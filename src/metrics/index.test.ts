@@ -518,7 +518,6 @@ describe("metrics public SDK", () => {
   });
 
   it("never exports one environment's queued samples to another environment's OTLP target", async () => {
-    const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
 
     await withEnv({
@@ -529,29 +528,28 @@ describe("metrics public SDK", () => {
       VERYFRONT_API_INTERNAL_USER: "internal-user",
       VERYFRONT_API_INTERNAL_PASS: "internal-pass",
     }, async () => {
-      globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
-        requests.push({ url: String(url), init });
-        return Promise.resolve(new Response("{}", { status: 200 }));
-      }) as typeof fetch;
+      await withMockFetch(
+        ((url: string | URL | Request, init?: RequestInit) => {
+          requests.push({ url: String(url), init });
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          // A victim environment enqueues a sample bound for the internal proxy.
+          metrics.counter("vf_victim_metric_total", 1, { project_id: "victim-project" });
 
-      try {
-        // A victim environment enqueues a sample bound for the internal proxy.
-        metrics.counter("vf_victim_metric_total", 1, { project_id: "victim-project" });
-
-        // A co-located environment configured with its own OTLP endpoint then
-        // enqueues a sample and the flush fires under ITS project-env context —
-        // exactly the ambient context the flush timer inherits in production.
-        await runWithProjectEnv({
-          OTEL_METRICS_ENABLED: "true",
-          OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://attacker.example/v1/metrics",
-          OTEL_EXPORTER_OTLP_METRICS_HEADERS: "x-api-key=attacker-key",
-        }, async () => {
-          metrics.counter("vf_attacker_metric_total", 1, { project_id: "attacker-project" });
-          await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
-        });
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+          // A co-located environment configured with its own OTLP endpoint then
+          // enqueues a sample and the flush fires under ITS project-env context —
+          // exactly the ambient context the flush timer inherits in production.
+          await runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://attacker.example/v1/metrics",
+            OTEL_EXPORTER_OTLP_METRICS_HEADERS: "x-api-key=attacker-key",
+          }, async () => {
+            metrics.counter("vf_attacker_metric_total", 1, { project_id: "attacker-project" });
+            await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+          });
+        },
+      );
     });
 
     assertEquals(requests.length, 2, "each environment's samples must be exported separately");
@@ -579,6 +577,111 @@ describe("metrics public SDK", () => {
       (attackerRequest?.init?.headers as Record<string, string>).Authorization,
       undefined,
       "internal proxy credentials must never reach a project-configured endpoint",
+    );
+  });
+
+  it("does not expose internal metrics credentials to replaced target-grouping intrinsics", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const observed: string[] = [];
+    const nativeStringify = JSON.stringify;
+
+    // Record every value a replaced intrinsic would be able to read. Each spy
+    // delegates to the captured native so behaviour is unchanged.
+    const record = (values: unknown[]): void => {
+      for (const value of values) {
+        if (typeof value === "string") {
+          observed.push(value);
+          continue;
+        }
+        try {
+          observed.push(String(nativeStringify(value)));
+        } catch {
+          // Unserializable values cannot carry the credential as data.
+        }
+      }
+    };
+
+    const nativeEntries = Object.entries;
+    const nativeSort = Array.prototype.sort;
+    const nativeLocaleCompare = String.prototype.localeCompare;
+    const nativeMapSet = Map.prototype.set;
+
+    const restore = () => {
+      Object.entries = nativeEntries;
+      Array.prototype.sort = nativeSort;
+      String.prototype.localeCompare = nativeLocaleCompare;
+      Map.prototype.set = nativeMapSet;
+      JSON.stringify = nativeStringify;
+    };
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-1,env-2",
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request, init?: RequestInit) => {
+          requests.push({ url: String(url), init });
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          Object.entries = ((value: object) => {
+            record([value]);
+            return nativeEntries(value);
+          }) as typeof Object.entries;
+          Array.prototype.sort = function (this: unknown[], compare?) {
+            record([this]);
+            return nativeSort.call(this, compare) as unknown[];
+          } as typeof Array.prototype.sort;
+          String.prototype.localeCompare = function (this: string, that: string) {
+            record([String(this), that]);
+            return nativeLocaleCompare.call(String(this), that);
+          } as typeof String.prototype.localeCompare;
+          Map.prototype.set = function (this: Map<unknown, unknown>, key, value) {
+            record([key, value]);
+            return nativeMapSet.call(this, key, value) as Map<unknown, unknown>;
+          } as typeof Map.prototype.set;
+          JSON.stringify = ((value: unknown, replacer?, space?) => {
+            record([value]);
+            return nativeStringify(
+              value,
+              replacer as (this: unknown, key: string, value: unknown) => unknown,
+              space,
+            );
+          }) as typeof JSON.stringify;
+
+          try {
+            // Two distinct targets so the flush must group by target identity,
+            // which is where the credential-bearing headers get compared.
+            metrics.counter("vf_internal_metric_total", 1, { project_id: "project-1" });
+            await runWithProjectEnv({
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+            }, async () => {
+              metrics.counter("vf_project_metric_total", 1, { project_id: "project-2" });
+              await (metrics as unknown as { __flushForTests(): Promise<void> })
+                .__flushForTests();
+            });
+          } finally {
+            restore();
+          }
+        },
+      );
+    });
+
+    assertEquals(requests.length, 2, "both targets must still be exported");
+
+    const encodedCredential = "aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz";
+    const leaked = observed.filter((value) =>
+      value.includes(encodedCredential) || value.includes("internal-pass")
+    );
+    assertEquals(
+      leaked,
+      [],
+      "target grouping must never pass the internal proxy credential through a replaceable intrinsic",
     );
   });
 

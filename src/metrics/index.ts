@@ -85,6 +85,8 @@ const DIRECT_FLUSH_DELAY_MS = 1_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
+const objectKeys = Object.keys;
+const arraySort = Array.prototype.sort;
 const hostBtoa = typeof globalThis.btoa === "function" ? globalThis.btoa : undefined;
 const mathMin = Math.min;
 const NativeTextEncoder = TextEncoder;
@@ -325,13 +327,55 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
   };
 }
 
+function sortHeaderNames(names: string[]): string[] {
+  return apply(arraySort, names, [
+    (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0),
+  ]) as string[];
+}
+
+function headersEqual(
+  left: Record<string, string>,
+  right: Record<string, string>,
+): boolean {
+  const leftNames = sortHeaderNames(apply(objectKeys, Object, [left]) as string[]);
+  const rightNames = sortHeaderNames(apply(objectKeys, Object, [right]) as string[]);
+  if (leftNames.length !== rightNames.length) return false;
+  for (let index = 0; index < leftNames.length; index++) {
+    const name = leftNames[index];
+    if (name === undefined || name !== rightNames[index]) return false;
+    if (left[name] !== right[name]) return false;
+  }
+  return true;
+}
+
+// Target identities are interned so the key is an opaque counter rather than a
+// rendering of the target itself. `headers` can carry the host-generated
+// internal-proxy Basic credential, and the key ends up in long-lived map keys
+// and in the flush grouping, so it must never contain that secret. Comparison
+// runs on captured intrinsics and primitive operators only: in a dedicated
+// runtime, project code can replace `Object.entries`, `Array.prototype.sort`,
+// `String.prototype.localeCompare` and `JSON.stringify`, and any of those would
+// otherwise be handed the credential. The table is bounded by the number of
+// distinct export targets in the process, i.e. by co-located environments.
+const internedTargets: Array<{ target: DirectMetricsTarget; key: string }> = [];
+let nextInternedTargetId = 0;
+
 function directTargetKey(target: DirectMetricsTarget): string {
-  return JSON.stringify([
-    target.url,
-    Object.entries(target.headers).sort(([left], [right]) => left.localeCompare(right)),
-    target.serviceName,
-    target.serviceVersion,
-  ]);
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (
+      interned !== undefined &&
+      interned.target.url === target.url &&
+      interned.target.serviceName === target.serviceName &&
+      interned.target.serviceVersion === target.serviceVersion &&
+      headersEqual(interned.target.headers, target.headers)
+    ) {
+      return interned.key;
+    }
+  }
+  const key = `t${nextInternedTargetId++}`;
+  internedTargets[internedTargets.length] = { target, key };
+  return key;
 }
 
 function toOtlpValue(value: AttributeValue) {
@@ -473,15 +517,38 @@ async function flushDirectMetrics(): Promise<void> {
   // ambient-context target resolution here would misroute other tenants'
   // samples.
   const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
-  const groups = new Map<string, { target: DirectMetricsTarget; samples: DirectMetricSample[] }>();
-  for (const sample of batch) {
+  // Plain arrays and index loops rather than a Map or iterator protocol: a
+  // group holds the target, and `target.headers` can carry the internal-proxy
+  // credential, so it must not be handed to `Map.prototype.set` or to
+  // `Array.prototype[Symbol.iterator]`, both replaceable by project code.
+  interface DirectExportGroup {
+    key: string;
+    target: DirectMetricsTarget;
+    samples: DirectMetricSample[];
+  }
+  const groups: DirectExportGroup[] = [];
+  for (let index = 0; index < batch.length; index++) {
+    const sample = batch[index];
+    if (sample === undefined) continue;
     const key = directTargetKey(sample.target);
-    const group = groups.get(key) ?? { target: sample.target, samples: [] };
-    group.samples.push(sample);
-    groups.set(key, group);
+    let group: DirectExportGroup | undefined;
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      const candidate = groups[groupIndex];
+      if (candidate !== undefined && candidate.key === key) {
+        group = candidate;
+        break;
+      }
+    }
+    if (!group) {
+      group = { key, target: sample.target, samples: [] };
+      groups[groups.length] = group;
+    }
+    group.samples[group.samples.length] = sample;
   }
 
-  for (const [targetKey, group] of groups) {
+  for (let index = 0; index < groups.length; index++) {
+    const group = groups[index];
+    if (group === undefined) continue;
     try {
       const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
         group.target.url,
@@ -491,7 +558,7 @@ async function flushDirectMetrics(): Promise<void> {
             ...group.target.headers,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(buildDirectOtlpBody(group.samples, group.target, targetKey)),
+          body: JSON.stringify(buildDirectOtlpBody(group.samples, group.target, group.key)),
         },
       );
       if (!response.ok) {
@@ -608,6 +675,8 @@ export const metrics = {
     directQueue.length = 0;
     directCounterTotals.clear();
     directHistogramTotals.clear();
+    internedTargets.length = 0;
+    nextInternedTargetId = 0;
     if (directFlushTimer) {
       clearTimeout(directFlushTimer);
       directFlushTimer = null;
