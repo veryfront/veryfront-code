@@ -8,7 +8,12 @@
  * @module extensions/eval/eval-report-exporter
  */
 
-import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval/types.ts";
+import type {
+  EvalMetricResult,
+  EvalRecord,
+  EvalReport,
+  EvalReportExportRedaction,
+} from "#veryfront/eval/types.ts";
 import { assertRegistrationMethod, captureRegistrationId } from "../runtime-validation.ts";
 import { describeThrownValue } from "../safe-value.ts";
 
@@ -21,38 +26,13 @@ type EvalReportExportMaybePromise<T> = T | Promise<T>;
 /** Sentinel used when record payload fields are removed for external export. */
 export const EvalReportRedactedValue = "[redacted]" as const;
 
-/** Redaction policy applied before reports leave the process. */
-export interface EvalReportExportRedaction {
-  /** Include dataset input payloads. Defaults to false. */
-  includeInputs?: boolean;
-  /** Include target output payloads. Defaults to false. */
-  includeOutputs?: boolean;
-  /** Include reference answer payloads. Defaults to false. */
-  includeReferences?: boolean;
-  /** Include trace events and tool-call metadata. Defaults to false. */
-  includeTraces?: boolean;
-  /** Include retrieved RAG context passages. Defaults to false. */
-  includeRetrievedContext?: boolean;
-  /** Include answer citation payloads. Defaults to false. */
-  includeCitations?: boolean;
-  /** Include metric/check explanations. Defaults to false. */
-  includeMetricExplanations?: boolean;
-  /**
-   * Include metric/check evidence payloads. Defaults to false. Metric labels restate the same
-   * configured parameters, so they follow this setting on both record and summary metrics.
-   */
-  includeMetricEvidence?: boolean;
-  /** Include dataset source paths. Defaults to false. */
-  includeDatasetPath?: boolean;
-  /**
-   * Include the deterministic dataset content hash. Defaults to false. The hash is computed
-   * over every example's id, input, reference, and metadata without a salt, so it identifies
-   * dataset content across projects and runs and can be brute-forced for low-entropy datasets.
-   */
-  includeDatasetHash?: boolean;
-  /** Record and export context metadata keys that can be exported. Defaults to none. */
-  metadataAllowlist?: string[];
-}
+/**
+ * Redaction policy applied before reports leave the process.
+ *
+ * Re-exported from the eval core so the exporter contract and the eval report types share one
+ * definition instead of two copies that can drift apart.
+ */
+export type { EvalReportExportRedaction };
 
 /** Trace correlation fields that connect eval exports to runtime spans. */
 export interface EvalReportExportTraceContext {
@@ -217,10 +197,9 @@ function cloneRedaction(
 }
 
 function redactDatasetMetadata(
-  dataset: EvalReport["dataset"],
+  dataset: NonNullable<EvalReport["dataset"]>,
   redaction: EvalReportExportRedaction,
-): EvalReport["dataset"] {
-  if (!dataset) return dataset;
+): NonNullable<EvalReport["dataset"]> {
   const redactedDataset = { ...dataset };
   if (!redaction.includeDatasetPath) delete redactedDataset.path;
   if (!redaction.includeDatasetHash) delete redactedDataset.hash;
