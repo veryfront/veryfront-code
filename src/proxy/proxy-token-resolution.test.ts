@@ -5,6 +5,7 @@ import {
   extractUserToken,
   isMissingProxyProjectError,
   resolveProxyRequestToken,
+  stripUserTokenCookie,
 } from "./proxy-token-resolution.ts";
 import { OAuthTokenRequestError } from "./oauth-client.ts";
 
@@ -21,6 +22,22 @@ describe("proxy/proxy-token-resolution", () => {
       extractUserToken(`authToken=${"x".repeat(64 * 1024 + 1)}`),
       undefined,
     );
+  });
+
+  it("strips every authToken pair while preserving application cookies", () => {
+    assertEquals(stripUserTokenCookie("authToken=secret"), undefined);
+    assertEquals(stripUserTokenCookie("authToken=first; authToken=second"), undefined);
+    assertEquals(
+      stripUserTokenCookie("session=abc; authToken=secret; theme=dark"),
+      "session=abc; theme=dark",
+    );
+    assertEquals(
+      stripUserTokenCookie(" authToken = secret ; app=1"),
+      "app=1",
+    );
+    assertEquals(stripUserTokenCookie("authToken; app=1"), "app=1");
+    assertEquals(stripUserTokenCookie("authTokenX=1; XauthToken=2"), "authTokenX=1; XauthToken=2");
+    assertEquals(stripUserTokenCookie(""), undefined);
   });
 
   it("prefers signed internal control-plane tokens over preview user cookies", async () => {
