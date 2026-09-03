@@ -1869,6 +1869,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (contextChanged) {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
+      // The read path's file-list index keys its cached content map on
+      // `length:firstPath:lastPath` and, when the backing cache entry has
+      // expired, keeps serving that map for up to its staleness limit. Neither
+      // guard knows which branch, environment, or release the listing came
+      // from, so without an explicit clear here two contexts whose listings
+      // happen to agree on those three values would serve each other's file
+      // contents -- and cache them under the new context's key.
+      this.readOps.clearFileListIndex();
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
       this.clearRetainedFileList();

@@ -764,10 +764,17 @@ describe("VeryfrontFSAdapter", () => {
 
       const statOps = (adapter as unknown as { statOps: { clearIndex: () => void } }).statOps;
       const dirOps = (adapter as unknown as { dirOps: { clearTree: () => void } }).dirOps;
+      // The read path's file-list index caches file contents keyed only on the
+      // listing's length and its first and last path, so two contexts that
+      // agree on those would otherwise serve each other's file contents.
+      const readOps =
+        (adapter as unknown as { readOps: { clearFileListIndex: () => void } }).readOps;
       const originalClearIndex = statOps.clearIndex;
       const originalClearTree = dirOps.clearTree;
+      const originalClearFileListIndex = readOps.clearFileListIndex;
       let indexClears = 0;
       let treeClears = 0;
+      let fileListIndexClears = 0;
       statOps.clearIndex = () => {
         indexClears++;
         originalClearIndex.call(statOps);
@@ -775,6 +782,10 @@ describe("VeryfrontFSAdapter", () => {
       dirOps.clearTree = () => {
         treeClears++;
         originalClearTree.call(dirOps);
+      };
+      readOps.clearFileListIndex = () => {
+        fileListIndexClears++;
+        originalClearFileListIndex.call(readOps);
       };
 
       adapter.setContentContext({
@@ -786,6 +797,7 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(adapter.getContentContext()?.releaseId, "release-new");
       assertEquals(indexClears, 1, "a release switch must clear the stat index");
       assertEquals(treeClears, 1, "a release switch must clear the directory tree");
+      assertEquals(fileListIndexClears, 1, "a release switch must clear the file list index");
 
       adapter.setContentContext({
         sourceType: "release",
@@ -795,6 +807,11 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(indexClears, 1, "an unchanged context must not clear the stat index");
       assertEquals(treeClears, 1, "an unchanged context must not clear the directory tree");
+      assertEquals(
+        fileListIndexClears,
+        1,
+        "an unchanged context must not clear the file list index",
+      );
     });
 
     it("should not clear caches when context is identical", () => {

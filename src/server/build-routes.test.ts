@@ -301,6 +301,58 @@ describe("server/build-routes", () => {
       const routes = await collectPagesRoutes(adapter, "/project", ["/nonexistent"]);
       assertEquals(routes, []);
     });
+
+    // Directory enumeration order is filesystem-dependent, so discovery must
+    // impose its own order rather than inherit whatever readDir happens to
+    // return; otherwise build outputs derived from the route list differ
+    // between machines and between runs. The mock adapter enumerates in
+    // declaration order, so declaring the files "wrong" reproduces the
+    // unsorted filesystem.
+    it("orders pages routes by path regardless of directory enumeration order", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/blog.mdx": "blog",
+        "/project/pages/index.mdx": "home",
+        "/project/pages/about.mdx": "about",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/about", "/blog"]);
+    });
+
+    it("produces the same pages route order for either enumeration order", async () => {
+      const forward = await collectPagesRoutes(
+        createMockAdapter({
+          "/project/pages/index.mdx": "home",
+          "/project/pages/about.mdx": "about",
+          "/project/pages/blog/post.md": "post",
+        }),
+        "/project",
+      );
+      const reversed = await collectPagesRoutes(
+        createMockAdapter({
+          "/project/pages/blog/post.md": "post",
+          "/project/pages/about.mdx": "about",
+          "/project/pages/index.mdx": "home",
+        }),
+        "/project",
+      );
+
+      assertEquals(forward.map((r) => r.path), ["/", "/about", "/blog/post"]);
+      assertEquals(reversed, forward);
+    });
+
+    it("breaks ties deterministically when two files resolve to one path", async () => {
+      const routes = await collectPagesRoutes(
+        createMockAdapter({
+          "/project/pages/about.tsx": "about tsx",
+          "/project/pages/about.mdx": "about mdx",
+        }),
+        "/project",
+      );
+      assertEquals(routes.map((r) => r.file), [
+        "/project/pages/about.mdx",
+        "/project/pages/about.tsx",
+      ]);
+    });
   });
 
   describe("collectAppRoutes", () => {
@@ -533,6 +585,16 @@ describe("server/build-routes", () => {
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
       assertEquals(routes[0]!.segmentDirs, ["/project/app", "/project/app/blog"]);
+    });
+
+    it("orders app routes by path regardless of directory enumeration order", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/docs/page.tsx": "export default function Docs() {}",
+        "/project/app/blog/page.tsx": "export default function Blog() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+      const routes = await collectAppRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/blog", "/docs"]);
     });
   });
 });

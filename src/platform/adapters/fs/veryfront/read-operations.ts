@@ -193,7 +193,13 @@ export class ReadOperations {
         // repeated authenticated control-plane requests. Missing files still
         // surface as not-found-like errors, which callers treat as the
         // optional miss.
-        return await this.fetchContent(normalizedPath);
+        //
+        // `optional` keeps the three behaviours the direct
+        // `getOptionalFileContent` call had, which the module-read pipeline
+        // does not share: the read stays on the exact requested path, it is
+        // not subject to the framework-module guard, and its 404 is declared
+        // expected. See fetchContent for why each matters.
+        return await this.fetchContent(normalizedPath, { optional: true });
       },
       { "fs.path": path },
     );
@@ -312,6 +318,7 @@ export class ReadOperations {
     isPreviewMode: boolean,
     ctx: ResolvedContentContext | null,
     missReason: MissReason,
+    expectedMissing = false,
   ): Promise<string> {
     const cleanupResult = this.inFlightRequests.cleanup();
     if (cleanupResult) {
@@ -363,8 +370,15 @@ export class ReadOperations {
             ctx?.releaseId ?? null,
             ctx?.environmentName ?? null,
             isProduction,
+            expectedMissing,
           )
-          : await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+          : await this.fetchDraftContent(
+            normalizedPath,
+            apiPath,
+            cacheKey,
+            isProduction,
+            expectedMissing,
+          );
 
         const fetchDuration = Math.round(performance.now() - fetchStartTime);
 
@@ -536,18 +550,40 @@ export class ReadOperations {
     apiPath: string,
     releaseId: string | null,
     environmentName?: string | null,
+    expectedMissing = false,
   ): Promise<string> {
     return this.client.getPublishedFileContent(
       apiPath,
       releaseId ?? undefined,
       environmentName ?? undefined,
+      expectedMissing ? { expectedMissing: true } : undefined,
     );
   }
 
-  private async fetchContent(normalizedPath: string): Promise<string> {
+  /**
+   * Shared read pipeline for module reads and optional reads.
+   *
+   * `optional` marks a read whose target is a configured project file that may
+   * legitimately be absent (a global stylesheet, say) rather than a module the
+   * resolver expects to exist. Such a read is exact: it skips extension
+   * resolution, the framework-module guard, and published extension fallback,
+   * and it declares its 404 expected. Every cache layer, the fresh negative
+   * miss, and the in-flight dedupe still apply -- those are what keep an
+   * absent optional file from becoming one authenticated API call per render.
+   */
+  private async fetchContent(
+    normalizedPath: string,
+    { optional = false }: { optional?: boolean } = {},
+  ): Promise<string> {
     // Framework paths should NEVER be fetched from API - they must be read from local filesystem.
     // If we reach here for a framework path, the module server's local resolution failed.
-    assertProjectSourcePath(normalizedPath);
+    //
+    // Optional reads are exempt: they carry a project-relative path the
+    // project's own config chose, and that path is allowed to sit under a
+    // directory this guard reserves for framework modules (`src/lib/app.css`
+    // collides with the framework's `src/lib/`). Rejecting it would surface as
+    // an optional miss and silently drop the file from the render.
+    if (!optional) assertProjectSourcePath(normalizedPath);
 
     const ctx = this.contextProvider?.getContentContext() ?? null;
     const {
@@ -615,10 +651,19 @@ export class ReadOperations {
         isPreviewMode,
         ctx,
         "indexed_without_content",
+        optional,
       );
     }
 
-    if (!hasKnownExt) {
+    // Extension resolution is for module specifiers written without one
+    // ("components/Button" -> "components/Button.tsx"). An optional read names
+    // a complete filename, but one whose extension this pipeline does not
+    // recognise as a source extension, so `hasKnownExt` is false for every
+    // "globals.css". Running resolution on it would search "globals.css.*" and
+    // hand back the best-ranked sibling -- a "globals.css.map" would be
+    // injected as the stylesheet, ahead of the real file. Optional reads stay
+    // on the exact path.
+    if (!hasKnownExt && !optional) {
       if (!skipPersistentCaches) {
         const resolvedFromFileList = await this.tryResolveExtensionlessPathFromFileList(
           normalizedPath,
@@ -698,6 +743,7 @@ export class ReadOperations {
         : fileListMatch.status === "missing" && fileListMatch.fresh
         ? "not_in_filelist"
         : "no_filelist_cache",
+      optional,
     );
   }
 
@@ -708,6 +754,7 @@ export class ReadOperations {
     releaseId: string | null,
     environmentName: string | null,
     shouldCache: boolean,
+    expectedMissing = false,
   ): Promise<string> {
     logger.debug("Fetching published content", {
       path: normalizedPath,
@@ -717,7 +764,12 @@ export class ReadOperations {
     });
 
     try {
-      const content = await this.fetchPublishedVariant(apiPath, releaseId, environmentName);
+      const content = await this.fetchPublishedVariant(
+        apiPath,
+        releaseId,
+        environmentName,
+        expectedMissing,
+      );
 
       logger.debug("Fetched published content", {
         path: normalizedPath,
@@ -740,7 +792,10 @@ export class ReadOperations {
         throw error;
       }
 
-      if (requiresExactPublishedPath(apiPath)) {
+      // An optional read is exact for the same reason it skips extension
+      // resolution on the way in: the caller asked for one named file, and a
+      // differently-suffixed sibling is not that file.
+      if (expectedMissing || requiresExactPublishedPath(apiPath)) {
         throw createNotFoundLikeError(normalizedPath);
       }
 
@@ -868,6 +923,7 @@ export class ReadOperations {
     apiPath: string,
     cacheKey: string,
     shouldCache: boolean,
+    expectedMissing = false,
   ): Promise<string> {
     logger.debug("API_FETCH_START - fetching draft from API", {
       path: normalizedPath,
@@ -875,7 +931,10 @@ export class ReadOperations {
       cacheKey,
     });
 
-    const content = await this.client.getFileContent(apiPath);
+    const content = await this.client.getFileContent(
+      apiPath,
+      expectedMissing ? { expectedMissing: true } : undefined,
+    );
 
     logger.debug("API_FETCH_DONE - got content from API", {
       path: normalizedPath,

@@ -22,6 +22,10 @@ function createMockClient(
   } as unknown as VeryfrontApiClient;
 }
 
+function notFoundError(): Error {
+  return API_CLIENT_ERROR.create({ detail: "not found", status: 404 });
+}
+
 function createBranchContext(): ContentContextProvider {
   return {
     isProductionMode: () => false,
@@ -1051,6 +1055,103 @@ describe("ReadOperations", () => {
         0,
         "an expected optional miss must be answered by the file list index, not the API",
       );
+    });
+
+    it("should read the exact path instead of resolving a same-stem sibling", async () => {
+      // "globals.css" has no extension this pipeline recognises as a source
+      // extension, so the module path would treat it as extensionless and
+      // resolve "globals.css.*" -- which can rank a sourcemap ahead of the
+      // real stylesheet. An optional read names a complete file.
+      let resolveCalls = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: (basePath: string) => {
+          resolveCalls++;
+          return Promise.resolve({
+            path: `${basePath}.map`,
+            content: '{"version":3,"sources":[]}',
+          });
+        },
+        getFileContent: (path: string) =>
+          path === "globals.css"
+            ? Promise.resolve("body { color: red; }")
+            : Promise.reject(notFoundError()),
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      assertEquals(await readOps.readOptionalTextFile("globals.css"), "body { color: red; }");
+      assertEquals(resolveCalls, 0, "an optional read must not run extension resolution");
+    });
+
+    it("should not apply the framework-module guard to configured project files", async () => {
+      // "src/lib/" is reserved for framework modules on the module-read path,
+      // but a project may legitimately configure a stylesheet there. Rejecting
+      // it reaches the caller as an optional miss and silently drops the file.
+      const client = createMockClient({
+        getFileContent: (path: string) =>
+          path === "src/lib/app.css"
+            ? Promise.resolve("body { color: blue; }")
+            : Promise.reject(notFoundError()),
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      assertEquals(
+        await readOps.readOptionalTextFile("src/lib/app.css"),
+        "body { color: blue; }",
+      );
+
+      // The guard still holds for module reads, which is what it is for.
+      await assertRejects(
+        () => readOps.readTextFile("src/lib/app.css"),
+        Error,
+        "cannot be fetched from API",
+      );
+    });
+
+    it("should declare an optional draft 404 expected so it is not logged as a fault", async () => {
+      const seen: Array<boolean | undefined> = [];
+      const client = createMockClient({
+        getFileContent: (_path: string, options?: { expectedMissing?: boolean }) => {
+          seen.push(options?.expectedMissing);
+          return Promise.reject(notFoundError());
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      await assertRejects(() => readOps.readOptionalTextFile("globals.css"), Error);
+      assertEquals(seen, [true], "an optional miss must reach the transport as an expected 404");
+    });
+
+    it("should declare an optional published 404 expected and not try other extensions", async () => {
+      const seen: Array<boolean | undefined> = [];
+      let resolveCalls = 0;
+      const client = createMockClient({
+        getPublishedFileContent: (
+          _path: string,
+          _releaseId?: string,
+          _environmentName?: string,
+          options?: { expectedMissing?: boolean },
+        ) => {
+          seen.push(options?.expectedMissing);
+          return Promise.reject(notFoundError());
+        },
+        resolveFileWithExtension: () => {
+          resolveCalls++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const readOps = createReadOps(client, false, createReleaseContext("rel-optional"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      await assertRejects(() => readOps.readOptionalTextFile("theme.ts"), Error, "404 Not Found");
+      assertEquals(seen, [true], "an optional miss must reach the transport as an expected 404");
+      assertEquals(resolveCalls, 0, "an optional miss must not fan out over other extensions");
     });
   });
 

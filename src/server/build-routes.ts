@@ -38,6 +38,31 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
+function compareStrings(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/**
+ * Directory iteration order is filesystem-dependent: neither `readDir` nor the
+ * recursive walk built on it promises sorted entries, and on hashed-directory
+ * filesystems the order also shifts with the directory's own name, so the same
+ * project can enumerate its pages differently between machines and between runs
+ * on one machine. Route discovery therefore imposes its own total order instead
+ * of inheriting the filesystem's, so build outputs derived from the route list
+ * (ssgPaths, manifests, prerender sequences) are reproducible. Paths are
+ * compared by code unit, which places a parent ahead of its children ("/" before
+ * "/blog"), and the backing file breaks ties between routes that resolve to the
+ * same path.
+ */
+function compareRoutes(a: RouteInfo, b: RouteInfo): number {
+  return compareStrings(a.path, b.path) || compareStrings(a.file, b.file);
+}
+
+function compareAppRoutes(a: AppRouteInfo, b: AppRouteInfo): number {
+  return compareStrings(a.path, b.path) || compareStrings(a.pageFile, b.pageFile);
+}
+
 export async function collectPagesRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -69,7 +94,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes;
+  return routes.sort(compareRoutes);
 }
 
 /**
@@ -96,7 +121,9 @@ export async function collectAppRoutes(
 
   logger.debug(`Found ${collected.length} App Router static routes`);
 
-  return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
+  return collected
+    .filter((r) => shouldIncludeRoute(r.path, include, exclude))
+    .sort(compareAppRoutes);
 }
 
 function isForceDynamic(source: string): boolean {

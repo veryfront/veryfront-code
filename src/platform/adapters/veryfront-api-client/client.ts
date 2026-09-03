@@ -306,8 +306,8 @@ export class VeryfrontApiClient {
     }
   }
 
-  async getFileContent(pathOrId: string): Promise<string> {
-    const file = await this.getFile(pathOrId);
+  async getFileContent(pathOrId: string, options: GetFileOptions = {}): Promise<string> {
+    const file = await this.getFile(pathOrId, options);
     return file.content;
   }
 
@@ -642,16 +642,22 @@ export class VeryfrontApiClient {
     path: string,
     releaseId?: string,
     environmentName?: string,
+    options: GetFileOptions = {},
   ): Promise<string> {
     const projectRef = this.requireProjectSlug();
 
     if (releaseId) {
-      const result = await this.operations.getReleaseFile(projectRef, releaseId, path);
+      const result = await this.operations.getReleaseFile(projectRef, releaseId, path, options);
       return result.content;
     }
 
     if (environmentName) {
-      const result = await this.operations.getEnvironmentFile(projectRef, environmentName, path);
+      const result = await this.operations.getEnvironmentFile(
+        projectRef,
+        environmentName,
+        path,
+        options,
+      );
       return result.content;
     }
 
