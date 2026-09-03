@@ -62,7 +62,7 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
     : contentContext;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(effectiveContentContext);
   const cacheKey = cacheVariant
-    ? `${cacheKeyPrefix}:${cacheVariant}:${normalizedPath}`
+    ? `${cacheKeyPrefix}|${cacheVariant.length}:${cacheVariant}:${normalizedPath}`
     : `${cacheKeyPrefix}:${normalizedPath}`;
   const isProduction = contextProvider?.isProductionMode() ?? false;
   const releaseId = effectiveContentContext?.releaseId;

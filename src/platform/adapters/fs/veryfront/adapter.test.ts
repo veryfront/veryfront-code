@@ -949,6 +949,42 @@ describe("VeryfrontFSAdapter", () => {
       adapter.clearRequestBranch();
       assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:main");
     });
+
+    it("reads retained file lists from the per-request branch", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      const mainContext: ResolvedContentContext = {
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const featureContext: ResolvedContentContext = {
+        ...mainContext,
+        branch: "feature",
+      };
+      adapter.setContentContext(mainContext);
+      const cache = (adapter as unknown as {
+        cache: { set(key: string, value: Array<{ path: string; content: string }>): void };
+      }).cache;
+      cache.set(buildFileListCacheKey(mainContext), [{ path: "main.css", content: "main" }]);
+      cache.set(buildFileListCacheKey(featureContext), [{
+        path: "feature.css",
+        content: "feature",
+      }]);
+
+      adapter.setRequestBranch("feature");
+
+      assertEquals(await adapter.getAllSourceFiles(), [{
+        path: "feature.css",
+        content: "feature",
+      }]);
+    });
   });
 
   describe("source snapshot fingerprints", () => {
