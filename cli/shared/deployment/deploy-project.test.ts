@@ -960,11 +960,7 @@ function withGitProject(
 
 describe("pushed source provenance", () => {
   it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
-    const projectDir = await Deno.makeTempDir();
-    try {
-      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
-      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
-      const commitSha = await commitProject(projectDir);
+    await withGitProject(async (projectDir, commitSha) => {
       const sourceDigest = await computeSourceDigest([
         { path: "app.ts", content: "export const value = 1;\n" },
       ]);
@@ -989,9 +985,7 @@ describe("pushed source provenance", () => {
       });
 
       assertEquals(result, { commitSha, sourceDigest });
-    } finally {
-      await Deno.remove(projectDir, { recursive: true });
-    }
+    });
   });
 
   it("rejects a clean push receipt once the working tree has uncommitted edits", async () => {
