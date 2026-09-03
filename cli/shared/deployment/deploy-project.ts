@@ -324,10 +324,17 @@ async function ensureProjectLinkedForDeploy(
  * Whether an `ensure-pushed` deploy has to upload the local source first.
  *
  * Holding a receipt is not evidence that the receipt still describes the
- * working tree: only a clean checkout parked on the receipt's own commit is.
- * Every weaker state — no receipt, a dirty tree, a moved HEAD, or a project
- * outside Git — counts as changed source and is pushed again, so `veryfront up`
- * cannot deploy a stale upload while reporting the new source as live.
+ * working tree. Uncommitted work is the gap no later check can close: it leaves
+ * HEAD untouched, so a commit comparison sees a match that is not one, and
+ * deploying on it would serve the previous upload while reporting the edited
+ * source as live. That state — along with no receipt at all, a receipt that
+ * never proved a clean source, and a project outside Git — is pushed again, so
+ * `veryfront up` refreshes the source instead of deploying a stale one.
+ *
+ * A moved HEAD is deliberately not in that list. {@link validatePushReceipt}
+ * already refuses a receipt from a different commit and tells the operator to
+ * push, and that refusal is the contract deploy has always had: committed work
+ * is never uploaded behind the operator's back.
  */
 export async function needsBootstrapPush(
   receipt: PushReceipt | null,
@@ -336,8 +343,7 @@ export async function needsBootstrapPush(
 ): Promise<boolean> {
   if (source.kind !== "ensure-pushed") return false;
   if (!receipt || !receipt.clean || !receipt.commitSha) return true;
-  const gitSource = await resolveGitSource(projectDir);
-  return !gitSource.clean || gitSource.commitSha !== receipt.commitSha;
+  return !(await resolveGitSource(projectDir)).clean;
 }
 
 export function assertProjectOwnership(

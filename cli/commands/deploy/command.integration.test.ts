@@ -4,6 +4,7 @@ import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
@@ -286,6 +287,10 @@ async function withInferredDeployEnv<T>(
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
 ): Promise<T> {
   const envKeys = [
+    // This fixture commits a repository of its own under a temp directory, so
+    // a CI job's GITHUB_SHA names an unrelated commit; resolveGitSource fails
+    // closed when it disagrees with HEAD.
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -294,6 +299,7 @@ async function withInferredDeployEnv<T>(
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"missing-app"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
@@ -371,7 +377,6 @@ it("deploys production from the existing verified push without mutating source",
         clean: true,
         pushedAt: "2026-07-10T09:20:00.000Z",
       });
-      await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
 
       const requests: string[] = [];
       const uploadedPaths: string[] = [];
@@ -419,6 +424,54 @@ it("deploys production from the existing verified push without mutating source",
       }
     });
   }
+});
+
+it("re-pushes uncommitted work instead of redeploying the source it replaced", async () => {
+  // An edit that never reaches a commit leaves HEAD matching the receipt, so
+  // no commit check can see it. Deploy used to take the receipt's word and
+  // serve the previous upload while reporting the edited source as live.
+  const projectDir = await makeTempDir();
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({
+        requests,
+        sourceDigest,
+        uploadedPaths,
+        releaseSource: STALE_SOURCE,
+      }),
+      () =>
+        deployCommand({
+          projectDir,
+          branch: "main",
+          env: "production",
+          dryRun: false,
+          force: false,
+          quiet: true,
+          deployProject: boundedDeployProject(),
+        }),
+    );
+
+    assertEquals(uploadedPaths.includes("app.ts"), true);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  });
 });
 
 it("defaults omitted deploy branch to main instead of promoting a feature push receipt", async () => {
@@ -884,13 +937,21 @@ it("reports dry-run deploy actions from the verified push state in human and JSO
 
 it("uses canonical production read-back in human and JSON modes", async () => {
   const projectDir = await Deno.makeTempDir();
-  const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+  // GITHUB_SHA is cleared for the same reason as in withDeployEnv: this
+  // fixture's Git repository is not the one a CI job is checked out on.
+  const envKeys = [
+    "GITHUB_SHA",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+  ];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const requests: string[] = [];
   let environmentReads = 0;
   let environmentUrlReads = 0;
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     const currentReleaseSource = "export default function Dashboard() { return null; }\n";
     await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
@@ -1639,6 +1700,8 @@ it("does not claim dry-run deploy would push source when source push is skipped"
 it("uses an alternative slug when inferred first deploy project creation conflicts", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
+    // See withDeployEnv: the temp repository below is not the CI checkout.
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -1650,6 +1713,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
   let inferredProjectLookups = 0;
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"taken-app"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
@@ -1819,6 +1883,8 @@ it("uses an alternative slug when inferred first deploy project creation conflic
 it("collects configured app and pages routes when projectDir has a trailing slash", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
+    // See withDeployEnv: the temp repository below is not the CI checkout.
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -1827,6 +1893,7 @@ it("collects configured app and pages routes when projectDir has a trailing slas
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.mkdir(`${projectDir}/src/site`, { recursive: true });
     await Deno.mkdir(`${projectDir}/src/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");

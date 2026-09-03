@@ -430,10 +430,18 @@ describe("resolveGitSource", () => {
       assertEquals(invalidCiSource.clean, false);
       Deno.env.delete("GITHUB_SHA");
 
-      await Deno.writeTextFile(`${projectDir}/.veryfront/other.txt`, "untracked\n");
+      // The CLI writes its own bookkeeping (the project link, the receipt)
+      // under .veryfront/, and none of it is ever uploaded, so a project that
+      // does not Git-ignore the directory must not read as changed source.
+      await Deno.writeTextFile(`${projectDir}/.veryfront/project.json`, "{}\n");
+      const cliState = await resolveGitSource(projectDir);
+      assertEquals(cliState.clean, true);
+      await Deno.remove(`${projectDir}/.veryfront/project.json`);
+
+      await Deno.writeTextFile(`${projectDir}/untracked.ts`, "export const extra = 1;\n");
       const untracked = await resolveGitSource(projectDir);
       assertEquals(untracked.clean, false);
-      await Deno.remove(`${projectDir}/.veryfront/other.txt`);
+      await Deno.remove(`${projectDir}/untracked.ts`);
 
       await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
       const dirty = await resolveGitSource(projectDir);

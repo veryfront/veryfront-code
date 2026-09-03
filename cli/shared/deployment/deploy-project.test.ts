@@ -53,6 +53,7 @@ import {
   readyManifest,
   withDeployEnv,
   withFetchStub,
+  withoutAmbientCommitSha,
 } from "../../test-utils/deploy-test-support.ts";
 
 async function expectDeployError(
@@ -910,11 +911,13 @@ describe("DeployProject", () => {
 function withGitProject(
   fn: (projectDir: string, commitSha: string) => Promise<void>,
 ): Promise<void> {
-  return withTempDir(async (projectDir) => {
-    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
-    await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
-    await fn(projectDir, await commitProject(projectDir));
-  });
+  return withTempDir((projectDir) =>
+    withoutAmbientCommitSha(async () => {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+      await fn(projectDir, await commitProject(projectDir));
+    })
+  );
 }
 
 describe("pushed source provenance", () => {
@@ -984,6 +987,65 @@ describe("pushed source provenance", () => {
       );
     });
   });
+
+  it("keeps deploying a project that does not Git-ignore the CLI state directory", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        const commitSha = await commitProject(projectDir);
+        const sourceDigest = await computeSourceDigest([
+          { path: "app.ts", content: "export const value = 1;\n" },
+        ]);
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha,
+          sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+        // Deploy links the project before it verifies the source, so the link
+        // lands in an un-ignored .veryfront/ right after a clean push. It is
+        // CLI state that never reaches the upload, so the pushed source is
+        // still exactly what the receipt promised.
+        await Deno.writeTextFile(
+          `${projectDir}/.veryfront/project.json`,
+          JSON.stringify({ version: 1 }) + "\n",
+        );
+
+        assertEquals(
+          await resolvePushedSource({
+            projectDir,
+            controlPlane: "https://control.example.test/api",
+            projectId: "550e8400-e29b-41d4-a716-446655440000",
+            projectSlug: "my-project",
+            branch: "main",
+          }),
+          { commitSha, sourceDigest },
+        );
+        assertEquals(
+          await needsBootstrapPush(
+            {
+              version: 2,
+              controlPlane: "https://control.example.test/api",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+              branch: "main",
+              commitSha,
+              sourceDigest,
+              clean: true,
+              pushedAt: "2026-07-10T09:20:00.000Z",
+            },
+            { kind: "ensure-pushed" },
+            projectDir,
+          ),
+          false,
+        );
+      })
+    );
+  });
 });
 
 describe("needsBootstrapPush", () => {
@@ -1002,6 +1064,22 @@ describe("needsBootstrapPush", () => {
       assertEquals(
         await needsBootstrapPush(
           { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+        ),
+        false,
+      );
+    });
+  });
+
+  it("leaves a moved HEAD to the receipt check instead of uploading behind it", async () => {
+    await withGitProject(async (projectDir) => {
+      // Committed work the push never saw is refused by validatePushReceipt
+      // with "came from a different commit"; deploy must not quietly replace
+      // that refusal with an upload.
+      assertEquals(
+        await needsBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true },
           { kind: "ensure-pushed" },
           projectDir,
         ),

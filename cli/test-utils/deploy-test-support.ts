@@ -179,6 +179,26 @@ export function readyManifest(routes: Record<string, { modules: string[]; css: s
   };
 }
 
+/**
+ * Run `fn` with the ambient GitHub Actions commit SHA out of the environment.
+ *
+ * Deploy fixtures commit their own throwaway repository under a temp directory,
+ * so a CI job's `GITHUB_SHA` describes a completely different repository.
+ * `resolveGitSource` fails closed when the environment SHA and the checkout's
+ * HEAD disagree, which would otherwise make every fixture look like a dirty,
+ * commit-less checkout on CI and nowhere else.
+ */
+export async function withoutAmbientCommitSha<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = Deno.env.get("GITHUB_SHA");
+  try {
+    Deno.env.delete("GITHUB_SHA");
+    return await fn();
+  } finally {
+    if (saved === undefined) Deno.env.delete("GITHUB_SHA");
+    else Deno.env.set("GITHUB_SHA", saved);
+  }
+}
+
 export async function withDeployEnv<T>(
   fn: () => Promise<T>,
   overrides: Record<string, string | null> = {},
@@ -188,6 +208,9 @@ export async function withDeployEnv<T>(
     VERYFRONT_API_URL: CONTROL_PLANE,
     VERYFRONT_PROJECT_SLUG: null,
     VERYFRONT_PROJECT_ID: null,
+    // Fixtures own a temp Git repository of their own; see
+    // {@link withoutAmbientCommitSha}.
+    GITHUB_SHA: null,
     ...overrides,
   };
   const keys = Object.keys(defaults);
