@@ -3481,6 +3481,71 @@ describe("DAGExecutor", () => {
       assertEquals(result.waiting, false);
     });
 
+    it("admits callback-defined sibling sub-workflows one at a time", async () => {
+      let definitionsResolved = 0;
+      const dynamicWorkflow = (id: string): WorkflowDefinition => ({
+        id,
+        steps: () => {
+          definitionsResolved++;
+          return [waitForApproval("review", { message: "Approve the release" })];
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          ...subWorkflow("release-1", { workflow: dynamicWorkflow("release-wf-1") }),
+          dependsOn: [],
+        },
+        {
+          ...subWorkflow("release-2", { workflow: dynamicWorkflow("release-wf-2") }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "review");
+      assertEquals(definitionsResolved, 1);
+      assertEquals(result.nodeStates["release-2"], undefined);
+    });
+
+    it("rejects collisions from a sub-workflow nested in a concurrent composite", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nested = {
+        ...parallel("group", [
+          subWorkflow("nested", {
+            workflow: {
+              id: "nested-workflow",
+              steps: [{ id: "approve", config: { type: "step" } as any }],
+            },
+          }),
+        ]),
+        dependsOn: [],
+      };
+      const collidingChildId = "group/approve";
+      const direct = {
+        ...subWorkflow("direct", {
+          workflow: {
+            id: "direct-workflow",
+            steps: [{ id: collidingChildId, config: { type: "step" } as any }],
+          },
+        }),
+        dependsOn: [],
+      };
+
+      const result = await exec.execute([nested, direct], createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", `child id "${collidingChildId}"`);
+      assertEquals(executed, []);
+    });
+
     it("rejects sub-workflow child ids that collide with declared parent nodes", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
@@ -3672,6 +3737,63 @@ describe("DAGExecutor", () => {
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "review");
       assertEquals(executed, []);
+    });
+
+    it("resumes ownerless legacy state for the active sequential sibling", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        subWorkflow("release-1", {
+          workflow: {
+            id: "release-wf-1",
+            steps: [
+              waitForApproval("review", { message: "Approve the first release" }),
+              { id: "publish", dependsOn: ["review"], config: { type: "step" } as any },
+            ],
+          },
+        }),
+        {
+          ...subWorkflow("release-2", {
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("review", { message: "Approve the second release" })],
+            },
+          }),
+          dependsOn: ["release-1"],
+        },
+      ];
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "release-1": {
+              nodeId: "release-1",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+            review: {
+              nodeId: "review",
+              status: "completed",
+              attempt: 1,
+              startedAt: new Date(),
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(executed, ["publish"]);
+      assertEquals(result.nodeStates["release-1"]?.status, "completed");
+      assertEquals(result.nodeStates["release-2"]?.status, "running");
+      assertEquals(result.nodeStates.review?.status, "running");
+      assertEquals(result.waiting, true);
     });
 
     it("keeps slash-containing sub-workflow owner paths distinct", async () => {

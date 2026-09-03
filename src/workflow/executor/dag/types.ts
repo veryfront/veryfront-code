@@ -47,6 +47,8 @@ export interface ExecutionScope {
   subWorkflowNodeIds: Map<string, Set<string>>;
   /** Child node ids reserved before concurrent sub-workflow execution begins. */
   subWorkflowNodeReservations: Map<string, Set<string>>;
+  /** Sub-workflow node owning each reservation path. */
+  subWorkflowReservationOwners: Map<string, string>;
   /** Slash-safe encoded owner path of the graph currently being executed. */
   subWorkflowPath: string;
   /**
