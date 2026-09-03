@@ -1,4 +1,5 @@
 import type { AgentConfig } from "../types.ts";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { DEFAULT_MAX_STEPS } from "../runtime/constants.ts";
 import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
@@ -111,7 +112,12 @@ function restrictConfiguredTools(
     const toolName = configuredToolNames[index];
     if (toolName === undefined) continue;
     const configuredTool = tools[toolName];
-    if (configuredTool !== undefined && allowedTools[toolName] === true) {
+    const canonicalRemoteName = getRemoteToolProvenance(configuredTool);
+    if (
+      configuredTool !== undefined &&
+      (allowedTools[toolName] === true ||
+        (canonicalRemoteName !== undefined && allowedTools[canonicalRemoteName] === true))
+    ) {
       intersected[toolName] = configuredTool;
     }
   }

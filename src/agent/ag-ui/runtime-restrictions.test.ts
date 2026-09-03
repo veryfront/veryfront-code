@@ -5,6 +5,7 @@ import type { AgentConfig } from "../types.ts";
 import { createEphemeralAgent } from "../factory.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
 import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
+import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   applyAgUiRuntimeRestrictions,
   hasAgUiRuntimeRestrictions,
@@ -43,6 +44,21 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.delegates, []);
     assertEquals(restricted.mcpServers, []);
     assertEquals(restricted.skills, false);
+  });
+
+  it("matches an aliased remote tool by its canonical provenance", () => {
+    const aliasedTool = markRemoteToolProvenance(
+      { id: "email_search" },
+      "gmail__search_emails",
+    );
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: { email_search: aliasedTool } as unknown as AgentConfig["tools"],
+      }),
+      { allowedTools: ["gmail__search_emails"] },
+    );
+
+    assertEquals(restricted.tools, { email_search: aliasedTool });
   });
 
   it("authorizes no tools for an empty allowlist", () => {
