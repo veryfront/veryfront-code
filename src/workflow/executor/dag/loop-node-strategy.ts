@@ -126,6 +126,7 @@ export async function executeLoopNodeStrategy(
   let iteration = 0;
   let exitReason: "condition" | "maxIterations" | "error" = "condition";
   let lastError: string | undefined;
+  let lastErrorCause: NodeExecutionResult["errorCause"];
   // Tracks whether the loop terminated because `while` returned false. A loop
   // that exhausts its iteration budget never trips this, so it is relabeled as
   // "maxIterations" below.
@@ -292,6 +293,7 @@ export async function executeLoopNodeStrategy(
 
     if (result.error) {
       lastError = result.error;
+      lastErrorCause = result.errorCause;
       exitReason = "error";
       break;
     }
@@ -356,6 +358,7 @@ export async function executeLoopNodeStrategy(
       ...completionUpdates,
     }),
     waiting: false,
+    errorCause: lastErrorCause,
   };
 }
 

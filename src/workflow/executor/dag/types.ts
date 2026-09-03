@@ -160,6 +160,8 @@ export interface NodeExecutionResult {
   state: NodeState;
   contextPatch: ContextPatch;
   waiting: boolean;
+  /** Registry-typed cause propagated from a failed child graph. */
+  errorCause?: VeryfrontError;
   /**
    * The node that actually suspended, when this node is a composite whose child
    * graph is waiting. An approval is built from `nodeStates[waitingNode].input`,

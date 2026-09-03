@@ -3589,6 +3589,7 @@ describe("DAGExecutor", () => {
       // Neither sibling may park on the shared "review" key, so no approval is
       // raised and no dependent publish step runs.
       assertEquals(result.waiting, false);
+      assertEquals(result.errorCause?.slug, INVALID_ARGUMENT.slug);
       assertEquals(executed, []);
     });
 
@@ -3714,6 +3715,64 @@ describe("DAGExecutor", () => {
       // The branch is deferred out of the batch holding "direct", so the two
       // never produce child state at the same time.
       assertEquals(executed, ["shipped", "taken-child"]);
+    });
+
+    it("admits a sub-workflow whose untaken branch arm would collide with a sibling", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          ...subWorkflow("conditional", {
+            workflow: {
+              id: "conditional-wf",
+              steps: [{
+                id: "gate",
+                dependsOn: [],
+                config: {
+                  type: "branch",
+                  condition: () => true,
+                  then: [{
+                    id: "gate/then/taken",
+                    dependsOn: [],
+                    config: { type: "step" } as any,
+                  }],
+                  else: [{
+                    id: "gate/else/review",
+                    dependsOn: [],
+                    config: { type: "step" } as any,
+                  }],
+                } as any,
+              }],
+            },
+          }),
+          dependsOn: [],
+        },
+        {
+          ...subWorkflow("direct", {
+            workflow: {
+              id: "direct-wf",
+              steps: [{
+                id: "gate/else/review",
+                dependsOn: [],
+                config: { type: "step" } as any,
+              }],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.error, undefined);
+      assertEquals(result.completed, true);
+      assertEquals(executed.includes("gate/then/taken"), true);
+      assertEquals(executed.includes("gate/else/review"), true);
     });
 
     it("resumes a sub-workflow nested in a loop without re-running its children", async () => {

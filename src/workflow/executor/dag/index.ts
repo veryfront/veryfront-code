@@ -167,6 +167,7 @@ function collectNodeSubWorkflowChildIds(
   switch (node.config.type) {
     case "subWorkflow": {
       const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
+      if (nodeHasUnknownSubWorkflowReservations(node)) break;
       const reservations = scope.subWorkflowNodeReservations.get(ownerPath);
       if (reservations) {
         for (const childId of reservations) childIds.add(childId);
@@ -232,7 +233,7 @@ function nodeHasUnknownSubWorkflowReservations(node: WorkflowNode): boolean {
     case "branch":
       // The selected arm is resolved only at execution, so the child ids this
       // node reserves are unknown until it runs.
-      return nodeMayExecuteSubWorkflow(node);
+      return true;
     case "loop":
       if (!Array.isArray(node.config.steps)) return true;
       return node.config.steps.some(nodeHasUnknownSubWorkflowReservations);
@@ -741,6 +742,7 @@ export class DAGExecutor {
           nodeId: string;
           waitConfig?: WaitNodeConfig;
           error?: string;
+          errorCause?: DAGExecutionResult["errorCause"];
         }
         | undefined;
       // Every node the settled batch parked, in index order. Dependency-free
@@ -837,6 +839,7 @@ export class DAGExecutor {
               kind: "failed",
               nodeId,
               error: nodeResult.state.error ?? "Unknown error",
+              errorCause: nodeResult.errorCause,
             };
           }
           continue;
@@ -894,6 +897,7 @@ export class DAGExecutor {
           nodeStates,
           contextPatch,
           error: `Node "${outcome.nodeId}" failed: ${outcome.error}`,
+          errorCause: outcome.errorCause,
         };
       }
 
@@ -1267,6 +1271,7 @@ export class DAGExecutor {
       state,
       contextPatch: result.contextPatch,
       waiting,
+      errorCause: waiting ? undefined : result.errorCause,
       waitingNode,
       waitingConfig,
       waitingNodes,
@@ -1354,6 +1359,7 @@ export class DAGExecutor {
       state,
       contextPatch: result.contextPatch,
       waiting,
+      errorCause: waiting ? undefined : result.errorCause,
       waitingNode,
       waitingConfig,
       waitingNodes,
@@ -1540,6 +1546,7 @@ export class DAGExecutor {
       state,
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting,
+      errorCause: waiting ? undefined : result.errorCause,
       waitingNode,
       waitingConfig,
       waitingNodes,
