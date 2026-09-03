@@ -166,5 +166,9 @@ veryfront schedule run daily-support-triage --remote --json
 ```
 
 Push the source schedule first. Remote runs use the pushed definition and do
-not accept `--input`; omit `--remote` when you intentionally want the existing
-local execution path.
+not execute `veryfront.config.ts` or `veryfront.config.js` from the checkout.
+Provide the project reference through `veryfront.json`, the local
+`.veryfront/project.json` link, or `VERYFRONT_PROJECT_SLUG`,
+`VERYFRONT_PROJECT_ID`, `TENANT_PROJECT_SLUG`, or `TENANT_PROJECT_ID`. Remote
+runs do not accept `--input`; omit `--remote` when you intentionally want the
+existing local execution path.
