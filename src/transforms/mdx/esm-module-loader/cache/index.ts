@@ -56,6 +56,15 @@ const MAX_MODULE_PATH_CACHE_ENTRIES = 500;
 const MAX_CYCLE_MANIFEST_SOURCE_ENTRIES = 5_000;
 const CYCLE_MANIFEST_SOURCES_INDEX_KEY = "__veryfront_cycle_manifest_sources_v1__";
 
+// Cache cleanup runs after project modules may have changed shared-realm
+// prototypes. Capture the string operations used by the containment boundary
+// before project code can replace them.
+const ReflectApply = Reflect.apply;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeReplaceAll = String.prototype.replaceAll;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+
 interface CycleManifestSourceIndex {
   readonly sources: Set<string>;
   saturated: boolean;
@@ -280,14 +289,18 @@ function getLegacyHashedMdxEsmSsrCacheDir(projectId: string, contentSourceId: st
 
 /** Whether cacheDir is strictly below parentDir, on either path separator. */
 function normalizeCachePath(value: string): string {
-  const normalized = value.replaceAll("\\", "/");
+  const normalized = ReflectApply(StringPrototypeReplaceAll, value, ["\\", "/"]) as string;
   let end = normalized.length;
-  while (end > 0 && normalized.charCodeAt(end - 1) === 0x2f) end--;
-  return normalized.slice(0, end);
+  while (end > 0 && ReflectApply(StringPrototypeEndsWith, normalized, ["/", end])) end--;
+  return ReflectApply(StringPrototypeSlice, normalized, [0, end]) as string;
 }
 
 function isDescendantCachePath(cacheDir: string, parentDir: string): boolean {
-  return normalizeCachePath(cacheDir).startsWith(`${normalizeCachePath(parentDir)}/`);
+  return ReflectApply(
+    StringPrototypeStartsWith,
+    normalizeCachePath(cacheDir),
+    [`${normalizeCachePath(parentDir)}/`],
+  ) as boolean;
 }
 
 /**
