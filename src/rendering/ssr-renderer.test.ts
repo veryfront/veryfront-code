@@ -100,7 +100,9 @@ describe("rendering/ssr-renderer", () => {
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
       renderToReadableStream: (_element, options) => {
-        observedNonce = options?.nonce;
+        // React 19's types widened `nonce` to `string | { script?; style? }`;
+        // the renderer always passes the response nonce as a plain string.
+        observedNonce = typeof options?.nonce === "string" ? options.nonce : undefined;
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode("<div>streamed</div>"));
