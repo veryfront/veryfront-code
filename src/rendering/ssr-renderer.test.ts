@@ -94,7 +94,13 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: string | undefined;
+    // Derive the type from React's own options instead of restating `string | undefined`: React
+    // 19.2 widened `nonce` to `string | { script?: string; style?: string }`, so a hardcoded
+    // annotation breaks the test typecheck whenever the resolved react-dom types move.
+    type StreamNonce = NonNullable<
+      Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+    >["nonce"];
+    let observedNonce: StreamNonce;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
