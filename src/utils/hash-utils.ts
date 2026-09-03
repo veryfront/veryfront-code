@@ -18,6 +18,7 @@ const FNV1A_MASK_64 = (1n << 64n) - 1n;
 // Hashes participate in cache and request identities after project modules may
 // have executed in the shared realm. Capture the small set of primordials used
 // by that boundary before project code can replace their implementations.
+const BigIntPrototypeToString = BigInt.prototype.toString;
 const IntrinsicTextEncoder = TextEncoder;
 const IntrinsicUint8Array = Uint8Array;
 const NumberPrototypeToString = Number.prototype.toString;
@@ -40,12 +41,16 @@ function typedArrayLength(value: Uint8Array): number {
   return ReflectApply(TypedArrayLengthGetter, value, []) as number;
 }
 
+function byteToHex(byte: number): string {
+  const hex = ReflectApply(NumberPrototypeToString, byte, [16]) as string;
+  return ReflectApply(StringPrototypePadStart, hex, [2, "0"]) as string;
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   let result = "";
   const length = typedArrayLength(bytes);
   for (let index = 0; index < length; index++) {
-    const hex = ReflectApply(NumberPrototypeToString, bytes[index], [16]) as string;
-    result += ReflectApply(StringPrototypePadStart, hex, [2, "0"]) as string;
+    result += byteToHex(bytes[index]!);
   }
   return result;
 }
@@ -142,11 +147,64 @@ function fnv1a64Base36(input: string): string {
   let hash = FNV1A_OFFSET_BASIS_64;
 
   for (let index = 0; index < input.length; index++) {
-    hash ^= BigInt(input.charCodeAt(index));
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, input, [index]) as number;
+    hash ^= BigInt(codeUnit);
     hash = (hash * FNV1A_PRIME_64) & FNV1A_MASK_64;
   }
 
-  return hash.toString(36);
+  return ReflectApply(BigIntPrototypeToString, hash, [36]) as string;
+}
+
+/**
+ * Lowercase hex of a string's WTF-8 bytes.
+ *
+ * Identical to UTF-8 for well-formed strings, but an unpaired surrogate keeps
+ * its own three-byte sequence instead of being folded to U+FFFD. `TextEncoder`
+ * performs that replacement, which is lossy: `"\uD800"` and `"�"` both
+ * encode to `efbfbd`, so two distinct identifiers would share one cache
+ * namespace. Reads code units through the captured primordial so project code
+ * that replaced `String.prototype.charCodeAt` cannot steer the encoding.
+ */
+function wtf8Hex(value: string): string {
+  let result = "";
+  const length = value.length;
+
+  for (let index = 0; index < length; index++) {
+    let codePoint = ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+
+    if (codePoint >= 0xd800 && codePoint <= 0xdbff && index + 1 < length) {
+      const trail = ReflectApply(StringPrototypeCharCodeAt, value, [index + 1]) as number;
+      if (trail >= 0xdc00 && trail <= 0xdfff) {
+        codePoint = (codePoint - 0xd800) * 0x400 + (trail - 0xdc00) + 0x10000;
+        index++;
+      }
+    }
+
+    if (codePoint < 0x80) {
+      result += byteToHex(codePoint);
+      continue;
+    }
+
+    if (codePoint < 0x800) {
+      result += byteToHex(0xc0 | (codePoint >> 6));
+      result += byteToHex(0x80 | (codePoint & 0x3f));
+      continue;
+    }
+
+    if (codePoint < 0x10000) {
+      result += byteToHex(0xe0 | (codePoint >> 12));
+      result += byteToHex(0x80 | ((codePoint >> 6) & 0x3f));
+      result += byteToHex(0x80 | (codePoint & 0x3f));
+      continue;
+    }
+
+    result += byteToHex(0xf0 | (codePoint >> 18));
+    result += byteToHex(0x80 | ((codePoint >> 12) & 0x3f));
+    result += byteToHex(0x80 | ((codePoint >> 6) & 0x3f));
+    result += byteToHex(0x80 | (codePoint & 0x3f));
+  }
+
+  return result;
 }
 
 /**
@@ -156,7 +214,8 @@ function fnv1a64Base36(input: string): string {
  * so two distinct identifiers must never share a segment: a collision lets one
  * content source serve another source's transformed modules for the same file
  * path. Identifiers of normal length are encoded losslessly (lowercase hex of
- * their UTF-8 bytes), which makes collisions impossible — including on
+ * their WTF-8 bytes, which preserves unpaired surrogates that UTF-8 encoding
+ * would fold to U+FFFD), which makes collisions impossible — including on
  * case-insensitive filesystems, where a case-sensitive encoding would fold
  * distinct segments back together. Oversized identifiers collapse to two
  * domain-separated 64-bit FNV-1a hashes so path segments stay bounded without
@@ -165,12 +224,7 @@ function fnv1a64Base36(input: string): string {
  * with each other.
  */
 export function cacheNamespaceSegment(id: string): string {
-  const bytes = ReflectApply(
-    TextEncoderPrototypeEncode,
-    hashTextEncoder,
-    [id],
-  ) as Uint8Array;
-  const encoded = bytesToHex(bytes);
+  const encoded = wtf8Hex(id);
   if (encoded.length <= MAX_INLINE_NAMESPACE_SEGMENT_LENGTH) return `id-${encoded}`;
 
   return `h-${fnv1a64Base36(`cache-namespace:a:${id}`)}-${

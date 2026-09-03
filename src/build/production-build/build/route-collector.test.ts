@@ -99,6 +99,35 @@ describe("build/production-build/build/route-collector", () => {
       );
     });
 
+    it("orders routes by path regardless of directory enumeration order", async () => {
+      // `readDir` yields whatever order the filesystem stores entries in, so a
+      // build's page order (and the ssgPaths it reports) would otherwise vary
+      // between machines. Seed the tree back-to-front to prove the sort.
+      const adapter = createMemoryAdapter();
+      adapter.fs.files.set("/tmp/project/pages/blog.mdx", "# Blog");
+      adapter.fs.files.set("/tmp/project/pages/index.mdx", "# Home");
+      adapter.fs.files.set("/tmp/project/pages/about.mdx", "# About");
+      adapter.fs.files.set(
+        "/tmp/project/app/reports/page.tsx",
+        "export default function Reports() {}",
+      );
+      adapter.fs.files.set(
+        "/tmp/project/app/dashboard/page.tsx",
+        "export default function Dashboard() {}",
+      );
+
+      const result = await collectAllRoutes(adapter, "/tmp/project", true);
+
+      assertEquals(
+        result.pages.map((route) => route.path),
+        ["/", "/about", "/blog"],
+      );
+      assertEquals(
+        result.app.map((route) => route.path),
+        ["/dashboard", "/reports"],
+      );
+    });
+
     it("falls back to the pages and app directories when no config is supplied", async () => {
       const adapter = createMemoryAdapter();
       adapter.fs.files.set("/tmp/project/pages/about.mdx", "# About");

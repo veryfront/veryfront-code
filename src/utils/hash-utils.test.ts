@@ -306,6 +306,48 @@ describe("hash-utils", () => {
       assertNotEquals(first, second);
     });
 
+    it("keeps unpaired surrogates distinct from the replacement character", () => {
+      // UTF-8 encoding folds an unpaired surrogate to U+FFFD, which would hand
+      // "\uD800" and "�" the same cache namespace.
+      assertNotEquals(cacheNamespaceSegment("\uD800"), cacheNamespaceSegment("�"));
+      assertNotEquals(cacheNamespaceSegment("\uDC00"), cacheNamespaceSegment("�"));
+      assertNotEquals(cacheNamespaceSegment("\uD800"), cacheNamespaceSegment("\uDC00"));
+      assertEquals(/^[a-z0-9-]+$/.test(cacheNamespaceSegment("\uD800")), true);
+    });
+
+    it("encodes well-formed identifiers as their UTF-8 bytes", () => {
+      const utf8Hex = (value: string) =>
+        Array.from(new TextEncoder().encode(value))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+
+      for (const id of ["branch-main", "こんにちは", "😀", "a b\\c%2F", ""]) {
+        assertEquals(cacheNamespaceSegment(id), `id-${utf8Hex(id)}`);
+      }
+    });
+
+    it("derives oversized segments without ambient hashing intrinsics", () => {
+      const originalCharCodeAt = String.prototype.charCodeAt;
+      const originalBigIntToString = BigInt.prototype.toString;
+      const oversized = `${"z".repeat(4096)}tail`;
+
+      let segment: string | undefined;
+      try {
+        // deno-lint-ignore no-explicit-any
+        (String.prototype as any).charCodeAt = () => 0x61;
+        // deno-lint-ignore no-explicit-any
+        (BigInt.prototype as any).toString = () => "x";
+        segment = cacheNamespaceSegment(oversized);
+      } finally {
+        String.prototype.charCodeAt = originalCharCodeAt;
+        BigInt.prototype.toString = originalBigIntToString;
+      }
+
+      assertEquals(segment, cacheNamespaceSegment(oversized));
+      assertNotEquals(segment, "h-x-x");
+      assertNotEquals(segment, cacheNamespaceSegment(`${"z".repeat(4096)}other`));
+    });
+
     it("keeps inline and hashed forms in disjoint namespaces", () => {
       const inline = cacheNamespaceSegment("short-id");
       const hashed = cacheNamespaceSegment("y".repeat(4096));
