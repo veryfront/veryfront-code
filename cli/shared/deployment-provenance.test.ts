@@ -619,4 +619,17 @@ describe("resolveGitSource", () => {
       await Deno.remove(repositoryDir, { recursive: true });
     }
   });
+
+  it("rejects deletion discovery when Git cannot inspect the project", async () => {
+    const projectDir = await makeTempDir();
+    try {
+      await assertRejects(
+        () => resolveDeletedGitSourcePaths(projectDir),
+        Error,
+        "Could not determine deleted Git source paths",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
 });

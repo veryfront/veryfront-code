@@ -879,6 +879,40 @@ describe("DeployProject", () => {
     });
   });
 
+  it("rechecks ensured source immediately before accepting the push receipt", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() =>
+          executeApply(projectDir, controlPlane, {
+            async onEvent(event) {
+              if (
+                event.kind === "step" && event.step === "verify-source" &&
+                event.phase === "started"
+              ) {
+                await Deno.writeTextFile(
+                  `${projectDir}/app/page.tsx`,
+                  "export default function Page() { return <main>Changed</main>; }\n",
+                );
+              }
+            },
+          }, {
+            source: { kind: "ensure-pushed", refreshStaleSource: true },
+          })
+        );
+
+        assertStringIncludes(
+          (error as Error).message,
+          "this project has uncommitted changes",
+        );
+        assertEquals(controlPlane.createdReleases, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("surfaces readiness failures for the discovered page route", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();

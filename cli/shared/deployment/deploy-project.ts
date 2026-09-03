@@ -476,18 +476,17 @@ export function resolveBootstrapPush(
 /**
  * What the working directory says about its source right now.
  *
- * Read once per deploy so the decision to refresh and the gate that enforces it
- * observe the same tree: two independent reads can disagree under a concurrent
- * edit, and they cost a duplicate pair of Git subprocesses and a duplicate
- * directory scan.
+ * Read once for the refresh decision. The final apply gate reads the tree again
+ * immediately before accepting the receipt, so edits made while the deploy is
+ * resolving its target cannot promote a stale upload.
  *
  * The scan reads every source file, so it is O(project size). A deploy that
  * pushes pays for it more than once: once here, once inside `pushCommand`, once
- * more when that push records its receipt, and once again in the gate, which
- * re-reads the tree on purpose because the push rewrote the receipt it checks.
+ * more when that push records its receipt, and once again in the final gate.
  * The reads are what make the proof a proof, and a push already uploads the
- * same bytes, so the scans are not the cost that dominates a deploy. A deploy
- * that skips the push, the common `veryfront up` case, pays for one.
+ * same bytes, so the scans are not the cost that dominates a deploy. An
+ * ensure-pushed deploy that skips the push pays for this decision read and the
+ * final gate read. An already-pushed deploy pays only for the final gate.
  */
 export interface LocalSourceObservation {
   gitSource: GitSource;
@@ -547,8 +546,9 @@ export async function resolvePushedSource(input: {
   /** Enforce that the receipt still describes local source, for owning callers. */
   enforceWorkingTreeClean?: boolean;
   /**
-   * The deploy's single working-tree read, reused so the decision to refresh
-   * and this gate cannot disagree. Resolved here when the caller has none.
+   * Optional working-tree observation for callers that intentionally bind a
+   * decision and validation to one read. Resolved here when the caller omits
+   * it. Apply flows omit it at the final gate to detect intervening edits.
    */
   local?: LocalSourceObservation | null;
 }): Promise<{ commitSha: string | null; sourceDigest: string }> {
@@ -1809,9 +1809,10 @@ export function createDeployProject(options: {
           projectSlug: project!.slug,
           branch,
           enforceWorkingTreeClean: verifyLocalSource,
-          // A push rewrites the receipt this gate reads, so the tree is read
-          // again after one rather than compared against a stale observation.
-          local: bootstrapPush ? null : localSource,
+          // Always read the tree again at the final gate. A push rewrites the
+          // receipt, and even a no-push deploy may have spent time resolving
+          // routes and the target after the refresh decision observed source.
+          local: null,
         }));
 
       const release = await step(observer, "create-release", async () => {

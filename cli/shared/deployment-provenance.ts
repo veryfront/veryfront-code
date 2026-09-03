@@ -3,6 +3,7 @@ import { createFileSystem, getEnv } from "veryfront/platform";
 import { runCommand } from "#cli/process-command";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
 import { join, relative } from "veryfront/platform/path";
+import { DEPLOYMENT_ERROR } from "veryfront/errors";
 import type { ApiClient } from "./config.ts";
 
 const RECEIPT_VERSION = 2 as const;
@@ -264,14 +265,22 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
  * remote-only files. The digest stays consistent either way, because the
  * receipt records the remote tree the push produced.
  */
+function deletedGitSourcePathsUnavailable(): Error {
+  return DEPLOYMENT_ERROR.create({
+    detail:
+      "Could not determine deleted Git source paths for the automatic source refresh. Run veryfront push, then retry the deploy.",
+  });
+}
+
 export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<string[]> {
   const gitEnv = env();
   for (const key of Object.keys(gitEnv)) {
     if (key.startsWith("GIT_")) delete gitEnv[key];
   }
 
+  let result;
   try {
-    const result = await runCommand("git", {
+    result = await runCommand("git", {
       args: [
         "diff",
         "--no-renames",
@@ -289,11 +298,13 @@ export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<
       capture: true,
       timeoutMs: 5_000,
     });
-    if (!result.success) return [];
-    return (result.stdout ?? "").split("\0").filter((path) => path.length > 0);
   } catch {
-    return [];
+    throw deletedGitSourcePathsUnavailable();
   }
+  if (!result.success) {
+    throw deletedGitSourcePathsUnavailable();
+  }
+  return (result.stdout ?? "").split("\0").filter((path) => path.length > 0);
 }
 
 export async function areSourceFilesTracked(
