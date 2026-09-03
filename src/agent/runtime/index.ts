@@ -1346,16 +1346,33 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<Message[]> {
     const validateTurnMessages = context && getTurnMessageValidator(context);
+    let validated: Message[] = inputMessages;
     if (validateTurnMessages) {
       const history = await this.memory.getMessages();
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
       if (history.length > 0) {
-        await validateTurnMessages([...history, ...inputMessages]);
+        validated = [...history, ...inputMessages];
+        await validateTurnMessages(validated);
       }
     }
     for (const msg of inputMessages) await this.memory.add(msg);
     const persisted = await this.memory.getMessages();
+    // Persisting can rewrite the transcript (summary memory compacts old
+    // messages into a synthesized leading system summary), and that rewrite
+    // can place system messages next to each other in ways the pre-write pass
+    // never saw. Re-validate only a transcript that differs from the validated
+    // assembly; in-process memories return the same message objects, so the
+    // reference comparison skips the common unchanged case. A rejection here
+    // cannot be rolled back through the Memory interface, but failing closed
+    // beats dispatching a merged instruction the validator never approved.
+    if (
+      validateTurnMessages && persisted.length > 0 &&
+      !(persisted.length === validated.length &&
+        persisted.every((message, index) => message === validated[index]))
+    ) {
+      await validateTurnMessages(persisted);
+    }
     return persisted.length > 0 ? persisted : inputMessages;
   }
 
@@ -1730,6 +1747,14 @@ export class AgentRuntime {
         );
       };
 
+      // Deferring persistence into the stream body moved the memory calls past
+      // the point where the route can still return a 5xx, so probe the memory
+      // backend BEFORE creating the ReadableStream: an unreachable store (e.g.
+      // a Redis outage) rejects this call instead of surfacing as an in-band
+      // SSE error inside a committed 200 response. The write itself still
+      // happens only after the middleware chain accepts the turn.
+      await this.memory.getMessages();
+
       // Hold the in-flight agent-loop promise so stream cancellation can detach a
       // no-op rejection handler. When the client cancels, we abort the shared
       // signal; the loop (model fetch / tool execution) then rejects with an
@@ -1794,8 +1819,24 @@ export class AgentRuntime {
               },
             );
             const response = await inFlight;
+            // `persistTurn` is the first thing the continuation does, so an
+            // untouched flag means a middleware answered without calling
+            // `next()` (a cache hit): no provider stream ever ran, so the
+            // response text must be replayed into the SSE stream or the client
+            // receives only `message-finish` with no answer.
+            const answeredWithoutContinuation = !turnPersisted;
             if (!turnPersisted) await persistTurn();
             throwIfAborted(streamAbortSignal);
+            if (answeredWithoutContinuation && response.text.length > 0) {
+              sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+              sendSSE(controller, encoder, {
+                type: "text-delta",
+                id: textPartId,
+                delta: response.text,
+              });
+              callbacks?.onChunk?.(response.text);
+              sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+            }
             callbacks?.onFinish?.(response);
             throwIfAborted(streamAbortSignal);
 

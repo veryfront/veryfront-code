@@ -1,4 +1,5 @@
 import type { AgentMiddleware, AgentResponse, Message } from "../../types.ts";
+import { hasSyntheticMessageId, hasSyntheticMessageTimestamp } from "../../runtime/input-utils.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -290,14 +291,23 @@ function defaultKeyGenerator(input: string, context?: Record<string, unknown>): 
  *
  * The runtime hands middleware normalized messages, and normalization
  * synthesizes `id` and `timestamp` for messages that omit them, stamping the
- * current time. Including those fields would give the same caller message a
- * different key on every call, so the key keeps only the fields that shape the
- * provider request: neither `id` nor `timestamp` is sent to the model.
+ * current time. Including those synthesized fields would give the same caller
+ * message a different key on every call, so they are dropped from the key.
+ * Caller-supplied values stay in the key: an explicit `id` or `timestamp` can
+ * shape the provider request through hooks such as `resolveRuntimeState`, so
+ * two calls that differ only in those fields must not share a cached response.
  */
 function toCacheableInputString(input: string | Message[]): string {
   if (typeof input === "string") return input;
   return JSON.stringify(
-    input.map(({ id: _id, timestamp: _timestamp, ...message }) => message),
+    input.map((message) => {
+      const { id, timestamp, ...rest } = message;
+      return {
+        ...rest,
+        ...(hasSyntheticMessageId(message) ? {} : { id }),
+        ...(hasSyntheticMessageTimestamp(message) ? {} : { timestamp }),
+      };
+    }),
   );
 }
 

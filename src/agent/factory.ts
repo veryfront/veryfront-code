@@ -18,6 +18,7 @@ import {
   streamWithAgentRuntimeDispatch,
 } from "./runtime/index.ts";
 import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
+import { normalizeInput } from "./runtime/input-utils.ts";
 import {
   detectPlatform,
   validatePlatformCompatibility,
@@ -226,14 +227,12 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
       return withSpan(
         "agent.factory.stream",
         async () => {
+          // Route string input through the shared normalizer so the
+          // synthesized id/timestamp are marked as runtime-generated; identity
+          // consumers (e.g. the cache middleware's key) must not treat them as
+          // caller-supplied.
           const inputMessages: Message[] = input.input
-            ? [
-              {
-                id: `msg_${Date.now()}`,
-                role: "user",
-                parts: [{ type: "text", text: input.input }],
-              },
-            ]
+            ? normalizeInput(input.input)
             : (input.messages ?? []);
 
           const skillSnapshot = resolveSkillSnapshot();
