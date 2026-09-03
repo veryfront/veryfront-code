@@ -1372,6 +1372,23 @@ export class AgentRuntime {
 
   #turnCommitQueue: Promise<void> = Promise.resolve();
 
+  private createTurnPersistence(
+    inputMessages: Message[],
+    context: AgentContext,
+  ): { persisted: boolean; persist: () => Promise<Message[]> } {
+    const persistence = {
+      persisted: false,
+      persist: async (): Promise<Message[]> => {
+        persistence.persisted = true;
+        return await this.prepareTurnMessages(
+          resolveValidatedTurnInput(context.input, inputMessages),
+          context,
+        );
+      },
+    };
+    return persistence;
+  }
+
   async #commitTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
@@ -1600,23 +1617,16 @@ export class AgentRuntime {
         // to memory first would store a rejected (hostile) message, and the next
         // benign turn would replay it to the provider without ever being
         // validated again. A middleware that answers without calling `next()`
-        // (a cache hit) still accepted the turn, so `persistTurn` runs after the
+        // (a cache hit) still accepted the turn, so persistence runs after the
         // chain resolves when the continuation never reached it.
-        let turnPersisted = false;
-        const persistTurn = async (): Promise<Message[]> => {
-          turnPersisted = true;
-          return await this.prepareTurnMessages(
-            resolveValidatedTurnInput(agentContext.input, inputMessages),
-            agentContext,
-          );
-        };
+        const turnPersistence = this.createTurnPersistence(inputMessages, agentContext);
 
         const chain = new MiddlewareChain(this.config.middleware);
         const response = await chain.execute(
           agentContext,
           async () => {
             try {
-              const messages = await persistTurn();
+              const messages = await turnPersistence.persist();
               return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                 this.#executeAgentLoop(
                   systemPrompt,
@@ -1650,7 +1660,7 @@ export class AgentRuntime {
           },
         );
 
-        if (!turnPersisted) await persistTurn();
+        if (!turnPersistence.persisted) await turnPersistence.persist();
         return response;
       }).catch(async (error) => {
         await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
@@ -1766,16 +1776,9 @@ export class AgentRuntime {
       // Persist only after the middleware chain accepted this turn, so a
       // rejected message never lands in memory to be replayed to the provider on
       // a later, benign turn. A middleware that answers without calling `next()`
-      // (a cache hit) still accepted the turn, so `persistTurn` runs after the
+      // (a cache hit) still accepted the turn, so persistence runs after the
       // chain resolves when the continuation never reached it.
-      let turnPersisted = false;
-      const persistTurn = async (): Promise<Message[]> => {
-        turnPersisted = true;
-        return await this.prepareTurnMessages(
-          resolveValidatedTurnInput(agentContext.input, inputMessages),
-          agentContext,
-        );
-      };
+      const turnPersistence = this.createTurnPersistence(inputMessages, agentContext);
 
       // Deferring persistence into the stream body moved the memory calls past
       // the point where the route can still return a 5xx, so probe the memory
@@ -1818,7 +1821,7 @@ export class AgentRuntime {
               agentContext,
               async () => {
                 try {
-                  const memoryMessages = await persistTurn();
+                  const memoryMessages = await turnPersistence.persist();
                   return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                     this.#executeAgentLoopStreaming(
                       systemPrompt,
@@ -1849,11 +1852,11 @@ export class AgentRuntime {
               },
             );
             const response = await inFlight;
-            // `persistTurn` is the first thing the continuation does, so an
+            // Turn persistence is the first thing the continuation does, so an
             // untouched flag means a middleware answered without calling
             // `next()` (a cache hit). That turn was still accepted, so it must
             // be committed here.
-            if (!turnPersisted) await persistTurn();
+            if (!turnPersistence.persisted) await turnPersistence.persist();
             throwIfAborted(streamAbortSignal);
             callbacks?.onFinish?.(response);
             throwIfAborted(streamAbortSignal);
