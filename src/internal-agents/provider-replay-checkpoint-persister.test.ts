@@ -6,7 +6,15 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import {
+  createProviderReplayCheckpointEvent,
+  parseProviderReplayCheckpointEvent,
+  type ProviderReplayCheckpoint,
+} from "#veryfront/agent/runtime/provider-replay.ts";
+import {
+  MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
+  MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
+} from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { createRunScopedProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 
@@ -27,6 +35,13 @@ function checkpoint(): ProviderReplayCheckpoint {
     providerMessageBlockCounts: [1],
     totalPartCount: 1,
   };
+}
+
+/** Build a chain of `levels` nested objects, deepest last. */
+function nestedChain(levels: number): Record<string, unknown> {
+  let node: Record<string, unknown> = {};
+  for (let index = 0; index < levels; index += 1) node = { nested: node };
+  return node;
 }
 
 describe("run-scoped provider replay checkpoint persistence", () => {
@@ -197,6 +212,287 @@ describe("run-scoped provider replay checkpoint persistence", () => {
 
     assertEquals(getterCalls, 0);
     assertEquals(String(capturedBody).includes("<LEAKED>"), false);
+  });
+
+  it("never resolves an inherited descriptor accessor while reading own properties", async () => {
+    const bodies: string[] = [];
+    // Built before the shared prototype is poisoned so nothing inside the
+    // poisoned window has to construct a Response.
+    const acknowledged = Promise.resolve(new Response(null, { status: 200 }));
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (_input, init) => {
+        bodies.push(String(init?.body));
+        return acknowledged;
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    await persist(checkpoint());
+
+    // `Object.getOwnPropertyDescriptor` returns an ordinary object whose
+    // prototype project code shares, and a data descriptor owns no `get` or
+    // `set` field. Reading those fields would therefore run this hook with the
+    // descriptor as `this`, handing it the private provider block and a chance
+    // to rewrite the value that lands in the privileged append.
+    const observed: unknown[] = [];
+    const inheritedAccessor: PropertyDescriptor = {
+      configurable: true,
+      get(this: Record<string, unknown>) {
+        observed.push(this.value);
+        this.value = "FORGED_BY_PROJECT_CODE";
+        return undefined;
+      },
+    };
+    let persistence: Promise<void> | undefined;
+    Object.defineProperty(Object.prototype, "get", inheritedAccessor);
+    Object.defineProperty(Object.prototype, "set", inheritedAccessor);
+    try {
+      // The append body is built synchronously, before the first `await`, so
+      // the poisoned window stays inside this call.
+      persistence = persist(checkpoint());
+    } finally {
+      delete (Object.prototype as { get?: unknown }).get;
+      delete (Object.prototype as { set?: unknown }).set;
+    }
+    await persistence;
+
+    assertEquals(observed.length, 0);
+    assertEquals(bodies.length, 2);
+    assertEquals(bodies[1], bodies[0]);
+    assertEquals(bodies[1]?.includes("FORGED_BY_PROJECT_CODE"), false);
+  });
+
+  it("never iterates reflected keys through a shared Array prototype hook", async () => {
+    const bodies: string[] = [];
+    const acknowledged = Promise.resolve(new Response(null, { status: 200 }));
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (_input, init) => {
+        bodies.push(String(init?.body));
+        return acknowledged;
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    await persist(checkpoint());
+
+    // `Reflect.ownKeys` returns an ordinary array, so walking it with `for...of`
+    // would resolve `Symbol.iterator` through the prototype project code shares.
+    // This hook sees every private field name and yields nothing, which would
+    // silently strip the checkpoint out of the privileged append.
+    const observed: unknown[] = [];
+    const nativeArrayIterator = Array.prototype[Symbol.iterator];
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: function poisonedIterator(this: unknown[]) {
+        observed.push(this);
+        return nativeArrayIterator.call([]);
+      },
+    });
+    let persistence: Promise<void> | undefined;
+    try {
+      persistence = persist(checkpoint());
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        enumerable: false,
+        writable: true,
+        value: nativeArrayIterator,
+      });
+    }
+    await persistence;
+
+    assertEquals(observed.length, 0);
+    assertEquals(bodies.length, 2);
+    assertEquals(bodies[1], bodies[0]);
+    assertStringIncludes(String(bodies[1]), MESSAGE_ID);
+  });
+
+  it("persists every nesting depth the parse-back layer accepts", async () => {
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: () => Promise.resolve(new Response(null, { status: 200 })),
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    // The persister must not be stricter than the snapshot validator behind
+    // `parseProviderReplayCheckpointEvent`: a checkpoint that loads back
+    // successfully has to survive its own next append, or continuation breaks.
+    let deepestAccepted = -1;
+    let shallowestRejected = -1;
+    for (
+      let levels = MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH - 10;
+      levels <= MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH + 2;
+      levels += 1
+    ) {
+      const nested = checkpoint();
+      nested.providerBlocks[0]!.block = {
+        type: "thinking",
+        thinking: "",
+        signature: "<REDACTED>",
+        metadata: nestedChain(levels),
+      };
+      try {
+        parseProviderReplayCheckpointEvent(createProviderReplayCheckpointEvent(nested));
+      } catch {
+        if (shallowestRejected < 0) shallowestRejected = levels;
+        continue;
+      }
+      // Must not throw: the parse-back layer just accepted this checkpoint.
+      await persist(nested);
+      deepestAccepted = levels;
+    }
+
+    // The scanned range has to straddle the boundary the validator enforces,
+    // so the deepest persisted checkpoint above sits exactly on it.
+    assertEquals(shallowestRejected, deepestAccepted + 1);
+  });
+
+  it("reproduces the omissions JSON.stringify makes from own data properties alone", async () => {
+    let capturedBody: string | undefined;
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (_input, init) => {
+        capturedBody = String(init?.body);
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    const sparse = [1, 2, 3];
+    delete sparse[1];
+    const block: Record<string, unknown> = {
+      type: "thinking",
+      nothing: null,
+      dropped: undefined,
+      callable: () => "unreachable",
+      symbolValue: Symbol("value"),
+      entries: [1, undefined, 3],
+      holes: sparse,
+    };
+    Object.defineProperty(block, "notEnumerable", {
+      configurable: true,
+      enumerable: false,
+      value: "hidden",
+      writable: true,
+    });
+    Object.defineProperty(block, Symbol("private-field"), {
+      configurable: true,
+      enumerable: true,
+      value: "symbol-keyed",
+      writable: true,
+    });
+    const source = checkpoint();
+    source.providerBlocks[0]!.block = block;
+
+    await persist(source);
+
+    // Rebuilding the body out of detached containers has to stay byte-identical
+    // to what `JSON.stringify` would have produced for the same event.
+    assertEquals(
+      capturedBody,
+      JSON.stringify({ events: [createProviderReplayCheckpointEvent(source)] }),
+    );
+  });
+
+  it("fails closed on values and shapes the append body cannot represent", async () => {
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: () => Promise.resolve(new Response(null, { status: 200 })),
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    const withBigint = checkpoint();
+    withBigint.providerBlocks[0]!.block = { type: "thinking", counter: 1n };
+    await assertRejects(() => persist(withBigint), VeryfrontError, "non-serializable value");
+
+    const tooDeep = checkpoint();
+    tooDeep.providerBlocks[0]!.block = {
+      type: "thinking",
+      metadata: nestedChain(MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH + 2),
+    };
+    await assertRejects(() => persist(tooDeep), VeryfrontError, "serializable depth bound");
+
+    const tooManyNodes = checkpoint();
+    const nodes: Record<string, unknown>[] = [];
+    for (let index = 0; index <= MAX_PROVIDER_REPLAY_RAW_METADATA_NODES; index += 1) {
+      nodes.push({});
+    }
+    tooManyNodes.providerBlocks[0]!.block = { type: "thinking", metadata: nodes };
+    await assertRejects(() => persist(tooManyNodes), VeryfrontError, "serializable node bound");
+  });
+
+  it("rejects a cancelled run before the append is prepared", async () => {
+    let requests = 0;
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: () => {
+        requests += 1;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    const reason = new DOMException("run cancelled", "AbortError");
+    let caught: unknown;
+    try {
+      await persist(checkpoint(), AbortSignal.abort(reason));
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, reason);
+    assertEquals(requests, 0);
+  });
+
+  it("times out a stalled append without leaking the transport error", async () => {
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      timeoutMs: 1,
+      fetch: (input, init) => {
+        const signal = new Request(input, init).signal;
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    await assertRejects(() => persist(checkpoint()), VeryfrontError, "persistence timed out");
+  });
+
+  it("reports an opaque failure when the transport itself throws", async () => {
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: () => Promise.reject(new TypeError("connect ECONNREFUSED 10.0.0.1:443")),
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    const error = await assertRejects(
+      () => persist(checkpoint()),
+      VeryfrontError,
+      "checkpoint append failed",
+    );
+    assertEquals(String(error).includes("10.0.0.1"), false);
   });
 
   it("does not create a writer for a missing or malformed credential", () => {

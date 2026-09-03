@@ -47,8 +47,20 @@ const typedArrayByteLengthGetter = typedArrayByteLengthGetterCandidate;
 const objectCreate = Object.create;
 const setPrototypeOf = Object.setPrototypeOf;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const reflectOwnKeys = Reflect.ownKeys;
 const isArray = Array.isArray;
+
+/**
+ * Descriptor objects returned by `Object.getOwnPropertyDescriptor` are ordinary
+ * objects that inherit from `Object.prototype`, so a plain `descriptor.get`
+ * read on a data descriptor resolves through that shared prototype and would
+ * invoke a tenant-installed accessor with the descriptor as `this`. Every
+ * descriptor field is therefore probed as an own property first.
+ */
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
 
 /** Marks values JSON.stringify drops, so detaching reproduces its output. */
 const OMITTED = Symbol("omitted-json-value");
@@ -71,10 +83,12 @@ function readDetachableProperty(target: DetachableContainer, key: string): unkno
   const descriptor = apply(getOwnPropertyDescriptor, Object, [target, key]) as
     | PropertyDescriptor
     | undefined;
-  if (descriptor === undefined || descriptor.enumerable !== true) return OMITTED;
-  if (typeof descriptor.get === "function" || typeof descriptor.set === "function") {
-    return OMITTED;
-  }
+  if (descriptor === undefined) return OMITTED;
+  // A data descriptor owns `value`; an accessor descriptor owns `get`/`set`
+  // instead. Testing for the own `value` field keeps accessors out without ever
+  // reading a field the descriptor lacks through `Object.prototype`.
+  if (!hasOwn(descriptor, "value")) return OMITTED;
+  if (!hasOwn(descriptor, "enumerable") || descriptor.enumerable !== true) return OMITTED;
   return descriptor.value;
 }
 
@@ -93,7 +107,11 @@ function detachJsonValue(value: unknown, depth: number, budget: { nodes: number 
     // bigint, and any other primitive JSON.stringify refuses to represent.
     throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
   }
-  if (depth >= MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
+  // Root sits at depth 0 and the maximum depth is inclusive, matching the
+  // `depth > maxDepth` rule the snapshot validator behind
+  // `parseProviderReplayCheckpointEvent` applies. Keeping the two in step means
+  // the persister never rejects a checkpoint that read-back would accept.
+  if (depth > MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
     throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
   }
   if (budget.nodes <= 0) {
@@ -108,7 +126,10 @@ function detachJsonValue(value: unknown, depth: number, budget: { nodes: number 
     const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
       | PropertyDescriptor
       | undefined;
-    const length = typeof lengthDescriptor?.value === "number" ? lengthDescriptor.value : 0;
+    const length = lengthDescriptor !== undefined && hasOwn(lengthDescriptor, "value") &&
+        typeof lengthDescriptor.value === "number"
+      ? lengthDescriptor.value
+      : 0;
     for (let index = 0; index < length; index += 1) {
       const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
       // JSON.stringify writes null for array entries it cannot represent.
@@ -119,7 +140,21 @@ function detachJsonValue(value: unknown, depth: number, budget: { nodes: number 
 
   const record = value as Record<string, unknown>;
   const detached = createDetachedObject();
-  for (const key of apply(reflectOwnKeys, Reflect, [record]) as (string | symbol)[]) {
+  // `Reflect.ownKeys` hands back an ordinary array, so `for...of` would resolve
+  // `Symbol.iterator` through the shared `Array.prototype` and hand a tenant
+  // hook the private field names — along with the chance to drop, reorder, or
+  // never finish yielding them. Indexed reads of own data properties keep the
+  // key list out of reach of every shared prototype.
+  const keys = apply(reflectOwnKeys, Reflect, [record]) as (string | symbol)[];
+  const keysLengthDescriptor = apply(getOwnPropertyDescriptor, Object, [keys, "length"]) as
+    | PropertyDescriptor
+    | undefined;
+  const keyCount = keysLengthDescriptor !== undefined && hasOwn(keysLengthDescriptor, "value") &&
+      typeof keysLengthDescriptor.value === "number"
+    ? keysLengthDescriptor.value
+    : 0;
+  for (let keyIndex = 0; keyIndex < keyCount; keyIndex += 1) {
+    const key = readDetachableProperty(keys, `${keyIndex}`);
     // JSON.stringify only serializes string keys.
     if (typeof key !== "string") continue;
     const property = readDetachableProperty(record, key);
