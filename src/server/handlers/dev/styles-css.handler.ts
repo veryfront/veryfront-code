@@ -23,14 +23,12 @@ import {
   composeCSSStyleProfileHash,
   hashCandidates,
 } from "#veryfront/html/styles-builder/css-identity.ts";
-import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
   createPreparedProjectCSSContext,
   type PreparedProjectCSSRequestContext,
   storePreparedProjectCSS,
   tryGetPreparedProjectCSS,
 } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
-import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type {
@@ -39,6 +37,7 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
+import { resolveScanCacheIdentity, type ScanCacheIdentity } from "./styles-scan-cache.ts";
 import { findStylesheetFromFiles } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
 import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
@@ -157,8 +156,17 @@ export class StylesCSSHandler extends BaseHandler {
     try {
       return await this.withProxyContext(ctx, async () => {
         const responseBuilder = this.createResponseBuilder(ctx).withCache(SUCCESSFUL_CSS_CACHE);
-        const projectScope = ctx.projectSlug ?? ctx.projectDir;
-        const styleProfile = createStyleScopeProfile(ctx.config);
+        // Key the prepared-CSS and compiled-CSS caches on the same resolved
+        // identity the scans use. Keying them on `ctx.projectSlug` and the
+        // request's own release/branch selectors let an unauthenticated client
+        // vary `x-project-slug` (or the Host-parsed subdomain) on a standalone
+        // server to miss both caches and force a full Tailwind compile per
+        // request, on a route that is public and exempt from the concurrency
+        // limiter. `resolveScanCacheIdentity` admits a slug only behind the
+        // proxy boundary and otherwise names the directory actually served.
+        const scanIdentity = resolveScanCacheIdentity(ctx);
+        const projectScope = scanIdentity.scope;
+        const styleProfile = scanIdentity.styleProfile;
         const contentContext = this.getContentContext(ctx);
         let rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
         // Production SSR merges CSS imported by modules (`import "./styles.css"`
@@ -212,13 +220,11 @@ export class StylesCSSHandler extends BaseHandler {
           generationSession.cacheIdentity,
         );
         const preparedContext = this.createPreparedCSSContext(
-          projectScope,
+          scanIdentity,
           resolvedCss,
           candidates,
           generationSession,
           artifactStyleProfileHash,
-          contentContext,
-          ctx,
         );
 
         if (preparedContext) {
@@ -263,7 +269,7 @@ export class StylesCSSHandler extends BaseHandler {
         try {
           result = await profilePhase(
             "css.generate_stylesheet",
-            () => this.generateStylesheet(ctx, resolvedCss, candidates, generationSession),
+            () => this.generateStylesheet(projectScope, resolvedCss, candidates, generationSession),
           );
         } catch (error) {
           const formatted = formatCSSError(error instanceof Error ? error : String(error));
@@ -418,13 +424,11 @@ export class StylesCSSHandler extends BaseHandler {
   }
 
   private generateStylesheet(
-    ctx: HandlerContext,
+    projectScope: string,
     rawCss: string,
     candidates: Set<string>,
     generationSession: CSSGenerationSession,
   ): Promise<GeneratedStylesResult> {
-    const projectScope = ctx.projectSlug ?? ctx.projectDir;
-
     return getProjectCSS(projectScope, rawCss, candidates, {
       minify: generationSession.minify,
       environment: "preview",
@@ -455,23 +459,23 @@ export class StylesCSSHandler extends BaseHandler {
   }
 
   private createPreparedCSSContext(
-    projectScope: string | undefined,
+    identity: ScanCacheIdentity,
     rawCss: string,
     candidates: Set<string>,
     generationSession: CSSGenerationSession,
     styleProfileHash: string,
-    contentContext: ResolvedContentContext | null,
-    ctx: HandlerContext,
   ) {
-    if (!projectScope) return undefined;
+    if (!identity.scope) return undefined;
 
+    // Scope and version both come from the resolved identity, so the prepared
+    // entry names the source tree this request actually reads rather than the
+    // selectors it claims. A request that resolves no content context on a
+    // standalone server keys on `ctx.projectDir` and the `live` version; the
+    // entry stays correct because its key also covers the stylesheet text and
+    // the candidate hash, both of which change when the sources do.
     return createPreparedProjectCSSContext(
-      projectScope,
-      resolveStyleContentVersion(contentContext, {
-        releaseId: ctx.releaseId,
-        branch: ctx.parsedDomain?.branch,
-        environmentName: ctx.environmentName,
-      }),
+      identity.scope,
+      identity.version,
       rawCss,
       styleProfileHash,
       {
