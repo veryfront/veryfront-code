@@ -129,7 +129,7 @@ verify_npm_compatibility_artifact() {
 NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
 NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
 
-is_transient_publish_conflict() {
+is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${CONFLICT_OUTPUT_CANDIDATE}" \
     | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument|IDENTITY_TOKEN_READ_ERROR'
@@ -243,7 +243,7 @@ publish_npm_package_with_retry() {
   PUBLISH_PACKAGE_NAME="$2"
   PUBLISH_SPEC="$3"
   shift 3
-  PUBLISH_SAW_CONFLICT=0
+  PUBLISH_SAW_TRANSIENT_FAILURE=0
   for PUBLISH_ATTEMPT in $(seq 1 "${NPM_PUBLISH_CONFLICT_ATTEMPTS}"); do
     if [[ "${PUBLISH_ATTEMPT}" -gt 1 ]]; then
       # npm refuses to reuse a published name/version, so a write that landed
@@ -264,17 +264,17 @@ publish_npm_package_with_retry() {
     if [[ "${PUBLISH_STATUS}" -eq 0 ]]; then
       return 0
     fi
-    if ! is_transient_publish_conflict "${PUBLISH_OUTPUT}"; then
+    if ! is_transient_publish_failure "${PUBLISH_OUTPUT}"; then
       # Only the recover mode may reinterpret an already-published rejection
       # that races an earlier conflict; the fail-closed mode reports npm's
       # rejection as-is so an existing version always fails the release.
-      if [[ "${PUBLISH_SAW_CONFLICT}" -eq 1 && "${PUBLISH_RETRY_MODE}" == "recover" ]] \
+      if [[ "${PUBLISH_SAW_TRANSIENT_FAILURE}" -eq 1 && "${PUBLISH_RETRY_MODE}" == "recover" ]] \
         && recover_publish_rejection_after_conflict "${PUBLISH_PACKAGE_NAME}" "${PUBLISH_OUTPUT}"; then
         return 0
       fi
       return "${PUBLISH_STATUS}"
     fi
-    PUBLISH_SAW_CONFLICT=1
+    PUBLISH_SAW_TRANSIENT_FAILURE=1
 
     resolve_publish_conflict "${PUBLISH_PACKAGE_NAME}" \
       && PUBLISH_CONFLICT_STATE=0 || PUBLISH_CONFLICT_STATE=$?
@@ -282,11 +282,11 @@ publish_npm_package_with_retry() {
       return "${PUBLISH_CONFLICT_STATE}"
     fi
     if [[ "${PUBLISH_ATTEMPT}" -lt "${NPM_PUBLISH_CONFLICT_ATTEMPTS}" ]]; then
-      echo "npm registry conflict publishing ${PUBLISH_PACKAGE_NAME}@${VERSION}; retrying in ${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}s (attempt ${PUBLISH_ATTEMPT}/${NPM_PUBLISH_CONFLICT_ATTEMPTS})."
+      echo "Transient npm publish failure for ${PUBLISH_PACKAGE_NAME}@${VERSION}; retrying in ${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}s (attempt ${PUBLISH_ATTEMPT}/${NPM_PUBLISH_CONFLICT_ATTEMPTS})."
       sleep "${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}"
     elif [[ "${PUBLISH_RETRY_MODE}" == "recover" ]] \
       && wait_for_npm_git_head "${PUBLISH_PACKAGE_NAME}"; then
-      echo "::notice::${PUBLISH_PACKAGE_NAME}@${VERSION} landed after the final npm registry conflict; continuing."
+      echo "::notice::${PUBLISH_PACKAGE_NAME}@${VERSION} landed after the final transient publish failure; continuing."
       return 0
     elif [[ "${PUBLISH_RETRY_MODE}" == "recover" && -n "${PUBLISHED_GIT_HEAD}" ]]; then
       echo "::error::${PUBLISH_PACKAGE_NAME}@${VERSION} exists with a different commit after the final registry conflict." >&2
