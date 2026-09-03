@@ -4279,6 +4279,67 @@ describe("DAGExecutor", () => {
       assertEquals(started.includes("shared-review"), false);
     });
 
+    it("does not attribute an active nested legacy wait to a future outer sibling", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nestedRelease = (outerId: string): WorkflowNode =>
+        subWorkflow(outerId, {
+          workflow: {
+            id: `${outerId}-workflow`,
+            steps: [
+              subWorkflow("inner", {
+                workflow: {
+                  id: `${outerId}-inner-workflow`,
+                  steps: [
+                    waitForApproval("review", { message: `Approve ${outerId}` }),
+                    { id: "publish", dependsOn: ["review"], config: { type: "step" } as any },
+                  ],
+                },
+              }),
+            ],
+          },
+        });
+      const first = nestedRelease("outer-1");
+      const second = { ...nestedRelease("outer-2"), dependsOn: ["outer-1"] };
+
+      const result = await exec.execute(
+        [first, second],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "outer-1": {
+              nodeId: "outer-1",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+            inner: {
+              nodeId: "inner",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+            review: {
+              nodeId: "review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(executed, ["publish"]);
+      assertEquals(result.nodeStates["outer-1"]?.status, "completed");
+      assertEquals(result.nodeStates["outer-2"]?.status, "running");
+      assertEquals(result.waiting, true);
+    });
+
     it("keeps slash-containing sub-workflow owner paths distinct", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({

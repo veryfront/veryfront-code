@@ -363,6 +363,22 @@ function isSubWorkflowDescendant(candidate: string, parent: string): boolean {
   return candidate === parent || candidate.startsWith(`${parent}/`);
 }
 
+function reservationOwnerStatus(
+  ownerPath: string,
+  ownerNodeId: string | undefined,
+  nodeStates: Readonly<Record<string, NodeState>>,
+  scope: ExecutionScope,
+): NodeState["status"] | undefined {
+  for (const [candidatePath, candidateNodeId] of scope.subWorkflowReservationOwners) {
+    if (candidatePath === ownerPath || !isSubWorkflowDescendant(ownerPath, candidatePath)) {
+      continue;
+    }
+    const ancestorStatus = nodeStates[candidateNodeId]?.status;
+    if (ancestorStatus === undefined || ancestorStatus === "pending") return ancestorStatus;
+  }
+  return ownerNodeId === undefined ? undefined : nodeStates[ownerNodeId]?.status;
+}
+
 function collectPreviouslyProducedSubWorkflowNodeIds(
   ownerPath: string,
   nodeStates: Record<string, NodeState>,
@@ -381,7 +397,7 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
       isSubWorkflowDescendant(ownerPath, owner)
     ) continue;
     const ownerNodeId = scope.subWorkflowReservationOwners.get(owner);
-    const ownerStatus = ownerNodeId === undefined ? undefined : nodeStates[ownerNodeId]?.status;
+    const ownerStatus = reservationOwnerStatus(owner, ownerNodeId, nodeStates, scope);
     if (ownerStatus === undefined || ownerStatus === "pending") continue;
     for (const id of ids) producedNodeIds.add(id);
   }
