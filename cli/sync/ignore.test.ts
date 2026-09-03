@@ -232,6 +232,10 @@ describe("cli/sync/ignore", () => {
         assertEquals(internalWildcardChecker.isIgnored("src/.env"), true);
         assertEquals(warnings.length, 4, "an internal wildcard must not hide the warning");
 
+        const anchoredRootFileChecker = createIgnoreChecker([".git", "!/*.ts"]);
+        assertEquals(anchoredRootFileChecker.isIgnored(".git"), true);
+        assertEquals(warnings.length, 4, "a root file rule must not warn for protected children");
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
         assertEquals(warnings.length, 4, "JSON mode must not emit human warning text");

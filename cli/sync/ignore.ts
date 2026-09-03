@@ -250,7 +250,10 @@ function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string):
   // A wildcard before the first literal segment can match a descendant below
   // any directory, so a protected directory stops that negation from ever
   // being evaluated on a concrete child.
-  if (!rule.literalPrefix) return true;
+  if (!rule.literalPrefix) {
+    return !rule.anchored ||
+      rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath));
+  }
   if (rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath))) return true;
   const candidates = rule.anchored
     ? [normalizedPath]
