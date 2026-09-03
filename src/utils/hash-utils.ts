@@ -13,7 +13,7 @@ const SHORT_HASH_LENGTH = 8;
 const MAX_INLINE_NAMESPACE_SEGMENT_LENGTH = 64;
 
 /** Longest identifier cacheNamespaceSegment keeps verbatim (ASCII, 1 byte each). */
-const MAX_VERBATIM_NAMESPACE_ID_LENGTH = MAX_INLINE_NAMESPACE_SEGMENT_LENGTH;
+const MAX_VERBATIM_NAMESPACE_ID_LENGTH = 56;
 
 /**
  * Upper bound on any cacheNamespaceSegment result: a three-character prefix
@@ -257,7 +257,7 @@ function isVerbatimNamespaceId(id: string): boolean {
  * a shared segment lets one content source serve another source's transformed
  * modules for the same file path.
  *
- * Path-safe ASCII identifiers up to 64 bytes are kept verbatim under "id-";
+ * Path-safe ASCII identifiers up to 56 bytes are kept verbatim under "id-";
  * other identifiers up to 32 WTF-8 bytes use lowercase hex under "hx-". Both
  * encodings are injective, so distinct identifiers inside those bounds
  * provably never share a segment, including on case-insensitive filesystems,
