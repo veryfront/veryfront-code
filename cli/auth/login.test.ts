@@ -24,6 +24,7 @@ import {
   createTestEnvironmentConfig,
   type EnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { UserInfo } from "./login.ts";
 import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 
@@ -1608,7 +1609,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("validates an environment token against the configured API URL in JSON mode", async () => {
+    it("validates an environment token against a shell-confirmed API URL in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalError = console.error;
@@ -1619,12 +1620,11 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       const projectDir = await makeTempDir({ prefix: "login-env-config-api-url-" });
 
       try {
+        // The host comes from the operator's shell, not from repository
+        // content, so an ambient credential may travel to it.
         await Deno.writeTextFile(
           `${projectDir}/veryfront.json`,
-          JSON.stringify({
-            apiUrl: "https://control.example.test/api",
-            projectSlug: "test-project",
-          }) + "\n",
+          JSON.stringify({ projectSlug: "test-project" }) + "\n",
         );
 
         globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -1647,7 +1647,12 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
         const result = await withCwd(
           projectDir,
-          () => login(undefined, { ...testEnv, apiToken: "env-valid-token" }),
+          () =>
+            login(undefined, {
+              ...testEnv,
+              apiUrl: "https://control.example.test/api",
+              apiToken: "env-valid-token",
+            }),
         );
         const envelope = JSON.parse(output.join("\n"));
 
@@ -1673,7 +1678,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("validates a stored token against the configured API URL in JSON mode", async () => {
+    it("validates a stored token against a shell-confirmed API URL in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalError = console.error;
@@ -1685,12 +1690,11 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       await saveToken("stored-valid-token", testEnv);
 
       try {
+        // The host comes from the operator's shell, not from repository
+        // content, so the stored login may travel to it.
         await Deno.writeTextFile(
           `${projectDir}/veryfront.json`,
-          JSON.stringify({
-            apiUrl: "https://control.example.test/api",
-            projectSlug: "test-project",
-          }) + "\n",
+          JSON.stringify({ projectSlug: "test-project" }) + "\n",
         );
 
         globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -1711,7 +1715,10 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         const { login } = await import("./login.ts");
         setJsonMode(true);
 
-        const result = await withCwd(projectDir, () => login(undefined, testEnv));
+        const result = await withCwd(
+          projectDir,
+          () => login(undefined, { ...testEnv, apiUrl: "https://control.example.test/api" }),
+        );
         const envelope = JSON.parse(output.join("\n"));
 
         assertEquals(result, { id: "stored-user", email: "stored@example.com" });
@@ -1730,6 +1737,58 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         console.log = originalLog;
         console.error = originalError;
         globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("never sends an ambient credential to a veryfront.json API URL", async () => {
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const requestedUrls: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-steered-api-url-" });
+      await saveToken("stored-valid-token", testEnv);
+
+      try {
+        // A cloned repository points the CLI at a host it controls. The login
+        // preflight validates each candidate by calling /me on that host, so
+        // an unfiltered candidate list would hand it the developer's shell and
+        // stored-login tokens before any command resolved its configuration.
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({
+            apiUrl: "https://attacker.example/api",
+            projectSlug: "test-project",
+          }) + "\n",
+        );
+
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => output.push(String(message));
+
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { whoami } = await import("./login.ts");
+        setJsonMode(true);
+
+        const result = await withMockFetch(
+          (input: RequestInfo | URL) => {
+            requestedUrls.push(String(input));
+            return Promise.resolve(new Response(null, { status: 401 }));
+          },
+          () => withCwd(projectDir, () => whoami({ ...testEnv, apiToken: "env-valid-token" })),
+        );
+
+        assertEquals(result, null);
+        assertEquals(requestedUrls, []);
+        assertEquals(output.join("\n").includes("env-valid-token"), false);
+        assertEquals(output.join("\n").includes("stored-valid-token"), false);
+      } finally {
+        const { setJsonMode } = await import("../shared/json-output.ts");
+        setJsonMode(false);
+        console.log = originalLog;
+        console.error = originalError;
         resetInteractiveMode();
         await safeDeleteToken();
         await remove(projectDir, { recursive: true });

