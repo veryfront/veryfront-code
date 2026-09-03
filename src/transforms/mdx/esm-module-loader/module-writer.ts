@@ -269,7 +269,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
     rewritten = await withSpan(
       SpanNames.MDX_TRANSFORM_JSX,
-      () => transformJsxImports(rewritten, adapter, esmCacheDir),
+      () => transformJsxImports(rewritten, adapter, esmCacheDir, projectDir),
       { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });

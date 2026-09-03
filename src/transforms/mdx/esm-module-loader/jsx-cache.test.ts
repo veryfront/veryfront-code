@@ -10,6 +10,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
+  mkdir,
   readDir,
   readTextFile,
   remove,
@@ -19,9 +20,20 @@ import { join } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
 import { buildMdxJsxCacheFileName, buildMdxJsxCacheFileNamePrefix } from "./cache-format.ts";
-import { transformJsxImports } from "./import-transformer.ts";
+import {
+  __importTransformerInternals,
+  MAX_JSX_CACHE_VARIANTS_PER_PATH,
+  transformJsxImports,
+} from "./import-transformer.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
+
+function limitErrorMessage(error: unknown): string {
+  if (!(error instanceof ModuleSourceLimitError)) {
+    throw new Error(`expected a ModuleSourceLimitError, got ${String(error)}`);
+  }
+  return error.message;
+}
 
 function extractCachedJsxPath(code: string): string {
   const match = code.match(/file:\/\/([^"']+jsx-[^"']+\.mjs)/);
@@ -174,7 +186,8 @@ describe("transformJsxImports", () => {
 
   it("rejects a project JSX source larger than the module source limit", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-oversized-source-test-" });
-    const sourcePath = "/tmp/source/Oversized.tsx";
+    const projectDir = "/srv/deployments/tenant-42/project";
+    const sourcePath = `${projectDir}/components/Oversized.tsx`;
     const oversizedSource = `export const pad = "${"a".repeat(MAX_MDX_MODULE_CODE_BYTES)}";`;
     let readCount = 0;
     const adapter = {
@@ -189,10 +202,15 @@ describe("transformJsxImports", () => {
     const mdxImportCode = `import Oversized from "file://${sourcePath}";`;
 
     try {
-      await assertRejects(
-        () => transformJsxImports(mdxImportCode, adapter, tempDir),
+      const error = await assertRejects(
+        () => transformJsxImports(mdxImportCode, adapter, tempDir, projectDir),
         ModuleSourceLimitError,
-        sourcePath,
+        "components/Oversized.tsx",
+      );
+      assertEquals(
+        limitErrorMessage(error).includes(projectDir),
+        false,
+        "the limit error must not disclose the deployment path above the project root",
       );
       assertEquals(readCount, 1, "an oversized source must be rejected, not retried");
 
@@ -208,51 +226,485 @@ describe("transformJsxImports", () => {
     }
   });
 
-  it("removes the superseded cached artifacts of a changed source path", async () => {
+  it("names only the file when the source sits outside the project directory", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-oversized-outside-test-" });
+    const sourcePath = "/var/lib/veryfront/linked/Outside.tsx";
+    const oversizedSource = `export const pad = "${"a".repeat(MAX_MDX_MODULE_CODE_BYTES)}";`;
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve(oversizedSource),
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformJsxImports(
+            `import Outside from "file://${sourcePath}";`,
+            adapter,
+            tempDir,
+            "/srv/deployments/tenant-42/project",
+          ),
+        ModuleSourceLimitError,
+        "Outside.tsx",
+      );
+      assertEquals(
+        limitErrorMessage(error).includes("/var/lib/veryfront"),
+        false,
+        "a source outside the project must be named without its filesystem location",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reads a project JSX source through the adapter's strict bounded reader", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-strict-reader-test-" });
+    const sourcePath = "/tmp/source/Strict.tsx";
+    const source = "export const Strict = () => <b />;";
+    const requestedLimits: number[] = [];
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("unbounded readFile must not be used when a strict reader exists");
+        },
+        readFileBytesWithinLimit: (path: string, byteLimit: number) => {
+          if (path !== sourcePath) throw new Error(`unexpected read: ${path}`);
+          requestedLimits.push(byteLimit);
+          return Promise.resolve(new TextEncoder().encode(source));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      const transformed = await transformJsxImports(
+        `import Strict from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+      );
+      assertEquals(extractCachedJsxPath(transformed).startsWith(tempDir), true);
+      assertEquals(
+        requestedLimits,
+        [MAX_MDX_MODULE_CODE_BYTES],
+        "the strict reader must be asked for exactly the accepted maximum",
+      );
+    } finally {
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("translates a strict bounded reader's oversize rejection into a limit error", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-strict-oversize-test-" });
+    const projectDir = "/srv/deployments/tenant-42/project";
+    const sourcePath = `${projectDir}/components/Huge.tsx`;
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("unbounded readFile must not be used when a strict reader exists");
+        },
+        readFileBytesWithinLimit: () =>
+          Promise.reject(new RangeError("value exceeds the requested byte limit")),
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformJsxImports(
+            `import Huge from "file://${sourcePath}";`,
+            adapter,
+            tempDir,
+            projectDir,
+          ),
+        ModuleSourceLimitError,
+        "components/Huge.tsx",
+      );
+      assertEquals(
+        limitErrorMessage(error).includes(`max ${MAX_MDX_MODULE_CODE_BYTES} bytes`),
+        true,
+        "a reader that refuses to measure an oversized source must still report the ceiling",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("bounds the cached artifacts one changing source path may accumulate", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-artifact-prune-test-" });
     const sourcePath = "/tmp/source/Changing.tsx";
-    const firstSource = "export const Changing = () => <b />;";
-    const secondSource = "export const Changing = () => <i />;";
-    let source = firstSource;
+    const otherPath = "/tmp/source/Stable.tsx";
+    const variantCount = MAX_JSX_CACHE_VARIANTS_PER_PATH + 3;
+    let variant = 0;
     const adapter = {
       fs: {
         readFile: (path: string) => {
+          if (path === otherPath) return Promise.resolve("export const Stable = () => <hr />;");
           if (path !== sourcePath) throw new Error(`unexpected read: ${path}`);
-          return Promise.resolve(source);
+          return Promise.resolve(`export const Changing = () => <b data-v="${variant}" />;`);
         },
       },
     } as unknown as RuntimeAdapter;
     const mdxImportCode = `import Changing from "file://${sourcePath}";`;
 
     try {
-      const firstPath = extractCachedJsxPath(
-        await transformJsxImports(mdxImportCode, adapter, tempDir),
+      const otherArtifact = extractCachedJsxPath(
+        await transformJsxImports(
+          `import Stable from "file://${otherPath}";`,
+          adapter,
+          tempDir,
+        ),
       );
 
-      source = secondSource;
-      const secondPath = extractCachedJsxPath(
-        await transformJsxImports(mdxImportCode, adapter, tempDir),
+      const writtenPaths: string[] = [];
+      for (; variant < variantCount; variant++) {
+        writtenPaths.push(
+          extractCachedJsxPath(await transformJsxImports(mdxImportCode, adapter, tempDir)),
+        );
+      }
+      assertEquals(
+        new Set(writtenPaths).size,
+        variantCount,
+        "each source content variant must occupy its own cache artifact",
       );
-      assertNotEquals(firstPath, secondPath);
 
       // Every content variant of one source path shares a name prefix, so the
-      // writer can drop the superseded ones instead of letting each variant
-      // leave a persistent artifact in the shared cache directory.
+      // writer can retire the oldest instead of letting each variant leave a
+      // persistent artifact in the cache directory. The retention window is
+      // what keeps a concurrent render's freshly written artifact alive.
       const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
       const remaining: string[] = [];
       for await (const entry of readDir(tempDir)) {
-        if (entry.name.startsWith(prefix)) remaining.push(entry.name);
+        if (entry.name.startsWith(prefix)) remaining.push(join(tempDir, entry.name));
       }
       assertEquals(
         remaining.length,
-        1,
-        "only the newest cached artifact for the source path may survive",
+        MAX_JSX_CACHE_VARIANTS_PER_PATH,
+        "a source path that keeps changing must not grow the cache without bound",
       );
-      assertEquals(join(tempDir, remaining[0]), secondPath);
+      assertEquals(
+        remaining.includes(writtenPaths[writtenPaths.length - 1] ?? ""),
+        true,
+        "the artifact the last transform returned must survive its own prune",
+      );
+      assertEquals(
+        remaining.includes(writtenPaths[0] ?? ""),
+        false,
+        "the oldest content variant must be the one retired",
+      );
+      assertEquals(
+        await readTextFile(otherArtifact) !== "",
+        true,
+        "pruning one source path must not touch another path's artifact",
+      );
     } finally {
       const { stop } = await import("veryfront/extensions/bundler");
       await stop();
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("keeps the artifacts of concurrent renders of one changing source path", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-concurrent-prune-test-" });
+    const sourcePath = "/tmp/source/Concurrent.tsx";
+    const generations = ["<b />", "<i />", "<u />", "<s />"];
+    let generation = 0;
+    const adapter = {
+      fs: {
+        readFile: (path: string) => {
+          if (path !== sourcePath) throw new Error(`unexpected read: ${path}`);
+          // Each concurrent render observes its own generation of the source,
+          // the interleaving a preview deploy produces while it is updating.
+          const source = `export const Concurrent = () => ${generations[generation]};`;
+          generation = (generation + 1) % generations.length;
+          return Promise.resolve(source);
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const mdxImportCode = `import Concurrent from "file://${sourcePath}";`;
+
+    try {
+      const rendered = await Promise.all(
+        generations.map(() => transformJsxImports(mdxImportCode, adapter, tempDir)),
+      );
+      const servedPaths = rendered.map(extractCachedJsxPath);
+      assertEquals(
+        new Set(servedPaths).size,
+        generations.length,
+        "each concurrent render must serve its own content variant",
+      );
+
+      for (const servedPath of servedPaths) {
+        assertEquals(
+          (await readTextFile(servedPath)).length > 0,
+          true,
+          "an artifact a concurrent render returned must still exist after pruning",
+        );
+      }
+    } finally {
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("readProjectJsxSourceWithinLimit", () => {
+  it("falls back to the prefix reader when no strict reader is advertised", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prefix-reader-test-" });
+    const sourcePath = "/tmp/source/Prefix.tsx";
+    const source = "export const Prefix = () => <b />;";
+    const requestedLimits: number[] = [];
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("unbounded readFile must not be used when a bounded reader exists");
+        },
+        readFileBytesBounded: (path: string, byteLimit: number) => {
+          if (path !== sourcePath) throw new Error(`unexpected read: ${path}`);
+          requestedLimits.push(byteLimit);
+          return Promise.resolve(new TextEncoder().encode(source));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      const transformed = await transformJsxImports(
+        `import Prefix from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+      );
+      assertEquals(extractCachedJsxPath(transformed).startsWith(tempDir), true);
+      assertEquals(
+        requestedLimits,
+        [MAX_MDX_MODULE_CODE_BYTES + 1],
+        "the prefix reader must be asked for one byte past the ceiling to see an overrun",
+      );
+    } finally {
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("propagates a bounded read failure that is not an oversize rejection", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-strict-failure-test-" });
+    const sourcePath = "/tmp/source/Unreadable.tsx";
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("unbounded readFile must not be used when a strict reader exists");
+        },
+        readFileBytesWithinLimit: () => Promise.reject(new Error("permission denied")),
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      // A source that cannot be read is a transform failure, not an admission
+      // failure: the import is left alone rather than failing the whole render.
+      const transformed = await transformJsxImports(
+        `import Unreadable from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+      );
+      assertEquals(transformed.includes(`file://${sourcePath}`), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects an oversized source read through the prefix reader", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prefix-oversize-test-" });
+    const projectDir = "/srv/deployments/tenant-42/project";
+    const sourcePath = `${projectDir}/components/Prefix.tsx`;
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("unbounded readFile must not be used when a bounded reader exists");
+        },
+        readFileBytesBounded: (_path: string, byteLimit: number) =>
+          Promise.resolve(new Uint8Array(byteLimit)),
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformJsxImports(
+            `import Prefix from "file://${sourcePath}";`,
+            adapter,
+            tempDir,
+            projectDir,
+          ),
+        ModuleSourceLimitError,
+        "components/Prefix.tsx",
+      );
+      assertEquals(
+        limitErrorMessage(error).includes(`${MAX_MDX_MODULE_CODE_BYTES + 1} bytes`),
+        true,
+        "the prefix reader knows the overrun size and must report it",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("pruneSupersededJsxArtifacts", () => {
+  const { pruneSupersededJsxArtifacts, readArtifactModifiedAtMs } = __importTransformerInternals;
+
+  it("treats an artifact that vanished before its stat as the oldest variant", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-vanished-test-" });
+
+    try {
+      assertEquals(await readArtifactModifiedAtMs(join(tempDir, "gone.mjs")), 0);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("ignores directory entries that share an artifact prefix", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-dir-entry-test-" });
+    const sourcePath = "/tmp/source/DirEntry.tsx";
+    const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
+    const names: string[] = [];
+
+    try {
+      await mkdir(join(tempDir, `${prefix}directory`));
+      for (let variant = 0; variant < MAX_JSX_CACHE_VARIANTS_PER_PATH + 2; variant++) {
+        const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
+        await writeTextFile(join(tempDir, name), `export const v = ${variant};`);
+        names.push(name);
+      }
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+      );
+
+      const remainingFiles: string[] = [];
+      let keptDirectory = false;
+      for await (const entry of readDir(tempDir)) {
+        if (entry.isDirectory) keptDirectory = true;
+        else remainingFiles.push(entry.name);
+      }
+      assertEquals(remainingFiles.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
+      assertEquals(keptDirectory, true, "a directory is never an artifact to retire");
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("retires the oldest variants once a path exceeds the retention window", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-unit-test-" });
+    const sourcePath = "/tmp/source/Many.tsx";
+    const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
+    const names: string[] = [];
+
+    try {
+      for (let variant = 0; variant < MAX_JSX_CACHE_VARIANTS_PER_PATH + 4; variant++) {
+        const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
+        await writeTextFile(join(tempDir, name), `export const v = ${variant};`);
+        names.push(name);
+      }
+      const current = names[names.length - 1] ?? "";
+
+      await pruneSupersededJsxArtifacts(tempDir, new Map([[sourcePath, current]]));
+
+      const remaining: string[] = [];
+      for await (const entry of readDir(tempDir)) {
+        if (entry.name.startsWith(prefix)) remaining.push(entry.name);
+      }
+      assertEquals(remaining.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
+      assertEquals(
+        remaining.includes(current),
+        true,
+        "the artifact the caller just wrote must never be retired",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("leaves a path alone while it stays inside the retention window", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-window-test-" });
+    const sourcePath = "/tmp/source/Few.tsx";
+    const names: string[] = [];
+
+    try {
+      for (let variant = 0; variant < MAX_JSX_CACHE_VARIANTS_PER_PATH; variant++) {
+        const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
+        await writeTextFile(join(tempDir, name), `export const v = ${variant};`);
+        names.push(name);
+      }
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+      );
+
+      const remaining: string[] = [];
+      for await (const entry of readDir(tempDir)) remaining.push(entry.name);
+      assertEquals(remaining.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports an unreadable cache directory instead of failing the transform", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-missing-test-" });
+    const notADirectory = join(tempDir, "occupied");
+
+    try {
+      await writeTextFile(notADirectory, "export const value = 1;");
+
+      // A cache directory that cannot be enumerated is a cleanup problem, not a
+      // render problem: the transform already wrote and returned its artifact.
+      await pruneSupersededJsxArtifacts(
+        notADirectory,
+        new Map([["/tmp/source/Gone.tsx", "jsx-gone.mjs"]]),
+      );
+      await pruneSupersededJsxArtifacts(
+        join(tempDir, "absent"),
+        new Map([["/tmp/source/Gone.tsx", "jsx-gone.mjs"]]),
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does nothing when the transform wrote no artifact", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-empty-test-" });
+
+    try {
+      await writeTextFile(join(tempDir, "untouched.mjs"), "export const value = 1;");
+      await pruneSupersededJsxArtifacts(tempDir, new Map());
+
+      const remaining: string[] = [];
+      for await (const entry of readDir(tempDir)) remaining.push(entry.name);
+      assertEquals(remaining, ["untouched.mjs"]);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("describeProjectSource", () => {
+  const { describeProjectSource } = __importTransformerInternals;
+
+  it("names a project source by its project-relative path", () => {
+    assertEquals(
+      describeProjectSource("/srv/deploy/project/components/Card.tsx", "/srv/deploy/project"),
+      "components/Card.tsx",
+    );
+  });
+
+  it("falls back to the file name when no project directory is known", () => {
+    assertEquals(describeProjectSource("/srv/deploy/project/components/Card.tsx"), "Card.tsx");
+  });
+
+  it("names a source that resolves to nothing outside a path", () => {
+    assertEquals(describeProjectSource("/"), "project source");
   });
 });

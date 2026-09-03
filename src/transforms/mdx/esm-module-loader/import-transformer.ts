@@ -13,6 +13,7 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
+import { sanitizePathForDisplay } from "#veryfront/security/path-validation.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyResolutionObservation } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
 import { assertNoConfiguredCommonJsBrowserImports } from "#veryfront/transforms/import-rewriter/commonjs-policy.ts";
@@ -231,6 +232,20 @@ async function hasReactImport(code: string): Promise<boolean> {
 }
 
 /**
+ * Name a project source in an error without disclosing where it lives on disk.
+ *
+ * `filePath` is the absolute path lifted out of a `file://` import, and the
+ * limit error it feeds reaches the loader's error log and the compile-error
+ * collector. Project-relative identity is what a project author can act on;
+ * the deployment layout above the project root is not theirs to see.
+ */
+function describeProjectSource(filePath: string, projectDir?: string): string {
+  const relative = projectDir ? sanitizePathForDisplay(filePath, projectDir) : "";
+  if (relative) return relative;
+  return filePath.split(/[\\/]/).at(-1) || "project source";
+}
+
+/**
  * Read one project JSX/TSX source without materializing more than the
  * MDX module source limit.
  *
@@ -239,59 +254,141 @@ async function hasReactImport(code: string): Promise<boolean> {
  * Bounding the read here keeps an oversized file from turning that lookup into
  * unbounded memory, CPU and I/O, the same ceiling `fetchAndCacheModule`
  * already enforces on the modules it resolves.
+ *
+ * The strict reader is preferred over the prefix reader: adapters whose store
+ * has a whole-object ceiling far above this limit (Cloudflare KV admits 25 MiB)
+ * implement `readFileBytesWithinLimit` and not `readFileBytesBounded`, so
+ * without this order those runtimes would fall through to `readFile` and
+ * materialize the very payload the limit exists to refuse.
  */
 async function readProjectJsxSourceWithinLimit(
   fs: NonNullable<ESMLoaderContext["adapter"]>["fs"],
   filePath: string,
+  sourceIdentity: string,
 ): Promise<string> {
+  if (fs.readFileBytesWithinLimit) {
+    try {
+      const bytes = await fs.readFileBytesWithinLimit(filePath, MAX_MDX_MODULE_CODE_BYTES);
+      return new TextDecoder().decode(bytes);
+    } catch (error) {
+      // The contract for this capability is to reject an oversized source with
+      // a RangeError rather than report its size, so the size stays unknown.
+      if (error instanceof RangeError) {
+        throw new ModuleSourceLimitError(sourceIdentity, undefined, MAX_MDX_MODULE_CODE_BYTES);
+      }
+      throw error;
+    }
+  }
+
   if (fs.readFileBytesBounded) {
     // One byte past the ceiling distinguishes an exactly-sized file from an
     // oversized one without reading the rest of an oversized file.
     const bytes = await fs.readFileBytesBounded(filePath, MAX_MDX_MODULE_CODE_BYTES + 1);
-    assertMdxModuleSourceSize(filePath, bytes.byteLength);
+    assertMdxModuleSourceSize(sourceIdentity, bytes.byteLength);
     return new TextDecoder().decode(bytes);
   }
 
   const raw = await fs.readFile(filePath);
   const sourceCode = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-  assertMdxModuleSourceSize(filePath, utf8ByteLength(sourceCode));
+  assertMdxModuleSourceSize(sourceIdentity, utf8ByteLength(sourceCode));
   return sourceCode;
 }
 
 /**
- * Drop the cached artifacts left by earlier content variants of one source path.
+ * Cached content variants retained per source path.
+ *
+ * Deleting every variant but the one this pass wrote is not safe: a render
+ * that transformed an older generation of the same path is still holding the
+ * `file://` specifier of its own artifact, and deleting it breaks that render's
+ * module load. Retaining a small window keeps the artifacts of in-flight
+ * renders alive while still bounding a path that keeps changing to a constant
+ * number of files instead of one per content variant ever seen.
+ */
+export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 8;
+
+async function readArtifactModifiedAtMs(path: string): Promise<number> {
+  try {
+    return (await getLocalFs().stat(path)).mtime?.getTime() ?? 0;
+  } catch (_) {
+    /* expected: a concurrent transform may have removed the variant already */
+    return 0;
+  }
+}
+
+/**
+ * Retire the oldest cached content variants of the source paths just written.
  *
  * Artifact names are content-keyed, so a project that keeps changing the same
- * path would otherwise accumulate one persistent `jsx-*.mjs` file per variant
- * in the shared cache directory. Keeping only the artifact just written bounds
- * that growth to the project's current source.
+ * path would otherwise accumulate one persistent `jsx-*.mjs` file per variant.
+ *
+ * One pass covers every path written by a transform: the directory holds the
+ * artifacts of a whole content source, so scanning it once per import (up to
+ * the 500-import ceiling) would make the cleanup itself the amplifier it is
+ * meant to prevent.
  */
 async function pruneSupersededJsxArtifacts(
   esmCacheDir: string,
-  filePath: string,
-  currentFileName: string,
+  writtenArtifacts: ReadonlyMap<string, string>,
 ): Promise<void> {
-  const prefix = buildMdxJsxCacheFileNamePrefix(filePath);
+  if (writtenArtifacts.size === 0) return;
+
   const localFs = getLocalFs();
+  const variantsByPrefix = new Map<string, { current: string; superseded: string[] }>();
+  for (const [filePath, currentFileName] of writtenArtifacts) {
+    variantsByPrefix.set(buildMdxJsxCacheFileNamePrefix(filePath), {
+      current: currentFileName,
+      superseded: [],
+    });
+  }
 
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
-      if (!entry.name.startsWith(prefix) || entry.name === currentFileName) continue;
+      for (const [prefix, variants] of variantsByPrefix) {
+        if (!entry.name.startsWith(prefix)) continue;
+        if (entry.name !== variants.current) variants.superseded.push(entry.name);
+        break;
+      }
+    }
+  } catch (error) {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
 
+  for (const variants of variantsByPrefix.values()) {
+    // The artifact just written always counts against the retention window.
+    if (variants.superseded.length < MAX_JSX_CACHE_VARIANTS_PER_PATH) continue;
+
+    const dated = await Promise.all(
+      variants.superseded.map(async (name) => ({
+        name,
+        modifiedAtMs: await readArtifactModifiedAtMs(join(esmCacheDir, name)),
+      })),
+    );
+    dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
+
+    for (const { name } of dated.slice(MAX_JSX_CACHE_VARIANTS_PER_PATH - 1)) {
       try {
-        await localFs.remove(join(esmCacheDir, entry.name));
+        await localFs.remove(join(esmCacheDir, name));
       } catch (_) {
         /* expected: a concurrent transform may have removed the variant already */
       }
     }
-  } catch (error) {
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to prune superseded JSX cache artifacts`, {
-      filePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
   }
 }
+
+/**
+ * Reachable for the cache-retention and redaction tests, which need to drive
+ * the prune pass and the source identity directly rather than through a full
+ * JSX transform.
+ */
+export const __importTransformerInternals = {
+  describeProjectSource,
+  pruneSupersededJsxArtifacts,
+  readArtifactModifiedAtMs,
+};
 
 /**
  * Transform JSX/TSX imports using esbuild.
@@ -301,6 +398,7 @@ export async function transformJsxImports(
   code: string,
   adapter: ESMLoaderContext["adapter"],
   esmCacheDir: string,
+  projectDir?: string,
 ): Promise<string> {
   const { transform } = await import("veryfront/extensions/bundler");
 
@@ -330,6 +428,9 @@ export async function transformJsxImports(
     `${LOG_PREFIX_MDX_LOADER} Transforming ${importsToProcess.length} JSX imports in parallel`,
   );
 
+  /** Source path to the artifact name this pass wrote, for one prune pass. */
+  const writtenArtifacts = new Map<string, string>();
+
   const transformResults = await parallelMap(
     importsToProcess,
     async ({ specifier, filePath, ext }) => {
@@ -339,7 +440,11 @@ export async function transformJsxImports(
         if (isFrameworkFile) {
           sourceCode = await getLocalFs().readTextFile(filePath);
         } else if (adapter) {
-          sourceCode = await readProjectJsxSourceWithinLimit(adapter.fs, filePath);
+          sourceCode = await readProjectJsxSourceWithinLimit(
+            adapter.fs,
+            filePath,
+            describeProjectSource(filePath, projectDir),
+          );
         } else {
           logger.warn(
             `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
@@ -393,7 +498,7 @@ export async function transformJsxImports(
         transformed = await rewriteDntImports(transformed, filePath);
 
         await getLocalFs().writeTextFile(transformedPath, transformed);
-        await pruneSupersededJsxArtifacts(esmCacheDir, filePath, transformedFileName);
+        writtenArtifacts.set(filePath, transformedFileName);
 
         return {
           specifier,
@@ -411,6 +516,8 @@ export async function transformJsxImports(
     },
     { semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY) },
   );
+
+  await pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts);
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
     total: importsToProcess.length,
