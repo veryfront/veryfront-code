@@ -35,6 +35,8 @@ export interface ScanCacheIdentity {
   key: string;
   /** Project scope used to target invalidation at one project's entries. */
   scope: string;
+  /** Canonical cache partition, including project ID in shared proxy mode. */
+  partition: string;
   /** Resolved content version this scan reads, shared with the candidate manifest. */
   version: string;
   /**
@@ -143,6 +145,7 @@ export function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity
     // content slug, so a scope derived any other way could leave a
     // release-versioned entry that a targeted invalidation never matches.
     scope: contentScope,
+    partition: projectPartition,
     version: projectVersion,
     mutable: !projectVersion.startsWith("release:"),
     styleProfile,
@@ -164,7 +167,10 @@ interface PendingScan {
 
 export interface ProjectScanCache {
   /** Memoized scan for `identity`; `scan` runs only on a miss. */
-  run(identity: ScanCacheIdentity, scan: () => Promise<string[]>): Promise<string[]>;
+  run(
+    identity: ScanCacheIdentity,
+    scan: (isCurrent: () => boolean) => Promise<string[]>,
+  ): Promise<string[]>;
   /** Invalidate cached scans for one project scope (or all scopes). */
   invalidate(projectScope?: string): void;
   /** Internal counts used to verify that cache metadata stays bounded. */
@@ -288,7 +294,7 @@ export function createProjectScanCache(name: string): ProjectScanCache {
         generation,
         // A failed walk is never cached, so the next request retries it.
         promise: (async () => {
-          const results = await scan();
+          const results = await scan(() => generation === generationFor(identity.scope));
           storeScan(identity, results, generation);
           return results;
         })(),

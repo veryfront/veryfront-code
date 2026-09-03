@@ -72,7 +72,7 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
   const identity = resolveScanCacheIdentity(ctx);
   const projectCandidates = await candidateScanCache.run(
     identity,
-    () => scanProjectCandidates(ctx, identity),
+    (isCurrent) => scanProjectCandidates(ctx, identity, isCurrent),
   );
 
   const candidates = new Set<string>(frameworkCandidates);
@@ -84,6 +84,7 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
 async function scanProjectCandidates(
   ctx: HandlerContext,
   identity: ScanCacheIdentity,
+  isCurrent: () => boolean,
 ): Promise<string[]> {
   const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
   // Call getUnderlyingAdapter on wrappedFs to preserve its 'this' context.
@@ -117,11 +118,13 @@ async function scanProjectCandidates(
     // entry is built with `developmentMode: true` and the manifest's own TTL
     // retires it.
     projectScope: identity.scope,
+    projectPartition: identity.partition,
     projectVersion: identity.version,
     projectDir: ctx.projectDir,
     styleProfile: identity.styleProfile,
     files,
     developmentMode: identity.mutable,
+    shouldCache: isCurrent,
   })];
 }
 

@@ -262,6 +262,76 @@ describe("server/handlers/dev/styles-candidate-scanner", () => {
     }
   });
 
+  it("partitions a reassigned proxy slug by canonical project id", async () => {
+    const oldProject = createScanAdapter([PAGE_FILE], null);
+    const newProject = createScanAdapter([], null);
+    const proxyContext = {
+      projectSlug: "reassigned-slug",
+      isProxyMode: true,
+      requestContext: { token: "", slug: "reassigned-slug", branch: "main", mode: "preview" },
+    } as Partial<HandlerContext>;
+
+    try {
+      reset();
+
+      const oldCandidates = await extractProjectCandidates(
+        makeCtx(oldProject.adapter, { ...proxyContext, projectId: "project-old" }),
+      );
+      const newCandidates = await extractProjectCandidates(
+        makeCtx(newProject.adapter, { ...proxyContext, projectId: "project-new" }),
+      );
+
+      assertEquals(oldCandidates.has("text-cyan-500"), true);
+      assertEquals(newCandidates.has("text-cyan-500"), false);
+      assertEquals(newProject.getScanCount(), 1);
+    } finally {
+      reset();
+    }
+  });
+
+  it("does not repopulate the candidate manifest from an invalidated scan", async () => {
+    const adapter = createMockAdapter();
+    const contentContext = {
+      sourceType: "branch",
+      projectSlug: PROJECT_SLUG,
+      branch: "main",
+    } as ResolvedContentContext;
+    let currentFiles: Array<{ path: string; content?: string }> = [];
+    let scanCount = 0;
+    let settleFirst!: (files: Array<{ path: string; content?: string }>) => void;
+    const firstFiles = new Promise<Array<{ path: string; content?: string }>>((resolve) => {
+      settleFirst = resolve;
+    });
+    const controlledAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        getUnderlyingAdapter: () => ({
+          getAllSourceFiles: () => {
+            scanCount++;
+            return scanCount === 1 ? firstFiles : Promise.resolve(currentFiles);
+          },
+          getContentContext: () => contentContext,
+        }),
+      },
+    } as unknown as RuntimeAdapter;
+    const ctx = makeCtx(controlledAdapter);
+
+    try {
+      reset();
+      const staleScan = extractProjectCandidates(ctx);
+      reset();
+      currentFiles = [];
+      settleFirst([PAGE_FILE]);
+
+      assertEquals((await staleScan).has("text-cyan-500"), true);
+      assertEquals((await extractProjectCandidates(ctx)).has("text-cyan-500"), false);
+      assertEquals(scanCount, 2);
+    } finally {
+      reset();
+    }
+  });
+
   it("evicts the least recently used scan instead of growing without bound", async () => {
     try {
       reset();

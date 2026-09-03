@@ -742,6 +742,7 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     const identity = (scope: string): ScanCacheIdentity => ({
       key: scope,
       scope,
+      partition: scope,
       version: `release:${scope}`,
       mutable: false,
       styleProfile: {} as ScanCacheIdentity["styleProfile"],
