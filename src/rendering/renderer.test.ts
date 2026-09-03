@@ -1924,6 +1924,9 @@ describe("Renderer release asset cache isolation", () => {
     using time = new FakeTime();
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
+    // Production uses the clock captured before tenant modules load. Point this
+    // instance at FakeTime's clock so the deadline remains deterministic here.
+    (renderer as unknown as { prewarmNow: () => number }).prewarmNow = Date.now;
     let probeCount = 0;
     const probeOptions: { signal?: AbortSignal; deadline?: number }[] = [];
     (renderer as unknown as {

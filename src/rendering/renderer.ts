@@ -106,6 +106,7 @@ import {
 import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
+const IntrinsicDateNow = Date.now;
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -356,6 +357,8 @@ export class Renderer {
   /** Lets foreground followers recover when a background leader fails fast at capacity. */
   private renderFlightAdmissions = new Map<string, RenderAdmission>();
   private productionPrewarmContexts = new Map<string, Promise<void>>();
+  /** Clock captured before tenant modules can replace `Date.now`. */
+  private prewarmNow = IntrinsicDateNow;
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
@@ -1298,7 +1301,7 @@ export class Renderer {
     if (maxRoutes <= 0) return [];
 
     const maxProbes = maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER;
-    const deadline = Date.now() + RENDER_PREWARM_PROBE_BUDGET_MS;
+    const deadline = this.prewarmNow() + RENDER_PREWARM_PROBE_BUDGET_MS;
     const candidates = selectPrewarmProbeCandidates(slugs, maxProbes);
     if (candidates.length < slugs.length) {
       logger.debug("Production render prewarm probe budget truncated candidates", {
@@ -1326,7 +1329,7 @@ export class Renderer {
     slug: string,
     deadline: number,
   ): Promise<PrewarmProbeResult> {
-    const remainingMs = deadline - Date.now();
+    const remainingMs = deadline - this.prewarmNow();
     if (remainingMs <= 0) return "timed-out";
 
     // Cancel the probe when the batch budget expires so the resolver slot is
