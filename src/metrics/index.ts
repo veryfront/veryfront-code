@@ -54,12 +54,16 @@ interface DirectMetricSample {
   value: number;
   attributes: Record<string, AttributeValue>;
   timestampUnixNano: string;
-  // Export target captured at enqueue time. Samples from concurrent project
-  // environments share one process-global queue, so the flush must never
-  // resolve the target from whichever AsyncLocalStorage context it happens
-  // to inherit — that would let one environment's OTLP endpoint receive
-  // another environment's queued samples.
+  // Opaque export target identity captured at enqueue time. The secret-bearing
+  // target remains in the private intern table instead of crossing mutable
+  // Array methods with this process-global queue.
+  targetKey: string;
+}
+
+interface DirectExportGroup {
+  key: string;
   target: DirectMetricsTarget;
+  samples: DirectMetricSample[];
 }
 
 const counters = new Map<string, Counter>();
@@ -82,9 +86,16 @@ const directHistogramTotals = new Map<
 let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DIRECT_FLUSH_DELAY_MS = 1_000;
+const DIRECT_EXPORT_TIMEOUT_MS = 10_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
+const NativeAbortController = AbortController;
+const AbortControllerPrototypeAbort = AbortController.prototype.abort;
+const AbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)?.get;
 const objectKeys = Object.keys;
 const arraySort = Array.prototype.sort;
 const hostBtoa = typeof globalThis.btoa === "function" ? globalThis.btoa : undefined;
@@ -98,6 +109,8 @@ const typedArrayByteLength = Object.getOwnPropertyDescriptor(
   "byteLength",
 )?.get;
 const utf8Encoder = new NativeTextEncoder();
+const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
 // Capture the runtime transport before project code can replace the ambient fetch.
 // Host-authenticated telemetry must never cross a project-controlled function.
 const hostFetch = globalThis.fetch.bind(globalThis);
@@ -359,6 +372,7 @@ function headersEqual(
 // distinct export targets in the process, i.e. by co-located environments.
 const internedTargets: Array<{ target: DirectMetricsTarget; key: string }> = [];
 let nextInternedTargetId = 0;
+let directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
 
 function directTargetKey(target: DirectMetricsTarget): string {
   for (let index = 0; index < internedTargets.length; index++) {
@@ -376,6 +390,14 @@ function directTargetKey(target: DirectMetricsTarget): string {
   const key = `t${nextInternedTargetId++}`;
   internedTargets[internedTargets.length] = { target, key };
   return key;
+}
+
+function directTargetForKey(key: string): DirectMetricsTarget | undefined {
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned?.key === key) return interned.target;
+  }
+  return undefined;
 }
 
 function toOtlpValue(value: AttributeValue) {
@@ -504,6 +526,47 @@ function logDirectExportFailure(error: unknown): void {
   );
 }
 
+function createDirectExportDeadline(): {
+  signal: AbortSignal;
+  clear(): void;
+} {
+  if (!AbortControllerSignalGetter) {
+    throw new TypeError("AbortController signal intrinsic is unavailable");
+  }
+  const controller = new NativeAbortController();
+  const signal = apply(AbortControllerSignalGetter, controller, []) as AbortSignal;
+  const timeout = hostSetTimeout(() => {
+    apply(AbortControllerPrototypeAbort, controller, []);
+  }, directExportTimeoutMs);
+  return {
+    signal,
+    clear: () => hostClearTimeout(timeout),
+  };
+}
+
+async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
+  const deadline = createDirectExportDeadline();
+  try {
+    const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
+      group.target.url,
+      {
+        method: "POST",
+        headers: {
+          ...group.target.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildDirectOtlpBody(group.samples, group.target, group.key)),
+        signal: deadline.signal,
+      },
+    );
+    if (!response.ok) logDirectExportFailure(`HTTP ${response.status}`);
+  } catch (error) {
+    logDirectExportFailure(error);
+  } finally {
+    deadline.clear();
+  }
+}
+
 async function flushDirectMetrics(): Promise<void> {
   if (directFlushTimer) {
     clearTimeout(directFlushTimer);
@@ -521,16 +584,11 @@ async function flushDirectMetrics(): Promise<void> {
   // group holds the target, and `target.headers` can carry the internal-proxy
   // credential, so it must not be handed to `Map.prototype.set` or to
   // `Array.prototype[Symbol.iterator]`, both replaceable by project code.
-  interface DirectExportGroup {
-    key: string;
-    target: DirectMetricsTarget;
-    samples: DirectMetricSample[];
-  }
   const groups: DirectExportGroup[] = [];
   for (let index = 0; index < batch.length; index++) {
     const sample = batch[index];
     if (sample === undefined) continue;
-    const key = directTargetKey(sample.target);
+    const key = sample.targetKey;
     let group: DirectExportGroup | undefined;
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
       const candidate = groups[groupIndex];
@@ -540,33 +598,23 @@ async function flushDirectMetrics(): Promise<void> {
       }
     }
     if (!group) {
-      group = { key, target: sample.target, samples: [] };
+      const target = directTargetForKey(key);
+      if (!target) continue;
+      group = { key, target, samples: [] };
       groups[groups.length] = group;
     }
     group.samples[group.samples.length] = sample;
   }
 
+  // Start every target request before awaiting any of them. Each request owns
+  // a deadline, so one tenant endpoint cannot block another target or retain a
+  // removed batch indefinitely.
+  const exports = new Array<Promise<void>>(groups.length);
   for (let index = 0; index < groups.length; index++) {
-    const group = groups[index];
-    if (group === undefined) continue;
-    try {
-      const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
-        group.target.url,
-        {
-          method: "POST",
-          headers: {
-            ...group.target.headers,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(buildDirectOtlpBody(group.samples, group.target, group.key)),
-        },
-      );
-      if (!response.ok) {
-        logDirectExportFailure(`HTTP ${response.status}`);
-      }
-    } catch (error) {
-      logDirectExportFailure(error);
-    }
+    exports[index] = exportDirectGroup(groups[index]!);
+  }
+  for (let index = 0; index < exports.length; index++) {
+    await exports[index];
   }
 
   if (directQueue.length > 0) {
@@ -598,13 +646,14 @@ function enqueueDirectMetric(
 ): void {
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
+  const targetKey = directTargetKey(target);
   directQueue.push({
     kind,
     name,
     value,
     attributes,
     timestampUnixNano: getUnixNanoTimestamp(),
-    target,
+    targetKey,
   });
   if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
     void flushDirectMetrics();
@@ -668,6 +717,9 @@ export const metrics = {
   async __flushForTests(): Promise<void> {
     await flushDirectMetrics();
   },
+  __setDirectExportTimeoutForTests(timeoutMs: number): void {
+    directExportTimeoutMs = timeoutMs;
+  },
   __resetForTests(): void {
     counters.clear();
     histograms.clear();
@@ -677,6 +729,7 @@ export const metrics = {
     directHistogramTotals.clear();
     internedTargets.length = 0;
     nextInternedTargetId = 0;
+    directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
     if (directFlushTimer) {
       clearTimeout(directFlushTimer);
       directFlushTimer = null;

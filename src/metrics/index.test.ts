@@ -580,6 +580,55 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("exports later target groups when the first endpoint stalls", async () => {
+    const requestedUrls: string[] = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-project,env-internal",
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request, init?: RequestInit) => {
+          const requestedUrl = String(url);
+          requestedUrls[requestedUrls.length] = requestedUrl;
+          if (requestedUrl !== "https://stalled.example/v1/metrics") {
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          }
+
+          return new Promise<Response>((resolve) => {
+            const finish = () => resolve(new Response("{}", { status: 504 }));
+            if (init?.signal?.aborted) {
+              finish();
+            } else {
+              init?.signal?.addEventListener("abort", finish, { once: true });
+            }
+          });
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(25);
+          await runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://stalled.example/v1/metrics",
+          }, () => {
+            metrics.counter("vf_stalled_metric_total", 1);
+          });
+          metrics.counter("vf_internal_metric_total", 1);
+
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(requestedUrls, [
+      "https://stalled.example/v1/metrics",
+      "http://veryfront-api:80/internal/metrics/otlp/v1/metrics",
+    ]);
+  });
+
   it("does not expose internal metrics credentials to replaced target-grouping intrinsics", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const observed: string[] = [];
@@ -590,11 +639,11 @@ describe("metrics public SDK", () => {
     const record = (values: unknown[]): void => {
       for (const value of values) {
         if (typeof value === "string") {
-          observed.push(value);
+          observed[observed.length] = value;
           continue;
         }
         try {
-          observed.push(String(nativeStringify(value)));
+          observed[observed.length] = String(nativeStringify(value));
         } catch {
           // Unserializable values cannot carry the credential as data.
         }
@@ -602,12 +651,18 @@ describe("metrics public SDK", () => {
     };
 
     const nativeEntries = Object.entries;
+    const nativeMap = Array.prototype.map;
+    const nativePush = Array.prototype.push;
+    const nativeSplice = Array.prototype.splice;
     const nativeSort = Array.prototype.sort;
     const nativeLocaleCompare = String.prototype.localeCompare;
     const nativeMapSet = Map.prototype.set;
 
     const restore = () => {
       Object.entries = nativeEntries;
+      Array.prototype.map = nativeMap;
+      Array.prototype.push = nativePush;
+      Array.prototype.splice = nativeSplice;
       Array.prototype.sort = nativeSort;
       String.prototype.localeCompare = nativeLocaleCompare;
       Map.prototype.set = nativeMapSet;
@@ -624,7 +679,7 @@ describe("metrics public SDK", () => {
     }, async () => {
       await withMockFetch(
         ((url: string | URL | Request, init?: RequestInit) => {
-          requests.push({ url: String(url), init });
+          requests[requests.length] = { url: String(url), init };
           return Promise.resolve(new Response("{}", { status: 200 }));
         }) as typeof fetch,
         async () => {
@@ -632,6 +687,27 @@ describe("metrics public SDK", () => {
             record([value]);
             return nativeEntries(value);
           }) as typeof Object.entries;
+          Array.prototype.map = function (this: unknown[], callback, thisArg?) {
+            record([this]);
+            return nativeMap.call(this, callback, thisArg);
+          } as typeof Array.prototype.map;
+          Array.prototype.push = function (this: unknown[], ...values: unknown[]) {
+            record([this, ...values]);
+            return nativePush.apply(this, values);
+          } as typeof Array.prototype.push;
+          Array.prototype.splice = function (
+            this: unknown[],
+            start: number,
+            deleteCount?: number,
+            ...items: unknown[]
+          ) {
+            record([this, ...items]);
+            return Reflect.apply(
+              nativeSplice,
+              this,
+              deleteCount === undefined ? [start] : [start, deleteCount, ...items],
+            );
+          } as typeof Array.prototype.splice;
           Array.prototype.sort = function (this: unknown[], compare?) {
             record([this]);
             return nativeSort.call(this, compare) as unknown[];
