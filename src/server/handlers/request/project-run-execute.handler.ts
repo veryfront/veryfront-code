@@ -68,6 +68,9 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   level: "warn",
   message: "Knowledge ingest logs were truncated",
 });
+const ReflectApply = Reflect.apply;
+const NumberPrototypeToString = Number.prototype.toString;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -372,10 +375,18 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
  * glob metacharacters.
  */
 function encodeWorkflowRedisScope(value: string): string {
-  return value.replace(
-    /[^A-Za-z0-9_-]/g,
-    (char) => `.${char.codePointAt(0)!.toString(16)}.`,
-  );
+  let encoded = "";
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    const allowed = codeUnit >= 48 && codeUnit <= 57 ||
+      codeUnit >= 65 && codeUnit <= 90 ||
+      codeUnit >= 97 && codeUnit <= 122 ||
+      codeUnit === 45 || codeUnit === 95;
+    encoded += allowed
+      ? value[index]
+      : `.${ReflectApply(NumberPrototypeToString, codeUnit, [16]) as string}.`;
+  }
+  return encoded;
 }
 
 export interface ProjectWorkflowRedisTargetScope {

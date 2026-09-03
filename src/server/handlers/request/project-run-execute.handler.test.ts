@@ -82,6 +82,27 @@ describe("projectWorkflowRedisPrefix", () => {
     );
   });
 
+  it("does not use project-controlled string encoding methods", () => {
+    const originalReplace = String.prototype.replace;
+    const originalCharCodeAt = String.prototype.charCodeAt;
+    const originalNumberToString = Number.prototype.toString;
+    let first: string | undefined;
+    let second: string | undefined;
+    try {
+      String.prototype.replace = () => "shared";
+      String.prototype.charCodeAt = () => 0;
+      Number.prototype.toString = () => "0";
+      first = projectWorkflowRedisPrefix("project.*");
+      second = projectWorkflowRedisPrefix("project.?");
+    } finally {
+      String.prototype.replace = originalReplace;
+      String.prototype.charCodeAt = originalCharCodeAt;
+      Number.prototype.toString = originalNumberToString;
+    }
+
+    assertEquals(first === second, false);
+  });
+
   it("preserves whitespace in the verified project id when configuring Redis", () => {
     const canonical = projectWorkflowRedisConfig("proj-1");
     const whitespacePrefixed = projectWorkflowRedisConfig(" proj-1");
