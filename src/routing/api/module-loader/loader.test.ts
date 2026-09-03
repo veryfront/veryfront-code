@@ -55,11 +55,11 @@ const appRouteContext: AppRouteContext = { params: {}, identity: null, env: {} }
 const denoIt = isDeno ? it : it.skip;
 
 describe("bundledModuleScopeDiscriminator", () => {
-  const hostedScope = (environmentName: string, value: string) =>
+  const hostedScope = (environmentName: string, value: string, projectId = "project-one-id") =>
     runWithRequestContext(
       {
         projectSlug: "project-one",
-        projectId: "project-one-id",
+        projectId,
         token: "test-token",
         productionMode: true,
         releaseId: "release-one",
@@ -103,6 +103,19 @@ describe("bundledModuleScopeDiscriminator", () => {
     }
 
     assertEquals(discriminator?.length, 64);
+  });
+
+  it("does not use a project-controlled registry-scope encoder", async () => {
+    const originalEncodeURIComponent = globalThis.encodeURIComponent;
+    try {
+      globalThis.encodeURIComponent = () => "shared";
+      assertNotEquals(
+        await hostedScope("production", "safe", "project-one-id"),
+        await hostedScope("production", "safe", "project-two-id"),
+      );
+    } finally {
+      globalThis.encodeURIComponent = originalEncodeURIComponent;
+    }
   });
 });
 

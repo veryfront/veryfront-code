@@ -2087,7 +2087,11 @@ export function getUserDependencies(
  * overlay. A module whose top-level init ran under one tenant's or
  * environment's env overlay is never reused under another.
  */
-const bundledModules = new IntrinsicMap<string, Promise<APIRoute>>();
+interface BundledModuleRecord {
+  readonly loading: Promise<APIRoute>;
+}
+
+const bundledModules = new IntrinsicMap<string, BundledModuleRecord>();
 
 /**
  * Identity of the scope a bundled module may be reused within.
@@ -2142,12 +2146,13 @@ export async function loadModuleFromCode(
 ): Promise<APIRoute> {
   const key = await bundledModuleKey(owner, code);
   const cached = IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) as
-    | Promise<APIRoute>
+    | BundledModuleRecord
     | undefined;
-  if (cached) return await cached;
+  if (cached) return await cached.loading;
 
   const loading = importModuleFromCode(code, fs);
-  IntrinsicReflectApply(MapPrototypeSet, bundledModules, [key, loading]);
+  const record = { loading } satisfies BundledModuleRecord;
+  IntrinsicReflectApply(MapPrototypeSet, bundledModules, [key, record]);
 
   // Deno retains every imported ESM record for the life of the process. Keep
   // one matching lookup entry too: evicting only this map caused a later visit
@@ -2156,7 +2161,7 @@ export async function loadModuleFromCode(
   try {
     return await loading;
   } catch (error) {
-    if (IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) === loading) {
+    if (IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) === record) {
       IntrinsicReflectApply(MapPrototypeDelete, bundledModules, [key]);
     }
     throw error;

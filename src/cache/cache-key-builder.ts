@@ -8,6 +8,7 @@ import { currentRequestContext } from "#veryfront/platform/request-context-acces
 type MultiProjectRequestContextType = NonNullable<ReturnType<typeof currentRequestContext>>;
 const trustedRequestContextAccessor = currentRequestContext;
 const registryScopeOwners = new WeakMap<object, object>();
+const IntrinsicEncodeURIComponent = encodeURIComponent;
 
 export type { CacheKeyContext };
 
@@ -19,7 +20,7 @@ export interface RegistryScopeContext {
 
 function encodeRegistryScopeSegment(value: string): string {
   try {
-    return encodeURIComponent(value);
+    return IntrinsicEncodeURIComponent(value);
   } catch (error) {
     if (!(error instanceof URIError)) throw error;
 
@@ -43,11 +44,11 @@ function encodeRegistryScopeSegment(value: string): string {
       }
       if (!isHighSurrogate && !isLowSurrogate) continue;
 
-      encoded += encodeURIComponent(value.slice(chunkStart, index));
+      encoded += IntrinsicEncodeURIComponent(value.slice(chunkStart, index));
       encoded += `%u${codeUnit.toString(16).toUpperCase().padStart(4, "0")}`;
       chunkStart = index + 1;
     }
-    return encoded + encodeURIComponent(value.slice(chunkStart));
+    return encoded + IntrinsicEncodeURIComponent(value.slice(chunkStart));
   }
 }
 
