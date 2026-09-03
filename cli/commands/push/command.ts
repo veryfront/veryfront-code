@@ -1596,7 +1596,34 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               } during forced push verification`,
             );
           }
-          if (repairUploadResult.uploaded > 0) {
+          const repairDeleteResult = await deleteFiles(
+            client,
+            projectApiReference(config),
+            branchId,
+            latestRemoteFiles
+              .filter((file) => deletePaths.has(file.path))
+              .map((file) => ({ path: file.path })),
+            false,
+          );
+          deleteResult = {
+            deleted: deleteResult.deleted + repairDeleteResult.deleted,
+            failed: deleteResult.failed + repairDeleteResult.failed,
+            conflicts: [...deleteResult.conflicts, ...repairDeleteResult.conflicts],
+            applied: [...deleteResult.applied, ...repairDeleteResult.applied],
+          };
+          if (repairDeleteResult.conflicts.length > 0) {
+            await writeVerifiedAppliedSyncTarget();
+            throw pushConflictError(repairDeleteResult.conflicts);
+          }
+          if (repairDeleteResult.failed > 0) {
+            await writeVerifiedAppliedSyncTarget();
+            throw new Error(
+              `Push failed for ${repairDeleteResult.failed} file${
+                repairDeleteResult.failed === 1 ? "" : "s"
+              } during forced push verification`,
+            );
+          }
+          if (repairUploadResult.uploaded > 0 || repairDeleteResult.deleted > 0) {
             latestRemoteFiles = await listAllFilesForVerification();
           }
           const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
@@ -1613,10 +1640,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             [...latestRemoteSnapshot]
               .filter(([path]) => uploadPaths.has(path)),
           );
-          const conflicts = findRemoteSnapshotChanges(
-            expectedUploadSnapshot,
-            actualUploadSnapshot,
-          );
+          const conflicts = [
+            ...findRemoteSnapshotChanges(expectedUploadSnapshot, actualUploadSnapshot),
+            ...latestRemoteFiles
+              .filter((file) => deletePaths.has(file.path))
+              .map((file) => file.path),
+          ];
           if (conflicts.length > 0) {
             await writeVerifiedAppliedSyncTarget(latestRemoteFiles);
             throw pushConflictError(conflicts);

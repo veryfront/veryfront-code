@@ -4363,6 +4363,73 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("re-deletes a selected path recreated during a forced targeted refresh", async () => {
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        let deleteCalls = 0;
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "export const value = 1;\n" },
+                ...(deleteCalls < 2
+                  ? [{ path: "deleted-locally.ts", content: "remote source\n" }]
+                  : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") {
+            assertEquals(
+              decodeURIComponent(url.pathname.split("/files/")[1] ?? ""),
+              "deleted-locally.ts",
+            );
+            deleteCalls++;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(fetchHandler, () =>
+          pushCommand({
+            projectDir,
+            branch: "main",
+            prunePaths: ["deleted-locally.ts"],
+            force: true,
+            quiet: true,
+          }));
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(deleteCalls, 2);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([{ path: "app.ts", content: "export const value = 1;\n" }]),
+        );
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("does not delete remote files protected by .vfignore", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
