@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
+import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
 import {
   applyAgUiRuntimeRestrictions,
   hasAgUiRuntimeRestrictions,
@@ -38,7 +39,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.tools, { web_search: true });
     assertEquals(restricted.providerTools, []);
     assertEquals(restricted.delegates, []);
-    assertEquals(restricted.mcpServers, undefined);
+    assertEquals(restricted.mcpServers, []);
     assertEquals(restricted.skills, false);
   });
 
@@ -48,7 +49,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.tools, {});
     assertEquals(restricted.providerTools, []);
     assertEquals(restricted.delegates, []);
-    assertEquals(restricted.mcpServers, undefined);
+    assertEquals(restricted.mcpServers, []);
     assertEquals(restricted.skills, false);
   });
 
@@ -71,6 +72,20 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     // allowed provider tool travels in `providerTools` alone.
     assertEquals(restricted.tools, { read_file: true });
     assertEquals(restricted.providerTools, ["web_fetch"]);
+  });
+
+  it("leaves no remote tool source reachable for an allowlisted unresolved tool", () => {
+    // An absent `mcpServers` makes `getRuntimeRemoteToolSources` synthesize an
+    // implicit Veryfront API server for boolean tool references no local
+    // registry resolves, which would hand the run a same-named platform tool it
+    // was never configured with.
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({ tools: true, providerTools: undefined }),
+      { allowedTools: ["not_in_any_registry"] },
+    );
+
+    assertEquals(restricted.tools, { not_in_any_registry: true });
+    assertEquals(getRuntimeRemoteToolSources(restricted), []);
   });
 
   it("keeps allowlisted provider tools, delegates, and skills", () => {

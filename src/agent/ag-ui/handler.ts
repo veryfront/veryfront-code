@@ -1,6 +1,6 @@
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
-import { resolveSecurityMiddleware } from "../factory.ts";
+import { createEphemeralAgent } from "../factory.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors";
 import {
@@ -31,7 +31,6 @@ import {
   parseAgUiRequestOrError,
 } from "./host-support.ts";
 import { extractRequest } from "./request-shared.ts";
-import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   type AgUiRuntimeRestrictions,
@@ -378,52 +377,30 @@ async function createAgUiDirectStreamResponse(
     completedResponse = response;
   };
 
-  let upstreamBody: ReadableStream<Uint8Array> | null;
-  let upstreamStatus = 200;
-  let upstreamStatusText: string | undefined;
+  // `agent.stream()` runs the agent's own runtime, which carries its full
+  // configured tool surface. A restricted run therefore streams through an
+  // unregistered agent rebuilt by the same factory from the narrowed
+  // configuration: the ceiling binds tool exposure and execution instead of
+  // travelling as unenforced request metadata, while the run keeps the
+  // framework's own prompt composition (project and environment context, and
+  // the skill catalog only when the loader survives the ceiling), security
+  // middleware, resolved skill-selector context, and private runtime dispatch.
+  const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
+    ? createEphemeralAgent(applyAgUiRuntimeRestrictions(agent.config, restrictions))
+    : agent;
 
-  if (hasAgUiRuntimeRestrictions(restrictions)) {
-    // `agent.stream()` runs the agent's own runtime, which carries its full
-    // configured tool surface, so a restricted run streams through a runtime
-    // built from the narrowed configuration instead. The ceiling then binds
-    // tool exposure and execution rather than travelling as unenforced request
-    // metadata.
-    const runtime = new AgentRuntime(agent.id, {
-      ...applyAgUiRuntimeRestrictions(agent.config, restrictions),
-      // `agent.config.system` is the raw authored prompt. The factory composes
-      // project context, environment context, and the skill catalog into a
-      // separate resolver that the agent's own runtime uses, so a restricted
-      // run reads that effective resolver to stream against the same prompt a
-      // normal run would.
-      system: getEffectiveAgentSystem(agent),
-      // The agent's own runtime carries the security middleware the factory
-      // resolved for it, so a restricted run resolves the same chain rather
-      // than dropping input and output protection.
-      middleware: resolveSecurityMiddleware(agent.config),
-    });
-    upstreamBody = toolDataEvents.wrapStream(
-      await runtime.stream(
-        messages,
-        streamContext,
-        { onFinish },
-        request.model,
-        request.maxOutputTokens,
-      ),
-    );
-  } else {
-    const result = await agent.stream({
-      messages,
-      context: streamContext,
-      ...(request.model ? { model: request.model } : {}),
-      ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
-      onFinish,
-    });
+  const result = await streamAgent.stream({
+    messages,
+    context: streamContext,
+    ...(request.model ? { model: request.model } : {}),
+    ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
+    onFinish,
+  });
 
-    const upstream = result.toDataStreamResponse();
-    upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
-    upstreamStatus = upstream.status;
-    upstreamStatusText = upstream.statusText;
-  }
+  const upstream = result.toDataStreamResponse();
+  const upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
+  const upstreamStatus = upstream.status;
+  const upstreamStatusText = upstream.statusText;
 
   return await createAgUiStreamResponse({
     agentId: agent.id,

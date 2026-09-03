@@ -3,7 +3,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { type Agent, AgentRuntime } from "#veryfront/agent";
+import type { Agent } from "#veryfront/agent";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
@@ -25,6 +28,44 @@ import { createControlPlaneSignature, createCtx } from "./internal-agent-run.tes
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 const encoder = new TextEncoder();
+
+/**
+ * A model transport that streams one fixed answer.
+ *
+ * A restricted local eval rebuilds the source agent through the framework
+ * factory and streams it for real, so these tests supply a transport instead of
+ * replacing a runtime method: the ceiling is then observed exactly where it has
+ * to hold, in the tool list and prompt the provider receives.
+ */
+function createEvalTransportModel(input: {
+  text: string;
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  onCall?: (options: ModelRuntimeCallOptions) => void;
+}): ModelRuntime<ModelRuntimeCallOptions> {
+  return {
+    provider: "anthropic",
+    modelId: "claude-sonnet-4-6",
+    doGenerate: () => {
+      throw new Error("Expected the streaming path");
+    },
+    doStream: (options) => {
+      input.onCall?.(options);
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            controller.enqueue({ type: "text-delta", id: "text-1", delta: input.text });
+            controller.enqueue({
+              type: "finish",
+              finishReason: "stop",
+              ...(input.usage ? { usage: input.usage } : {}),
+            });
+            controller.close();
+          },
+        }),
+      });
+    },
+  };
+}
 
 describe("createKnowledgeEventLogger", () => {
   it("caps the number of accumulated knowledge ingest events", () => {
@@ -1024,47 +1065,29 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs local eval AG-UI requests through discovered source agents", async () => {
     let capturedContext: Record<string, unknown> | undefined;
-    agentRegistry.register(
-      "researcher",
-      createStreamingAgent("researcher", "Paris", {
-        promptTokens: 12,
-        completionTokens: 8,
-        totalTokens: 20,
-      }),
-    );
-    // Control-plane eval runs forward a tool allowlist, so the run streams
-    // through the restricted runtime rather than the agent's own tool surface.
-    const originalStream = AgentRuntime.prototype.stream;
-    AgentRuntime.prototype.stream = function (
-      this: AgentRuntime,
-      _messages: Message[],
-      context?: Record<string, unknown>,
-      callbacks?: { onFinish?: (response: unknown) => void },
-    ): Promise<ReadableStream<Uint8Array>> {
-      capturedContext = context;
-      return Promise.resolve(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(
-              encodeDataStreamEvent({ type: "message-start", messageId: "msg-1" }),
-            );
-            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
-            controller.enqueue(
-              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "Paris" }),
-            );
-            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
-            callbacks?.onFinish?.({
+    // Control-plane eval runs carry a runtime ceiling, so the run streams
+    // through a framework-rebuilt restricted agent rather than through the
+    // source agent's own stream implementation.
+    const sourceAgent = createStreamingAgent("researcher", "Paris", {
+      promptTokens: 12,
+      completionTokens: 8,
+      totalTokens: 20,
+    });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        resolveModelTransport: (request: { context?: Record<string, unknown> }) => {
+          capturedContext = request.context;
+          return Promise.resolve({
+            model: createEvalTransportModel({
               text: "Paris",
-              messages: [],
-              toolCalls: [],
-              status: "completed",
-              usage: { promptTokens: 12, completionTokens: 8, totalTokens: 20 },
-            });
-            controller.close();
-          },
-        }),
-      );
-    } as typeof AgentRuntime.prototype.stream;
+              usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+            }),
+          });
+        },
+      } as Agent["config"],
+    });
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
         target === "eval:deep-research"
@@ -1127,14 +1150,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
       assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
-      AgentRuntime.prototype.stream = originalStream;
       agentRegistry.delete("researcher");
     }
   });
 
   it("applies forwarded eval tool restrictions to local source agent runs", async () => {
     let sourceAgentStreamCalls = 0;
-    let capturedRuntimeConfig: Record<string, unknown> | undefined;
+    let observedToolNames: string[] = [];
     const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
       sourceAgentStreamCalls += 1;
     });
@@ -1142,34 +1164,36 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       ...sourceAgent,
       config: {
         ...sourceAgent.config,
-        tools: { web_search: true, delete_project: true },
-        providerTools: ["web_fetch"],
+        tools: {
+          eval_allowed_lookup: tool({
+            id: "eval_allowed_lookup",
+            description: "Allowed by the forwarded eval ceiling.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+          eval_denied_delete: tool({
+            id: "eval_denied_delete",
+            description: "Denied by the forwarded eval ceiling.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+        },
+        providerTools: ["web_search", "web_fetch"],
         mcpServers: [{ kind: "veryfront-api" }],
         maxSteps: 20,
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: createEvalTransportModel({
+              text: "Paris",
+              onCall: (options) => {
+                observedToolNames = (options.tools ?? [])
+                  .map((definition) => definition.name)
+                  .toSorted();
+              },
+            }),
+          }),
       } as Agent["config"],
     });
-    const originalStream = AgentRuntime.prototype.stream;
-
-    AgentRuntime.prototype.stream = function (
-      this: AgentRuntime,
-    ): Promise<ReadableStream<Uint8Array>> {
-      capturedRuntimeConfig = (this as unknown as { config: Record<string, unknown> }).config;
-      return Promise.resolve(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(
-              encodeDataStreamEvent({ type: "message-start", messageId: "msg-1" }),
-            );
-            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
-            controller.enqueue(
-              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "Paris" }),
-            );
-            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
-            controller.close();
-          },
-        }),
-      );
-    } as typeof AgentRuntime.prototype.stream;
 
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
@@ -1199,7 +1223,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       target: "eval:deep-research",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-      config: { allowed_tools: ["web_search"], max_steps: 2 },
+      config: { allowed_tools: ["eval_allowed_lookup", "web_fetch"], max_steps: 2 },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_restricted_tools/execute",
@@ -1219,15 +1243,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(result.response.status, 200);
       const payload = await result.response.json();
       assertEquals(payload.success, true);
-      // The eval runs against the restricted configuration, not the source
-      // agent's full tool and MCP surface.
-      assertEquals(capturedRuntimeConfig?.tools, { web_search: true });
-      assertEquals(capturedRuntimeConfig?.providerTools, []);
-      assertEquals(capturedRuntimeConfig?.mcpServers, undefined);
-      assertEquals(capturedRuntimeConfig?.maxSteps, 2);
+      // The eval runs against the restricted configuration: only the
+      // allowlisted local and provider tools reach the model, and the source
+      // agent's own unrestricted surface never runs.
+      assertEquals(observedToolNames, ["eval_allowed_lookup", "web_fetch"]);
       assertEquals(sourceAgentStreamCalls, 0);
     } finally {
-      AgentRuntime.prototype.stream = originalStream;
       agentRegistry.delete("researcher");
     }
   });

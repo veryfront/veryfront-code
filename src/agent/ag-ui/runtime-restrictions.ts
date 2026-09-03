@@ -1,5 +1,6 @@
 import type { AgentConfig } from "../types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
 
 const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 
@@ -83,7 +84,17 @@ export function applyAgUiRuntimeRestrictions(
   // MCP servers publish their tool names when the run connects to them, so a
   // name allowlist resolved before the run cannot bound that surface. Drop the
   // servers instead of leaving remote tools reachable.
-  restricted.mcpServers = undefined;
+  //
+  // The list has to be explicitly empty rather than absent: an absent
+  // `mcpServers` makes `getRuntimeRemoteToolSources` treat allowlisted boolean
+  // tool references that no local registry resolves as a request for an
+  // implicit Veryfront API MCP server, and it lets ambient runtime remote
+  // sources be inherited. Injected remote-source fields are cleared for the
+  // same reason.
+  restricted.mcpServers = [];
+  const remoteToolConfig = restricted as AgentConfig & RuntimeRemoteToolConfig;
+  remoteToolConfig.__vfRemoteToolSources = [];
+  remoteToolConfig.__vfAllowedRemoteTools = [];
   // Skills reach further instructions and tools through the skill loader, so
   // they stay out unless the loader itself is allowlisted.
   if (!SKILL_LOADER_TOOL_NAMES.some((toolName) => allowedTools.has(toolName))) {
