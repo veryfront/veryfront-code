@@ -24,6 +24,20 @@ import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
+/**
+ * The `nonce` React hands the streaming renderer, taken from the renderer's own
+ * signature rather than restated as `string`.
+ *
+ * `@types/react-dom` widened this field from `string` to `NonceOption`
+ * (`string | { script?: string; style?: string }`) within the pinned `~19.2`
+ * range, so a hard-coded `string` here breaks on whichever patch release the
+ * checkout happens to resolve. Deriving it keeps the assertion — the framework
+ * still passes the plain response nonce — while tracking either shape.
+ */
+type StreamRenderNonce = NonNullable<
+  Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+>["nonce"];
+
 function createPipeableSSRStream(
   pipeImpl: (writable: NodeJS.WritableStream) => void,
   abortImpl: () => void = () => {},
@@ -94,7 +108,7 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: string | undefined;
+    let observedNonce: StreamRenderNonce;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
