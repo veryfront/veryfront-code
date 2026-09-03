@@ -1781,7 +1781,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         );
 
         assertEquals(result, null);
-        assertEquals(requestedUrls, []);
+        assertEquals(requestedUrls, ["https://api.veryfront.com/me"]);
         assertEquals(output.join("\n").includes("env-valid-token"), false);
         assertEquals(output.join("\n").includes("stored-valid-token"), false);
       } finally {
@@ -1843,7 +1843,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
                     }, projectDir),
                 ),
               Error,
-              "sets VERYFRONT_API_URL to https://attacker.example",
+              "sets VERYFRONT_API_URL to a repository-configured API endpoint",
             ),
         );
 

@@ -139,11 +139,17 @@ function isHostedChatProviderVisibleNonToolPart(role: string, part: unknown): bo
   return false;
 }
 
+/** Upper bound on replayed messages accepted per hosted chat request (DoS guard). */
+export const MAX_HOSTED_CHAT_REQUEST_MESSAGES = 1000;
+/** Upper bound on parts accepted per replayed hosted chat message (DoS guard). */
+export const MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS = 1000;
+
 const getHostedChatRequestMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     role: getChatUiMessageRoleSchema(),
-    parts: v.array(getHostedChatRequestMessagePartSchema()),
+    parts: v.array(getHostedChatRequestMessagePartSchema())
+      .max(MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS),
     metadata: v.record(v.string(), v.unknown()).optional(),
   }).strip()
 );
@@ -157,296 +163,337 @@ type OpenHostedToolCall = {
 };
 
 const getHostedChatRequestMessagesSchema = defineSchema((v) =>
-  v.array(getHostedChatRequestMessageSchema()).superRefine((messages, ctx) => {
-    const knownToolNames = new Map<string, string>();
-    const knownToolResultIds = new Set<string>();
-    const openToolCalls = new Map<string, OpenHostedToolCall>();
-    const recordToolCall = (
-      toolCallId: string,
-      toolName: string,
-      path: Array<string | number>,
-      options: { messageIndex: number; requiresResult?: boolean },
-    ): boolean => {
-      rejectOpenToolCallsBeforeNewCall(options.messageIndex);
-      if (knownToolNames.has(toolCallId)) {
-        ctx.addIssue({
-          code: "custom",
-          message: "tool_call id must be unique",
-          path,
-        });
-        return false;
+  v.array(getHostedChatRequestMessageSchema()).max(MAX_HOSTED_CHAT_REQUEST_MESSAGES)
+    .superRefine((messages, ctx) => {
+      // Zod records .max() as a nonfatal issue and still invokes refinements.
+      // Do not traverse or correlate an oversized replay after its bounds have
+      // already rejected it.
+      if (messages.length > MAX_HOSTED_CHAT_REQUEST_MESSAGES) return;
+      for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+        if (messages[messageIndex]!.parts.length > MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS) return;
       }
 
-      knownToolNames.set(toolCallId, toolName);
-      openToolCalls.set(toolCallId, {
-        toolName,
-        path,
-        originMessageIndex: options.messageIndex,
-        requiresResult: options?.requiresResult === true,
-        sawLaterNonResultContent: false,
-      });
-      return true;
-    };
-    const rejectUnresolvedTerminalToolCalls = (message: string): boolean => {
-      let rejected = false;
-      for (const openToolCall of openToolCalls.values()) {
-        if (!openToolCall.requiresResult) {
-          continue;
-        }
-
-        rejected = true;
-        ctx.addIssue({
-          code: "custom",
-          message,
-          path: openToolCall.path,
-        });
-      }
-
-      if (rejected) {
-        openToolCalls.clear();
-      }
-      return rejected;
-    };
-    const closeOpenBatchBeforeContinuation = (): void => {
-      rejectUnresolvedTerminalToolCalls(
-        "terminal tool_call requires an adjacent tool_result before conversation continuation",
-      );
-      openToolCalls.clear();
-    };
-    const rejectOpenToolCallsBeforeNewCall = (messageIndex: number): void => {
-      for (const [toolCallId, openToolCall] of openToolCalls) {
-        if (
-          openToolCall.originMessageIndex === messageIndex &&
-          !openToolCall.sawLaterNonResultContent
-        ) {
-          continue;
-        }
-
-        if (openToolCall.requiresResult) {
+      const knownToolNames = new Map<string, string>();
+      const knownToolResultIds = new Set<string>();
+      const openToolCalls = new Map<string, OpenHostedToolCall>();
+      // Count of openToolCalls entries originating from the current message that
+      // have not seen later non-result content. When every open entry is in that
+      // state, rejectOpenToolCallsBeforeNewCall is a no-op, so tracking the count
+      // lets it skip rescanning the map for each tool call in the same message
+      // (keeping validation linear instead of quadratic in parts per message).
+      let currentMessageIndex = 0;
+      let freshOpenToolCallCount = 0;
+      let currentBatchSawNonResultContent = false;
+      const recordToolCall = (
+        toolCallId: string,
+        toolName: string,
+        path: Array<string | number>,
+        options: { messageIndex: number; requiresResult?: boolean },
+      ): boolean => {
+        rejectOpenToolCallsBeforeNewCall(options.messageIndex);
+        if (knownToolNames.has(toolCallId)) {
           ctx.addIssue({
             code: "custom",
-            message: openToolCall.originMessageIndex === messageIndex
-              ? "terminal tool_call requires a same-message tool_result before assistant continuation"
-              : "terminal tool_call requires an adjacent tool_result before conversation continuation",
+            message: "tool_call id must be unique",
+            path,
+          });
+          return false;
+        }
+
+        knownToolNames.set(toolCallId, toolName);
+        openToolCalls.set(toolCallId, {
+          toolName,
+          path,
+          originMessageIndex: options.messageIndex,
+          requiresResult: options?.requiresResult === true,
+          sawLaterNonResultContent: false,
+        });
+        freshOpenToolCallCount += 1;
+        currentBatchSawNonResultContent = false;
+        return true;
+      };
+      const rejectUnresolvedTerminalToolCalls = (message: string): boolean => {
+        let rejected = false;
+        for (const openToolCall of openToolCalls.values()) {
+          if (!openToolCall.requiresResult) {
+            continue;
+          }
+
+          rejected = true;
+          ctx.addIssue({
+            code: "custom",
+            message,
             path: openToolCall.path,
           });
         }
-        openToolCalls.delete(toolCallId);
-      }
-    };
-    const handleNonResultContent = (messageIndex: number): void => {
-      for (const [toolCallId, openToolCall] of openToolCalls) {
-        if (openToolCall.originMessageIndex !== messageIndex) {
+
+        if (rejected) {
+          openToolCalls.clear();
+          freshOpenToolCallCount = 0;
+          currentBatchSawNonResultContent = false;
+        }
+        return rejected;
+      };
+      const closeOpenBatchBeforeContinuation = (): void => {
+        rejectUnresolvedTerminalToolCalls(
+          "terminal tool_call requires an adjacent tool_result before conversation continuation",
+        );
+        openToolCalls.clear();
+        freshOpenToolCallCount = 0;
+        currentBatchSawNonResultContent = false;
+      };
+      const rejectOpenToolCallsBeforeNewCall = (messageIndex: number): void => {
+        if (openToolCalls.size === freshOpenToolCallCount) {
+          return;
+        }
+
+        for (const [toolCallId, openToolCall] of openToolCalls) {
+          if (
+            openToolCall.originMessageIndex === messageIndex &&
+            !openToolCall.sawLaterNonResultContent
+          ) {
+            continue;
+          }
+
           if (openToolCall.requiresResult) {
             ctx.addIssue({
               code: "custom",
-              message:
-                "terminal tool_call requires an adjacent tool_result before conversation continuation",
+              message: openToolCall.originMessageIndex === messageIndex
+                ? "terminal tool_call requires a same-message tool_result before assistant continuation"
+                : "terminal tool_call requires an adjacent tool_result before conversation continuation",
               path: openToolCall.path,
             });
           }
           openToolCalls.delete(toolCallId);
-          continue;
         }
+        freshOpenToolCallCount = openToolCalls.size;
+      };
+      const handleNonResultContent = (messageIndex: number): void => {
+        if (currentBatchSawNonResultContent && freshOpenToolCallCount === 0) return;
 
-        openToolCalls.set(toolCallId, {
-          ...openToolCall,
-          sawLaterNonResultContent: true,
-        });
-      }
-    };
-    const closeOpenBatchAfterSameMessageContinuation = (): void => {
-      for (const [toolCallId, openToolCall] of openToolCalls) {
-        if (!openToolCall.sawLaterNonResultContent) {
-          continue;
-        }
-
-        if (openToolCall.requiresResult) {
-          ctx.addIssue({
-            code: "custom",
-            message:
-              "terminal tool_call requires a same-message tool_result before assistant continuation",
-            path: openToolCall.path,
-          });
-        }
-        openToolCalls.delete(toolCallId);
-      }
-    };
-    const validateToolResult = (
-      toolCallId: string,
-      toolName: string | undefined,
-      toolCallIdPath: Array<string | number>,
-      toolNamePath: Array<string | number>,
-    ) => {
-      if (knownToolResultIds.has(toolCallId)) {
-        ctx.addIssue({
-          code: "custom",
-          message: "tool_result for tool_call_id must be unique",
-          path: toolCallIdPath,
-        });
-        return;
-      }
-
-      knownToolResultIds.add(toolCallId);
-      const knownToolName = knownToolNames.get(toolCallId);
-      if (!knownToolName) {
-        ctx.addIssue({
-          code: "custom",
-          message: "tool_result requires a preceding matching tool_call",
-          path: toolCallIdPath,
-        });
-        return;
-      }
-
-      const openToolCall = openToolCalls.get(toolCallId);
-      if (!openToolCall) {
-        ctx.addIssue({
-          code: "custom",
-          message: "tool_result requires an adjacent terminal tool_call",
-          path: toolCallIdPath,
-        });
-        return;
-      }
-
-      openToolCalls.delete(toolCallId);
-      if (toolName && toolName !== openToolCall.toolName) {
-        ctx.addIssue({
-          code: "custom",
-          message: "tool_result tool_name must match its preceding tool_call",
-          path: toolNamePath,
-        });
-      }
-    };
-    const getFirstProviderVisiblePart = (
-      role: string,
-      parts: readonly unknown[],
-    ): unknown | undefined => {
-      return parts.find((part) =>
-        isHostedChatToolResultPart(part) ||
-        isHostedChatUiToolPartCandidate(part) ||
-        (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) ||
-        isHostedChatProviderVisibleNonToolPart(role, part)
-      );
-    };
-
-    for (const [messageIndex, message] of messages.entries()) {
-      const firstPart = getFirstProviderVisiblePart(message.role, message.parts);
-      if (firstPart && openToolCalls.size > 0 && !isHostedChatToolResultPart(firstPart)) {
-        closeOpenBatchBeforeContinuation();
-      }
-
-      for (const [partIndex, part] of message.parts.entries()) {
-        const uiToolIdentity = getHostedChatUiToolIdentity(part);
-        const isRawToolCall = part.type === "tool_call" && "id" in part && "name" in part;
-        if (isRawToolCall && message.role !== "assistant") {
-          ctx.addIssue({
-            code: "custom",
-            message: "tool_call is only allowed in assistant messages",
-            path: [messageIndex, "parts", partIndex, "type"],
-          });
-          continue;
-        }
-
-        if (!uiToolIdentity && !isRawToolCall && isHostedChatUiToolPartCandidate(part)) {
-          ctx.addIssue({
-            code: "custom",
-            message: "tool UI parts require a non-empty toolName",
-            path: [messageIndex, "parts", partIndex, "toolName"],
-          });
-          continue;
-        }
-
-        if (
-          uiToolIdentity && message.role !== "assistant" && message.role !== "tool"
-        ) {
-          ctx.addIssue({
-            code: "custom",
-            message: "tool UI parts are only allowed in assistant or tool messages",
-            path: [messageIndex, "parts", partIndex, "type"],
-          });
-          continue;
-        }
-
-        if (
-          part.type === "tool_result" && message.role !== "assistant" && message.role !== "tool"
-        ) {
-          ctx.addIssue({
-            code: "custom",
-            message: "tool_result is only allowed in assistant or tool messages",
-            path: [messageIndex, "parts", partIndex, "type"],
-          });
-          continue;
-        }
-
-        if (isRawToolCall) {
-          recordToolCall(part.id, part.name, [messageIndex, "parts", partIndex, "id"], {
-            messageIndex,
-            requiresResult: part.state === "completed" || part.state === "error",
-          });
-          continue;
-        }
-
-        if (uiToolIdentity) {
-          if (message.role === "assistant") {
-            recordToolCall(uiToolIdentity.toolCallId, uiToolIdentity.toolName, [
-              messageIndex,
-              "parts",
-              partIndex,
-              "toolCallId",
-            ], {
-              messageIndex,
-              requiresResult: "state" in part && part.state === "completed",
-            });
+        for (const [toolCallId, openToolCall] of openToolCalls) {
+          if (openToolCall.originMessageIndex !== messageIndex) {
+            if (openToolCall.requiresResult) {
+              ctx.addIssue({
+                code: "custom",
+                message:
+                  "terminal tool_call requires an adjacent tool_result before conversation continuation",
+                path: openToolCall.path,
+              });
+            }
+            openToolCalls.delete(toolCallId);
+            continue;
           }
 
-          const hasUiToolResult = "state" in part &&
-            (part.state === "output-available" || part.state === "output-error" ||
-              part.state === "output-denied" || part.state === "error");
-          if (message.role === "tool" && !hasUiToolResult) {
+          openToolCalls.set(toolCallId, {
+            ...openToolCall,
+            sawLaterNonResultContent: true,
+          });
+        }
+        freshOpenToolCallCount = 0;
+        currentBatchSawNonResultContent = true;
+      };
+      const closeOpenBatchAfterSameMessageContinuation = (): void => {
+        for (const [toolCallId, openToolCall] of openToolCalls) {
+          if (!openToolCall.sawLaterNonResultContent) {
+            continue;
+          }
+
+          if (openToolCall.requiresResult) {
             ctx.addIssue({
               code: "custom",
-              message: "tool message UI parts require a result-bearing state",
-              path: [messageIndex, "parts", partIndex, "state"],
+              message:
+                "terminal tool_call requires a same-message tool_result before assistant continuation",
+              path: openToolCall.path,
+            });
+          }
+          openToolCalls.delete(toolCallId);
+        }
+      };
+      const validateToolResult = (
+        toolCallId: string,
+        toolName: string | undefined,
+        toolCallIdPath: Array<string | number>,
+        toolNamePath: Array<string | number>,
+      ) => {
+        if (knownToolResultIds.has(toolCallId)) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result for tool_call_id must be unique",
+            path: toolCallIdPath,
+          });
+          return;
+        }
+
+        knownToolResultIds.add(toolCallId);
+        const knownToolName = knownToolNames.get(toolCallId);
+        if (!knownToolName) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result requires a preceding matching tool_call",
+            path: toolCallIdPath,
+          });
+          return;
+        }
+
+        const openToolCall = openToolCalls.get(toolCallId);
+        if (!openToolCall) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result requires an adjacent terminal tool_call",
+            path: toolCallIdPath,
+          });
+          return;
+        }
+
+        if (
+          openToolCall.originMessageIndex === currentMessageIndex &&
+          !openToolCall.sawLaterNonResultContent
+        ) {
+          freshOpenToolCallCount -= 1;
+        }
+        openToolCalls.delete(toolCallId);
+        if (toolName && toolName !== openToolCall.toolName) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result tool_name must match its preceding tool_call",
+            path: toolNamePath,
+          });
+        }
+      };
+      const getFirstProviderVisiblePart = (
+        role: string,
+        parts: readonly unknown[],
+      ): unknown | undefined => {
+        return parts.find((part) =>
+          isHostedChatToolResultPart(part) ||
+          isHostedChatUiToolPartCandidate(part) ||
+          (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) ||
+          isHostedChatProviderVisibleNonToolPart(role, part)
+        );
+      };
+
+      for (const [messageIndex, message] of messages.entries()) {
+        currentMessageIndex = messageIndex;
+        freshOpenToolCallCount = 0;
+        currentBatchSawNonResultContent = false;
+        const firstPart = getFirstProviderVisiblePart(message.role, message.parts);
+        if (firstPart && openToolCalls.size > 0 && !isHostedChatToolResultPart(firstPart)) {
+          closeOpenBatchBeforeContinuation();
+        }
+
+        for (const [partIndex, part] of message.parts.entries()) {
+          const uiToolIdentity = getHostedChatUiToolIdentity(part);
+          const isRawToolCall = part.type === "tool_call" && "id" in part && "name" in part;
+          if (isRawToolCall && message.role !== "assistant") {
+            ctx.addIssue({
+              code: "custom",
+              message: "tool_call is only allowed in assistant messages",
+              path: [messageIndex, "parts", partIndex, "type"],
             });
             continue;
           }
 
-          if (hasUiToolResult) {
-            validateToolResult(
-              uiToolIdentity.toolCallId,
-              uiToolIdentity.toolName,
-              [messageIndex, "parts", partIndex, "toolCallId"],
-              [
+          if (!uiToolIdentity && !isRawToolCall && isHostedChatUiToolPartCandidate(part)) {
+            ctx.addIssue({
+              code: "custom",
+              message: "tool UI parts require a non-empty toolName",
+              path: [messageIndex, "parts", partIndex, "toolName"],
+            });
+            continue;
+          }
+
+          if (
+            uiToolIdentity && message.role !== "assistant" && message.role !== "tool"
+          ) {
+            ctx.addIssue({
+              code: "custom",
+              message: "tool UI parts are only allowed in assistant or tool messages",
+              path: [messageIndex, "parts", partIndex, "type"],
+            });
+            continue;
+          }
+
+          if (
+            part.type === "tool_result" && message.role !== "assistant" && message.role !== "tool"
+          ) {
+            ctx.addIssue({
+              code: "custom",
+              message: "tool_result is only allowed in assistant or tool messages",
+              path: [messageIndex, "parts", partIndex, "type"],
+            });
+            continue;
+          }
+
+          if (isRawToolCall) {
+            recordToolCall(part.id, part.name, [messageIndex, "parts", partIndex, "id"], {
+              messageIndex,
+              requiresResult: part.state === "completed" || part.state === "error",
+            });
+            continue;
+          }
+
+          if (uiToolIdentity) {
+            if (message.role === "assistant") {
+              recordToolCall(uiToolIdentity.toolCallId, uiToolIdentity.toolName, [
                 messageIndex,
                 "parts",
                 partIndex,
-                "toolName" in part ? "toolName" : "type",
-              ],
-            );
+                "toolCallId",
+              ], {
+                messageIndex,
+                requiresResult: "state" in part && part.state === "completed",
+              });
+            }
+
+            const hasUiToolResult = "state" in part &&
+              (part.state === "output-available" || part.state === "output-error" ||
+                part.state === "output-denied" || part.state === "error");
+            if (message.role === "tool" && !hasUiToolResult) {
+              ctx.addIssue({
+                code: "custom",
+                message: "tool message UI parts require a result-bearing state",
+                path: [messageIndex, "parts", partIndex, "state"],
+              });
+              continue;
+            }
+
+            if (hasUiToolResult) {
+              validateToolResult(
+                uiToolIdentity.toolCallId,
+                uiToolIdentity.toolName,
+                [messageIndex, "parts", partIndex, "toolCallId"],
+                [
+                  messageIndex,
+                  "parts",
+                  partIndex,
+                  "toolName" in part ? "toolName" : "type",
+                ],
+              );
+            }
+            continue;
           }
-          continue;
+
+          if (part.type !== "tool_result") {
+            if (isHostedChatProviderVisibleNonToolPart(message.role, part)) {
+              handleNonResultContent(messageIndex);
+            }
+            continue;
+          }
+
+          validateToolResult(
+            part.tool_call_id,
+            part.tool_name,
+            [messageIndex, "parts", partIndex, "tool_call_id"],
+            [messageIndex, "parts", partIndex, "tool_name"],
+          );
         }
 
-        if (part.type !== "tool_result") {
-          if (isHostedChatProviderVisibleNonToolPart(message.role, part)) {
-            handleNonResultContent(messageIndex);
-          }
-          continue;
-        }
-
-        validateToolResult(
-          part.tool_call_id,
-          part.tool_name,
-          [messageIndex, "parts", partIndex, "tool_call_id"],
-          [messageIndex, "parts", partIndex, "tool_name"],
-        );
+        closeOpenBatchAfterSameMessageContinuation();
       }
 
-      closeOpenBatchAfterSameMessageContinuation();
-    }
-
-    rejectUnresolvedTerminalToolCalls("terminal tool_call requires a matching tool_result");
-  })
+      rejectUnresolvedTerminalToolCalls("terminal tool_call requires a matching tool_result");
+    })
 );
 
 export const getHostedChatRequestSchema = defineSchema((v) =>
@@ -462,14 +509,20 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
   })
 );
 
-/** Schema for hosted chat request.
+/**
+ * Schema for hosted chat request. A request accepts at most 1,000 replayed
+ * messages and at most 1,000 parts in each message.
+ *
  * @deprecated Use getHostedChatRequestSchema()
  */
 export const hostedChatRequestSchema = lazySchema(getHostedChatRequestSchema);
 
 /** Request payload for hosted chat. */
 export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatRequestSchema>>;
-/** Input payload for hosted chat request. */
+/**
+ * Input payload for hosted chat request. A request accepts at most 1,000
+ * replayed messages and at most 1,000 parts in each message.
+ */
 export type HostedChatRequestInput = {
   messages: RuntimeAgentRunInvocation["messages"];
   context: InferSchema<ReturnType<typeof getChatRequestContextSchema>>;

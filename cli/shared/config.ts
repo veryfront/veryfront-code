@@ -370,6 +370,7 @@ async function resolveApiCredentialCandidates(
   configFile: VeryfrontConfig | null,
   interactive: boolean,
   validationEnv: EnvironmentConfig,
+  configFileValidationEnv: EnvironmentConfig = validationEnv,
 ): Promise<ApiCredentialCandidate[]> {
   const envToken = env.apiToken;
   const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
@@ -393,7 +394,7 @@ async function resolveApiCredentialCandidates(
     candidates.push({
       apiToken: configFile.apiToken,
       apiTokenSource: "config-file",
-      validationEnv,
+      validationEnv: configFileValidationEnv,
       authoritative: true,
     });
   }
@@ -435,13 +436,26 @@ export async function resolveApiCredentialCandidatesForAuth(
 ): Promise<ApiCredentialCandidate[]> {
   const configFile = await readConfigJsonFile(projectDir);
   const trust = resolveApiUrlTrust(env, configFile);
-  const validationEnv = { ...env, apiUrl: trust.apiUrl };
+  // A checked-in veryfront.json apiUrl only steers the credential that came
+  // from that same file. Shell-environment, .env-file, and token-store
+  // credentials validate against the environment-derived API URL, so a
+  // malicious repository config cannot redirect their Authorization headers
+  // to an attacker-controlled host.
+  const validationEnv = {
+    ...env,
+    apiUrl: resolveCliApiUrl(env),
+  };
+  const configFileValidationEnv = {
+    ...env,
+    apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+  };
 
   const candidates = await resolveApiCredentialCandidates(
     env,
     configFile,
     interactive,
     validationEnv,
+    configFileValidationEnv,
   );
 
   // `login`, `whoami`, and `up` validate a candidate by sending it to
@@ -449,7 +463,7 @@ export async function resolveApiCredentialCandidatesForAuth(
   // host before any call to `resolveConfig`. They need the same rule: a
   // repository-steered host may only receive credentials the repository itself
   // supplied, never a shell, stored-login, or unrelated .env token.
-  if (!trust.repositorySteered) return candidates;
+  if (!trust.repositorySteered || trust.steeringEnvFile === undefined) return candidates;
   return candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust));
 }
 
