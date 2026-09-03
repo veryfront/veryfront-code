@@ -301,6 +301,32 @@ describe("server/build-routes", () => {
       const routes = await collectPagesRoutes(adapter, "/project", ["/nonexistent"]);
       assertEquals(routes, []);
     });
+
+    // The mock adapter yields directory entries in declaration order, so
+    // declaring these out of path order reproduces the filesystem-dependent
+    // discovery order that `readDir` gives on a real disk.
+    it("orders routes by path regardless of directory iteration order", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/zebra.mdx": "# Zebra",
+        "/project/pages/index.mdx": "# Home",
+        "/project/pages/blog.mdx": "# Blog",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/blog", "/zebra"]);
+    });
+
+    it("breaks ties on source file when two files map to the same path", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/about/index.mdx": "# About index",
+        "/project/pages/about.mdx": "# About",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/about", "/about"]);
+      assertEquals(routes.map((r) => r.file), [
+        "/project/pages/about.mdx",
+        "/project/pages/about/index.mdx",
+      ]);
+    });
   });
 
   describe("collectAppRoutes", () => {
@@ -533,6 +559,18 @@ describe("server/build-routes", () => {
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
       assertEquals(routes[0]!.segmentDirs, ["/project/app", "/project/app/blog"]);
+    });
+
+    // `walkAppSSG` recurses in `readDir` order, so a subdirectory declared
+    // first is collected first; sorting is what makes the result stable.
+    it("orders routes by path regardless of directory iteration order", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/zebra/page.tsx": "export default function Zebra() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/about/page.tsx": "export default function About() {}",
+      });
+      const routes = await collectAppRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/about", "/zebra"]);
     });
   });
 });

@@ -38,6 +38,23 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
+/**
+ * Order routes deterministically by route path, breaking ties on the source
+ * file so two files that map to the same path keep a stable relative order.
+ *
+ * Directory iteration order is filesystem-dependent -- `readDir` guarantees no
+ * ordering, and ext4's hashed order differs from APFS's -- so collecting in
+ * discovery order made the collected routes, and everything derived from them
+ * (`ssgPaths`, generated manifests, sitemaps), vary by machine. Comparisons are
+ * plain code-unit comparisons rather than `localeCompare` so the result does
+ * not depend on the build host's locale either.
+ */
+function compareRoutes(aPath: string, aFile: string, bPath: string, bFile: string): number {
+  if (aPath !== bPath) return aPath < bPath ? -1 : 1;
+  if (aFile === bFile) return 0;
+  return aFile < bFile ? -1 : 1;
+}
+
 export async function collectPagesRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -69,7 +86,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes;
+  return routes.sort((a, b) => compareRoutes(a.path, a.file, b.path, b.file));
 }
 
 /**
@@ -96,7 +113,9 @@ export async function collectAppRoutes(
 
   logger.debug(`Found ${collected.length} App Router static routes`);
 
-  return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
+  return collected
+    .filter((r) => shouldIncludeRoute(r.path, include, exclude))
+    .sort((a, b) => compareRoutes(a.path, a.pageFile, b.path, b.pageFile));
 }
 
 function isForceDynamic(source: string): boolean {
