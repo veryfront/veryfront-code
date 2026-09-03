@@ -25,11 +25,20 @@ export interface ProjectSourceExecutionContext {
   proxyContext?: ProxyProjectSourceContext;
 }
 
+// Captured before project code runs: the host-private stored login token is
+// normalized here, so a project that replaces `String.prototype.trim` must not
+// observe the credential from the method receiver.
+const stringTrim = String.prototype.trim;
+
+function trimHostPrivate(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : Reflect.apply(stringTrim, value, []) as string;
+}
+
 export function getProxyProjectSourceContext(): ProxyProjectSourceContext | null {
   const projectSlug = getEnv("VERYFRONT_PROJECT_SLUG")?.trim();
   // Host-scoped: `applyRuntimeAuthContext` keeps the CLI login token out of the
   // process environment, so it resolves through `getHostEnv` and not `getEnv`.
-  const token = getHostEnv("VERYFRONT_API_TOKEN")?.trim();
+  const token = trimHostPrivate(getHostEnv("VERYFRONT_API_TOKEN"));
 
   if (!projectSlug || !token) {
     return null;

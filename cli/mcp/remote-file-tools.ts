@@ -29,8 +29,15 @@ function getApiBaseUrl(): string {
   return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
 }
 
+// Captured before project code runs: `getApiToken` passes the host-private
+// stored login token through this normalizer, so a project that replaces
+// `String.prototype.trim` must not observe the credential from the method
+// receiver.
+const stringTrim = String.prototype.trim;
+
 function normalizeToken(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
+  if (value === undefined) return undefined;
+  const normalized = Reflect.apply(stringTrim, value, []) as string;
   return normalized ? normalized : undefined;
 }
 

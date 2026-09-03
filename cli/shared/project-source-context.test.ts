@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { VeryfrontConfig } from "veryfront/config";
-import { deleteHostSecret, getHostEnv } from "#cli/process-env";
+import { deleteHostSecret, getHostEnv, setHostSecret } from "#cli/process-env";
 import { saveToken } from "../auth/token-store.ts";
 import {
   applyProjectSourceRuntimeAuth,
@@ -52,6 +52,42 @@ describe("getProxyProjectSourceContext", () => {
       projectId: "project-id",
       branchRef: "preview",
     });
+  });
+
+  it("normalizes the stored login token without a mutable String.prototype hook", () => {
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", "example-project");
+    Deno.env.delete("VERYFRONT_API_TOKEN");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    Deno.env.delete("VERYFRONT_BRANCH_REF");
+    Deno.env.delete("TENANT_BRANCH_ID");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    // Project code served by `veryfront dev` runs in this realm and can
+    // replace `String.prototype.trim`. Normalizing the host-private credential
+    // must never hand it to such a hook as its method receiver.
+    const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
+    let observedCredential = 0;
+    Object.defineProperty(String.prototype, "trim", {
+      configurable: true,
+      writable: true,
+      value: function (this: unknown): string {
+        if (this === "stored-login-token") observedCredential += 1;
+        return Reflect.apply(originalTrim.value, this, []);
+      },
+    });
+
+    try {
+      assertEquals(getProxyProjectSourceContext(), {
+        projectSlug: "example-project",
+        token: "stored-login-token",
+        projectId: undefined,
+        branchRef: null,
+      });
+    } finally {
+      Object.defineProperty(String.prototype, "trim", originalTrim);
+    }
+
+    assertEquals(observedCredential, 0);
   });
 
   it("uses TENANT_BRANCH_ID when VERYFRONT_BRANCH_REF is not set", () => {

@@ -138,6 +138,45 @@ describe("integrations/remote-tools", () => {
     }
   });
 
+  it("validates the stored login token without a mutable String.prototype hook", async () => {
+    // Project code served by `veryfront dev` runs in this realm and can replace
+    // `String.prototype.charCodeAt` before integration discovery. Token
+    // validation must never hand the host-private credential to such a hook as
+    // its method receiver.
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    const originalCharCodeAt = Object.getOwnPropertyDescriptor(
+      String.prototype,
+      "charCodeAt",
+    )!;
+    let observedCredential = 0;
+    Object.defineProperty(String.prototype, "charCodeAt", {
+      configurable: true,
+      writable: true,
+      value: function (this: unknown, index: number): number {
+        if (this === "stored-login-token") observedCredential += 1;
+        return Reflect.apply(originalCharCodeAt.value, this, [index]);
+      },
+    });
+
+    let authorization = "";
+    try {
+      await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+    } finally {
+      Object.defineProperty(String.prototype, "charCodeAt", originalCharCodeAt);
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
+    // The credential still authenticates discovery, and the poisoned hook never
+    // received it as a receiver.
+    assertEquals(authorization, "Bearer stored-login-token");
+    assertEquals(observedCredential, 0);
+  });
+
   it("does not let a blank exported token shadow the stored login token", async () => {
     // The environment snapshot keeps a whitespace-only export verbatim, and the
     // CLI treats that as "unset" when it registers the stored token.

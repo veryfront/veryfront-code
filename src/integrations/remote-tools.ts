@@ -212,6 +212,13 @@ function snapshotToolExecutionContext(
 // Per-request token resolution
 // ---------------------------------------------------------------------------
 
+// Captured before project code runs: `resolveRequestToken` passes the
+// host-private stored login token through this validator, so a project that
+// replaces `String.prototype.charCodeAt` must not observe the credential from
+// the method receiver.
+const applyIntrinsic = Reflect.apply;
+const stringCharCodeAt = String.prototype.charCodeAt;
+
 function isValidApiToken(token: unknown): token is string {
   if (
     typeof token !== "string" ||
@@ -221,7 +228,7 @@ function isValidApiToken(token: unknown): token is string {
     return false;
   }
   for (let index = 0; index < token.length; index++) {
-    const code = token.charCodeAt(index);
+    const code = applyIntrinsic(stringCharCodeAt, token, [index]) as number;
     if (code < 0x21 || code > 0x7e) return false;
   }
   return true;

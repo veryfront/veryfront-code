@@ -503,6 +503,61 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(requestAuth, "Bearer stored-login-token");
     });
 
+    it("normalizes the stored login token without a mutable String.prototype hook", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiToken: undefined,
+      });
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      // Project code served by `veryfront dev` runs in this realm and can
+      // replace `String.prototype.trim` before the next remote-file call. Token
+      // normalization must never hand the host-private credential to such a
+      // hook as its method receiver.
+      const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
+      let observedCredential = 0;
+      Object.defineProperty(String.prototype, "trim", {
+        configurable: true,
+        writable: true,
+        value: function (this: unknown): string {
+          if (this === "stored-login-token") observedCredential += 1;
+          return Reflect.apply(originalTrim.value, this, []);
+        },
+      });
+
+      let requestAuth = "";
+      try {
+        await withMockFetch(async (input, init) => {
+          requestAuth = new Request(input, init).headers.get("Authorization") ?? "";
+          return new Response(
+            JSON.stringify({
+              id: "1",
+              path: "pages/index.tsx",
+              content: "export default function Page() {}",
+              size: 42,
+              type: "file",
+              updated_at: "2024-01-01T00:00:00.000Z",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }, async () => {
+          return await vfRemoteGetFile.execute({
+            project: "my-project",
+            path: "pages/index.tsx",
+          });
+        });
+      } finally {
+        Object.defineProperty(String.prototype, "trim", originalTrim);
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+
+      // The credential still authenticates the call, and the poisoned hook
+      // never received it as a receiver.
+      assertEquals(requestAuth, "Bearer stored-login-token");
+      assertEquals(observedCredential, 0);
+    });
+
     it("returns error response when API responds with unauthorized JSON error", async () => {
       resetEnv();
       let requestUrl = "";
