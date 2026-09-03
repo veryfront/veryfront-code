@@ -21,6 +21,8 @@ import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
 const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
 const API_MAX_RETRIES = 3;
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
 
 /** Returns true for HTTP status codes that indicate a transient gateway failure. */
 function isTransientStatus(status: number): boolean {
@@ -245,7 +247,10 @@ async function resolveApiCredentialCandidates(
   // CLI treats a blank `VERYFRONT_API_TOKEN` as unset everywhere it decides
   // between the exported and the stored login token. An unusable blank export
   // must not become an authoritative candidate that shadows the token store.
-  const envToken = env.apiToken?.trim() ? env.apiToken : undefined;
+  const envToken = env.apiToken !== undefined &&
+      (applyIntrinsic(stringTrim, env.apiToken, []) as string)
+    ? env.apiToken
+    : undefined;
   const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
   const storedToken = await readToken(env);
   const candidates: ApiCredentialCandidate[] = [];

@@ -262,6 +262,27 @@ describe("resolveConfigWithAuth", () => {
     });
   });
 
+  it("does not expose an exported token to a project-replaced trim method", async () => {
+    const token = "test-shell-token";
+    const originalTrim = String.prototype.trim;
+    let observedToken = false;
+    String.prototype.trim = function () {
+      if (String(this) === token) observedToken = true;
+      return Reflect.apply(originalTrim, this, []);
+    };
+
+    try {
+      const config = await resolveConfigWithAuth(
+        "/tmp/test-dir",
+        createMockEnv({ apiToken: token, projectSlug: "test-project" }),
+      );
+      assertEquals(config.apiToken, token);
+      assertEquals(observedToken, false);
+    } finally {
+      String.prototype.trim = originalTrim;
+    }
+  });
+
   it("prefers veryfront.json token over project .env and token store for management commands", async () => {
     const tempDir = await Deno.makeTempDir();
     const configHome = await Deno.makeTempDir();
