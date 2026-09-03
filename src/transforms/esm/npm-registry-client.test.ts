@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import { refreshEnvironmentConfig } from "../../config/environment-config.ts";
 import {
@@ -135,6 +136,43 @@ describe("npm-registry-client dependency contracts", () => {
       assertEquals(authorization, "Bearer request-scoped-token");
     } finally {
       globalThis.fetch = originalFetch;
+      setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      refreshEnvironmentConfig();
+    }
+  });
+
+  it("authenticates the write-back with a host-private stored login token", async () => {
+    // A stored `veryfront login` token is registered host-privately instead of
+    // being exported, so the environment snapshot never carries it. The
+    // write-back must still authenticate instead of silently skipping.
+    const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+    const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+    const originalFetch = globalThis.fetch;
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    setEnv("VERYFRONT_API_TOKEN", "");
+    refreshEnvironmentConfig();
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    globalThis.fetch = (_input, init) => {
+      authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ?? "";
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+
+    try {
+      schedulePlatformDependencyResolution(
+        "host-token-project",
+        "zod",
+        "^3",
+        MAIN_SCHEDULE,
+      );
+      await _pendingResolutions();
+
+      assertEquals(authorization, "Bearer stored-login-token");
+    } finally {
+      globalThis.fetch = originalFetch;
+      deleteHostSecret("VERYFRONT_API_TOKEN");
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
       refreshEnvironmentConfig();

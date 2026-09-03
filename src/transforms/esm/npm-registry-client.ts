@@ -399,7 +399,13 @@ export async function postDependencyResolution(
   );
   const config = getEnvironmentConfig();
   const apiBaseUrl = config.apiBaseUrl;
-  const apiToken = authToken || config.apiToken;
+  // The environment snapshot only carries an explicitly exported token; a
+  // stored `veryfront login` token is registered host-privately so project
+  // code cannot read it out of the process environment. Falling back to
+  // `getHostEnv` keeps the write-back authenticated for a CLI-authenticated
+  // dev session, and a blank exported value must not shadow that credential.
+  const snapshotToken = config.apiToken?.trim() ? config.apiToken : undefined;
+  const apiToken = authToken || snapshotToken || getHostEnv("VERYFRONT_API_TOKEN");
 
   if (!apiBaseUrl || !apiToken) {
     logger.debug("Skipping dependency resolution write-back: no API config", { projectId });
