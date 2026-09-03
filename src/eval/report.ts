@@ -14,6 +14,7 @@ import type {
   EvalReportMetadata,
   EvalReportSummary,
   EvalUsageSummary,
+  LocalEvalReport,
 } from "./types.ts";
 import { computeHash } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
@@ -346,9 +347,9 @@ export function createEvalReport(input: {
   runId: string;
   startedAt: Date;
   endedAt: Date;
-  dataset?: EvalReportDatasetMetadata;
+  dataset?: EvalReportDatasetMetadata & { hash: string };
   metadata?: EvalReportMetadata;
-}): EvalReport {
+}): LocalEvalReport {
   return {
     kind: "eval-report",
     schemaVersion: EVAL_REPORT_SCHEMA_VERSION,

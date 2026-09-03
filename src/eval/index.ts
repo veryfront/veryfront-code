@@ -166,6 +166,7 @@ export type {
   EvalTrace,
   EvalUsage,
   EvalUsageSummary,
+  LocalEvalReport,
   RunEvalOptions,
 } from "./types.ts";
 export type {

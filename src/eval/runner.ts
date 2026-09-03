@@ -24,6 +24,7 @@ import type {
   EvalToolCall,
   EvalTrace,
   EvalUsage,
+  LocalEvalReport,
   RunEvalOptions,
 } from "./types.ts";
 import {
@@ -587,7 +588,7 @@ async function runRecord(
 export async function runEval(
   definition: EvalDefinition,
   options: RunEvalOptions,
-) {
+): Promise<LocalEvalReport> {
   if (!isEvalDefinition(definition)) {
     throw createEvalValidationError("runEval requires a valid eval definition");
   }

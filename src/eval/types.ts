@@ -726,11 +726,16 @@ export interface EvalReportDatasetMetadata {
   path?: string;
   examples: number;
   /**
-   * Deterministic dataset content hash. Always present on locally created reports; removed
-   * from external exports unless redaction explicitly includes it.
+   * Deterministic dataset content hash. Sanitized exporter copies can omit it
+   * unless redaction explicitly includes it.
    */
   hash?: string;
 }
+
+/** Eval report returned by local execution, with its dataset hash intact. */
+export type LocalEvalReport = Omit<EvalReport, "dataset"> & {
+  dataset?: EvalReportDatasetMetadata & { hash: string };
+};
 
 /** Per-model row in an eval model comparison report. */
 export interface EvalModelReportSummary {

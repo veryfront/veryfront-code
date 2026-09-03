@@ -57,7 +57,7 @@ describe("eval/runner", () => {
     assertEquals(report.target, "agent:researcher");
     assertEquals(report.dataset?.kind, "inline");
     assertEquals(report.dataset?.examples, 2);
-    assertEquals(report.dataset?.hash?.startsWith("sha256:"), true);
+    assertEquals(report.dataset?.hash.startsWith("sha256:"), true);
     assertEquals(report.summary.records, 2);
     assertEquals(report.summary.passed, 2);
     assertEquals(report.summary.failed, 0);
