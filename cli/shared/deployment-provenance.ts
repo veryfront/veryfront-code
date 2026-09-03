@@ -25,6 +25,18 @@ export interface PushReceipt {
   branch: string;
   commitSha: string | null;
   sourceDigest: string;
+  /**
+   * Digest of the local file set the push uploaded, before the remote tree it
+   * produced folded in any preserved remote-only file.
+   *
+   * `sourceDigest` describes that remote tree, so it cannot be recomputed from
+   * this directory. This one can: recomputing it is direct evidence about
+   * whether the source still matches the upload, and unlike {@link clean} it
+   * does not inherit Git's blind spot for a file `.gitignore` hides while
+   * `.vfignore` does not. Optional so a receipt written by an earlier CLI still
+   * loads and falls back to the Git observation.
+   */
+  localSourceDigest?: string;
   clean: boolean;
   pushedAt: string;
 }
@@ -47,6 +59,14 @@ interface PushReceiptExpectation {
   commitSha?: string | null;
   /** Whether the local checkout is clean right now, from {@link resolveGitSource}. */
   clean: boolean;
+  /**
+   * Digest of the file set `veryfront push` would upload from this directory
+   * right now, or `null` when it could not be computed.
+   *
+   * Where both this and the receipt carry one, the pair settles whether the
+   * source still matches the upload and {@link clean} is not consulted.
+   */
+  localSourceDigest?: string | null;
   /**
    * Whether a clean receipt has to be backed by a clean checkout.
    *
@@ -124,6 +144,9 @@ function isPushReceipt(value: unknown): value is PushReceipt {
       (typeof receipt.commitSha === "string" && COMMIT_SHA_PATTERN.test(receipt.commitSha))) &&
     typeof receipt.sourceDigest === "string" &&
     SOURCE_DIGEST_PATTERN.test(receipt.sourceDigest) &&
+    (receipt.localSourceDigest === undefined ||
+      (typeof receipt.localSourceDigest === "string" &&
+        SOURCE_DIGEST_PATTERN.test(receipt.localSourceDigest))) &&
     typeof receipt.clean === "boolean" &&
     typeof receipt.pushedAt === "string";
 }
@@ -184,10 +207,9 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
         // supported file that `.gitignore` hides but `.vfignore` and
         // DEFAULT_IGNORE_PATTERNS do not (cli/sync/ignore.ts reads only
         // `.vfignore`) is uploaded by push yet stays invisible here, so editing
-        // one leaves the checkout clean and a clean receipt usable. Closing
-        // that needs a local source digest rather than a Git observation, and
-        // the receipt digests the resulting remote tree rather than the local
-        // snapshot, so it cannot be compared against one directly.
+        // one leaves the checkout clean. `localSourceDigest` is the proof that
+        // closes that gap; this flag is provenance metadata and the fallback
+        // for receipts written before the digest existed.
         args: [
           "status",
           "--porcelain=v1",
@@ -332,6 +354,50 @@ export async function clearPushReceipt(projectDir: string): Promise<void> {
   if (inspected.receiptExists) await fs.remove(path);
 }
 
+/**
+ * Refuse a receipt that no longer describes the source in this directory.
+ *
+ * The commit check alone cannot see edits that never reached a commit: they
+ * leave HEAD where the receipt left it. Two kinds of evidence close that gap,
+ * and the stronger one wins.
+ *
+ * A recomputed local source digest is a direct comparison of the file set push
+ * uploads, so it decides the question outright wherever the receipt carries one
+ * too. It sees exactly what push sees, including a file `.gitignore` hides
+ * while `.vfignore` does not, and it clears a working tree that is dirty only
+ * in files no push would upload.
+ *
+ * Git cleanliness is the fallback for receipts written before that digest
+ * existed. It is a proxy, not a proof: a receipt written from a clean checkout
+ * promises the pushed source was exactly that commit, so a tree that is no
+ * longer clean is provably not what was pushed, while a receipt that was
+ * already dirty proves nothing either way and keeps the push-then-deploy flow
+ * it has always had.
+ */
+function assertReceiptDescribesLocalSource(
+  receipt: PushReceipt,
+  expected: PushReceiptExpectation,
+): void {
+  if (receipt.localSourceDigest && expected.localSourceDigest) {
+    if (receipt.localSourceDigest === expected.localSourceDigest) return;
+    throw new Error(
+      "This directory no longer holds the source the latest push uploaded. " +
+        "Run veryfront push again to deploy the current source.",
+    );
+  }
+  if (!receipt.clean || expected.clean) return;
+  // With no current commit to name, "uncommitted changes" would misdescribe
+  // a project that is no longer a Git checkout at all; the refusal is the
+  // same, only the reason shown to the operator differs.
+  throw new Error(
+    expected.commitSha
+      ? "The latest push came from a clean checkout, but this project has uncommitted changes. " +
+        "Run veryfront push again to deploy them."
+      : "The latest push came from a clean checkout, but this project no longer resolves to a Git commit. " +
+        "Run veryfront push again to deploy the current source.",
+  );
+}
+
 export function validatePushReceipt(
   receipt: PushReceipt,
   expected: PushReceiptExpectation,
@@ -360,23 +426,6 @@ export function validatePushReceipt(
         : "The latest push has no Git commit SHA. Run veryfront push again from the checked-out commit.",
     );
   }
-  // The commit check alone cannot see edits that never reached a commit. A
-  // receipt written from a clean checkout is a promise that the pushed source
-  // was exactly that commit, so a working tree that is no longer clean is
-  // provably not what was pushed and must not be deployed as if it were. A
-  // receipt that was already dirty proves nothing either way, so it keeps the
-  // push-then-deploy flow it has always had.
-  if (expected.enforceClean !== false && receipt.clean && !expected.clean) {
-    // With no current commit to name, "uncommitted changes" would misdescribe
-    // a project that is no longer a Git checkout at all; the refusal is the
-    // same, only the reason shown to the operator differs.
-    throw new Error(
-      expected.commitSha
-        ? "The latest push came from a clean checkout, but this project has uncommitted changes. " +
-          "Run veryfront push again to deploy them."
-        : "The latest push came from a clean checkout, but this project no longer resolves to a Git commit. " +
-          "Run veryfront push again to deploy the current source.",
-    );
-  }
+  if (expected.enforceClean !== false) assertReceiptDescribesLocalSource(receipt, expected);
   return receipt.commitSha;
 }

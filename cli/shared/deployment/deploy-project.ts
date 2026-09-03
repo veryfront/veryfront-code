@@ -35,6 +35,7 @@ import {
 } from "veryfront/errors";
 import {
   computeSourceDigest,
+  type GitSource,
   normalizeControlPlane,
   type ProjectTarget,
   PUSH_RECEIPT_RELATIVE_PATH,
@@ -44,6 +45,7 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../deployment-provenance.ts";
+import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { normalizeProjectSlug } from "../slug.ts";
 import { reserveProjectSlug } from "../reserve-slug.ts";
 import {
@@ -63,7 +65,7 @@ import {
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
 } from "../config.ts";
-import { pushCommand } from "../../commands/push/index.ts";
+import { pushCommand, scanLocalFiles } from "../../commands/push/index.ts";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -89,7 +91,23 @@ export interface DeployProjectRequest {
   environment: string;
   releaseName?: string;
   mode: "apply" | "dry-run";
-  source: { kind: "ensure-pushed" } | { kind: "already-pushed" };
+  source:
+    | {
+      kind: "ensure-pushed";
+      /**
+       * Push the working tree again when it no longer matches the receipt.
+       *
+       * Only a command whose job is to publish what is on disk may do this.
+       * `veryfront up` does: it exists to make the current directory live, so
+       * refusing there would strand the operator on an upload they replaced.
+       * `veryfront deploy` promotes a reviewed push, and CI runs it after an
+       * explicit `veryfront push`, so an accidentally dirty checkout must fail
+       * rather than upload unreviewed bytes to an environment. Left off, a
+       * stale source reaches {@link validatePushReceipt} as a refusal.
+       */
+      refreshStaleSource?: boolean;
+    }
+    | { kind: "already-pushed" };
 }
 
 export interface DeployPollingPolicy {
@@ -371,9 +389,11 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * working tree. Uncommitted work is the gap no later check can close: it leaves
  * HEAD untouched, so a commit comparison sees a match that is not one, and
  * deploying on it would serve the previous upload while reporting the edited
- * source as live. That state — along with no receipt at all, a receipt that
- * never proved a clean source, and a project outside Git — is pushed again, so
- * `veryfront up` refreshes the source instead of deploying a stale one.
+ * source as live. A recomputed source digest catches that state outright where
+ * the receipt carries one; Git cleanliness stands in for older receipts, and a
+ * receipt that never proved a clean source or names no commit is refreshed on
+ * sight. A caller that asked to refresh therefore publishes what is on disk
+ * rather than deploying a stale upload.
  *
  * Every refusal {@link validatePushReceipt} owns is checked *before* dirtiness
  * can select a push, because the push rewrites the receipt those refusals read.
@@ -386,37 +406,87 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * the operator's back, and neither a dirty tree nor a dirty receipt converts a
  * refusal into an upload.
  *
- * Known limit: Git cleanliness is a proxy for source equality, so a supported
- * file hidden by `.gitignore` but not by `.vfignore` is pushed yet invisible to
- * {@link resolveGitSource}, and editing it leaves a clean receipt usable. See
- * the note in {@link resolveGitSource} for why a digest comparison cannot
- * replace the observation today.
+ * Only a source that asked for it is refreshed. Without
+ * `refreshStaleSource`, a stale receipt selects `"none"` and reaches
+ * {@link validatePushReceipt} as a refusal instead.
  */
-export async function resolveBootstrapPush(
+export function resolveBootstrapPush(
   receipt: PushReceipt | null,
   source: DeployProjectRequest["source"],
-  projectDir: string,
+  local: LocalSourceObservation | null,
   target: BootstrapPushTarget,
-): Promise<BootstrapPushKind> {
+): BootstrapPushKind {
   if (source.kind !== "ensure-pushed") return "none";
+  // A project with no receipt has nothing to refuse and nothing to promote, so
+  // its first push is bootstrapped for every ensure-pushed caller.
   if (!receipt) return "bootstrap";
+  if (!source.refreshStaleSource || !local) return "none";
   if (!receiptTargetsDeploy(receipt, target)) return "none";
   // A receipt that never recorded a commit has no HEAD to compare against, so
   // the source is refreshed. It is the only state that skips the comparison:
   // a dirty receipt that still names a commit gets compared like a clean one,
   // because a HEAD that has moved off it is committed work the push never saw.
   if (!receipt.commitSha) return "refresh";
-  const gitSource = await resolveGitSource(projectDir);
+  const { gitSource } = local;
   if (gitSource.commitSha !== receipt.commitSha) {
     // A checkout on a different commit must reach {@link validatePushReceipt}
     // holding the receipt that proves the mismatch; pushing here would rewrite
     // that receipt into one that matches. When the checkout no longer resolves
     // to any commit, a clean receipt still fails closed the same way, while a
     // dirty one proves nothing about the upload and keeps its refresh.
-    return gitSource.commitSha || receipt.clean ? "none" : "refresh";
+    const checkoutNamesAnotherCommit = gitSource.commitSha !== null;
+    return checkoutNamesAnotherCommit || receipt.clean ? "none" : "refresh";
+  }
+  // Digests compare the file set push uploads, so where both sides have one
+  // they decide outright: an edit Git cannot see is caught, and a tree dirty
+  // only in files no push would upload is left alone.
+  if (receipt.localSourceDigest && local.sourceDigest) {
+    return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
   }
   if (!receipt.clean) return "refresh";
   return gitSource.clean ? "none" : "refresh";
+}
+
+/**
+ * What the working directory says about its source right now.
+ *
+ * Read once per deploy so the decision to refresh and the gate that enforces it
+ * observe the same tree: two independent reads can disagree under a concurrent
+ * edit, and they cost a duplicate pair of Git subprocesses and a duplicate
+ * directory scan.
+ */
+export interface LocalSourceObservation {
+  gitSource: GitSource;
+  /**
+   * Digest of the file set `veryfront push` would upload from this directory,
+   * or `null` when it could not be computed.
+   *
+   * Comparing it against a receipt's `localSourceDigest` is direct evidence
+   * about the pushed source, so unlike {@link GitSource.clean} it does not
+   * inherit Git's blind spot for a file `.gitignore` hides while `.vfignore`
+   * does not.
+   */
+  sourceDigest: string | null;
+}
+
+export async function observeLocalSource(projectDir: string): Promise<LocalSourceObservation> {
+  const [gitSource, sourceDigest] = await Promise.all([
+    resolveGitSource(projectDir),
+    computeLocalSourceDigest(projectDir),
+  ]);
+  return { gitSource, sourceDigest };
+}
+
+async function computeLocalSourceDigest(projectDir: string): Promise<string | null> {
+  try {
+    const ignoreChecker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
+    return await computeSourceDigest(await scanLocalFiles(projectDir, ignoreChecker));
+  } catch {
+    // A directory push itself cannot read, such as one holding a symlinked
+    // `.vfignore`, has no digest to compare. Fall back to the Git observation
+    // and let the push that follows report the real failure.
+    return null;
+  }
 }
 
 export function assertProjectOwnership(
@@ -437,8 +507,13 @@ export async function resolvePushedSource(input: {
   projectId: string;
   projectSlug: string;
   branch: string;
-  /** Enforce local checkout cleanliness when this operation owns local source. */
+  /** Enforce that the receipt still describes local source, for owning callers. */
   enforceWorkingTreeClean?: boolean;
+  /**
+   * The deploy's single working-tree read, reused so the decision to refresh
+   * and this gate cannot disagree. Resolved here when the caller has none.
+   */
+  local?: LocalSourceObservation | null;
 }): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
@@ -447,14 +522,15 @@ export async function resolvePushedSource(input: {
     );
   }
 
-  const gitSource = await resolveGitSource(input.projectDir);
+  const local = input.local ?? await observeLocalSource(input.projectDir);
   const commitSha = validatePushReceipt(receipt, {
     controlPlane: input.controlPlane,
     projectId: input.projectId,
     projectSlug: input.projectSlug,
     branch: input.branch,
-    commitSha: gitSource.commitSha,
-    clean: gitSource.clean,
+    commitSha: local.gitSource.commitSha,
+    clean: local.gitSource.clean,
+    localSourceDigest: local.sourceDigest,
     enforceClean: input.enforceWorkingTreeClean !== false,
   });
   return { commitSha, sourceDigest: receipt.sourceDigest };
@@ -1553,10 +1629,16 @@ export function createDeployProject(options: {
         request.projectSlug,
       );
       let { config, controlPlane, project } = setup;
-      const bootstrapPushKind = await resolveBootstrapPush(
+      // One read of the working tree serves both the refresh decision and the
+      // gate that enforces it. Naming a project promotes what that project
+      // already has, so this directory is not its source and is not read.
+      const localSource = request.source.kind === "ensure-pushed"
+        ? await observeLocalSource(request.projectDir)
+        : null;
+      const bootstrapPushKind = resolveBootstrapPush(
         receipt,
         request.source,
-        request.projectDir,
+        localSource,
         {
           controlPlane: config.apiUrl,
           branch,
@@ -1651,6 +1733,7 @@ export function createDeployProject(options: {
             projectSlug: project!.slug,
             branch,
             enforceWorkingTreeClean: request.source.kind === "ensure-pushed",
+            local: localSource,
           });
         }
         return {
@@ -1675,6 +1758,9 @@ export function createDeployProject(options: {
           projectSlug: project!.slug,
           branch,
           enforceWorkingTreeClean: request.source.kind === "ensure-pushed",
+          // A push rewrites the receipt this gate reads, so the tree is read
+          // again after one rather than compared against a stale observation.
+          local: bootstrapPush ? null : localSource,
         }));
 
       const release = await step(observer, "create-release", async () => {

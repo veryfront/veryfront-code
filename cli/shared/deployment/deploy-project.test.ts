@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import {
   assertEquals,
+  assertExists,
   assertMatch,
   assertRejects,
   assertStrictEquals,
@@ -33,6 +34,7 @@ import {
   type DeployEvent,
   type DeployProjectRequest,
   type DeployStepName,
+  observeLocalSource,
   resolveBootstrapPush,
   resolvePushedSource,
   verifyDeployment,
@@ -1006,6 +1008,64 @@ describe("pushed source provenance", () => {
     });
   });
 
+  it("rejects a source change Git cannot see once the receipt digests the pushed files", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        // `.gitignore` hides this file while `.vfignore` does not, so push
+        // uploads it and `git status` never reports it. Cleanliness alone
+        // therefore cannot tell a stale upload from a current one.
+        await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\ngenerated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
+        const commitSha = await commitProject(projectDir);
+        const pushed = await observeLocalSource(projectDir);
+        assertExists(pushed.sourceDigest);
+        const receipt = await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha,
+          sourceDigest: `sha256:${"0".repeat(64)}`,
+          localSourceDigest: pushed.sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+
+        await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 2;\n");
+        const edited = await observeLocalSource(projectDir);
+        assertEquals(edited.gitSource.clean, true, "the edit stays invisible to Git");
+
+        await assertRejects(
+          () =>
+            resolvePushedSource({
+              projectDir,
+              controlPlane: "https://control.example.test/api",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+              branch: "main",
+            }),
+          Error,
+          "This directory no longer holds the source the latest push uploaded.",
+        );
+        assertEquals(
+          resolveBootstrapPush(
+            receipt,
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            edited,
+            {
+              controlPlane: "https://control.example.test/api",
+              branch: "main",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+            },
+          ),
+          "refresh",
+        );
+      })
+    );
+  });
+
   it("keeps deploying a project that does not Git-ignore the CLI state directory", async () => {
     await withTempDir((projectDir) =>
       withoutAmbientCommitSha(async () => {
@@ -1044,7 +1104,7 @@ describe("pushed source provenance", () => {
           { commitSha, sourceDigest },
         );
         assertEquals(
-          await resolveBootstrapPush(
+          resolveBootstrapPush(
             {
               version: 2,
               controlPlane: "https://control.example.test/api",
@@ -1056,8 +1116,8 @@ describe("pushed source provenance", () => {
               clean: true,
               pushedAt: "2026-07-10T09:20:00.000Z",
             },
-            { kind: "ensure-pushed" },
-            projectDir,
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            await observeLocalSource(projectDir),
             {
               controlPlane: "https://control.example.test/api",
               branch: "main",
@@ -1098,10 +1158,10 @@ describe("resolveBootstrapPush", () => {
   it("skips the push only for a clean checkout parked on the pushed commit", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
@@ -1115,10 +1175,10 @@ describe("resolveBootstrapPush", () => {
       // with "came from a different commit"; deploy must not quietly replace
       // that refusal with an upload.
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
@@ -1134,10 +1194,10 @@ describe("resolveBootstrapPush", () => {
       await dirty(projectDir);
 
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
@@ -1150,10 +1210,10 @@ describe("resolveBootstrapPush", () => {
       await dirty(projectDir);
 
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, branch: "feature", commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
@@ -1166,28 +1226,28 @@ describe("resolveBootstrapPush", () => {
       await dirty(projectDir);
 
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, projectSlug: "other-project", commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
       );
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, projectId: "550e8400-e29b-41d4-a716-446655440001", commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
       );
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, controlPlane: "https://other.example.test/api", commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
@@ -1202,13 +1262,71 @@ describe("resolveBootstrapPush", () => {
       await dirty(projectDir);
 
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "refresh",
+      );
+    });
+  });
+
+  it("leaves a drifted tree to the deploy gate when the caller does not refresh", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      // veryfront deploy promotes a reviewed push; CI runs it after an
+      // explicit veryfront push. An accidentally dirty checkout must reach
+      // validatePushReceipt as a refusal, not become an upload of unreviewed
+      // bytes to an environment.
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("bootstraps a project without a receipt even when the caller does not refresh", async () => {
+    await withGitProject(async (projectDir) => {
+      // Nothing is being promoted or refused yet, so the first push is not the
+      // policy question the refresh flag settles.
+      assertEquals(
+        resolveBootstrapPush(
+          null,
+          { kind: "ensure-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "bootstrap",
+      );
+    });
+  });
+
+  it("trusts a matching source digest over a tree Git reports as dirty", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      // `.rst` is not an extension push uploads, so the digest still matches
+      // and the source provably did not change. Git cleanliness alone would
+      // have pushed the whole tree again for it.
+      await Deno.writeTextFile(`${projectDir}/notes.rst`, "notes\n");
+      const local = await observeLocalSource(projectDir);
+      assertExists(local.sourceDigest);
+      assertEquals(local.gitSource.clean, false);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true, localSourceDigest: local.sourceDigest },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          local,
+          target,
+        ),
+        "none",
       );
     });
   });
@@ -1219,10 +1337,10 @@ describe("resolveBootstrapPush", () => {
       // a clean one: refreshing here would upload the new commit and rewrite
       // the receipt validatePushReceipt reads to refuse the moved HEAD.
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: false },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "none",
@@ -1237,10 +1355,10 @@ describe("resolveBootstrapPush", () => {
         // way; a clean receipt must still reach validatePushReceipt's refusal
         // rather than be silently overwritten by a push.
         assertEquals(
-          await resolveBootstrapPush(
+          resolveBootstrapPush(
             { ...receipt, commitSha: "1".repeat(40), clean: true },
-            { kind: "ensure-pushed" },
-            projectDir,
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            await observeLocalSource(projectDir),
             target,
           ),
           "none",
@@ -1248,10 +1366,10 @@ describe("resolveBootstrapPush", () => {
         // A dirty receipt proves nothing about the upload and keeps its
         // refresh, exactly as it did for a project outside Git before.
         assertEquals(
-          await resolveBootstrapPush(
+          resolveBootstrapPush(
             { ...receipt, commitSha: "1".repeat(40), clean: false },
-            { kind: "ensure-pushed" },
-            projectDir,
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            await observeLocalSource(projectDir),
             target,
           ),
           "refresh",
@@ -1263,19 +1381,19 @@ describe("resolveBootstrapPush", () => {
   it("refreshes for receipts that never proved a clean source", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha, clean: false },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "refresh",
       );
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha: null, clean: false },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           target,
         ),
         "refresh",
@@ -1286,7 +1404,12 @@ describe("resolveBootstrapPush", () => {
   it("bootstraps only when no receipt exists at all", async () => {
     await withGitProject(async (projectDir) => {
       assertEquals(
-        await resolveBootstrapPush(null, { kind: "ensure-pushed" }, projectDir, target),
+        resolveBootstrapPush(
+          null,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
         "bootstrap",
       );
     });
@@ -1297,10 +1420,10 @@ describe("resolveBootstrapPush", () => {
       await dirty(projectDir);
 
       assertEquals(
-        await resolveBootstrapPush(
+        resolveBootstrapPush(
           { ...receipt, commitSha, clean: true },
-          { kind: "ensure-pushed" },
-          projectDir,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
           { controlPlane: target.controlPlane, branch: "main", projectId: null, projectSlug: null },
         ),
         "refresh",
@@ -1311,7 +1434,12 @@ describe("resolveBootstrapPush", () => {
   it("never pushes for an already-pushed source", async () => {
     await withGitProject(async (projectDir) => {
       assertEquals(
-        await resolveBootstrapPush(null, { kind: "already-pushed" }, projectDir, target),
+        resolveBootstrapPush(
+          null,
+          { kind: "already-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
         "none",
       );
     });

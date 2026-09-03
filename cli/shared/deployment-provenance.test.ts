@@ -90,6 +90,48 @@ describe("validatePushReceipt", () => {
     );
   });
 
+  it("rejects a source digest the directory no longer produces", async () => {
+    // The refusal does not depend on Git seeing the change: a file .gitignore
+    // hides while .vfignore does not is pushed and edited without ever making
+    // the checkout dirty.
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validatePushReceipt({ ...RECEIPT, localSourceDigest: `sha256:${"1".repeat(64)}` }, {
+            controlPlane: RECEIPT.controlPlane,
+            projectId: RECEIPT.projectId,
+            projectSlug: RECEIPT.projectSlug,
+            branch: RECEIPT.branch,
+            commitSha: RECEIPT.commitSha,
+            clean: true,
+            localSourceDigest: `sha256:${"2".repeat(64)}`,
+          })
+        ),
+      Error,
+      "This directory no longer holds the source the latest push uploaded. " +
+        "Run veryfront push again to deploy the current source.",
+    );
+  });
+
+  it("accepts a matching source digest from a checkout Git reports as dirty", () => {
+    // The digest covers exactly the files push uploads, so a tree dirty only
+    // outside that set is provably still the pushed source.
+    const result = validatePushReceipt(
+      { ...RECEIPT, localSourceDigest: `sha256:${"1".repeat(64)}` },
+      {
+        controlPlane: RECEIPT.controlPlane,
+        projectId: RECEIPT.projectId,
+        projectSlug: RECEIPT.projectSlug,
+        branch: RECEIPT.branch,
+        commitSha: RECEIPT.commitSha,
+        clean: false,
+        localSourceDigest: `sha256:${"1".repeat(64)}`,
+      },
+    );
+
+    assertEquals(result, RECEIPT.commitSha);
+  });
+
   it("names the missing commit when the project no longer resolves to one", async () => {
     // Same fail-closed refusal, different reason: without a current commit,
     // "uncommitted changes" would misdescribe a project that is no longer a

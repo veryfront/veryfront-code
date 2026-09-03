@@ -877,6 +877,10 @@ export async function recordPushReceipt(
     branch,
     commitSha: snapshot.gitSource.commitSha,
     sourceDigest: pushedSourceDigest,
+    // The local file set this push uploaded, recorded next to the remote tree
+    // digest so deploy can recompute it from the directory and prove the source
+    // is still the one that was pushed.
+    localSourceDigest: snapshot.sourceDigest,
     clean: snapshot.gitSource.clean,
   });
 }

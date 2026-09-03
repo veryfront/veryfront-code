@@ -8,6 +8,7 @@ import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import { computeContentDigest, writeSyncTarget } from "../../sync/state.ts";
 import { deployCommand } from "./command.ts";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import type { DeploymentRoutingConvergence } from "../../shared/deployment/control-plane.ts";
@@ -34,6 +35,11 @@ const OTHER_PROJECT_ID = "770e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 const PUSHED_SOURCE = "export const value = 1;\n";
+/** A stable stand-in for the version id the control plane assigns each file. */
+function remoteVersionId(path: string): string {
+  return `version-${path}`;
+}
+
 const STALE_SOURCE = "export const value = 2;\n";
 
 async function runGit(projectDir: string, ...args: string[]) {
@@ -72,6 +78,8 @@ async function commitProject(projectDir: string) {
 async function withDeployEnv<T>(
   projectDir: string,
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
+  /** Extra source committed with the rest, so the checkout still starts clean. */
+  extraFiles: Readonly<Record<string, string>> = {},
 ): Promise<T> {
   const envKeys = [
     "GITHUB_SHA",
@@ -86,10 +94,14 @@ async function withDeployEnv<T>(
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
+    for (const [path, content] of Object.entries(extraFiles)) {
+      await Deno.writeTextFile(`${projectDir}/${path}`, content);
+    }
     const commitSha = await commitProject(projectDir);
     const sourceDigest = await computeSourceDigest([
       { path: "app.ts", content: PUSHED_SOURCE },
       { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+      ...Object.entries(extraFiles).map(([path, content]) => ({ path, content })),
     ]);
 
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
@@ -119,12 +131,21 @@ function createDeployFetchHandler(options: {
   sourceDigest: string;
   uploadedPaths?: string[];
   uploadedFiles?: Map<string, string>;
+  deletedPaths?: string[];
   releaseFiles?: Map<string, string>;
   branchCreates?: string[];
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
   const uploadedFiles = options.uploadedFiles ?? new Map<string, string>();
+  const remoteFileList = () => ({
+    data: [...uploadedFiles].map(([path, content]) => ({
+      path,
+      content,
+      version_id: remoteVersionId(path),
+    })),
+    page_info: {},
+  });
 
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -159,16 +180,10 @@ function createDeployFetchHandler(options: {
       });
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
-      return Response.json({
-        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
-        page_info: {},
-      });
+      return Response.json(remoteFileList());
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/files`) {
-      return Response.json({
-        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
-        page_info: {},
-      });
+      return Response.json(remoteFileList());
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
@@ -190,6 +205,16 @@ function createDeployFetchHandler(options: {
       const body = await request.clone().json() as { content: string };
       uploadedFiles.set(path, body.content);
       options.uploadedPaths?.push(path);
+      return Response.json({});
+    }
+    if (
+      request.method === "DELETE" &&
+      (url.pathname.startsWith(`/api/projects/${PROJECT_ID}/files/`) ||
+        url.pathname.startsWith("/api/projects/my-project/files/"))
+    ) {
+      const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+      uploadedFiles.delete(path);
+      options.deletedPaths?.push(path);
       return Response.json({});
     }
     if (request.method === "GET" && url.pathname.endsWith("/environments")) {
@@ -439,8 +464,90 @@ it("deploys production from the existing verified push without mutating source",
 
 it("re-pushes uncommitted work instead of redeploying the source it replaced", async () => {
   // An edit that never reaches a commit leaves HEAD matching the receipt, so
-  // no commit check can see it. Deploy used to take the receipt's word and
-  // serve the previous upload while reporting the edited source as live.
+  // no commit check can see it. veryfront up used to take the receipt's word
+  // and serve the previous upload while reporting the edited source as live.
+  // This drives the refreshing source `up` asks for, end to end: the refresh
+  // push, the targeted prune of a file this checkout deleted, and the release
+  // built from the resulting remote tree.
+  const projectDir = await makeTempDir();
+  const STUDIO_SOURCE = "export default function StudioPage() { return null; }\n";
+  const LEGACY_SOURCE = "export const legacy = true;\n";
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await writeSyncTarget(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      files: {
+        "legacy.ts": {
+          digest: await computeContentDigest(LEGACY_SOURCE),
+          versionId: remoteVersionId("legacy.ts"),
+        },
+      },
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+    // A tracked file deleted here must be pruned from the branch; a remote-only
+    // file nobody deleted must survive.
+    await Deno.remove(`${projectDir}/legacy.ts`);
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+    const deletedPaths: string[] = [];
+    const uploadedFiles = new Map<string, string>([
+      ["legacy.ts", LEGACY_SOURCE],
+      ["studio-page.tsx", STUDIO_SOURCE],
+    ]);
+    const refreshedSourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: STALE_SOURCE },
+      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+      { path: "studio-page.tsx", content: STUDIO_SOURCE },
+    ]);
+
+    await withMockFetch(
+      createDeployFetchHandler({
+        requests,
+        sourceDigest: refreshedSourceDigest,
+        uploadedPaths,
+        uploadedFiles,
+        deletedPaths,
+        releaseFiles: uploadedFiles,
+        releaseSource: STALE_SOURCE,
+      }),
+      () =>
+        boundedDeployProject().execute({
+          projectDir,
+          branch: "main",
+          environment: "production",
+          mode: "apply",
+          source: { kind: "ensure-pushed", refreshStaleSource: true },
+        }),
+    );
+
+    assertEquals(uploadedPaths.includes("app.ts"), true);
+    assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
+    assertEquals(deletedPaths, ["legacy.ts"]);
+    assertEquals(uploadedFiles.get("studio-page.tsx"), STUDIO_SOURCE);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  }, { "legacy.ts": LEGACY_SOURCE });
+});
+
+it("refuses to promote a receipt the working tree no longer matches", async () => {
+  // veryfront deploy promotes a reviewed push, and CI runs it after an
+  // explicit veryfront push. An accidentally dirty checkout must fail rather
+  // than upload unreviewed bytes to an environment.
   const projectDir = await makeTempDir();
   await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
     await writePushReceipt(projectDir, {
@@ -457,49 +564,30 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
 
     const requests: string[] = [];
     const uploadedPaths: string[] = [];
-    const uploadedFiles = new Map<string, string>([
-      ["studio-page.tsx", "export default function StudioPage() { return null; }\n"],
-    ]);
-    const refreshedSourceDigest = await computeSourceDigest([
-      { path: "app.ts", content: STALE_SOURCE },
-      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
-      {
-        path: "studio-page.tsx",
-        content: "export default function StudioPage() { return null; }\n",
-      },
-    ]);
 
-    await withMockFetch(
-      createDeployFetchHandler({
-        requests,
-        sourceDigest: refreshedSourceDigest,
-        uploadedPaths,
-        uploadedFiles,
-        releaseFiles: uploadedFiles,
-        releaseSource: STALE_SOURCE,
-      }),
+    await assertRejects(
       () =>
-        deployCommand({
-          projectDir,
-          branch: "main",
-          env: "production",
-          dryRun: false,
-          force: false,
-          quiet: true,
-          deployProject: boundedDeployProject(),
-        }),
+        withMockFetch(
+          createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+        ),
+      Error,
+      "uncommitted changes",
     );
 
-    assertEquals(uploadedPaths.includes("app.ts"), true);
-    assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
-    assertEquals(
-      uploadedFiles.get("studio-page.tsx"),
-      "export default function StudioPage() { return null; }\n",
-    );
-    assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
+    assertEquals(uploadedPaths, []);
     assertEquals(
       requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
-      true,
+      false,
     );
   });
 });

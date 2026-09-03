@@ -4356,6 +4356,14 @@ describe("push deletion ownership", () => {
             { path: "remote-only.ts", content: "remote\n" },
           ]),
         );
+        // The remote tree keeps the preserved remote-only file; the local
+        // digest deploy recomputes describes only what this directory sent.
+        assertEquals(
+          receipt.localSourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+          ]),
+        );
       });
     } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));

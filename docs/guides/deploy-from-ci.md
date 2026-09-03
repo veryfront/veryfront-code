@@ -66,11 +66,11 @@ extensions are not reconciled with Veryfront.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
-`.vfignore` files are rejected. Git cleanliness is recorded as provenance
-metadata and is measured over the project directory only; Deploy promotes the
-source digest recorded by Push rather than recomputing production bytes from the
-working tree, refreshing that Push first when the checkout no longer matches the
-receipt.
+`.vfignore` files are rejected. Push records a digest of the managed source set
+it uploaded, and Git cleanliness alongside it as provenance metadata, measured
+over the project directory only. Deploy promotes the source digest recorded by
+Push rather than recomputing production bytes from the working tree, and refuses
+a receipt this directory no longer matches.
 
 ## Preview the Push
 
@@ -101,24 +101,32 @@ veryfront push --branch main --prune --force --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
-Push records the checked-out commit, the source digest, and whether the checkout
-was clean in `.veryfront/push-receipt.json`. Deploy uses that last verified Push
-receipt and requires it to match the same control plane, project, branch, and
-Git commit, then verifies the release source digest before assigning it to the
-environment. A receipt from a different commit is refused rather than replaced,
-so committed work is never uploaded behind the operator's back: check out the
-pushed commit, or run Push again from the commit you want deployed.
+Push records the checked-out commit, the digest of the source it uploaded, and
+whether the checkout was clean in `.veryfront/push-receipt.json`. Deploy uses
+that last verified Push receipt and requires it to match the same control plane,
+project, branch, and Git commit, then verifies the release source digest before
+assigning it to the environment. A receipt from a different commit is refused
+rather than replaced, so committed work is never uploaded behind the operator's
+back: check out the pushed commit, or run Push again from the commit you want
+deployed.
 
 Uncommitted edits are the one change no commit check can see, because they leave
-`HEAD` where the receipt left it. When the receipt came from a clean checkout and
-the working tree is no longer clean, Deploy pushes the working tree again before
-creating the release, so the release carries the bytes on disk rather than the
-ones the earlier Push uploaded. That refresh is an ordinary push: it keeps the
-remote-conflict checks that `--force` would waive, and it prunes only files this
-checkout deleted from Git, so remote-only files stay in place. Deploying a
-project named with `--project` promotes what that project already has and never
-uploads the working directory, so local edits are neither pushed nor treated as a
-mismatch on that path.
+`HEAD` where the receipt left it. Deploy recomputes the source digest from the
+directory and refuses the promotion when it no longer matches the receipt, so an
+accidentally dirty checkout fails instead of promoting bytes no Push reviewed.
+The digest covers exactly the files Push uploads, so an edit `.gitignore` hides
+is still caught and an edit to a file Push never sends is not a mismatch. Run
+Push again to deploy the current source. Deploying a project named with
+`--project` promotes what that project already has and never uploads the working
+directory, so local edits are neither pushed nor treated as a mismatch on that
+path.
+
+`veryfront up` makes the current directory live rather than promoting a reviewed
+Push, so it refreshes a stale receipt with a quiet Push instead of refusing. That
+refresh is an ordinary push: it keeps the remote-conflict checks that `--force`
+would waive, and it prunes only files the checkout deleted from Git, so
+remote-only files stay in place. Do not use `veryfront up` as a CI promotion
+step.
 
 If no receipt exists, Deploy bootstraps one with a quiet Push, but CI should keep
 the explicit Push step so review and production promotion remain separate. Do not
