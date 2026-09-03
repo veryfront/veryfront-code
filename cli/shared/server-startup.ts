@@ -60,9 +60,11 @@ export function buildDiscoveryConfig(
 ): DiscoveryOptions {
   // `applyRuntimeAuthContext` registers a stored CLI login token host-privately
   // instead of exporting it, so fall back to that store when the developer has
-  // not exported `VERYFRONT_API_TOKEN` themselves.
-  const token = host.env.get("VERYFRONT_API_TOKEN") ??
-    getHostSecret("VERYFRONT_API_TOKEN") ?? "";
+  // not exported `VERYFRONT_API_TOKEN` themselves. A defined-but-blank export
+  // counts as "not exported" here, matching the normalization the CLI used when
+  // it decided to register the stored token.
+  const exportedToken = host.env.get("VERYFRONT_API_TOKEN")?.trim();
+  const token = exportedToken ? exportedToken : (getHostSecret("VERYFRONT_API_TOKEN") ?? "");
   const slug = host.env.get("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
 
   return {

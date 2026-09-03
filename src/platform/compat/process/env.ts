@@ -134,11 +134,20 @@ export function deleteHostSecret(key: string): void {
  * Host-private credentials registered with {@link setHostSecret} resolve here
  * and only here, so framework code reaches them while `getEnv()` — the reader
  * project code can reach — does not.
+ *
+ * A host value that is defined but blank does not shadow a registered
+ * credential. The CLI normalizes `VERYFRONT_API_TOKEN=""` (or whitespace) to
+ * "unset" when it decides to register the stored login token, so treating that
+ * blank value as authoritative here would strand the credential and leave
+ * `dev`, `start`, workflow, and eval consumers with no usable token.
  */
 export function getHostEnv(key: string): string | undefined {
   const value = readHostProcessEnv(key);
-  if (value !== undefined) return value;
-  return getHostSecret(key);
+  if (value !== undefined && value.trim() !== "") return value;
+  // Only a registered credential displaces the blank host value; without one
+  // the host environment is still reported verbatim.
+  const secret = getHostSecret(key);
+  return secret !== undefined ? secret : value;
 }
 
 /** The host process environment alone, without host-private credentials. */

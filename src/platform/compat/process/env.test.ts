@@ -49,6 +49,33 @@ describe("host environment access", () => {
     }
   });
 
+  it("does not let a blank exported variable strand a host-private credential", () => {
+    const key = "VF_HOST_SECRET_TEST_BLANK";
+    setHostSecret(key, "host-private-token");
+    setEnv(key, "   ");
+
+    try {
+      // The CLI normalizes a blank `VERYFRONT_API_TOKEN` to "unset" before it
+      // registers the stored login token, so a blank export must not be treated
+      // as an authoritative value that hides the credential.
+      assertEquals(getHostEnv(key), "host-private-token");
+    } finally {
+      deleteHostSecret(key);
+      deleteEnv(key);
+    }
+  });
+
+  it("reports a blank exported variable verbatim when no credential is registered", () => {
+    const key = "VF_HOST_SECRET_TEST_BLANK_ONLY";
+    setEnv(key, "");
+
+    try {
+      assertEquals(getHostEnv(key), "");
+    } finally {
+      deleteEnv(key);
+    }
+  });
+
   it("creates an immutable scoped Deno environment facade", () => {
     const view = createProjectScopedDenoEnvView({
       get: () => undefined,

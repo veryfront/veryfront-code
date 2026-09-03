@@ -122,6 +122,19 @@ describe("cli/shared/runtime-auth", () => {
     assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "env-token");
   });
 
+  it("resolves the stored login token past a blank exported token", async () => {
+    await useTempConfigHome();
+    await saveToken("stored-token");
+    setEnv("VERYFRONT_API_TOKEN", "   ");
+
+    const context = await applyRuntimeAuthContext({});
+
+    // A blank export is normalized to "unset", so the stored token is the one
+    // registered — and the blank value must not shadow it for consumers.
+    assertEquals(context.apiToken, "stored-token");
+    assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
+  });
+
   it("keeps an explicitly linked project scoped to cloud requests", async () => {
     await useTempConfigHome();
     await saveToken("stored-token");
