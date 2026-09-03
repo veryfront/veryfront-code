@@ -78,6 +78,13 @@ describe("server/handlers/dev/styles-css-import-scanner (real filesystem)", () =
           makeCtx(adapter, { projectDir, releaseId: "rel-b" } as Partial<HandlerContext>),
         );
         assertEquals(reads, 1, "a different claimed release must not re-walk the same directory");
+
+        // Outside proxy mode the slug is the raw x-project-slug header or the
+        // Host-parsed subdomain, so it must not reach the cache key either.
+        for (const projectSlug of ["claimed-a", "claimed-b", "claimed-c"]) {
+          await extractProjectCssImports(makeCtx(adapter, { projectDir, projectSlug }));
+        }
+        assertEquals(reads, 1, "a different claimed slug must not re-walk the same directory");
       } finally {
         invalidateProjectCssImportScans();
       }

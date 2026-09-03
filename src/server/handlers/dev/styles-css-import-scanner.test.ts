@@ -22,7 +22,6 @@ const IMPORTED_CSS = "/project/app/styles.css";
 interface ScanAdapter {
   adapter: RuntimeAdapter;
   getScanCount: () => number;
-  getWaitForWarmupValues: () => Array<boolean | undefined>;
   setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
 }
 
@@ -37,12 +36,10 @@ function createScanAdapter(
   const adapter = createMockAdapter();
   let currentFiles = files;
   let scanCount = 0;
-  const waitForWarmupValues: Array<boolean | undefined> = [];
 
   const underlyingAdapter = {
-    getAllSourceFiles: async (options?: { waitForWarmup?: boolean }) => {
+    getAllSourceFiles: async () => {
       scanCount++;
-      waitForWarmupValues.push(options?.waitForWarmup);
       await Promise.resolve();
       return currentFiles;
     },
@@ -58,7 +55,6 @@ function createScanAdapter(
       },
     } as unknown as RuntimeAdapter,
     getScanCount: () => scanCount,
-    getWaitForWarmupValues: () => waitForWarmupValues,
     setFiles: (nextFiles) => {
       currentFiles = nextFiles;
     },
@@ -92,7 +88,6 @@ interface DeferredScanAdapter {
   getScanCount: () => number;
   /** Complete the oldest source walk that is still waiting. */
   settleNext: (nextFiles: Array<{ path: string; content?: string }>) => void;
-  settleAt: (index: number, nextFiles: Array<{ path: string; content?: string }>) => void;
 }
 
 /**
@@ -121,7 +116,6 @@ function createDeferredScanAdapter(contentContext: ResolvedContentContext): Defe
     } as unknown as RuntimeAdapter,
     getScanCount: () => scanCount,
     settleNext: (nextFiles) => waiting.shift()?.(nextFiles),
-    settleAt: (index, nextFiles) => waiting[index]?.(nextFiles),
   };
 }
 
@@ -149,7 +143,6 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
         1,
         "repeated stylesheet requests must not re-walk the project sources",
       );
-      assertEquals(scan.getWaitForWarmupValues(), [true]);
     } finally {
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
@@ -212,6 +205,34 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
 
       assertEquals(await extractProjectCssImports(ctx), []);
       assertEquals(scan.getScanCount(), 2);
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
+  it("retires a release entry by its resolved content slug even when the admitted slug differs", async () => {
+    // A content push invalidates by the resolved content slug. If the entry
+    // stored the admitted request slug instead, a mismatch between the two
+    // would leave a release-versioned entry that no targeted invalidation ever
+    // matches, and nothing else retires a release entry.
+    const scan = createScanAdapter([LAYOUT_FILE], releaseContent("rel-scope-precedence"));
+    const ctx = makeCtx(scan.adapter, { projectSlug: "admitted-alias" });
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      assertEquals(await extractProjectCssImports(ctx), [IMPORTED_CSS]);
+      assertEquals(scan.getScanCount(), 1);
+
+      scan.setFiles([]);
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      assertEquals(await extractProjectCssImports(ctx), []);
+      assertEquals(
+        scan.getScanCount(),
+        2,
+        "invalidating by the resolved content slug must retire the entry",
+      );
     } finally {
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
@@ -362,7 +383,13 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
   it("does not let one project's invalidation retire another project's in-flight walk", async () => {
     // Invalidation is per project scope, so a content push for one tenant must
     // not force an unrelated tenant on the same runtime to re-walk its sources.
-    const other = createDeferredScanAdapter(releaseContent("rel-neighbour"));
+    const other = createDeferredScanAdapter(
+      {
+        sourceType: "release",
+        projectSlug: "neighbour-project",
+        releaseId: "rel-neighbour",
+      } as ResolvedContentContext,
+    );
     const otherCtx = makeCtx(other.adapter, { projectSlug: "neighbour-project" });
 
     try {
@@ -393,11 +420,12 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
-  it("keys the scan on the admitted tenant when the filesystem resolves no content", async () => {
+  it("keys the scan on the admitted tenant when the proxy filesystem resolves no content", async () => {
     // A shared-proxy filesystem exposes getAllSourceFiles() but no content
     // context while every tenant keeps the same server-level projectDir, so
     // without the admitted slug in the key project B would be served project
-    // A's imports.
+    // A's imports. In proxy mode the slug is trusted tenant identity: the
+    // proxy admission boundary resolved it, not the client.
     const tenantA = createScanAdapter([LAYOUT_FILE], null);
     const tenantB = createScanAdapter([], null);
 
@@ -407,13 +435,13 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
       // Both tenants are served by one runtime, so they share `projectDir`.
       assertEquals(
         await extractProjectCssImports(
-          makeCtx(tenantA.adapter, { projectSlug: "tenant-a" }),
+          makeCtx(tenantA.adapter, { projectSlug: "tenant-a", isProxyMode: true }),
         ),
         [IMPORTED_CSS],
       );
       assertEquals(
         await extractProjectCssImports(
-          makeCtx(tenantB.adapter, { projectSlug: "tenant-b" }),
+          makeCtx(tenantB.adapter, { projectSlug: "tenant-b", isProxyMode: true }),
         ),
         [],
       );
@@ -427,27 +455,29 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
-  it("keys shared-proxy scans on the admitted content snapshot", async () => {
+  it("ignores the client-supplied slug on a non-proxy content-less filesystem", async () => {
+    // Outside proxy mode there is no admission boundary for the slug: it is the
+    // raw x-project-slug header or the Host-parsed subdomain, so keying on it
+    // would let an unauthenticated client mint a fresh cache key per request
+    // and force one full source walk each time. The filesystem serves
+    // `projectDir` whatever the client claims, so that directory is the key.
     const scan = createScanAdapter([LAYOUT_FILE], null);
 
     try {
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
+
+      for (const projectSlug of ["claim-1", "claim-2", "claim-3", "claim-4"]) {
+        const ctx = makeCtx(scan.adapter, { projectSlug });
+        assertEquals(await extractProjectCssImports(ctx), [IMPORTED_CSS]);
+      }
+
       assertEquals(
-        await extractProjectCssImports(
-          makeCtx(scan.adapter, { isProxyMode: true, releaseId: "rel-a" }),
-        ),
-        [IMPORTED_CSS],
+        scan.getScanCount(),
+        1,
+        "client-supplied slugs must not be able to multiply source walks on a standalone server",
       );
-      scan.setFiles([]);
-      assertEquals(
-        await extractProjectCssImports(
-          makeCtx(scan.adapter, { isProxyMode: true, releaseId: "rel-b" }),
-        ),
-        [],
-      );
-      assertEquals(scan.getScanCount(), 2);
     } finally {
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
     }
   });
 
@@ -496,33 +526,6 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
       assertEquals(scan.getScanCount(), 2);
     } finally {
       invalidateProjectCssImportScans();
-    }
-  });
-
-  it("does not reuse a generation while an overwritten scan is still pending", async () => {
-    const scan = createDeferredScanAdapter(releaseContent("rel-aba"));
-    const ctx = makeCtx(scan.adapter);
-
-    try {
-      invalidateProjectCssImportScans(PROJECT_SLUG);
-      const oldScan = extractProjectCssImports(ctx);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
-      const replacementScan = extractProjectCssImports(ctx);
-      assertEquals(scan.getScanCount(), 2);
-
-      scan.settleAt(1, []);
-      assertEquals(await replacementScan, []);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
-
-      scan.settleAt(0, [LAYOUT_FILE]);
-      assertEquals(await oldScan, [IMPORTED_CSS]);
-
-      const afterOldScan = extractProjectCssImports(ctx);
-      assertEquals(scan.getScanCount(), 3);
-      scan.settleAt(2, []);
-      assertEquals(await afterOldScan, []);
-    } finally {
-      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
