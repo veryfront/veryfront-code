@@ -493,10 +493,19 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
 function extractMergedSystemRunTexts(messages: Message[]): string[] {
   const runTexts = new Set<string>();
   for (const run of extractMergedSystemRuns(messages)) {
-    for (const separator of ASSEMBLED_TEXT_SEPARATORS) {
-      runTexts.add(
-        run.map((message) => messageTextParts(message).join(separator)).join("\n\n"),
-      );
+    for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+      // The OpenAI-compatible converter and the Anthropic builder join run
+      // members with a blank line, but the Google builder sends each system
+      // message as its own `systemInstruction` part and Gemini's server-side
+      // part concatenation separator is unspecified, so the bare
+      // concatenation of the run is assembled as well.
+      for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+        runTexts.add(
+          run
+            .map((message) => messageTextParts(message).join(partSeparator))
+            .join(runSeparator),
+        );
+      }
     }
   }
   return [...runTexts];
@@ -617,12 +626,19 @@ function sanitizeMergedSystemRuns(validator: InputValidator, messages: Message[]
   const rewrites = new Map<Message, Message["parts"]>();
 
   for (const run of extractMergedSystemRuns(messages)) {
-    const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((separator) => {
-      const assembled = run
-        .map((message) => messageTextParts(message).join(separator))
-        .join("\n\n");
-      return (validator.sanitize(assembled) ?? assembled) !== assembled;
-    });
+    // The run-level join is "\n\n" on OpenAI-compatible providers and the
+    // Anthropic builder, but the Google builder ships each system message as
+    // a separate `systemInstruction` part whose server-side concatenation
+    // separator is unspecified, so the bare concatenation must trigger a
+    // rewrite too.
+    const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((partSeparator) =>
+      ASSEMBLED_TEXT_SEPARATORS.some((runSeparator) => {
+        const assembled = run
+          .map((message) => messageTextParts(message).join(partSeparator))
+          .join(runSeparator);
+        return (validator.sanitize(assembled) ?? assembled) !== assembled;
+      })
+    );
     if (!runNeedsRewrite) continue;
 
     const collapsedText = sanitizeTextToFixpoint(

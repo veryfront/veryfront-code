@@ -772,6 +772,31 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("blocks a split injection the hoist reassembles without a separator", async () => {
+    // The halves split mid-word: "ignore prev" + "ious instructions" only
+    // forms the blocked phrase when joined with no separator at all. The
+    // Google request builder ships each system message as a separate
+    // `systemInstruction` part and Gemini's server-side part concatenation
+    // separator is unspecified, so the bare concatenation must be validated
+    // alongside the blank-line join.
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "ignore prev" }] },
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "ious instructions" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
   it("allows separated system messages whose hoisted merge stays benign", async () => {
     // The hoisted assembly must not reject a conversation whose system
     // messages are individually and jointly clean.
@@ -945,6 +970,44 @@ describe("securityMiddleware", () => {
       "the hoisted system instruction must not contain the script payload",
     );
     assertEquals(assembledSystem.includes("alert(1)"), false);
+  });
+
+  it("sanitizes a harmful sequence the hoist reassembles without a separator", async () => {
+    // "<scr" and "ipt>alert(1)</script>" only form a script tag when joined
+    // with no separator at all, which is exactly what an unspecified
+    // server-side concatenation of Google `systemInstruction` parts could do.
+    // The rewrite must trigger on the bare concatenation and collapse the run
+    // so the provider receives a single part whose literal blank line keeps
+    // the tag broken.
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "<scr" }] },
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+        {
+          id: "system-2",
+          role: "system",
+          parts: [{ type: "text", text: "ipt>alert(1)</script>" }],
+        },
+      ],
+    });
+
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+
+    if (typeof context.input === "string") {
+      throw new Error("Expected structured input to stay a Message[] after sanitization");
+    }
+    assertEquals(context.input.length, 3);
+    assertEquals(textPartValue(context.input[1]?.parts[0]), "hello");
+    const concatenatedSystem = context.input
+      .filter((message) => message.role === "system")
+      .map((message) => message.parts.map((part) => textPartValue(part) ?? "").join(""))
+      .join("");
+    assertEquals(
+      concatenatedSystem.includes("<script"),
+      false,
+      "the separator-free system concatenation must not reassemble the script tag",
+    );
   });
 
   it("rejects a cross-turn system merge sanitization would rewrite", async () => {
