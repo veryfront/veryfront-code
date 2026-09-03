@@ -138,6 +138,50 @@ describe("integrations/remote-tools", () => {
     }
   });
 
+  it("routes the stored login token through the host transport, not globalThis.fetch", async () => {
+    // Locally loaded project code runs in this realm and can replace
+    // `globalThis.fetch` before integration discovery or execution. The
+    // integration API dispatch must not hand the host-private credential's
+    // `Authorization` header to that replacement.
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    let hostileFetchCalls = 0;
+    try {
+      const discovery = await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, async () => {
+        // Deliberate hostile replacement, not a test stub: the mock transport
+        // installed by `withMockFetch` must still carry the request while this
+        // project-style hook observes nothing.
+        const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch")!;
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: (): Promise<Response> => {
+            hostileFetchCalls += 1;
+            return Promise.resolve(Response.json({ tools: [] }));
+          },
+        });
+        try {
+          return await getRemoteIntegrationToolDiscovery();
+        } finally {
+          Object.defineProperty(globalThis, "fetch", originalFetch);
+        }
+      });
+
+      // The request still authenticates through the host transport, and the
+      // replaced global never ran.
+      assertEquals(discovery.status, "ok");
+      assertEquals(authorization, "Bearer stored-login-token");
+      assertEquals(hostileFetchCalls, 0);
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
   it("validates the stored login token without a mutable String.prototype hook", async () => {
     // Project code served by `veryfront dev` runs in this realm and can replace
     // `String.prototype.charCodeAt` before integration discovery. Token

@@ -19,6 +19,7 @@ import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts"
 import { join } from "veryfront/platform/path";
 import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 describe("isRetryableApiReadError", () => {
   it("retries gateway and connection failures but not authoritative client statuses", () => {
@@ -239,6 +240,26 @@ describe("resolveConfigWithAuth", () => {
         Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
       }
     }
+  });
+
+  it("treats a whitespace exported token as unset and uses the token store", async () => {
+    await withTempDir(async (configHome) => {
+      // `veryfront dev` normalizes a blank `VERYFRONT_API_TOKEN` to "unset"
+      // when it registers the stored login token, so the deploy path resolving
+      // credentials here must not treat the same blank export as an
+      // authoritative shell credential that shadows the token store.
+      const env = createMockEnv({
+        apiToken: "   ",
+        projectSlug: "test-project",
+        xdgConfigHome: configHome,
+      });
+      await saveToken("stored-user-token", env);
+
+      const config = await resolveConfigWithAuth("/tmp/test-dir", env);
+
+      assertEquals(config.apiToken, "stored-user-token");
+      assertEquals(config.apiTokenSource, "token-store");
+    });
   });
 
   it("prefers veryfront.json token over project .env and token store for management commands", async () => {

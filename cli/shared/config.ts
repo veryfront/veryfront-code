@@ -241,7 +241,11 @@ async function resolveApiCredentialCandidates(
   interactive: boolean,
   validationEnv: EnvironmentConfig,
 ): Promise<ApiCredentialCandidate[]> {
-  const envToken = env.apiToken;
+  // The environment snapshot keeps a whitespace-only export verbatim, but the
+  // CLI treats a blank `VERYFRONT_API_TOKEN` as unset everywhere it decides
+  // between the exported and the stored login token. An unusable blank export
+  // must not become an authoritative candidate that shadows the token store.
+  const envToken = env.apiToken?.trim() ? env.apiToken : undefined;
   const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
   const storedToken = await readToken(env);
   const candidates: ApiCredentialCandidate[] = [];

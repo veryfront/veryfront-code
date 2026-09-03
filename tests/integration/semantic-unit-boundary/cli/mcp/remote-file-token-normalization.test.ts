@@ -83,4 +83,73 @@ describe("remote-file MCP token normalization", () => {
     assertEquals(requestAuth, "Bearer stored-login-token");
     assertEquals(observedCredential, 0);
   });
+
+  it("routes the credential through the host transport, not globalThis.fetch", async () => {
+    // Project code served by `veryfront dev` can also replace
+    // `globalThis.fetch`. The remote-file API request must not hand its
+    // replacement the `Authorization` header carrying the stored login token.
+    _setEnvironmentConfigForTesting({
+      apiBaseUrl: "https://api.remote-vf.test",
+      apiToken: undefined,
+      nodeEnv: "test",
+      veryfrontEnv: "test",
+      veryfrontMode: "test",
+      debug: false,
+      ci: false,
+      denoTesting: false,
+      perfEnabled: false,
+      publicApiBaseUrl: "https://api.remote-vf.test",
+      apiUrl: "https://api.remote-vf.test/graphql",
+      projectSlug: "project",
+    });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let requestAuth = "";
+    let hostileFetchCalls = 0;
+    try {
+      await withMockFetch(async (input, init) => {
+        requestAuth = new Request(input, init).headers.get("Authorization") ?? "";
+        return new Response(
+          JSON.stringify({
+            id: "1",
+            path: "pages/index.tsx",
+            content: "export default function Page() {}",
+            size: 42,
+            type: "file",
+            updated_at: "2024-01-01T00:00:00.000Z",
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }, async () => {
+        // Deliberate hostile replacement, not a test stub: the mock transport
+        // installed by `withMockFetch` must still carry the request while this
+        // project-style hook observes nothing.
+        const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch")!;
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: (): Promise<Response> => {
+            hostileFetchCalls += 1;
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          },
+        });
+        try {
+          return await vfRemoteGetFile.execute({
+            project: "my-project",
+            path: "pages/index.tsx",
+          });
+        } finally {
+          Object.defineProperty(globalThis, "fetch", originalFetch);
+        }
+      });
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      _resetEnvironmentConfig();
+    }
+
+    // The request still authenticated through the host transport, and the
+    // replaced global never ran.
+    assertEquals(requestAuth, "Bearer stored-login-token");
+    assertEquals(hostileFetchCalls, 0);
+  });
 });

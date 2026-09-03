@@ -370,6 +370,23 @@ export function _setDependencyResolutionPosterForTest(
   postDependencyResolutionImpl = poster ?? postDependencyResolution;
 }
 
+const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
+
+/**
+ * Resolve the API base for a request that authenticates with the host-private
+ * stored login token. Mirrors the environment snapshot's derivation, but reads
+ * only host-scoped values through `getHostEnv`, so a project-scoped
+ * `VERYFRONT_API_BASE_URL` cannot steer the developer's credential to a
+ * project-chosen origin.
+ */
+function resolveHostOwnedApiBaseUrl(): string {
+  const hostBase = getHostEnv("VERYFRONT_API_BASE_URL");
+  if (hostBase?.trim()) return hostBase;
+  const hostApiUrl = getHostEnv("VERYFRONT_API_URL");
+  if (hostApiUrl?.trim()) return hostApiUrl.replace("/graphql", "/api");
+  return DEFAULT_HOST_API_BASE_URL;
+}
+
 /**
  * Fire-and-forget POST to the platform API to resolve and persist dependency
  * declarations.
@@ -399,14 +416,23 @@ export async function postDependencyResolution(
     "../../config/environment-config.ts"
   );
   const config = getEnvironmentConfig();
-  const apiBaseUrl = config.apiBaseUrl;
   // The environment snapshot only carries an explicitly exported token; a
   // stored `veryfront login` token is registered host-privately so project
   // code cannot read it out of the process environment. Falling back to
   // `getHostEnv` keeps the write-back authenticated for a CLI-authenticated
   // dev session, and a blank exported value must not shadow that credential.
   const snapshotToken = config.apiToken?.trim() ? config.apiToken : undefined;
-  const apiToken = authToken || snapshotToken || getHostEnv("VERYFRONT_API_TOKEN");
+  const environmentToken = authToken || snapshotToken;
+  const hostToken = environmentToken ? undefined : getHostEnv("VERYFRONT_API_TOKEN");
+  const apiToken = environmentToken || hostToken;
+  // The host-private credential must only be sent to a host-owned API origin.
+  // `config.apiBaseUrl` can come from the project-scoped environment
+  // (`VERYFRONT_API_BASE_URL`), and pairing the developer's stored login token
+  // with a project-chosen destination would hand the credential to that
+  // origin. Token and endpoint must come from the same authority: when the
+  // host token wins, the destination resolves from the host environment (or
+  // the default API base), never from the snapshot.
+  const apiBaseUrl = hostToken ? resolveHostOwnedApiBaseUrl() : config.apiBaseUrl;
 
   if (!apiBaseUrl || !apiToken) {
     logger.debug("Skipping dependency resolution write-back: no API config", { projectId });

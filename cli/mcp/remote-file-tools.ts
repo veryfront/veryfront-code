@@ -14,6 +14,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 import { getHostEnv } from "#cli/process-env";
+import { guardedOutboundFetch } from "#cli/outbound-fetch";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
@@ -31,13 +32,14 @@ function getApiBaseUrl(): string {
 
 // Captured before project code runs: `getApiToken` passes the host-private
 // stored login token through this normalizer, so a project that replaces
-// `String.prototype.trim` must not observe the credential from the method
-// receiver.
+// `String.prototype.trim` — or `Reflect.apply` itself — must not observe the
+// credential from the method receiver or the apply arguments.
+const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 
 function normalizeToken(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  const normalized = Reflect.apply(stringTrim, value, []) as string;
+  const normalized = applyIntrinsic(stringTrim, value, []) as string;
   return normalized ? normalized : undefined;
 }
 
@@ -68,7 +70,12 @@ async function apiRequest<T>(
   const url = `${getApiBaseUrl()}/api${path}`;
 
   try {
-    const response = await fetch(url, {
+    // The credential may be the host-private stored login token, so the
+    // request goes through the host transport rather than `globalThis.fetch`.
+    // A project served by `veryfront dev` runs in this process and can replace
+    // the global, and a direct call would hand its replacement the
+    // `Authorization` header to read.
+    const response = await guardedOutboundFetch(url, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,

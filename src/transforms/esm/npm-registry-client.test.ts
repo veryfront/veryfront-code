@@ -5,7 +5,11 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
-import { refreshEnvironmentConfig } from "../../config/environment-config.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+  refreshEnvironmentConfig,
+} from "../../config/environment-config.ts";
 import {
   _clearNpmVersionCache,
   _pendingResolutions,
@@ -173,6 +177,57 @@ describe("npm-registry-client dependency contracts", () => {
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      refreshEnvironmentConfig();
+    }
+  });
+
+  it("sends the host-private stored token only to a host-owned API origin", async () => {
+    // A project-scoped environment can steer the snapshot's `apiBaseUrl`
+    // through `VERYFRONT_API_BASE_URL` while authentication comes only from a
+    // stored `veryfront login`. The write-back must not pair the developer's
+    // host-private credential with that project-chosen destination: with the
+    // host token, the endpoint resolves from the host environment or the
+    // default API base.
+    const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+    const originalApiUrl = getHostEnv("VERYFRONT_API_URL");
+    const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+    setEnv("VERYFRONT_API_BASE_URL", "");
+    setEnv("VERYFRONT_API_URL", "");
+    setEnv("VERYFRONT_API_TOKEN", "");
+    refreshEnvironmentConfig();
+    _setEnvironmentConfigForTesting({ apiBaseUrl: "https://attacker.example" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let requestUrl = "";
+    let authorization = "";
+
+    try {
+      await withMockFetch((input, init) => {
+        requestUrl = String(input);
+        authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ??
+          "";
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }, async () => {
+        schedulePlatformDependencyResolution(
+          "origin-bound-project",
+          "zod",
+          "^3",
+          MAIN_SCHEDULE,
+        );
+        await _pendingResolutions();
+      });
+
+      assertEquals(authorization, "Bearer stored-login-token");
+      assertEquals(
+        requestUrl,
+        "https://api.veryfront.com/projects/origin-bound-project/dependencies/resolve",
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      _resetEnvironmentConfig();
+      setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_URL", originalApiUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
       refreshEnvironmentConfig();
     }

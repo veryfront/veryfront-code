@@ -26,12 +26,16 @@ export interface ProjectSourceExecutionContext {
 }
 
 // Captured before project code runs: the host-private stored login token is
-// normalized here, so a project that replaces `String.prototype.trim` must not
-// observe the credential from the method receiver.
+// normalized here, so a project that replaces `String.prototype.trim` — or
+// `Reflect.apply` itself, which would otherwise receive the credential as its
+// `thisArgument` — must not observe it. `withProjectSourceContext` executes
+// project config before `getProxyProjectSourceContext` runs, so both
+// intrinsics must be captured at module initialization.
+const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 
 function trimHostPrivate(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : Reflect.apply(stringTrim, value, []) as string;
+  return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
 }
 
 export function getProxyProjectSourceContext(): ProxyProjectSourceContext | null {

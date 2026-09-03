@@ -13,8 +13,17 @@ export interface RuntimeAuthContext {
   serviceLayer?: string;
 }
 
+// Captured before project code runs: `resolveRuntimeAuthContext` passes the
+// stored login token through this normalizer before it is registered
+// host-privately, so a project config that replaces `String.prototype.trim` —
+// or `Reflect.apply` itself — must not observe the credential from the method
+// receiver or the apply arguments.
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+
 function normalizeEnvValue(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
+  if (value === undefined) return undefined;
+  const normalized = applyIntrinsic(stringTrim, value, []) as string;
   return normalized ? normalized : undefined;
 }
 

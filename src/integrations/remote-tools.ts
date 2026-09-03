@@ -22,6 +22,7 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
@@ -569,7 +570,11 @@ async function postIntegrationApi(
 ): Promise<Response> {
   signal.throwIfAborted();
 
-  return await fetch(requestUrl, {
+  // The credential may be the host-private stored login token, so the request
+  // goes through the host transport rather than `globalThis.fetch`. Locally
+  // loaded project code runs in this process and can replace the global, and a
+  // direct call would hand its replacement the `Authorization` header to read.
+  return await guardedOutboundFetch(requestUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
