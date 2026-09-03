@@ -19,6 +19,7 @@ import type {
   EvalDefinition,
   EvalMetricResult,
   EvalRecord,
+  EvalReport,
   EvalReportExportConfig,
   EvalToolAdapterResult,
   EvalToolCall,
@@ -425,7 +426,7 @@ function withActiveTraceContext(
 
 async function exportWithSelectedExporter(
   registry: EvalReportExporterRegistry,
-  report: ReturnType<typeof createEvalReport>,
+  report: EvalReport,
   config: EvalReportExportConfig,
   exporterId: string,
 ): Promise<EvalReportExportResult> {
@@ -446,9 +447,15 @@ async function exportWithSelectedExporter(
   }
 }
 
-/** Export an eval report through the configured eval report exporter registry. */
+/**
+ * Export an eval report through the configured eval report exporter registry.
+ *
+ * Takes the wide {@link EvalReport}, not {@link LocalEvalReport}: exporting is the step that
+ * strips the dataset content hash, so it must accept reports that already lack one — a report
+ * round-tripped through redaction, or one read back from a sanitized artifact.
+ */
 export async function exportEvalReport(
-  report: ReturnType<typeof createEvalReport>,
+  report: EvalReport,
   config?: EvalReportExportConfig,
 ): Promise<EvalReportExportResult[] | undefined> {
   if (!config) return undefined;

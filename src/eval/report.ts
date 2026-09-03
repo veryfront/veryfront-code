@@ -9,7 +9,6 @@ import type {
   EvalMetricResult,
   EvalMetricSummary,
   EvalRecord,
-  EvalReport,
   EvalReportDatasetMetadata,
   EvalReportMetadata,
   EvalReportSummary,
