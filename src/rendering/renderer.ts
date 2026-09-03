@@ -80,6 +80,7 @@ import { RenderPipeline } from "./orchestrator/pipeline.ts";
 import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
+import type { EntityResolutionOptions } from "#veryfront/types/entities/getEntityInfo.ts";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
 import { Singleflight, SingleflightFollowerLimitError } from "#veryfront/utils/singleflight.ts";
 import {
@@ -105,11 +106,6 @@ import {
 import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
-const IntrinsicArray = Array;
-const IntrinsicDateNow = Date.now;
-const IntrinsicMathFloor = Math.floor;
-const IntrinsicMathMax = Math.max;
-const IntrinsicMathMin = Math.min;
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -180,15 +176,15 @@ const RENDER_PREWARM_CONCURRENCY = getBoundedEnvNumber(
 function selectPrewarmProbeCandidates(slugs: string[], maxProbes: number): string[] {
   if (slugs.length <= maxProbes) return slugs;
 
-  const prefixCount = IntrinsicMathMax(
+  const prefixCount = Math.max(
     1,
-    IntrinsicMathMin(
+    Math.min(
       maxProbes - 1,
-      IntrinsicMathFloor(maxProbes * RENDER_PREWARM_PROBE_PREFIX_RATIO),
+      Math.floor(maxProbes * RENDER_PREWARM_PROBE_PREFIX_RATIO),
     ),
   );
   const sampleCount = maxProbes - prefixCount;
-  const selected = new IntrinsicArray<string>(maxProbes);
+  const selected = new Array<string>(maxProbes);
   for (let prefixIndex = 0; prefixIndex < prefixCount; prefixIndex += 1) {
     selected[prefixIndex] = slugs[prefixIndex]!;
   }
@@ -203,7 +199,7 @@ function selectPrewarmProbeCandidates(slugs: string[], maxProbes: number): strin
   // the stride below never repeats an index.
   const suffixSpan = lastIndex - prefixCount;
   for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
-    const sourceIndex = prefixCount + IntrinsicMathFloor(
+    const sourceIndex = prefixCount + Math.floor(
       (sampleIndex * suffixSpan) / (sampleCount - 1),
     );
     selected[prefixCount + sampleIndex] = slugs[sourceIndex]!;
@@ -1267,16 +1263,32 @@ export class Renderer {
     return createPageResolver(ctx).getAllPages();
   }
 
-  async pageExists(slug: string, ctx: RenderContext): Promise<boolean> {
+  async pageExists(
+    slug: string,
+    ctx: RenderContext,
+    options: EntityResolutionOptions = {},
+  ): Promise<boolean> {
     if (!this.initialized) {
       throw INITIALIZATION_ERROR.create({
         detail: "Renderer not initialized. Call initialize() first.",
       });
     }
 
-    return createPageResolver(ctx).pageExists(slug);
+    return createPageResolver(ctx).pageExists(slug, options);
   }
 
+  /**
+   * Probe prewarm candidates for resolvability under a bounded probe budget.
+   *
+   * Prewarming degrades gracefully rather than exhaustively: at most
+   * `maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER` candidates reach the
+   * resolver, and the whole batch shares one `RENDER_PREWARM_PROBE_BUDGET_MS`
+   * deadline. A project whose candidate list is dominated by slugs the
+   * selected router cannot resolve can therefore end up prewarming nothing.
+   * That is the accepted trade: prewarming is a cache optimization, while an
+   * unbounded probe loop is a resource-exhaustion vector on shared renderer
+   * pods. Truncation is logged so the degraded case stays visible.
+   */
   private async filterResolvablePrewarmSlugs(
     ctx: RenderContext,
     slugs: string[],
@@ -1285,19 +1297,38 @@ export class Renderer {
     if (maxRoutes <= 0) return [];
 
     const maxProbes = maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER;
-    const deadline = IntrinsicDateNow() + RENDER_PREWARM_PROBE_BUDGET_MS;
+    const deadline = Date.now() + RENDER_PREWARM_PROBE_BUDGET_MS;
+    const candidates = selectPrewarmProbeCandidates(slugs, maxProbes);
+    if (candidates.length < slugs.length) {
+      logger.debug("Production render prewarm probe budget truncated candidates", {
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        candidateCount: slugs.length,
+        probeCount: candidates.length,
+      });
+    }
     const resolvable: string[] = [];
 
-    for (const slug of selectPrewarmProbeCandidates(slugs, maxProbes)) {
-      const remainingMs = deadline - IntrinsicDateNow();
+    for (const slug of candidates) {
+      const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) break;
+
+      // Cancel the probe when the batch budget expires so the resolver slot is
+      // released instead of being held until entity resolution's own default
+      // deadline. The deadline is threaded through as well, so the lookup can
+      // never outlive this batch even if it never observes the abort.
+      const probeAbort = new AbortController();
+      const probe = this.pageExists(slug, ctx, { signal: probeAbort.signal, deadline });
+      // The probe outlives a timeout rejection; keep its late outcome handled.
+      void probe.catch(() => {});
 
       try {
         if (
           await withTimeoutThrow(
-            this.pageExists(slug, ctx),
+            probe,
             remainingMs,
             "Production render prewarm route validation",
+            { onTimeout: () => probeAbort.abort() },
           )
         ) {
           resolvable.push(slug);

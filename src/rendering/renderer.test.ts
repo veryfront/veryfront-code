@@ -1836,10 +1836,13 @@ describe("Renderer release asset cache isolation", () => {
     }).filterResolvablePrewarmSlugs(makeRenderContext(), doomedSlugs, maxRoutes);
 
     try {
+      // Graceful degradation: nothing prewarms when no candidate resolves, and
+      // the probe count is pinned in both directions so neither an unbounded
+      // loop nor a silently probe-nothing implementation can pass.
       assertEquals(resolvable, []);
       assertEquals(
-        probeCount <= maxRoutes * 4,
-        true,
+        probeCount,
+        maxRoutes * 4,
         `resolver probes must stay bounded even when no candidate resolves (got ${probeCount})`,
       );
     } finally {
@@ -1871,7 +1874,7 @@ describe("Renderer release asset cache isolation", () => {
 
     try {
       assertEquals(resolvable, ["/valid-app-route"]);
-      assertEquals(probeCount <= maxRoutes * 4, true);
+      assertEquals(probeCount, maxRoutes * 4);
     } finally {
       await renderer.destroy();
     }
@@ -1910,7 +1913,8 @@ describe("Renderer release asset cache isolation", () => {
 
     try {
       assertEquals(resolvable, siblings);
-      assertEquals(probeCount <= maxRoutes * 4, true);
+      // Stops as soon as the route cap is met, well inside the probe budget.
+      assertEquals(probeCount, maxRoutes);
     } finally {
       await renderer.destroy();
     }
@@ -1921,13 +1925,20 @@ describe("Renderer release asset cache isolation", () => {
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
     let probeCount = 0;
+    const probeOptions: { signal?: AbortSignal; deadline?: number }[] = [];
     (renderer as unknown as {
-      pageExists: (slug: string) => Promise<boolean>;
-    }).pageExists = () => {
+      pageExists: (
+        slug: string,
+        ctx: RenderContext,
+        options: { signal?: AbortSignal; deadline?: number },
+      ) => Promise<boolean>;
+    }).pageExists = (_slug, _ctx, options) => {
       probeCount++;
+      probeOptions.push(options);
       return new Promise<boolean>(() => {});
     };
 
+    const startedAt = Date.now();
     const filtering = (renderer as unknown as {
       filterResolvablePrewarmSlugs: (
         ctx: RenderContext,
@@ -1945,6 +1956,10 @@ describe("Renderer release asset cache isolation", () => {
     try {
       assertEquals(await filtering, []);
       assertEquals(probeCount, 1);
+      // The stalled probe is cancelled and carries the batch deadline, so the
+      // resolver slot is not held for entity resolution's own default window.
+      assertEquals(probeOptions[0]?.signal?.aborted, true);
+      assertEquals(probeOptions[0]?.deadline, startedAt + 5_000);
     } finally {
       await renderer.destroy();
     }
