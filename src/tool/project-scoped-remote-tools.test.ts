@@ -159,14 +159,42 @@ it("hydrateProjectScopedRemoteToolInput injects project_reference when optional 
   );
 });
 
-it("hydrateProjectScopedRemoteToolInput preserves explicit project_reference", () => {
-  const toolInput = { project_reference: "explicit-project", pattern: "src" };
+it("hydrateProjectScopedRemoteToolInput overwrites mismatched project_reference", () => {
+  assertEquals(
+    hydrateProjectScopedRemoteToolInput({
+      toolDefinition: toolDefinition({ name: "list_files", required: ["project_reference"] }),
+      activeProjectId: "project-1",
+      toolInput: { project_reference: "explicit-project", pattern: "src" },
+    }),
+    { project_reference: "project-1", pattern: "src" },
+  );
+});
+
+it("hydrateProjectScopedRemoteToolInput keeps a project_reference matching the active project", () => {
+  const toolInput = { project_reference: "project-1", pattern: "src" };
 
   assertStrictEquals(
     hydrateProjectScopedRemoteToolInput({
       toolDefinition: toolDefinition({ name: "list_files", required: ["project_reference"] }),
       activeProjectId: "project-1",
       toolInput,
+    }),
+    toolInput,
+  );
+});
+
+it("hydrateProjectScopedRemoteToolInput preserves navigation tool project_reference", () => {
+  const toolInput = { project_reference: "other-project" };
+
+  assertStrictEquals(
+    hydrateProjectScopedRemoteToolInput({
+      toolDefinition: toolDefinition({
+        name: "open_project",
+        required: ["project_reference"],
+      }),
+      activeProjectId: "project-1",
+      toolInput,
+      projectScopedRemoteToolOptions: { projectNavigationToolNames: ["open_project"] },
     }),
     toolInput,
   );
@@ -273,6 +301,43 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
     { projectId: "project-1" },
     { projectId: "project-1" },
   ]);
+});
+
+it("createProjectScopedRemoteToolCatalog pins execution to the active project", async () => {
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [
+        toolDefinition({ name: "list_files", required: ["project_reference"] }),
+        toolDefinition({ name: "open_project", required: ["project_reference"] }),
+      ];
+    },
+    async executeTool() {
+      return { ok: true };
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({
+    source,
+    defaultProjectId: "project-1",
+    projectScopedRemoteToolOptions: { projectNavigationToolNames: ["open_project"] },
+  });
+
+  const scoped = await catalog.prepareExecution({
+    toolName: "list_files",
+    toolInput: { pattern: "src", project_reference: "other-project" },
+    context: {},
+  });
+  assertEquals(scoped.toolInput, {
+    pattern: "src",
+    project_reference: "project-1",
+  });
+
+  const navigation = await catalog.prepareExecution({
+    toolName: "open_project",
+    toolInput: { project_reference: "other-project" },
+    context: {},
+  });
+  assertEquals(navigation.toolInput, { project_reference: "other-project" });
 });
 
 it("createProjectScopedRemoteToolCatalog detaches and validates advertised MCP metadata", async () => {

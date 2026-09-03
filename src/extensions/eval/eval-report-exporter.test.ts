@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { EvalReport } from "veryfront/eval";
+import type { EvalMetricResult, EvalReport } from "veryfront/eval";
+import { summarizeEvalRecords } from "veryfront/eval";
 import {
   createEvalReportExporterRegistry,
   redactEvalReportForExport,
@@ -93,6 +94,34 @@ function createReport(): EvalReport {
       },
     ],
   };
+}
+
+const failingCitationMetric: EvalMetricResult = {
+  name: "knowledge.citationPrecision",
+  family: "knowledge",
+  severity: "gate",
+  score: 0,
+  pass: false,
+  explanation: "0 of 1 citations were supported.",
+  evidence: {
+    tool: "knowledge.search",
+    citations: ["[1] secret roadmap passage"],
+    expected: ["Private roadmap: secret roadmap passage"],
+    supported: [],
+    unsupported: ["[1] secret roadmap passage"],
+    supportedCount: 0,
+    citationCount: 1,
+  },
+};
+
+/** Report whose only metric is a failing citation gate, so the summary carries a gate failure. */
+function createCitationFailureReport(): EvalReport {
+  const report = createReport();
+  const record = report.records[0];
+  assert(record);
+  record.metrics = [failingCitationMetric];
+  report.summary = summarizeEvalRecords(report.records);
+  return report;
 }
 
 describe("EvalReportExporterRegistry", () => {
@@ -399,6 +428,51 @@ describe("EvalReportExporterRegistry", () => {
       },
       redaction: { metadataAllowlist: ["topic"] },
     });
+  });
+
+  it("redacts gate failure evidence and explanations copied into the summary", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+
+    registry.register({
+      id: "capture",
+      export(report) {
+        exportedReports.push(report);
+      },
+    });
+
+    await registry.export(createCitationFailureReport());
+
+    const exportedReport = exportedReports[0];
+    assert(exportedReport);
+    const gateFailure = exportedReport.summary.gateFailures?.[0];
+    assert(gateFailure, "the failing citation gate must still be reported");
+    assertEquals(gateFailure.name, "knowledge.citationPrecision");
+    assertEquals(gateFailure.evidence, undefined);
+    assertEquals(gateFailure.explanation, undefined);
+    // Citation labels and expected-source labels are content-derived, so no part of the exported
+    // report may still carry them.
+    const serialized = JSON.stringify(exportedReport);
+    assert(
+      !serialized.includes("secret roadmap passage"),
+      "citation evidence must not survive default export redaction",
+    );
+    assert(
+      !serialized.includes("Private roadmap"),
+      "expected source labels must not survive default export redaction",
+    );
+  });
+
+  it("keeps gate failure details when export redaction explicitly allows them", () => {
+    const redacted = redactEvalReportForExport(createCitationFailureReport(), {
+      includeMetricEvidence: true,
+      includeMetricExplanations: true,
+    });
+
+    const gateFailure = redacted.summary.gateFailures?.[0];
+    assert(gateFailure);
+    assertEquals(gateFailure.explanation, "0 of 1 citations were supported.");
+    assertEquals(gateFailure.evidence, failingCitationMetric.evidence);
   });
 
   it("keeps full record fields only when export redaction explicitly allows them", () => {
