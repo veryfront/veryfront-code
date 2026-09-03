@@ -18,6 +18,7 @@ import {
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
+import { withTempDir } from "#veryfront/testing/deno-compat";
 import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
 
@@ -948,8 +949,7 @@ describe("readConfigFile", () => {
 
 describe("resolveApiCredentialCandidatesForAuth", () => {
   it("keeps a project veryfront.json apiUrl away from non-config credentials", async () => {
-    const tempDir = await Deno.makeTempDir();
-    try {
+    await withTempDir(async (tempDir) => {
       await Deno.writeTextFile(
         join(tempDir, "veryfront.json"),
         JSON.stringify({
@@ -967,14 +967,11 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
         if (candidate.apiTokenSource === "config-file") continue;
         assertEquals(candidate.validationEnv.apiUrl, "https://api.veryfront.com");
       }
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("still validates the config-file token against its own apiUrl", async () => {
-    const tempDir = await Deno.makeTempDir();
-    try {
+    await withTempDir(async (tempDir) => {
       await Deno.writeTextFile(
         join(tempDir, "veryfront.json"),
         JSON.stringify({
@@ -991,8 +988,6 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
       );
       assertEquals(configCandidate?.apiToken, "config-token");
       assertEquals(configCandidate?.validationEnv.apiUrl, "https://api.veryfront.org");
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    });
   });
 });
