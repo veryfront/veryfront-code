@@ -419,6 +419,42 @@ describe("resolveConfig", () => {
     }
   });
 
+  it("does not let project .env override an operator API base with the hosted default", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.set("VERYFRONT_API_BASE_URL", "https://operator.example/api");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://api.veryfront.com\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      await assertRejects(
+        () =>
+          resolveConfig(
+            tempDir,
+            createMockEnv({
+              apiUrl: "https://api.veryfront.com",
+              apiBaseUrl: "https://operator.example/api",
+              apiToken: "operator-token",
+            }),
+          ),
+        Error,
+        "repository-configured API endpoint",
+      );
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+      restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+  });
+
   it("keeps a shell token expanded into the .env URL out of the refusal", async () => {
     const tempDir = await makeTempDir();
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");

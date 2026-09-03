@@ -16,7 +16,6 @@ import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import {
   type ApiUrlEnvKey,
-  DEFAULT_API_URL,
   isSameApiEndpoint,
   resolveCliApiUrl,
   resolveCliApiUrlWithOrigin,
@@ -254,12 +253,13 @@ export function resolveApiUrlTrust(
     // Set in the operator's own shell it confirms the host; read out of a
     // project `.env` file it is just more repository content.
     const source = getEnvSource(origin.key);
-    // Naming the endpoint the CLI would have used anyway, in any equivalent
-    // spelling, steers nothing. Comparing against the resolved URL would be
-    // circular here because the env file supplied it, so the comparison is
-    // against the default endpoint, which is what the CLI falls back to once
-    // the repository's own inputs are set aside.
-    if (source.source === "env-file" && !isSameApiEndpoint(apiUrl, DEFAULT_API_URL)) {
+    // Compare a project .env value with the endpoint selected after removing
+    // that repository-controlled override. This preserves an operator's
+    // explicit VERYFRONT_API_BASE_URL instead of assuming the hosted default.
+    const operatorApiUrl = source.source === "env-file"
+      ? resolveCliApiUrl({ ...env, apiUrl: undefined })
+      : apiUrl;
+    if (source.source === "env-file" && !isSameApiEndpoint(apiUrl, operatorApiUrl)) {
       return {
         apiUrl,
         repositorySteered: true,
