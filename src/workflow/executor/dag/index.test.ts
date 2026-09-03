@@ -3582,6 +3582,31 @@ describe("DAGExecutor", () => {
       assertEquals(executed, []);
     });
 
+    it("rejects a direct parallel child colliding with a concurrent sub-workflow", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          ...parallel("group", [waitForApproval("review", { message: "Group review" })]),
+          dependsOn: [],
+        },
+        {
+          ...subWorkflow("direct", {
+            workflow: {
+              id: "direct-workflow",
+              steps: [waitForApproval("group/review", { message: "Direct review" })],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, false);
+      assertStringIncludes(result.error ?? "", 'child id "group/review"');
+      assertEquals(result.errorCause?.slug, INVALID_ARGUMENT.slug);
+    });
+
     it("rejects colliding siblings inside a callback-defined sub-workflow", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
@@ -3723,6 +3748,47 @@ describe("DAGExecutor", () => {
       assertEquals(result.waitingNode, "orders_0");
       assertEquals(result.nodeStates.release?.status, "running");
       assertEquals(result.nodeStates.orders_0?.status, "running");
+    });
+
+    it("does not seed a completed parallel child into a later sub-workflow", async () => {
+      const nodes: WorkflowNode[] = [
+        parallel("group", [waitForApproval("review", { message: "Group review" })]),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("group/review", { message: "Release review" })],
+            },
+          }),
+          dependsOn: ["group"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            group: {
+              nodeId: "group",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "group/review": {
+              nodeId: "group/review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "group/review");
+      assertEquals(result.nodeStates.release?.status, "running");
     });
 
     it("keeps statically defined sibling sub-workflows in one batch", async () => {

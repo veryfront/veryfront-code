@@ -245,7 +245,7 @@ function collectStaticSubWorkflowReservations(
   return reservations;
 }
 
-function collectNodeSubWorkflowChildIds(
+function collectNodeSharedChildIds(
   node: WorkflowNode,
   parentPath: string,
   scope: ExecutionScope,
@@ -259,7 +259,7 @@ function collectNodeSubWorkflowChildIds(
   switch (node.config.type) {
     case "subWorkflow": {
       const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
-      if (nodeHasUnknownSubWorkflowReservations(node)) break;
+      if (nodeHasUnknownSharedChildReservations(node)) break;
       const reservations = scope.subWorkflowNodeReservations.get(ownerPath);
       if (reservations) {
         for (const childId of reservations) childIds.add(childId);
@@ -268,49 +268,28 @@ function collectNodeSubWorkflowChildIds(
     }
     case "parallel":
       for (const child of node.config.nodes) {
-        collectNodeSubWorkflowChildIds(child, parentPath, scope, childIds);
-      }
-      break;
-    // `branch` is deliberately absent. Only one arm ever runs, and which one is
-    // decided when the node executes, so unioning both arms here would refuse a
-    // run for a collision on an arm that is never taken. A branch that can reach
-    // a sub-workflow is instead admitted alone (see
-    // `nodeHasUnknownSubWorkflowReservations`), and the arm it selects is
-    // checked by that arm's own graph pass.
-    case "loop":
-      if (Array.isArray(node.config.steps)) {
-        for (const child of node.config.steps) {
-          collectNodeSubWorkflowChildIds(child, parentPath, scope, childIds);
-        }
+        childIds.add(child.id);
+        collectNodeSharedChildIds(child, parentPath, scope, childIds);
       }
       break;
   }
 }
 
-function nodeMayExecuteSubWorkflow(node: WorkflowNode): boolean {
+function nodeMayProduceSharedChildState(node: WorkflowNode): boolean {
   switch (node.config.type) {
     case "subWorkflow":
-      return true;
     case "parallel":
-      return node.config.nodes.some(nodeMayExecuteSubWorkflow);
     case "branch":
-      return node.config.then.some(nodeMayExecuteSubWorkflow) ||
-        (node.config.else ?? []).some(nodeMayExecuteSubWorkflow);
     case "loop":
-      if (!Array.isArray(node.config.steps)) return true;
-      return node.config.steps.some(nodeMayExecuteSubWorkflow);
-    case "map": {
-      const processor = node.config.processor;
-      if ("steps" in processor) return true;
-      return nodeMayExecuteSubWorkflow(processor);
-    }
+    case "map":
+      return true;
     default:
       return false;
   }
 }
 
-function nodeHasUnknownSubWorkflowReservations(node: WorkflowNode): boolean {
-  if (node.config.skip) return nodeMayExecuteSubWorkflow(node);
+function nodeHasUnknownSharedChildReservations(node: WorkflowNode): boolean {
+  if (node.config.skip) return nodeMayProduceSharedChildState(node);
 
   switch (node.config.type) {
     case "subWorkflow":
@@ -318,25 +297,23 @@ function nodeHasUnknownSubWorkflowReservations(node: WorkflowNode): boolean {
         typeof node.config.workflow === "string" ||
         !Array.isArray(node.config.workflow.steps)
       ) return true;
-      return node.config.workflow.steps.some(nodeHasUnknownSubWorkflowReservations);
+      return node.config.workflow.steps.some(nodeHasUnknownSharedChildReservations);
     case "parallel":
-      return node.config.nodes.some(nodeHasUnknownSubWorkflowReservations);
+      return node.config.nodes.some(nodeHasUnknownSharedChildReservations);
     case "branch":
       // The selected arm is resolved only at execution, so the child ids this
       // node reserves are unknown until it runs.
       return true;
     case "loop":
-      if (!Array.isArray(node.config.steps)) return true;
-      return node.config.steps.some(nodeHasUnknownSubWorkflowReservations);
     case "map":
-      // Item count and generated namespaces are resolved only at execution.
-      return nodeMayExecuteSubWorkflow(node);
+      // Selection, iteration count, and generated namespaces resolve only at execution.
+      return true;
     default:
       return false;
   }
 }
 
-function findConcurrentSubWorkflowChildCollision(
+function findConcurrentChildStateCollision(
   batch: string[],
   nodeMap: ReadonlyMap<string, WorkflowNode>,
   scope: ExecutionScope,
@@ -346,7 +323,7 @@ function findConcurrentSubWorkflowChildCollision(
     const node = nodeMap.get(nodeId);
     if (!node) continue;
     const reservations = new Set<string>();
-    collectNodeSubWorkflowChildIds(node, scope.subWorkflowPath, scope, reservations);
+    collectNodeSharedChildIds(node, scope.subWorkflowPath, scope, reservations);
 
     for (const childId of reservations) {
       const firstNodeId = reservedBy.get(childId);
@@ -379,12 +356,50 @@ function reservationOwnerStatus(
   return ownerNodeId === undefined ? undefined : nodeStates[ownerNodeId]?.status;
 }
 
+function collectCompletedCompositeChildIds(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  target: Set<string>,
+): void {
+  for (const node of nodes) {
+    const status = nodeStates[node.id]?.status;
+    if (status !== "completed" && status !== "skipped") continue;
+
+    if (node.config.type === "parallel") {
+      for (const childId of collectWorkflowNodeIds(node.config.nodes)) target.add(childId);
+      continue;
+    }
+    if (node.config.type === "branch") {
+      const output = nodeStates[node.id]?.output;
+      const branch = typeof output === "object" && output !== null && "branch" in output
+        ? (output as { branch?: unknown }).branch
+        : undefined;
+      const selected = branch === "then"
+        ? node.config.then
+        : branch === "else"
+        ? (node.config.else ?? [])
+        : [];
+      for (const childId of collectWorkflowNodeIds(selected)) target.add(childId);
+      continue;
+    }
+    const prefix = node.config.type === "map"
+      ? `${node.id}_`
+      : node.config.type === "loop"
+      ? `${node.id}/`
+      : undefined;
+    if (!prefix) continue;
+    for (const childId of Object.keys(nodeStates)) {
+      if (childId.startsWith(prefix)) target.add(childId);
+    }
+  }
+}
+
 function collectPreviouslyProducedSubWorkflowNodeIds(
   ownerPath: string,
   nodeStates: Record<string, NodeState>,
   scope: ExecutionScope,
 ): Set<string> {
-  const producedNodeIds = new Set<string>();
+  const producedNodeIds = new Set(scope.completedCompositeChildIds);
   for (const [owner, ids] of scope.subWorkflowNodeIds) {
     if (isSubWorkflowDescendant(owner, ownerPath)) continue;
     for (const id of ids) producedNodeIds.add(id);
@@ -514,6 +529,7 @@ export class DAGExecutor {
       resumingWait: run.status === "waiting",
       declaredNodeIds: new Set(),
       subWorkflowNodeIds,
+      completedCompositeChildIds: new Set(),
       subWorkflowNodeReservations: new Map(),
       subWorkflowReservationOwners: new Map(),
       subWorkflowPath: "",
@@ -559,6 +575,7 @@ export class DAGExecutor {
       scope.subWorkflowReservationOwners,
       nodeStates,
     );
+    collectCompletedCompositeChildIds(nodes, nodeStates, scope.completedCompositeChildIds);
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -694,7 +711,7 @@ export class DAGExecutor {
       // either approval can be reconciled. Reject the batch before any sibling
       // starts, while sequential siblings can continue to reuse IDs through
       // the ownership filter below.
-      const childCollision = findConcurrentSubWorkflowChildCollision(
+      const childCollision = findConcurrentChildStateCollision(
         candidateBatch,
         nodeMap,
         scope,
@@ -705,7 +722,7 @@ export class DAGExecutor {
         // batches already produced must survive, or their side effects run
         // twice on the next attempt. `errorCause` carries the registry slug the
         // ancestor-collision throw uses, so both refusals classify alike.
-        const detail = `Concurrent sub-workflow nodes "${childCollision.firstNodeId}" and ` +
+        const detail = `Concurrent nodes "${childCollision.firstNodeId}" and ` +
           `"${childCollision.secondNodeId}" both declare child id ` +
           `"${childCollision.childId}"`;
         return {
@@ -719,18 +736,17 @@ export class DAGExecutor {
         };
       }
 
-      // Runtime-defined sub-workflow children cannot be reserved without
-      // invoking project callbacks, potentially before their dependency
-      // context exists. Nodes whose child ids are statically visible were just
-      // proven distinct above and still run together; only nodes whose
-      // children appear at execution time are serialized, and then only
-      // against other sub-workflow-bearing nodes in the same batch.
+      // Runtime-defined composite children cannot be reserved without invoking
+      // project callbacks or selecting branches before their dependency
+      // context exists. Statically visible child ids were proven distinct
+      // above; unresolved producers are serialized against other composite
+      // producers in the same batch.
       const unresolvedNodeIds: string[] = [];
       let hasResolvedSubWorkflow = false;
       for (const nodeId of candidateBatch) {
         const node = nodeMap.get(nodeId);
-        if (node === undefined || !nodeMayExecuteSubWorkflow(node)) continue;
-        if (nodeHasUnknownSubWorkflowReservations(node)) unresolvedNodeIds.push(nodeId);
+        if (node === undefined || !nodeMayProduceSharedChildState(node)) continue;
+        if (nodeHasUnknownSharedChildReservations(node)) unresolvedNodeIds.push(nodeId);
         else hasResolvedSubWorkflow = true;
       }
       let batch = candidateBatch;
@@ -914,6 +930,11 @@ export class DAGExecutor {
             startedAt: baseNodeStates[nodeId]!.startedAt,
           },
           "Workflow node state",
+        );
+        collectCompletedCompositeChildIds(
+          [nodeMap.get(nodeId)!],
+          nodeStates,
+          scope.completedCompositeChildIds,
         );
 
         if (nodeResult.waiting) {

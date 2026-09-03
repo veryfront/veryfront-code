@@ -46,6 +46,8 @@ export interface ExecutionScope {
   declaredNodeIds: ReadonlySet<string>;
   /** Child node ids owned by each sub-workflow node, preventing sibling state leakage. */
   subWorkflowNodeIds: Map<string, Set<string>>;
+  /** Ownerless child ids produced by completed non-sub-workflow composites. */
+  completedCompositeChildIds: Set<string>;
   /** Child node ids reserved before concurrent sub-workflow execution begins. */
   subWorkflowNodeReservations: Map<string, Set<string>>;
   /** Sub-workflow node owning each reservation path. */
