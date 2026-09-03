@@ -423,15 +423,26 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * `refreshStaleSource`, a stale receipt selects `"none"` and reaches
  * {@link validatePushReceipt} as a refusal instead.
  */
+function resolveDigestOnlySourceRefresh(
+  receipt: PushReceipt,
+  local: LocalSourceObservation,
+): BootstrapPushKind {
+  // A digest-only receipt is the normal provenance for a directory outside
+  // Git. Keep it when both sides still have no commit and the recomputed source
+  // digest matches. If the directory has since gained a commit, preserve the
+  // existing policy: an unclean legacy receipt refreshes, while a clean one
+  // reaches validatePushReceipt as a commit mismatch.
+  if (local.gitSource.commitSha !== null) return receipt.clean ? "none" : "refresh";
+  if (receipt.localSourceDigest === undefined) return "refresh";
+  if (local.sourceDigest === null) return "refresh";
+  return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
+}
+
 function resolveStaleSourceRefresh(
   receipt: PushReceipt,
   local: LocalSourceObservation,
 ): BootstrapPushKind {
-  // A receipt that never recorded a commit has no HEAD to compare against, so
-  // the source is refreshed. It is the only state that skips the comparison:
-  // a dirty receipt that still names a commit gets compared like a clean one,
-  // because a HEAD that has moved off it is committed work the push never saw.
-  if (!receipt.commitSha) return "refresh";
+  if (!receipt.commitSha) return resolveDigestOnlySourceRefresh(receipt, local);
   const { gitSource } = local;
   if (gitSource.commitSha !== receipt.commitSha) {
     // A checkout on a different commit must reach {@link validatePushReceipt}

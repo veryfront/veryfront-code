@@ -1220,6 +1220,28 @@ describe("resolveBootstrapPush", () => {
     return Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
   }
 
+  it("keeps a matching digest-only receipt outside Git", () => {
+    const localSourceDigest = `sha256:${"1".repeat(64)}`;
+
+    assertEquals(
+      resolveBootstrapPush(
+        {
+          ...receipt,
+          commitSha: null,
+          clean: false,
+          localSourceDigest,
+        },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false },
+          sourceDigest: localSourceDigest,
+        },
+        target,
+      ),
+      "none",
+    );
+  });
+
   it("skips the push only for a clean checkout parked on the pushed commit", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(
