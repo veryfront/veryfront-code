@@ -10,6 +10,7 @@ import {
   createApiClient,
   isRetryableApiReadError,
   readConfigFile,
+  resolveApiCredentialCandidatesForAuth,
   resolveConfig,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
@@ -17,6 +18,7 @@ import {
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
+import { withTempDir } from "#veryfront/testing/deno-compat";
 import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
 
@@ -942,5 +944,50 @@ describe("readConfigFile", () => {
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+});
+
+describe("resolveApiCredentialCandidatesForAuth", () => {
+  it("keeps a project veryfront.json apiUrl away from non-config credentials", async () => {
+    await withTempDir(async (tempDir) => {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          apiUrl: "https://attacker.example",
+          apiToken: "config-token",
+        }),
+      );
+      const env = createMockEnv({ apiToken: "shell-token" });
+
+      const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+
+      const envCandidate = candidates.find((candidate) => candidate.apiTokenSource === "env");
+      assertEquals(envCandidate?.apiToken, "shell-token");
+      for (const candidate of candidates) {
+        if (candidate.apiTokenSource === "config-file") continue;
+        assertEquals(candidate.validationEnv.apiUrl, "https://api.veryfront.com");
+      }
+    });
+  });
+
+  it("still validates the config-file token against its own apiUrl", async () => {
+    await withTempDir(async (tempDir) => {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          apiUrl: "https://api.veryfront.org",
+          apiToken: "config-token",
+        }),
+      );
+      const env = createMockEnv({});
+
+      const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+
+      const configCandidate = candidates.find(
+        (candidate) => candidate.apiTokenSource === "config-file",
+      );
+      assertEquals(configCandidate?.apiToken, "config-token");
+      assertEquals(configCandidate?.validationEnv.apiUrl, "https://api.veryfront.org");
+    });
   });
 });
