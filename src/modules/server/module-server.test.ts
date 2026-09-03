@@ -1953,6 +1953,37 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(secondResponse.status, 200);
   });
 
+  it("does not let a non-JSON miss suppress the JSON module at the same base path", async () => {
+    // A non-JSON request drops `.json` from every project lookup, so its miss
+    // says nothing about `lib/data.json`. Keying the miss on the extensionless
+    // base path alone let any client poison the JSON module for the project by
+    // asking once for `lib/data.js`.
+    clearSourceMissCache("module-server");
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-json-miss-poisoning";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(`${projectDir}/lib/data.json`, `{ "value": 1 }`);
+    const options = { projectId: "module-json-miss-poisoning", projectDir, adapter, dev: true };
+
+    const poisoningResponse = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/lib/data.js"),
+      options,
+    );
+    assertEquals(poisoningResponse.status, 404, "a .js request must not resolve to .json");
+
+    // Both shapes the import rewriter can produce for `@/lib/data.json` must
+    // still resolve after the miss above was recorded.
+    for (const requestPath of ["lib/data.json", "lib/data.json.js"]) {
+      const response = await serveModule(
+        new Request(`http://localhost:3000/_vf_modules/${requestPath}`),
+        options,
+      );
+
+      assertEquals(response.status, 200, `${requestPath} must still resolve`);
+      assertStringIncludes(await response.text(), `"value"`);
+    }
+  });
+
   it("should serve dnt shims as JavaScript content type", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),

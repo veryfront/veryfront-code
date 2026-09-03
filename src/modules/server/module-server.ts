@@ -1439,6 +1439,14 @@ async function findSourceFile(
     branch: context.branch,
     releaseId: context.releaseId,
     basePath: basePathWithoutExt,
+    // The lookup below only stats `basePath` itself when it carries a known
+    // extension, and drops `.json` from the fallback list for every non-JSON
+    // request. Two requests that share an extensionless base path therefore
+    // probe different files, so they must not share a miss entry: without
+    // this, one `app/page.js` request caches a miss that makes the later
+    // `app/page.json` request return null before its own file is ever stat'd.
+    basePathExtension: knownExtMatch?.[0] ?? null,
+    requestedExtension: requestedExt,
     reactVersion,
   });
 
