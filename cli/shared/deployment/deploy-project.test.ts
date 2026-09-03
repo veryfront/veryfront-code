@@ -33,7 +33,7 @@ import {
   type DeployEvent,
   type DeployProjectRequest,
   type DeployStepName,
-  needsBootstrapPush,
+  resolveBootstrapPush,
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
@@ -1026,7 +1026,7 @@ describe("pushed source provenance", () => {
           { commitSha, sourceDigest },
         );
         assertEquals(
-          await needsBootstrapPush(
+          await resolveBootstrapPush(
             {
               version: 2,
               controlPlane: "https://control.example.test/api",
@@ -1040,15 +1040,21 @@ describe("pushed source provenance", () => {
             },
             { kind: "ensure-pushed" },
             projectDir,
+            {
+              controlPlane: "https://control.example.test/api",
+              branch: "main",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+            },
           ),
-          false,
+          "none",
         );
       })
     );
   });
 });
 
-describe("needsBootstrapPush", () => {
+describe("resolveBootstrapPush", () => {
   const receipt = {
     version: 2 as const,
     controlPlane: "https://control.example.test/api",
@@ -1059,15 +1065,28 @@ describe("needsBootstrapPush", () => {
     pushedAt: "2026-07-10T09:20:00.000Z",
   };
 
+  const target = {
+    controlPlane: "https://control.example.test/api",
+    branch: "main",
+    projectId: "550e8400-e29b-41d4-a716-446655440000",
+    projectSlug: "my-project",
+  };
+
+  /** Make the checkout dirty in a way the CLI-state allowance cannot excuse. */
+  function dirty(projectDir: string): Promise<void> {
+    return Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+  }
+
   it("skips the push only for a clean checkout parked on the pushed commit", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(
-        await needsBootstrapPush(
+        await resolveBootstrapPush(
           { ...receipt, commitSha, clean: true },
           { kind: "ensure-pushed" },
           projectDir,
+          target,
         ),
-        false,
+        "none",
       );
     });
   });
@@ -1078,52 +1097,148 @@ describe("needsBootstrapPush", () => {
       // with "came from a different commit"; deploy must not quietly replace
       // that refusal with an upload.
       assertEquals(
-        await needsBootstrapPush(
+        await resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: true },
           { kind: "ensure-pushed" },
           projectDir,
+          target,
         ),
-        false,
+        "none",
       );
     });
   });
 
-  it("pushes again when the working tree drifted from the pushed commit", async () => {
-    await withGitProject(async (projectDir, commitSha) => {
-      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+  it("keeps the moved-HEAD refusal when the tree is also dirty", async () => {
+    await withGitProject(async (projectDir) => {
+      // A dirty tree must not upgrade a refusal into an upload: pushing here
+      // would send the new commit *and* the uncommitted work, and would
+      // overwrite the very receipt validatePushReceipt reads to refuse.
+      await dirty(projectDir);
 
       assertEquals(
-        await needsBootstrapPush(
+        await resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("keeps the branch refusal when the tree is dirty", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await dirty(projectDir);
+
+      assertEquals(
+        await resolveBootstrapPush(
+          { ...receipt, branch: "feature", commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("keeps the project and control-plane refusals when the tree is dirty", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await dirty(projectDir);
+
+      assertEquals(
+        await resolveBootstrapPush(
+          { ...receipt, projectSlug: "other-project", commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+          target,
+        ),
+        "none",
+      );
+      assertEquals(
+        await resolveBootstrapPush(
+          { ...receipt, projectId: "550e8400-e29b-41d4-a716-446655440001", commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+          target,
+        ),
+        "none",
+      );
+      assertEquals(
+        await resolveBootstrapPush(
+          { ...receipt, controlPlane: "https://other.example.test/api", commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("refreshes rather than bootstraps when the working tree drifted", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      // "refresh" is what keeps the push's remote-conflict checks and prune;
+      // "bootstrap" would force over a collaborator's edit.
+      await dirty(projectDir);
+
+      assertEquals(
+        await resolveBootstrapPush(
           { ...receipt, commitSha, clean: true },
           { kind: "ensure-pushed" },
           projectDir,
+          target,
         ),
-        true,
+        "refresh",
       );
     });
   });
 
-  it("pushes again for receipts that never proved a clean source", async () => {
+  it("refreshes for receipts that never proved a clean source", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(
-        await needsBootstrapPush(
+        await resolveBootstrapPush(
           { ...receipt, commitSha, clean: false },
           { kind: "ensure-pushed" },
           projectDir,
+          target,
         ),
-        true,
+        "refresh",
       );
       assertEquals(
-        await needsBootstrapPush(
+        await resolveBootstrapPush(
           { ...receipt, commitSha: null, clean: false },
           { kind: "ensure-pushed" },
           projectDir,
+          target,
         ),
-        true,
+        "refresh",
       );
+    });
+  });
+
+  it("bootstraps only when no receipt exists at all", async () => {
+    await withGitProject(async (projectDir) => {
       assertEquals(
-        await needsBootstrapPush(null, { kind: "ensure-pushed" }, projectDir),
-        true,
+        await resolveBootstrapPush(null, { kind: "ensure-pushed" }, projectDir, target),
+        "bootstrap",
+      );
+    });
+  });
+
+  it("ignores an unknown project while the project is only planned", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await dirty(projectDir);
+
+      assertEquals(
+        await resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+          { controlPlane: target.controlPlane, branch: "main", projectId: null, projectSlug: null },
+        ),
+        "refresh",
       );
     });
   });
@@ -1131,8 +1246,8 @@ describe("needsBootstrapPush", () => {
   it("never pushes for an already-pushed source", async () => {
     await withGitProject(async (projectDir) => {
       assertEquals(
-        await needsBootstrapPush(null, { kind: "already-pushed" }, projectDir),
-        false,
+        await resolveBootstrapPush(null, { kind: "already-pushed" }, projectDir, target),
+        "none",
       );
     });
   });

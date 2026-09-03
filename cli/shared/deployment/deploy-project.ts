@@ -35,6 +35,7 @@ import {
 } from "veryfront/errors";
 import {
   computeSourceDigest,
+  normalizeControlPlane,
   type ProjectTarget,
   PUSH_RECEIPT_RELATIVE_PATH,
   type PushReceipt,
@@ -321,6 +322,48 @@ async function ensureProjectLinkedForDeploy(
 }
 
 /**
+ * How an `ensure-pushed` deploy has to upload the local source, if at all.
+ *
+ * - `"bootstrap"` — no receipt exists, so there is no remote state to
+ *   reconcile against and the first push may write the branch outright.
+ * - `"refresh"`  — a receipt for *this* deploy target exists but no longer
+ *   describes the checkout, so the source is pushed again under the normal
+ *   conflict checks.
+ * - `"none"`     — nothing to push, either because the receipt still describes
+ *   the checkout or because deploy must refuse rather than upload.
+ */
+export type BootstrapPushKind = "none" | "bootstrap" | "refresh";
+
+/** The deploy target a receipt has to match before it may be refreshed. */
+export interface BootstrapPushTarget {
+  controlPlane: string;
+  branch: string;
+  /** Omitted while the project is only planned, so nothing to compare yet. */
+  projectId?: string | null;
+  projectSlug?: string | null;
+}
+
+/**
+ * Whether a receipt describes the same place this deploy is about to write.
+ *
+ * A receipt aimed elsewhere is the evidence {@link validatePushReceipt} needs
+ * to refuse the deploy. Pushing over it would overwrite that evidence with a
+ * receipt that matches, turning a refusal into a silent redirect, so a
+ * mismatched receipt never selects an automatic push.
+ */
+function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget): boolean {
+  if (
+    normalizeControlPlane(receipt.controlPlane) !== normalizeControlPlane(target.controlPlane)
+  ) {
+    return false;
+  }
+  if (receipt.branch !== target.branch) return false;
+  if (target.projectId && receipt.projectId !== target.projectId) return false;
+  if (target.projectSlug && receipt.projectSlug !== target.projectSlug) return false;
+  return true;
+}
+
+/**
  * Whether an `ensure-pushed` deploy has to upload the local source first.
  *
  * Holding a receipt is not evidence that the receipt still describes the
@@ -331,19 +374,29 @@ async function ensureProjectLinkedForDeploy(
  * never proved a clean source, and a project outside Git — is pushed again, so
  * `veryfront up` refreshes the source instead of deploying a stale one.
  *
- * A moved HEAD is deliberately not in that list. {@link validatePushReceipt}
- * already refuses a receipt from a different commit and tells the operator to
- * push, and that refusal is the contract deploy has always had: committed work
- * is never uploaded behind the operator's back.
+ * Every refusal {@link validatePushReceipt} owns is checked *before* dirtiness
+ * can select a push, because the push rewrites the receipt those refusals read.
+ * A different control plane, project, or branch, and a HEAD that has moved off
+ * the pushed commit, therefore still reach the operator as an error telling
+ * them to push, exactly as they do from a clean checkout. That keeps deploy's
+ * standing contract intact: committed work is never uploaded behind the
+ * operator's back, and a dirty tree never converts a refusal into an upload.
  */
-export async function needsBootstrapPush(
+export async function resolveBootstrapPush(
   receipt: PushReceipt | null,
   source: DeployProjectRequest["source"],
   projectDir: string,
-): Promise<boolean> {
-  if (source.kind !== "ensure-pushed") return false;
-  if (!receipt || !receipt.clean || !receipt.commitSha) return true;
-  return !(await resolveGitSource(projectDir)).clean;
+  target: BootstrapPushTarget,
+): Promise<BootstrapPushKind> {
+  if (source.kind !== "ensure-pushed") return "none";
+  if (!receipt) return "bootstrap";
+  if (!receiptTargetsDeploy(receipt, target)) return "none";
+  // A receipt that never recorded a clean commit proves nothing about the
+  // checkout, so there is no commit to compare and the source is refreshed.
+  if (!receipt.clean || !receipt.commitSha) return "refresh";
+  const gitSource = await resolveGitSource(projectDir);
+  if (gitSource.commitSha !== receipt.commitSha) return "none";
+  return gitSource.clean ? "none" : "refresh";
 }
 
 export function assertProjectOwnership(
@@ -1477,11 +1530,18 @@ export function createDeployProject(options: {
         request.projectSlug,
       );
       let { config, controlPlane, project } = setup;
-      const bootstrapPush = await needsBootstrapPush(
+      const bootstrapPushKind = await resolveBootstrapPush(
         receipt,
         request.source,
         request.projectDir,
+        {
+          controlPlane: config.apiUrl,
+          branch,
+          projectId: project?.id ?? null,
+          projectSlug: project?.slug ?? null,
+        },
       );
+      const bootstrapPush = bootstrapPushKind !== "none";
 
       if (request.mode === "dry-run" && !project) {
         return {
@@ -1503,7 +1563,15 @@ export function createDeployProject(options: {
           await pushCommand({
             projectDir: request.projectDir,
             branch,
-            force: true,
+            // Only the very first push of a project has no receipt to
+            // reconcile against, so only it may write the branch outright.
+            // Refreshing an established push keeps the normal remote-conflict
+            // checks, or a collaborator's edit to an untouched file would be
+            // overwritten by an unrelated local one; and it prunes source that
+            // disappeared locally, or the deleted file would stay in the
+            // upload and be deployed as live.
+            force: bootstrapPushKind === "bootstrap",
+            prune: bootstrapPushKind === "refresh",
             dryRun: request.mode === "dry-run",
             quiet: true,
           });
