@@ -4,7 +4,16 @@ import process from "node:process";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { computeCodeHash, computeHash, fnv1aHash, shortHash, simpleHash } from "./hash-utils.ts";
+import {
+  cacheNamespaceSegment,
+  computeCodeHash,
+  computeHash,
+  fnv1aHash,
+  hashCodeHex,
+  MAX_CACHE_NAMESPACE_SEGMENT_LENGTH,
+  shortHash,
+  simpleHash,
+} from "./hash-utils.ts";
 
 const POISONED_DIGEST_SCRIPT = String.raw`
 import { computeHash } from "./src/utils/hash-utils.ts";
@@ -244,6 +253,154 @@ describe("hash-utils", () => {
   describe("fnv1aHash", () => {
     it("includes every UTF-16 code unit for non-BMP characters", () => {
       assertNotEquals(fnv1aHash("😀"), fnv1aHash("😁"));
+    });
+  });
+
+  describe("cacheNamespaceSegment", () => {
+    it("separates identifiers whose 32-bit hashCodeHex digests collide", () => {
+      // These SSR cache namespace keys previously used hashCodeHex, letting
+      // two content sources with colliding ids share one cache directory.
+      assertEquals(hashCodeHex("preview-58x4ga9b"), hashCodeHex("preview-5icz6rpk"));
+      assertNotEquals(
+        cacheNamespaceSegment("preview-58x4ga9b"),
+        cacheNamespaceSegment("preview-5icz6rpk"),
+      );
+    });
+
+    it("is deterministic", () => {
+      assertEquals(cacheNamespaceSegment("branch-main"), cacheNamespaceSegment("branch-main"));
+    });
+
+    it("produces filesystem- and URL-safe segments", () => {
+      const ids = [
+        "my/project",
+        "a b\\c%2F",
+        "preview-feature/refactor",
+        "こんにちは",
+        "",
+        "preview_main-1",
+        "x".repeat(4096),
+      ];
+      for (const id of ids) {
+        const segment = cacheNamespaceSegment(id);
+        assertEquals(
+          /^[a-z0-9_-]+$/.test(segment),
+          true,
+          `segment must be path-safe and case-insensitive: ${segment}`,
+        );
+        assertEquals(
+          segment.length <= MAX_CACHE_NAMESPACE_SEGMENT_LENGTH,
+          true,
+          `segment must stay within the documented bound: ${segment.length}`,
+        );
+      }
+    });
+
+    it("keeps path-safe identifiers verbatim so cached module paths stay short", () => {
+      // Two of these segments nest per cached SSR module path, so doubling
+      // every id as hex would push deep routes past the 260-character path
+      // limit on hosts without long-path support.
+      assertEquals(cacheNamespaceSegment("preview-58x4ga9b"), "id-preview-58x4ga9b");
+      assertEquals(
+        cacheNamespaceSegment("3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90"),
+        "id-3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
+      );
+      assertEquals(cacheNamespaceSegment("preview_main"), "id-preview_main");
+    });
+
+    it("does not keep identifiers verbatim when a filesystem could fold them", () => {
+      // A leading separator-like character, an uppercase letter, or a trailing
+      // dot (which Windows strips from directory names) must not survive into
+      // the segment as written.
+      for (const id of ["-leading", "_leading", "Preview", "trailing.", "with.dot"]) {
+        assertEquals(
+          cacheNamespaceSegment(id).startsWith("hx-"),
+          true,
+          `id must be hex-encoded: ${id}`,
+        );
+      }
+    });
+
+    it("keeps segments distinct on case-insensitive filesystems", () => {
+      // Directory names fold by case on macOS/Windows, so a case-sensitive
+      // encoding could hand two content sources the same cache directory.
+      const ids = ["Preview-A", "preview-a", "PREVIEW-A", "release/v1", "RELEASE/V1"];
+      const folded = new Set(ids.map((id) => cacheNamespaceSegment(id).toLowerCase()));
+      assertEquals(folded.size, ids.length);
+    });
+
+    it("does not nest slash-containing identifiers under their prefixes", () => {
+      const parent = cacheNamespaceSegment("preview-feature");
+      const child = cacheNamespaceSegment("preview-feature/refactor");
+      assertEquals(child.includes("/"), false);
+      assertNotEquals(parent, child);
+    });
+
+    it("bounds segment length for oversized identifiers while keeping them distinct", () => {
+      const base = "x".repeat(4096);
+      const first = cacheNamespaceSegment(`${base}a`);
+      const second = cacheNamespaceSegment(`${base}b`);
+
+      assertEquals(first.length <= 160, true, `oversized segment must stay bounded: ${first}`);
+      assertEquals(/^[a-z0-9-]+$/.test(first), true);
+      assertNotEquals(first, second);
+    });
+
+    it("keeps unpaired surrogates distinct from the replacement character", () => {
+      // UTF-8 encoding folds an unpaired surrogate to U+FFFD, which would hand
+      // "\uD800" and "�" the same cache namespace.
+      assertNotEquals(cacheNamespaceSegment("\uD800"), cacheNamespaceSegment("�"));
+      assertNotEquals(cacheNamespaceSegment("\uDC00"), cacheNamespaceSegment("�"));
+      assertNotEquals(cacheNamespaceSegment("\uD800"), cacheNamespaceSegment("\uDC00"));
+      assertEquals(/^[a-z0-9-]+$/.test(cacheNamespaceSegment("\uD800")), true);
+    });
+
+    it("encodes well-formed non-verbatim identifiers as their UTF-8 bytes", () => {
+      const utf8Hex = (value: string) =>
+        Array.from(new TextEncoder().encode(value))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+
+      for (const id of ["Branch-Main", "こんにちは", "😀", "a b\\c%2F", ""]) {
+        assertEquals(cacheNamespaceSegment(id), `hx-${utf8Hex(id)}`);
+      }
+    });
+
+    it("derives oversized segments without ambient hashing intrinsics", () => {
+      const originalCharCodeAt = String.prototype.charCodeAt;
+      const originalBigIntToString = BigInt.prototype.toString;
+      const originalBigInt = globalThis.BigInt;
+      const oversized = `${"z".repeat(4096)}tail`;
+
+      let segment: string | undefined;
+      try {
+        // deno-lint-ignore no-explicit-any
+        (String.prototype as any).charCodeAt = () => 0x61;
+        // deno-lint-ignore no-explicit-any
+        (BigInt.prototype as any).toString = () => "x";
+        globalThis.BigInt = (() => {
+          throw new Error("ambient BigInt constructor must not run");
+        }) as unknown as BigIntConstructor;
+        segment = cacheNamespaceSegment(oversized);
+      } finally {
+        String.prototype.charCodeAt = originalCharCodeAt;
+        globalThis.BigInt = originalBigInt;
+        BigInt.prototype.toString = originalBigIntToString;
+      }
+
+      assertEquals(segment, cacheNamespaceSegment(oversized));
+      assertEquals(segment?.endsWith("-x-x"), false);
+      assertNotEquals(segment, cacheNamespaceSegment(`${"z".repeat(4096)}other`));
+    });
+
+    it("keeps verbatim, hex and hashed forms in disjoint namespaces", () => {
+      // An identifier whose hex encoding reads back as another identifier must
+      // not land in that identifier's namespace, so the three forms carry
+      // prefixes that no other form can produce.
+      assertEquals(cacheNamespaceSegment("short-id").startsWith("id-"), true);
+      assertEquals(cacheNamespaceSegment("Short-Id").startsWith("hx-"), true);
+      assertEquals(cacheNamespaceSegment("y".repeat(4096)).startsWith("h-"), true);
+      assertNotEquals(cacheNamespaceSegment("ab"), cacheNamespaceSegment("6162"));
     });
   });
 });
