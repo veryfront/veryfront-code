@@ -759,6 +759,9 @@ export class RenderPipeline {
     };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+    // Mirror the fallback in resolveModuleLoaderConfig so stale-cache recovery
+    // classifies and purges the same namespace the module loader compiled into.
+    const contentSourceId = options?.contentSourceId ?? this.config.contentSourceId;
     const cacheKey = this.buildCacheKey(slug, options, dependencyPinningCacheKey);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
@@ -1116,11 +1119,13 @@ export class RenderPipeline {
       if (isMdxEsmExportMismatchError(error)) {
         const recovered = await recoverStaleMdxEsmPreviewCaches({
           adapter: this.config.adapter,
+          projectDir: this.config.projectDir,
           projectId,
           projectSlug,
-          contentSourceId: options?.contentSourceId,
+          contentSourceId,
           slug,
           pagePath: slug,
+          mode: this.config.mode,
         });
 
         if (recovered) {
@@ -1129,7 +1134,7 @@ export class RenderPipeline {
             slug,
             projectId,
             projectSlug,
-            contentSourceId: options?.contentSourceId,
+            contentSourceId,
           });
           return await renderOnce();
         }
