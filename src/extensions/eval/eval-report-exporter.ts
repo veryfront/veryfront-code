@@ -8,7 +8,12 @@
  * @module extensions/eval/eval-report-exporter
  */
 
-import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval/types.ts";
+import type {
+  EvalGateFailureSummary,
+  EvalMetricResult,
+  EvalRecord,
+  EvalReport,
+} from "#veryfront/eval/types.ts";
 import { assertRegistrationMethod, captureRegistrationId } from "../runtime-validation.ts";
 import { describeThrownValue } from "../safe-value.ts";
 
@@ -35,11 +40,15 @@ export interface EvalReportExportRedaction {
   includeRetrievedContext?: boolean;
   /** Include answer citation payloads. Defaults to false. */
   includeCitations?: boolean;
-  /** Include metric/check explanations. Defaults to false. */
+  /**
+   * Include metric/check explanations. Defaults to false. Applies to record results and to the
+   * summary gate failures that copy them.
+   */
   includeMetricExplanations?: boolean;
   /**
-   * Include metric/check evidence payloads. Defaults to false. Metric labels restate the same
-   * configured parameters, so they follow this setting on both record and summary metrics.
+   * Include metric/check evidence payloads. Defaults to false. Applies to record results and to the
+   * summary gate failures that copy them. Metric labels restate the same configured parameters, so
+   * they follow this setting on both record and summary metrics.
    */
   includeMetricEvidence?: boolean;
   /** Include dataset source paths. Defaults to false. */
@@ -185,19 +194,41 @@ function redactMetricResults(
   });
 }
 
-function redactMetricSummaries(
+function redactGateFailures(
+  gateFailures: EvalGateFailureSummary[],
+  redaction: EvalReportExportRedaction,
+): EvalGateFailureSummary[] {
+  return gateFailures.map((failure) => {
+    const redacted: EvalGateFailureSummary = { ...failure };
+    if (!redaction.includeMetricExplanations) {
+      delete redacted.explanation;
+    }
+    if (!redaction.includeMetricEvidence) {
+      delete redacted.evidence;
+    }
+    return redacted;
+  });
+}
+
+function redactSummary(
   summary: EvalReport["summary"],
   redaction: EvalReportExportRedaction,
 ): EvalReport["summary"] {
-  if (redaction.includeMetricEvidence) return summary;
-  return {
-    ...summary,
-    metrics: summary.metrics.map((metric) => {
-      const redacted = { ...metric };
-      delete redacted.label;
-      return redacted;
-    }),
-  };
+  const redacted: EvalReport["summary"] = { ...summary };
+  if (!redaction.includeMetricEvidence) {
+    redacted.metrics = summary.metrics.map((metric) => {
+      const redactedMetric = { ...metric };
+      delete redactedMetric.label;
+      return redactedMetric;
+    });
+  }
+  // Every gate failure copies the blocking result's explanation and evidence verbatim, so citation
+  // labels and retrieved-source labels reach the summary too. They leave on the same terms as the
+  // record-level metric they came from.
+  if (summary.gateFailures) {
+    redacted.gateFailures = redactGateFailures(summary.gateFailures, redaction);
+  }
+  return redacted;
 }
 
 function cloneRedaction(
@@ -252,7 +283,7 @@ export function redactEvalReportForExport(
   return {
     ...cloned,
     ...(cloned.dataset ? { dataset: redactDatasetMetadata(cloned.dataset, redaction) } : {}),
-    summary: redactMetricSummaries(cloned.summary, redaction),
+    summary: redactSummary(cloned.summary, redaction),
     records: cloned.records.map((record) => redactRecord(record, redaction)),
   };
 }
