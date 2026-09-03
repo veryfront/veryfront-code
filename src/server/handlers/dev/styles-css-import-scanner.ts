@@ -149,9 +149,18 @@ function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
   // every tenant keeps the same server-level `ctx.projectDir`. Keying on
   // `projectDir` alone would collapse all of them onto one entry, so a request
   // for project B could reuse or join project A's walk and then persist A's
-  // imports into B's prepared stylesheet. The slug is the tenant admission
-  // already resolved, not something the client selects.
-  const contentScope = contentContext?.projectSlug ?? ctx.projectSlug ?? ctx.projectDir;
+  // imports into B's prepared stylesheet. Behind the proxy admission boundary
+  // the slug is resolved tenant identity, so it is safe to key on there — but
+  // ONLY there. Outside proxy mode `ctx.projectSlug` is a client-supplied
+  // selector (the raw `x-project-slug` header or the Host-parsed subdomain,
+  // with no trust gate), while the filesystem serves `ctx.projectDir` whatever
+  // the client claims. Folding it into the key on a standalone server would let
+  // an unauthenticated caller mint a fresh key per request and force one full
+  // source walk each time, so a content-less non-proxy scan keys on the
+  // directory that is actually walked.
+  const contentScope = contentContext?.projectSlug ??
+    (ctx.isProxyMode ? ctx.projectSlug : undefined) ??
+    ctx.projectDir;
   const projectVersion = resolveStyleContentVersion(contentContext);
 
   return {

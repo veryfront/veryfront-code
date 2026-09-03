@@ -420,11 +420,12 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
-  it("keys the scan on the admitted tenant when the filesystem resolves no content", async () => {
+  it("keys the scan on the admitted tenant when the proxy filesystem resolves no content", async () => {
     // A shared-proxy filesystem exposes getAllSourceFiles() but no content
     // context while every tenant keeps the same server-level projectDir, so
     // without the admitted slug in the key project B would be served project
-    // A's imports.
+    // A's imports. In proxy mode the slug is trusted tenant identity: the
+    // proxy admission boundary resolved it, not the client.
     const tenantA = createScanAdapter([LAYOUT_FILE], null);
     const tenantB = createScanAdapter([], null);
 
@@ -434,13 +435,13 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
       // Both tenants are served by one runtime, so they share `projectDir`.
       assertEquals(
         await extractProjectCssImports(
-          makeCtx(tenantA.adapter, { projectSlug: "tenant-a" }),
+          makeCtx(tenantA.adapter, { projectSlug: "tenant-a", isProxyMode: true }),
         ),
         [IMPORTED_CSS],
       );
       assertEquals(
         await extractProjectCssImports(
-          makeCtx(tenantB.adapter, { projectSlug: "tenant-b" }),
+          makeCtx(tenantB.adapter, { projectSlug: "tenant-b", isProxyMode: true }),
         ),
         [],
       );
@@ -448,6 +449,32 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
         tenantB.getScanCount(),
         1,
         "a second tenant must walk its own sources, not reuse the first tenant's scan",
+      );
+    } finally {
+      invalidateProjectCssImportScans();
+    }
+  });
+
+  it("ignores the client-supplied slug on a non-proxy content-less filesystem", async () => {
+    // Outside proxy mode there is no admission boundary for the slug: it is the
+    // raw x-project-slug header or the Host-parsed subdomain, so keying on it
+    // would let an unauthenticated client mint a fresh cache key per request
+    // and force one full source walk each time. The filesystem serves
+    // `projectDir` whatever the client claims, so that directory is the key.
+    const scan = createScanAdapter([LAYOUT_FILE], null);
+
+    try {
+      invalidateProjectCssImportScans();
+
+      for (const projectSlug of ["claim-1", "claim-2", "claim-3", "claim-4"]) {
+        const ctx = makeCtx(scan.adapter, { projectSlug });
+        assertEquals(await extractProjectCssImports(ctx), [IMPORTED_CSS]);
+      }
+
+      assertEquals(
+        scan.getScanCount(),
+        1,
+        "client-supplied slugs must not be able to multiply source walks on a standalone server",
       );
     } finally {
       invalidateProjectCssImportScans();
