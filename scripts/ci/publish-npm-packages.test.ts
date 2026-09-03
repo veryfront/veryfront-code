@@ -1066,6 +1066,41 @@ describe("npm package publishing", () => {
     });
   }
 
+  it("does not poll registry metadata after identity-token retries are exhausted", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "$IDENTITY_TOKEN_OUTPUT"',
+          "    return 1",
+          "  fi",
+          "  return 1",
+          "}",
+          "sleep() { :; }",
+          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+        ].join("\n"),
+        {
+          IDENTITY_TOKEN_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_ATTEMPTS: "2",
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertStringIncludes(decoder.decode(output.stdout), "EXIT=1");
+      const calls = await loggedNpmCalls(npmLog);
+      assertEquals(calls.filter((line) => line.startsWith("publish ")).length, 2);
+      assertEquals(calls.filter((line) => line.startsWith("view ")).length, 7);
+    });
+  });
+
   it("accepts a 409 whose publish already landed in rc_publish_package_dir", async () => {
     await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
       const output = await runBash(
