@@ -14,6 +14,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   buildPushUrls,
   capturePushSourceSnapshot,
@@ -4287,7 +4288,6 @@ describe("push deletion ownership", () => {
   });
 
   it("prunes only selected missing paths during a targeted refresh", async () => {
-    const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -4311,7 +4311,7 @@ describe("push deletion ownership", () => {
         });
 
         const deleted: string[] = [];
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
@@ -4336,14 +4336,15 @@ describe("push deletion ownership", () => {
             return Response.json({});
           }
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
+        };
 
-        await pushCommand({
-          projectDir,
-          branch: "main",
-          prunePaths: ["deleted-locally.ts"],
-          quiet: true,
-        });
+        await withMockFetch(fetchHandler, () =>
+          pushCommand({
+            projectDir,
+            branch: "main",
+            prunePaths: ["deleted-locally.ts"],
+            quiet: true,
+          }));
 
         assertEquals(deleted, ["deleted-locally.ts"]);
         const receipt = await readPushReceipt(projectDir);
@@ -4357,7 +4358,6 @@ describe("push deletion ownership", () => {
         );
       });
     } finally {
-      globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }

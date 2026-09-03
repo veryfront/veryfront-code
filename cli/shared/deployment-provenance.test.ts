@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   clearPushReceipt,
   computeSourceDigest,
@@ -480,7 +481,7 @@ describe("resolveGitSource", () => {
   });
 
   it("ignores nested project metadata and reports tracked deletions relative to the project", async () => {
-    const repositoryDir = await Deno.makeTempDir();
+    const repositoryDir = await makeTempDir();
     const projectDir = `${repositoryDir}/packages/site`;
     const runGit = async (...args: string[]) => {
       const result = await new Deno.Command("git", {
