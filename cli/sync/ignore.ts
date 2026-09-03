@@ -217,8 +217,16 @@ function toRules(patterns: readonly string[], caseInsensitive = false): IgnoreRu
 
 const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS, true);
 
+function normalizeIgnorePath(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
 function isProtectedPath(normalizedPath: string): boolean {
   return PROTECTED_RULES.some((rule) => rule.regex.test(normalizedPath));
+}
+
+function isProtected(relativePath: string): boolean {
+  return isProtectedPath(normalizeIgnorePath(relativePath));
 }
 
 /**
@@ -232,7 +240,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
   const warnedOverrides = new Set<string>();
 
   function isIgnored(relativePath: string): boolean {
-    const normalizedPath = relativePath.replace(/\\/g, "/");
+    const normalizedPath = normalizeIgnorePath(relativePath);
     let ignored = false;
 
     for (const rule of rules) {
@@ -245,17 +253,13 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
         warnedOverrides.add(normalizedPath);
         logWarning(
           `Ignoring protected path "${normalizedPath}". A .vfignore negation cannot re-include ` +
-            "a .env, .veryfront, or .git path.",
+            "a path under .env, .veryfront, or .git.",
         );
       }
       return true;
     }
 
     return ignored;
-  }
-
-  function isProtected(relativePath: string): boolean {
-    return isProtectedPath(relativePath.replace(/\\/g, "/"));
   }
 
   function isSupportedExtension(filename: string): boolean {
