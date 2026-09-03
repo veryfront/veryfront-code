@@ -1119,6 +1119,7 @@ export class RenderPipeline {
       if (isMdxEsmExportMismatchError(error)) {
         const recovered = await recoverStaleMdxEsmPreviewCaches({
           adapter: this.config.adapter,
+          projectDir: this.config.projectDir,
           projectId,
           projectSlug,
           contentSourceId,

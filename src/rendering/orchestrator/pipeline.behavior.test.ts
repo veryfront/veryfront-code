@@ -18,7 +18,7 @@ import {
   toError,
   VeryfrontError,
 } from "#veryfront/errors";
-import { __resetStaleMdxEsmRecoveryStateForTests } from "../page-rendering.ts";
+import { __resetStaleMdxEsmRecoveryStateForTests } from "#veryfront/rendering/page-rendering.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";

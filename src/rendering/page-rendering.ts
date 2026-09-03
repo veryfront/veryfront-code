@@ -24,6 +24,8 @@ interface PreparedMDXPageBundles {
 
 interface StaleMdxEsmRecoveryOptions {
   adapter: RuntimeAdapter;
+  /** Stable filesystem identity used when projectId and projectSlug are absent. */
+  projectDir: string;
   projectId?: string;
   projectSlug?: string;
   contentSourceId?: string;
@@ -45,6 +47,14 @@ const STALE_MDX_ESM_RECOVERY_MAX_TRACKED_NAMESPACES = 512;
 
 /** Namespace key -> epoch ms at which its last recovery started. */
 const staleMdxEsmRecoveryAttempts = new Map<string, number>();
+/** Key -> request sequence that most recently completed recovery successfully. */
+const staleMdxEsmRecoveryCompletedBy = new Map<string, number>();
+/** Each recovery request gets an order so delayed identity lookups can join a newer pass. */
+let nextStaleMdxEsmRecoveryRequestSequence = 0;
+
+/** Identity-less adapters still need distinct recovery state. */
+const staleMdxEsmAdapterIds = new WeakMap<object, number>();
+let nextStaleMdxEsmAdapterId = 0;
 
 /**
  * Holder for one in-flight recovery. The promise is wrapped so the map stores a
@@ -100,16 +110,30 @@ export function isMutableMdxEsmContentSource(
 
 async function getStaleMdxEsmRecoveryKey(
   options: StaleMdxEsmRecoveryOptions,
-): Promise<string> {
-  const namespace = options.projectId ?? options.projectSlug ?? "";
+): Promise<string | undefined> {
+  const namespace = options.projectId ?? options.projectSlug ?? options.projectDir;
+  if (!namespace) return undefined;
+
   const sourceSnapshotIdentity = await options.adapter.fs.getSourceSnapshotIdentity?.();
-  return `${namespace}::${options.contentSourceId ?? ""}::${sourceSnapshotIdentity ?? ""}`;
+  let adapterIdentity = sourceSnapshotIdentity;
+  if (adapterIdentity === undefined) {
+    const fs = options.adapter.fs as object;
+    let adapterId = staleMdxEsmAdapterIds.get(fs);
+    if (adapterId === undefined) {
+      adapterId = ++nextStaleMdxEsmAdapterId;
+      staleMdxEsmAdapterIds.set(fs, adapterId);
+    }
+    adapterIdentity = `identity-less-adapter-${adapterId}`;
+  }
+
+  return `${namespace}::${options.contentSourceId ?? ""}::${adapterIdentity}`;
 }
 
 function pruneStaleMdxEsmRecoveryAttempts(now: number): void {
   for (const [key, attemptedAt] of staleMdxEsmRecoveryAttempts) {
     if (now - attemptedAt >= STALE_MDX_ESM_RECOVERY_COOLDOWN_MS) {
       staleMdxEsmRecoveryAttempts.delete(key);
+      staleMdxEsmRecoveryCompletedBy.delete(key);
     }
   }
 
@@ -118,6 +142,7 @@ function pruneStaleMdxEsmRecoveryAttempts(now: number): void {
     const oldest = staleMdxEsmRecoveryAttempts.keys().next();
     if (oldest.done) break;
     staleMdxEsmRecoveryAttempts.delete(oldest.value);
+    staleMdxEsmRecoveryCompletedBy.delete(oldest.value);
   }
 }
 
@@ -164,7 +189,10 @@ export async function recoverStaleMdxEsmPreviewCaches(
     return false;
   }
 
+  const requestSequence = ++nextStaleMdxEsmRecoveryRequestSequence;
   const key = await getStaleMdxEsmRecoveryKey(options);
+  if (key === undefined) return false;
+
   const inFlight = staleMdxEsmRecoveryInFlight.get(key);
   if (inFlight) return await inFlight.promise;
 
@@ -173,6 +201,9 @@ export async function recoverStaleMdxEsmPreviewCaches(
   // A negative delta means the wall clock stepped backwards; treat it as
   // "still cooling down" rather than handing out an unbounded retry budget.
   if (attemptedAt !== undefined && now - attemptedAt < STALE_MDX_ESM_RECOVERY_COOLDOWN_MS) {
+    const completedBy = staleMdxEsmRecoveryCompletedBy.get(key);
+    if (completedBy !== undefined && completedBy >= requestSequence) return true;
+
     logger.debug("Skipping stale MDX ESM cache recovery still within its cooldown", {
       slug: options.slug,
       pagePath: options.pagePath,
@@ -195,7 +226,9 @@ export async function recoverStaleMdxEsmPreviewCaches(
   staleMdxEsmRecoveryInFlight.set(key, recovery);
 
   try {
-    return await recovery.promise;
+    const recovered = await recovery.promise;
+    if (recovered) staleMdxEsmRecoveryCompletedBy.set(key, requestSequence);
+    return recovered;
   } finally {
     if (staleMdxEsmRecoveryInFlight.get(key) === recovery) {
       staleMdxEsmRecoveryInFlight.delete(key);
@@ -206,7 +239,9 @@ export async function recoverStaleMdxEsmPreviewCaches(
 /** Test-only: drop the recovery cooldown so cases do not leak into each other. */
 export function __resetStaleMdxEsmRecoveryStateForTests(): void {
   staleMdxEsmRecoveryAttempts.clear();
+  staleMdxEsmRecoveryCompletedBy.clear();
   staleMdxEsmRecoveryInFlight.clear();
+  nextStaleMdxEsmRecoveryRequestSequence = 0;
 }
 
 export async function prepareMDXPageBundles(
@@ -388,6 +423,7 @@ export function handleMDXPage(
           try {
             recovered = await recoverStaleMdxEsmPreviewCaches({
               adapter,
+              projectDir,
               projectId: options?.projectId,
               projectSlug: options?.projectSlug,
               contentSourceId: options?.contentSourceId,

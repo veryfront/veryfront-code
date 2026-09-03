@@ -18,7 +18,7 @@ import {
   handleMDXPage,
   prepareMDXPageBundles,
   recoverStaleMdxEsmPreviewCaches,
-} from "./page-rendering.ts";
+} from "#veryfront/rendering/page-rendering.ts";
 import { PageRenderer } from "./page-renderer.ts";
 import {
   __setServerModuleLoaderForTests,
@@ -319,6 +319,7 @@ describe("rendering/page-rendering", () => {
     const recover = (adapter: RuntimeAdapter) =>
       recoverStaleMdxEsmPreviewCaches({
         adapter,
+        projectDir: "/project",
         projectId: "project-1",
         contentSourceId: "preview-main",
         slug: "probe",
@@ -333,6 +334,77 @@ describe("rendering/page-rendering", () => {
       2,
       "distinct source snapshot identities must not share a recovery cooldown",
     );
+  });
+
+  it("does not share recovery cooldowns between identity-less adapters", async () => {
+    let sourceRefreshes = 0;
+    const createAdapter = (): RuntimeAdapter => ({
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter);
+
+    const recover = (adapter: RuntimeAdapter) =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    assertEquals(await recover(createAdapter()), true);
+    assertEquals(await recover(createAdapter()), true);
+    assertEquals(
+      sourceRefreshes,
+      2,
+      "identity-less adapters must not share a process-global recovery cooldown",
+    );
+  });
+
+  it("lets a delayed identity lookup join a recovery that started after it", async () => {
+    let sourceRefreshes = 0;
+    const identityResolvers: Array<(identity: string) => void> = [];
+    const adapter = {
+      fs: {
+        getSourceSnapshotIdentity: () =>
+          new Promise<string>((resolve) => identityResolvers.push(resolve)),
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = () =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    const delayed = recover();
+    const fast = recover();
+    assertEquals(identityResolvers.length, 2);
+
+    identityResolvers[1]("branch:project-1:main");
+    assertEquals(await fast, true);
+    identityResolvers[0]("branch:project-1:main");
+    assertEquals(
+      await delayed,
+      true,
+      "a request already waiting for its key must retry after a newer recovery succeeds",
+    );
+    assertEquals(sourceRefreshes, 1);
   });
 
   it("keeps a refreshed namespace from being evicted as the oldest tracked entry", async () => {
@@ -351,6 +423,7 @@ describe("rendering/page-rendering", () => {
     const recover = (contentSourceId: string) =>
       recoverStaleMdxEsmPreviewCaches({
         adapter,
+        projectDir: "/project",
         projectSlug: "project-slug",
         contentSourceId,
         slug: "probe",
