@@ -92,7 +92,8 @@ function toDeployRequest(options: DeployOptions) {
   // Naming a project promotes what that project already has. Deploy must never
   // upload the working directory into a project the caller only named by slug:
   // the directory is unrelated to that project by construction.
-  const promoteOnly = options.skipSourcePush || options.projectSlug !== undefined;
+  const promoteNamedProject = options.projectSlug !== undefined;
+  const promoteOnly = options.skipSourcePush || promoteNamedProject;
   return {
     projectDir: options.projectDir ?? cwd(),
     ...(options.projectSlug === undefined ? {} : { projectSlug: options.projectSlug }),
@@ -100,7 +101,13 @@ function toDeployRequest(options: DeployOptions) {
     environment: options.env,
     releaseName: options.releaseName,
     mode: options.dryRun ? "dry-run" as const : "apply" as const,
-    source: promoteOnly ? { kind: "already-pushed" as const } : { kind: "ensure-pushed" as const },
+    source: promoteOnly
+      // skipSourcePush says the caller already pushed this directory, not that
+      // the stale-source gate may be skipped: the working tree is still this
+      // project's source, so it is still verified. Only a project named by
+      // slug, whose source this directory is not, skips the verification too.
+      ? { kind: "already-pushed" as const, verifyLocalSource: !promoteNamedProject }
+      : { kind: "ensure-pushed" as const },
   };
 }
 

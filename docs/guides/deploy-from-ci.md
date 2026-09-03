@@ -128,9 +128,18 @@ would waive, and it prunes only files the checkout deleted from Git, so
 remote-only files stay in place. Do not use `veryfront up` as a CI promotion
 step.
 
-If no receipt exists, Deploy bootstraps one with a quiet Push, but CI should keep
-the explicit Push step so review and production promotion remain separate. Do not
-split the two commands across CI jobs or clean the checkout between them.
+If no receipt exists, Deploy bootstraps one with a quiet Push. That first Push
+has no receipt to check the checkout against, so it uploads the working tree as
+it stands, including uncommitted edits. CI must keep the explicit Push step so
+review and production promotion remain separate, and so the first deploy of a
+project is not the one that decides what its source is. Do not split the two
+commands across CI jobs or clean the checkout between them.
+
+A receipt written by a CLI older than the source digest carries no digest to
+recompute, so Deploy falls back to the recorded Git cleanliness for it. That
+fallback cannot see an edit `.gitignore` hides while `.vfignore` does not. Run
+Push once after upgrading: the receipt it writes carries the digest, and the
+full check applies from then on.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.

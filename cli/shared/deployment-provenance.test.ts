@@ -114,6 +114,9 @@ describe("validatePushReceipt", () => {
   });
 
   it("rejects a current receipt when its source digest cannot be recomputed", async () => {
+    // A directory too broken to scan cannot prove it still holds the pushed
+    // source, so the gate refuses instead of degrading to the Git check the
+    // digest was added to replace.
     await assertRejects(
       () =>
         Promise.resolve().then(() =>
@@ -130,6 +133,23 @@ describe("validatePushReceipt", () => {
       Error,
       "Veryfront could not verify that this directory still holds the source the latest push uploaded. " +
         "Run veryfront push again to deploy the current source.",
+    );
+  });
+
+  it("keeps the Git fallback for a receipt written before digests existed", () => {
+    // A pre-PR receipt carries no localSourceDigest, so there is nothing to
+    // recompute against and cleanliness is all the evidence there is.
+    assertEquals(
+      validatePushReceipt(RECEIPT, {
+        controlPlane: RECEIPT.controlPlane,
+        projectId: RECEIPT.projectId,
+        projectSlug: RECEIPT.projectSlug,
+        branch: RECEIPT.branch,
+        commitSha: RECEIPT.commitSha,
+        clean: true,
+        localSourceDigest: null,
+      }),
+      RECEIPT.commitSha,
     );
   });
 
@@ -542,7 +562,7 @@ describe("resolveGitSource", () => {
     }
   });
 
-  it("ignores nested project metadata and reports tracked deletions relative to the project", async () => {
+  it("scopes cleanliness to the project directory and reports its deletions", async () => {
     // The scratch repository below has its own HEAD, which never matches the
     // GITHUB_SHA that CI exports for the run executing this suite. Left set,
     // resolveGitSource reports a CI/checkout mismatch and every checkout here
@@ -566,8 +586,11 @@ describe("resolveGitSource", () => {
     };
 
     try {
+      const siblingDir = `${repositoryDir}/packages/api`;
       await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.mkdir(siblingDir, { recursive: true });
       await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+      await Deno.writeTextFile(`${siblingDir}/server.ts`, "export const port = 1;\n");
       await runGit("init", "--quiet");
       await runGit("config", "user.email", "test@veryfront.com");
       await runGit("config", "user.name", "Veryfront Test");
@@ -577,6 +600,14 @@ describe("resolveGitSource", () => {
       await Deno.mkdir(`${projectDir}/.veryfront`, { recursive: true });
       await Deno.writeTextFile(`${projectDir}/.veryfront/project.json`, "{}\n");
       assertEquals((await resolveGitSource(projectDir)).clean, true);
+
+      // Only projectDir is uploaded, so an edit in a sibling package cannot
+      // change the pushed source and must not report this project as changed.
+      // The repository root, deployed as its own project, still sees it.
+      await Deno.writeTextFile(`${siblingDir}/server.ts`, "export const port = 2;\n");
+      assertEquals((await resolveGitSource(projectDir)).clean, true);
+      assertEquals((await resolveGitSource(repositoryDir)).clean, false);
+      assertEquals(await resolveDeletedGitSourcePaths(projectDir), []);
 
       await Deno.remove(`${projectDir}/app.ts`);
       assertEquals((await resolveGitSource(projectDir)).clean, false);

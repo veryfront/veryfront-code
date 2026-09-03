@@ -106,7 +106,21 @@ export interface DeployProjectRequest {
        */
       refreshStaleSource?: boolean;
     }
-    | { kind: "already-pushed" };
+    | {
+      kind: "already-pushed";
+      /**
+       * Verify that the receipt still describes this directory, without
+       * pushing.
+       *
+       * "Do not push" is not "do not verify". A caller that pushed this
+       * directory itself still owns its source, so the working tree remains
+       * evidence about the upload and the stale-source gate must run.
+       * Promoting a project named by slug is the opposite case: the directory
+       * is unrelated to that project by construction, so its edits say nothing
+       * about what was pushed and must not refuse the promotion.
+       */
+      verifyLocalSource?: boolean;
+    };
 }
 
 export interface DeployPollingPolicy {
@@ -437,10 +451,14 @@ export function resolveBootstrapPush(
     if (checkoutNamesAnotherCommit) return "none";
     return receipt.clean ? "none" : "refresh";
   }
-  // Digests compare the file set push uploads, so where both sides have one
-  // they decide outright: an edit Git cannot see is caught, and a tree dirty
-  // only in files no push would upload is left alone.
+  // Digests compare the file set push uploads, so where the receipt has one it
+  // decides outright: an edit Git cannot see is caught, and a tree dirty only
+  // in files no push would upload is left alone.
   if (receipt.localSourceDigest !== undefined) {
+    // A digest that could not be recomputed proves nothing, and the gate
+    // refuses on it rather than falling back to the weaker Git check. Refresh
+    // so the push that follows reports the real read failure, instead of the
+    // deploy resolving an unreadable directory by guessing.
     if (local.sourceDigest === null) return "refresh";
     return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
   }
@@ -455,6 +473,14 @@ export function resolveBootstrapPush(
  * observe the same tree: two independent reads can disagree under a concurrent
  * edit, and they cost a duplicate pair of Git subprocesses and a duplicate
  * directory scan.
+ *
+ * The scan reads every source file, so it is O(project size). A deploy that
+ * pushes pays for it more than once: once here, once inside `pushCommand`, once
+ * more when that push records its receipt, and once again in the gate, which
+ * re-reads the tree on purpose because the push rewrote the receipt it checks.
+ * The reads are what make the proof a proof, and a push already uploads the
+ * same bytes, so the scans are not the cost that dominates a deploy. A deploy
+ * that skips the push, the common `veryfront up` case, pays for one.
  */
 export interface LocalSourceObservation {
   gitSource: GitSource;
@@ -485,8 +511,10 @@ async function computeLocalSourceDigest(projectDir: string): Promise<string | nu
     return (await capturePushSourceDigest(projectDir)).sourceDigest;
   } catch {
     // A directory push itself cannot read, such as one holding a symlinked
-    // `.vfignore`, has no digest to compare. Fall back to the Git observation
-    // and let the push that follows report the real failure.
+    // `.vfignore`, has no digest to compare. That is not a pass: against a
+    // receipt carrying a digest it refuses the deploy, and a refreshing caller
+    // pushes so the push reports the real read failure. Only a pre-digest
+    // receipt falls back to the Git observation, which is all it ever had.
     return null;
   }
 }
@@ -1638,6 +1666,10 @@ export function createDeployProject(options: {
         request.projectSlug,
       );
       let { config, controlPlane, project } = setup;
+      // Whether this directory is the source of the project being deployed.
+      // Every caller it is true for verifies it, whether or not it also pushes.
+      const verifyLocalSource = request.source.kind === "ensure-pushed" ||
+        request.source.verifyLocalSource === true;
       // One read of the working tree serves both the refresh decision and the
       // gate that enforces it. Naming a project promotes what that project
       // already has, so this directory is not its source and is not read.
@@ -1741,7 +1773,7 @@ export function createDeployProject(options: {
             projectId: project!.id,
             projectSlug: project!.slug,
             branch,
-            enforceWorkingTreeClean: request.source.kind === "ensure-pushed",
+            enforceWorkingTreeClean: verifyLocalSource,
             local: localSource,
           });
         }
@@ -1766,7 +1798,7 @@ export function createDeployProject(options: {
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
-          enforceWorkingTreeClean: request.source.kind === "ensure-pushed",
+          enforceWorkingTreeClean: verifyLocalSource,
           // A push rewrites the receipt this gate reads, so the tree is read
           // again after one rather than compared against a stale observation.
           local: bootstrapPush ? null : localSource,

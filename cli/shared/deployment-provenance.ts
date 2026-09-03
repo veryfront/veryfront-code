@@ -61,10 +61,14 @@ interface PushReceiptExpectation {
   clean: boolean;
   /**
    * Digest of the file set `veryfront push` would upload from this directory
-   * right now, or `null` when it could not be computed.
+   * right now, or `null` when the directory could not be scanned.
    *
-   * Where both this and the receipt carry one, the pair settles whether the
-   * source still matches the upload and {@link clean} is not consulted.
+   * Where the receipt carries one too, this settles whether the source still
+   * matches the upload and {@link clean} is not consulted. Anything but a
+   * digest is a refusal there: the proof that receipt promises cannot be
+   * recomputed, so the deploy fails closed instead of quietly dropping back to
+   * the weaker Git observation, and a caller that omits the field entirely
+   * fails closed the same way rather than opting out of the check.
    */
   localSourceDigest?: string | null;
   /**
@@ -365,14 +369,19 @@ export async function clearPushReceipt(projectDir: string): Promise<void> {
  * uploads, so it decides the question outright wherever the receipt carries one
  * too. It sees exactly what push sees, including a file `.gitignore` hides
  * while `.vfignore` does not, and it clears a working tree that is dirty only
- * in files no push would upload.
+ * in files no push would upload. A receipt that carries a digest the directory
+ * cannot produce right now is refused rather than downgraded to the Git check:
+ * a directory too broken to scan is also too broken to prove anything.
  *
  * Git cleanliness is the fallback for receipts written before that digest
  * existed. It is a proxy, not a proof: a receipt written from a clean checkout
  * promises the pushed source was exactly that commit, so a tree that is no
  * longer clean is provably not what was pushed, while a receipt that was
  * already dirty proves nothing either way and keeps the push-then-deploy flow
- * it has always had.
+ * it has always had. That leaves one gap this check cannot close, by
+ * construction: a receipt from a pre-digest CLI carries no digest to compare,
+ * so an edit `.gitignore` hides while `.vfignore` does not stays invisible
+ * until the next `veryfront push` rewrites the receipt with a digest.
  */
 function assertReceiptDescribesLocalSource(
   receipt: PushReceipt,
