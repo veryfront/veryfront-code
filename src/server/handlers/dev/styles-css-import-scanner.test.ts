@@ -210,6 +210,34 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
+  it("retires a release entry by its resolved content slug even when the admitted slug differs", async () => {
+    // A content push invalidates by the resolved content slug. If the entry
+    // stored the admitted request slug instead, a mismatch between the two
+    // would leave a release-versioned entry that no targeted invalidation ever
+    // matches, and nothing else retires a release entry.
+    const scan = createScanAdapter([LAYOUT_FILE], releaseContent("rel-scope-precedence"));
+    const ctx = makeCtx(scan.adapter, { projectSlug: "admitted-alias" });
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      assertEquals(await extractProjectCssImports(ctx), [IMPORTED_CSS]);
+      assertEquals(scan.getScanCount(), 1);
+
+      scan.setFiles([]);
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      assertEquals(await extractProjectCssImports(ctx), []);
+      assertEquals(
+        scan.getScanCount(),
+        2,
+        "invalidating by the resolved content slug must retire the entry",
+      );
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
   it("keeps a failed scan out of the cache", async () => {
     const adapter = createMockAdapter();
     let attempts = 0;
@@ -355,7 +383,13 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
   it("does not let one project's invalidation retire another project's in-flight walk", async () => {
     // Invalidation is per project scope, so a content push for one tenant must
     // not force an unrelated tenant on the same runtime to re-walk its sources.
-    const other = createDeferredScanAdapter(releaseContent("rel-neighbour"));
+    const other = createDeferredScanAdapter(
+      {
+        sourceType: "release",
+        projectSlug: "neighbour-project",
+        releaseId: "rel-neighbour",
+      } as ResolvedContentContext,
+    );
     const otherCtx = makeCtx(other.adapter, { projectSlug: "neighbour-project" });
 
     try {
