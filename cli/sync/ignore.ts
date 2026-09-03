@@ -39,7 +39,7 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
  * They hold credentials, local CLI state, and Git internals, so a negation such
  * as `!.env*.json` must not make `veryfront push` read and upload them.
  *
- * The trailing-slash `.env` entry also covers the plain file form, because a
+ * The trailing-slash `.env*/` pattern also covers the plain file form, because a
  * directory-only pattern compiles to a suffix of `(/` or end of string. It
  * matches `.env.production.json` and `.env/credentials.json` alike, so a
  * separate `.env` glob entry would be redundant.

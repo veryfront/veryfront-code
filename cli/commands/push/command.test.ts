@@ -14,6 +14,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   buildPushUrls,
   capturePushSourceSnapshot,
@@ -4361,7 +4362,6 @@ describe("push deletion ownership", () => {
   });
 
   it("deletes leaked protected remote files during prune", async () => {
-    const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -4374,7 +4374,7 @@ describe("push deletion ownership", () => {
 
         const deleted: string[] = [];
         const deleteUrls: string[] = [];
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
 
@@ -4409,9 +4409,12 @@ describe("push deletion ownership", () => {
             return Response.json({});
           }
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
+        };
 
-        await pushCommand({ projectDir, branch: "main", prune: true, quiet: true });
+        await withMockFetch(
+          fetchHandler,
+          () => pushCommand({ projectDir, branch: "main", prune: true, quiet: true }),
+        );
 
         assertEquals([...deleted].sort(), [".env.production.json", ".veryfront/state.json"]);
         // Each delete carries the observed version as an optimistic precondition.
@@ -4429,14 +4432,12 @@ describe("push deletion ownership", () => {
         );
       });
     } finally {
-      globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
   });
 
   it("leaves leaked protected remote files alone without prune", async () => {
-    const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -4459,7 +4460,7 @@ describe("push deletion ownership", () => {
 
         const requests: string[] = [];
         const uploaded: string[] = [];
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
           requests.push(`${request.method} ${url.pathname}`);
@@ -4489,9 +4490,12 @@ describe("push deletion ownership", () => {
             return Response.json({});
           }
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
+        };
 
-        await pushCommand({ projectDir, branch: "main", quiet: true });
+        await withMockFetch(
+          fetchHandler,
+          () => pushCommand({ projectDir, branch: "main", quiet: true }),
+        );
 
         // Without prune the leaked remote CLI state stays untouched.
         assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
@@ -4499,7 +4503,6 @@ describe("push deletion ownership", () => {
         assertEquals(uploaded, []);
       });
     } finally {
-      globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
