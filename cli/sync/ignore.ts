@@ -257,7 +257,10 @@ function isProtected(relativePath: string): boolean {
 function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
   if (!rule.negated || rule.regex.test(normalizedPath)) return false;
   if (rule.crossDirectorySinglePattern) return true;
-  if (!rule.anchored && rule.descendantSegments.length === 1) return true;
+  // An unanchored rule can begin at any descendant segment below this
+  // protected directory, even when none of its literal segments are present
+  // in the directory path itself.
+  if (!rule.anchored) return true;
 
   const pathSegments = normalizedPath.split("/");
   const matchesFrom = (start: number): boolean => {
@@ -280,11 +283,7 @@ function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string):
     return visit(0, start);
   };
 
-  if (rule.anchored) return matchesFrom(0);
-  for (let start = 0; start < pathSegments.length; start++) {
-    if (matchesFrom(start)) return true;
-  }
-  return false;
+  return matchesFrom(0);
 }
 
 /**

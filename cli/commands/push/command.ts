@@ -724,6 +724,14 @@ function pushMutationError(detail: string, protectedDeleted: readonly string[]):
   });
 }
 
+function pushVerificationReadError(protectedDeleted: readonly string[]): Error {
+  return DEPLOYMENT_ERROR.create({
+    detail:
+      "Push verification could not read the remote target after files were deleted. Retry the push and rotate any credential named in protectedDeleted.",
+    context: { protectedDeleted: [...protectedDeleted] },
+  });
+}
+
 function requireRemoteContent(file: RemoteFile): string {
   if (typeof file.content === "string") return file.content;
   throw new Error(
@@ -1243,11 +1251,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 );
               }
               if (lateDeleteResult.deleted > 0) {
-                latestRemoteFiles = await listAllFiles(
-                  client,
-                  projectApiReference(config),
-                  target.source,
-                );
+                try {
+                  latestRemoteFiles = await listAllFiles(
+                    client,
+                    projectApiReference(config),
+                    target.source,
+                  );
+                } catch (error) {
+                  const protectedDeleted = protectedDeleteContext();
+                  if (protectedDeleted.length > 0) {
+                    throw pushVerificationReadError(protectedDeleted);
+                  }
+                  throw error;
+                }
               }
               const conflicts = findRemoteSnapshotChanges(
                 buildSyncFileDigestSnapshot(plan.nextFiles),
@@ -1405,6 +1421,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           );
         } catch (error) {
           await writeConfirmedAppliedSyncTarget();
+          const protectedDeleted = protectedDeleteContext();
+          if (protectedDeleted.length > 0) {
+            throw pushVerificationReadError(protectedDeleted);
+          }
           throw error;
         }
       };

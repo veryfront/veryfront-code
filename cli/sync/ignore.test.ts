@@ -240,9 +240,13 @@ describe("cli/sync/ignore", () => {
         assertEquals(anchoredRecursiveFileChecker.isIgnored(".env"), true);
         assertEquals(warnings.length, 5, "an anchored double-star must retain its warning");
 
+        const unanchoredNestedChecker = createIgnoreChecker([".env*", "!foo/bar.json"]);
+        assertEquals(unanchoredNestedChecker.isIgnored(".env"), true);
+        assertEquals(warnings.length, 6, "an unanchored nested rule must retain its warning");
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 5, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 6, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();
