@@ -103,25 +103,100 @@ function mergeSubWorkflowReservation(
   for (const childId of childIds) existing.add(childId);
 }
 
+function narrowReservationsToSelectedBranches(
+  nodes: WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  reservations: Set<string>,
+): void {
+  for (const node of nodes) {
+    switch (node.config.type) {
+      case "parallel":
+        narrowReservationsToSelectedBranches(node.config.nodes, nodeStates, reservations);
+        break;
+      case "branch": {
+        const output = nodeStates[node.id]?.output;
+        const selected = typeof output === "object" && output !== null && "branch" in output
+          ? (output as { branch?: unknown }).branch
+          : undefined;
+        if (selected !== "then" && selected !== "else") {
+          narrowReservationsToSelectedBranches(node.config.then, nodeStates, reservations);
+          narrowReservationsToSelectedBranches(node.config.else ?? [], nodeStates, reservations);
+          break;
+        }
+        const selectedNodes = selected === "then" ? node.config.then : (node.config.else ?? []);
+        const unselectedNodes = selected === "then" ? (node.config.else ?? []) : node.config.then;
+        const selectedIds = collectWorkflowNodeIds(selectedNodes);
+        for (const childId of collectWorkflowNodeIds(unselectedNodes)) {
+          if (!selectedIds.has(childId)) reservations.delete(childId);
+        }
+        narrowReservationsToSelectedBranches(selectedNodes, nodeStates, reservations);
+        break;
+      }
+      case "loop":
+        if (Array.isArray(node.config.steps)) {
+          narrowReservationsToSelectedBranches(node.config.steps, nodeStates, reservations);
+        }
+        break;
+      case "subWorkflow":
+        if (
+          typeof node.config.workflow !== "string" &&
+          Array.isArray(node.config.workflow.steps)
+        ) {
+          narrowReservationsToSelectedBranches(
+            node.config.workflow.steps,
+            nodeStates,
+            reservations,
+          );
+        }
+        break;
+    }
+  }
+}
+
 function collectStaticSubWorkflowReservation(
   node: WorkflowNode,
   parentPath: string,
   reservations: Map<string, Set<string>>,
   owners: Map<string, string>,
+  nodeStates: Readonly<Record<string, NodeState>>,
 ): void {
   switch (node.config.type) {
     case "parallel":
-      collectStaticSubWorkflowReservations(node.config.nodes, parentPath, reservations, owners);
+      collectStaticSubWorkflowReservations(
+        node.config.nodes,
+        parentPath,
+        reservations,
+        owners,
+        nodeStates,
+      );
       return;
     case "branch":
-      collectStaticSubWorkflowReservations(node.config.then, parentPath, reservations, owners);
+      collectStaticSubWorkflowReservations(
+        node.config.then,
+        parentPath,
+        reservations,
+        owners,
+        nodeStates,
+      );
       if (node.config.else) {
-        collectStaticSubWorkflowReservations(node.config.else, parentPath, reservations, owners);
+        collectStaticSubWorkflowReservations(
+          node.config.else,
+          parentPath,
+          reservations,
+          owners,
+          nodeStates,
+        );
       }
       return;
     case "loop":
       if (Array.isArray(node.config.steps)) {
-        collectStaticSubWorkflowReservations(node.config.steps, parentPath, reservations, owners);
+        collectStaticSubWorkflowReservations(
+          node.config.steps,
+          parentPath,
+          reservations,
+          owners,
+          nodeStates,
+        );
       }
       return;
     case "subWorkflow": {
@@ -130,9 +205,19 @@ function collectStaticSubWorkflowReservation(
         !Array.isArray(node.config.workflow.steps)
       ) return;
       const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
+      const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
+      const ownerStatus = nodeStates[node.id]?.status;
+      if (ownerStatus === "skipped") childIds.clear();
+      else if (ownerStatus === "completed") {
+        narrowReservationsToSelectedBranches(
+          node.config.workflow.steps,
+          nodeStates,
+          childIds,
+        );
+      }
       mergeSubWorkflowReservation(
         ownerPath,
-        collectWorkflowNodeIds(node.config.workflow.steps),
+        childIds,
         reservations,
       );
       owners.set(ownerPath, node.id);
@@ -141,6 +226,7 @@ function collectStaticSubWorkflowReservation(
         ownerPath,
         reservations,
         owners,
+        nodeStates,
       );
     }
   }
@@ -151,9 +237,10 @@ function collectStaticSubWorkflowReservations(
   parentPath = "",
   reservations = new Map<string, Set<string>>(),
   owners = new Map<string, string>(),
+  nodeStates: Readonly<Record<string, NodeState>> = {},
 ): Map<string, Set<string>> {
   for (const node of nodes) {
-    collectStaticSubWorkflowReservation(node, parentPath, reservations, owners);
+    collectStaticSubWorkflowReservation(node, parentPath, reservations, owners, nodeStates);
   }
   return reservations;
 }
@@ -214,10 +301,7 @@ function nodeMayExecuteSubWorkflow(node: WorkflowNode): boolean {
       return node.config.steps.some(nodeMayExecuteSubWorkflow);
     case "map": {
       const processor = node.config.processor;
-      if ("steps" in processor) {
-        if (!Array.isArray(processor.steps)) return true;
-        return processor.steps.some(nodeMayExecuteSubWorkflow);
-      }
+      if ("steps" in processor) return true;
       return nodeMayExecuteSubWorkflow(processor);
     }
     default:
@@ -457,6 +541,7 @@ export class DAGExecutor {
       scope.subWorkflowPath,
       scope.subWorkflowNodeReservations,
       scope.subWorkflowReservationOwners,
+      nodeStates,
     );
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);

@@ -3663,6 +3663,39 @@ describe("DAGExecutor", () => {
       assertEquals(executed, []);
     });
 
+    it("serializes a workflow-definition map against a colliding sub-workflow", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          ...map("orders", {
+            items: [{}],
+            processor: {
+              id: "order-workflow",
+              steps: [waitForApproval("review", { message: "Review the order" })],
+            },
+          }),
+          dependsOn: [],
+        },
+        {
+          ...subWorkflow("direct", {
+            workflow: {
+              id: "direct-workflow",
+              steps: [
+                waitForApproval("orders_0/review", { message: "Review the direct release" }),
+              ],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.nodeStates.orders, undefined);
+      assertEquals(result.nodeStates.direct?.status, "running");
+      assertEquals(result.nodeStates["orders_0/review"]?.status, "running");
+    });
+
     it("keeps statically defined sibling sub-workflows in one batch", async () => {
       const staticRelease = (id: string, approvalId: string): WorkflowNode => ({
         ...subWorkflow(id, {
@@ -4132,6 +4165,89 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["release-2"]?.status, "running");
       assertEquals(result.nodeStates.review?.status, "running");
       assertEquals(result.waiting, true);
+    });
+
+    it("keeps ownerless state when only an untaken earlier branch reserves its id", async () => {
+      const started: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(),
+        onNodeStart: (nodeId) => void started.push(nodeId),
+      });
+      const nodes: WorkflowNode[] = [
+        subWorkflow("release-1", {
+          workflow: {
+            id: "release-wf-1",
+            steps: [{
+              id: "gate",
+              dependsOn: [],
+              config: {
+                type: "branch",
+                condition: () => true,
+                then: [{
+                  id: "gate/then/publish",
+                  dependsOn: [],
+                  config: { type: "step" } as any,
+                }],
+                else: [waitForApproval("shared-review", { message: "Unused review" })],
+              } as any,
+            }],
+          },
+        }),
+        {
+          ...subWorkflow("release-2", {
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("shared-review", { message: "Active review" })],
+            },
+          }),
+          dependsOn: ["release-1"],
+        },
+      ];
+      const originalStartedAt = new Date("2026-01-01T00:00:00.000Z");
+
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "release-1": {
+              nodeId: "release-1",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            gate: {
+              nodeId: "gate",
+              status: "completed",
+              output: { branch: "then", result: {} },
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "gate/then/publish": {
+              nodeId: "gate/then/publish",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "release-2": {
+              nodeId: "release-2",
+              status: "running",
+              attempt: 1,
+              startedAt: originalStartedAt,
+            },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "running",
+              attempt: 1,
+              startedAt: originalStartedAt,
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.nodeStates["shared-review"]?.startedAt, originalStartedAt);
+      assertEquals(started.includes("shared-review"), false);
     });
 
     it("keeps slash-containing sub-workflow owner paths distinct", async () => {
