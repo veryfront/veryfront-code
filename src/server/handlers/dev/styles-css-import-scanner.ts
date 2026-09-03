@@ -71,14 +71,18 @@ export function invalidateProjectCssImportScans(projectScope?: string): void {
  */
 export function extractProjectCssImports(ctx: HandlerContext): Promise<string[]> {
   const identity = resolveScanCacheIdentity(ctx);
-  return importScanCache.run(identity, () => scanProjectCssImports(ctx, identity));
+  return importScanCache.run(
+    identity,
+    (_canCache, skipCache) => scanProjectCssImports(ctx, identity, skipCache),
+  );
 }
 
 async function scanProjectCssImports(
   ctx: HandlerContext,
   identity: ScanCacheIdentity,
+  skipCache: () => void,
 ): Promise<string[]> {
-  const files = await collectSourceFiles(ctx, identity);
+  const files = await collectSourceFiles(ctx, identity, skipCache);
   const cssImports = collectCssImportPaths(files, ctx.projectDir);
 
   if (cssImports.length > 0) {
@@ -94,6 +98,7 @@ async function scanProjectCssImports(
 async function collectSourceFiles(
   ctx: HandlerContext,
   identity: ScanCacheIdentity,
+  skipCache: () => void,
 ): Promise<Array<{ path: string; content: string }>> {
   const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
   const fsAdapter = typeof wrappedFs.getUnderlyingAdapter === "function"
@@ -102,6 +107,7 @@ async function collectSourceFiles(
 
   if (typeof fsAdapter?.getAllSourceFiles === "function") {
     const files = await fsAdapter.getAllSourceFiles({ waitForWarmup: !identity.mutable });
+    if (!identity.mutable && files.length === 0) skipCache();
     const collected: Array<{ path: string; content: string }> = [];
 
     for (const file of files) {
@@ -110,7 +116,10 @@ async function collectSourceFiles(
         ? normalizePath(file.path)
         : normalizePath(join(ctx.projectDir, file.path));
       const content = file.content ?? await readFileOrNull(ctx, absolutePath);
-      if (content === null) continue;
+      if (content === null) {
+        skipCache();
+        continue;
+      }
       collected.push({ path: absolutePath, content });
     }
 

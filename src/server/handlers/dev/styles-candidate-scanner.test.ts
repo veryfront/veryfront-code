@@ -111,6 +111,21 @@ describe("server/handlers/dev/styles-candidate-scanner", () => {
     }
   });
 
+  it("retries an empty immutable source listing instead of caching it forever", async () => {
+    const scan = createScanAdapter([], releaseContent("rel-empty-retry"));
+    const ctx = makeCtx(scan.adapter);
+
+    try {
+      reset();
+      assertEquals((await extractProjectCandidates(ctx)).has("text-cyan-500"), false);
+      scan.setFiles([PAGE_FILE]);
+      assertEquals((await extractProjectCandidates(ctx)).has("text-cyan-500"), true);
+      assertEquals(scan.getScanCount(), 2);
+    } finally {
+      reset();
+    }
+  });
+
   it("coalesces concurrent scans into a single source walk", async () => {
     const scan = createScanAdapter([PAGE_FILE], releaseContent("rel-concurrent"));
     const ctx = makeCtx(scan.adapter);
@@ -344,7 +359,10 @@ describe("server/handlers/dev/styles-candidate-scanner", () => {
       assertEquals(first.getScanCount(), 1);
 
       for (let i = 0; i < 220; i++) {
-        const filler = createScanAdapter([], releaseContent(`rel-filler-${i}`));
+        const filler = createScanAdapter(
+          [{ path: "/project/app/empty.ts", content: "export {};\n" }],
+          releaseContent(`rel-filler-${i}`),
+        );
         await extractProjectCandidates(makeCtx(filler.adapter));
       }
 
@@ -383,7 +401,10 @@ describe("server/handlers/dev/styles-candidate-scanner", () => {
       assertEquals((await extractProjectCandidates(hotCtx)).has("text-cyan-500"), true);
 
       for (let i = 0; i < 220; i++) {
-        const filler = createScanAdapter([], releaseContent(`rel-lru-filler-${i}`));
+        const filler = createScanAdapter(
+          [{ path: "/project/app/empty.ts", content: "export {};\n" }],
+          releaseContent(`rel-lru-filler-${i}`),
+        );
         await extractProjectCandidates(makeCtx(filler.adapter));
         // Keep the hot entry in use while colder entries keep arriving.
         await extractProjectCandidates(hotCtx);

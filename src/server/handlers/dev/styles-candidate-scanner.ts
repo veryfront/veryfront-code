@@ -72,7 +72,7 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
   const identity = resolveScanCacheIdentity(ctx);
   const projectCandidates = await candidateScanCache.run(
     identity,
-    (isCurrent) => scanProjectCandidates(ctx, identity, isCurrent),
+    (canCache, skipCache) => scanProjectCandidates(ctx, identity, canCache, skipCache),
   );
 
   const candidates = new Set<string>(frameworkCandidates);
@@ -84,7 +84,8 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
 async function scanProjectCandidates(
   ctx: HandlerContext,
   identity: ScanCacheIdentity,
-  isCurrent: () => boolean,
+  canCache: () => boolean,
+  skipCache: () => void,
 ): Promise<string[]> {
   const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
   // Call getUnderlyingAdapter on wrappedFs to preserve its 'this' context.
@@ -107,6 +108,16 @@ async function scanProjectCandidates(
   // for the warmup exactly where the key is immutable; a mutable key self-heals
   // on the next request after the TTL, so it must not pay for the fetch.
   const files = await fsAdapter.getAllSourceFiles({ waitForWarmup: !identity.mutable });
+  if (
+    !identity.mutable &&
+    (files.length === 0 ||
+      files.some((file) =>
+        SOURCE_EXTENSIONS.some((extension) => file.path.endsWith(extension)) &&
+        file.content === undefined
+      ))
+  ) {
+    skipCache();
+  }
 
   return [...getProjectCandidates({
     // The manifest is keyed by the same resolved scope as the scan above, so a
@@ -124,7 +135,7 @@ async function scanProjectCandidates(
     styleProfile: identity.styleProfile,
     files,
     developmentMode: identity.mutable,
-    shouldCache: isCurrent,
+    shouldCache: canCache,
   })];
 }
 

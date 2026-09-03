@@ -169,7 +169,7 @@ export interface ProjectScanCache {
   /** Memoized scan for `identity`; `scan` runs only on a miss. */
   run(
     identity: ScanCacheIdentity,
-    scan: (isCurrent: () => boolean) => Promise<string[]>,
+    scan: (canCache: () => boolean, skipCache: () => void) => Promise<string[]>,
   ): Promise<string[]>;
   /** Invalidate cached scans for one project scope (or all scopes). */
   invalidate(projectScope?: string): void;
@@ -289,13 +289,15 @@ export function createProjectScanCache(name: string): ProjectScanCache {
       if (inFlight?.generation === generation) return [...await inFlight.promise];
 
       beginPendingScan(identity.scope);
+      let cacheable = true;
+      const canCache = () => cacheable && generation === generationFor(identity.scope);
       const pending: PendingScan = {
         scope: identity.scope,
         generation,
         // A failed walk is never cached, so the next request retries it.
         promise: (async () => {
-          const results = await scan(() => generation === generationFor(identity.scope));
-          storeScan(identity, results, generation);
+          const results = await scan(canCache, () => cacheable = false);
+          if (canCache()) storeScan(identity, results, generation);
           return results;
         })(),
       };

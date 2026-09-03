@@ -156,6 +156,21 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
+  it("retries an empty immutable source listing instead of caching it forever", async () => {
+    const scan = createScanAdapter([], releaseContent("rel-empty-retry"));
+    const ctx = makeCtx(scan.adapter);
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+      assertEquals(await extractProjectCssImports(ctx), []);
+      scan.setFiles([LAYOUT_FILE]);
+      assertEquals(await extractProjectCssImports(ctx), [IMPORTED_CSS]);
+      assertEquals(scan.getScanCount(), 2);
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
   it("coalesces concurrent scans into a single source walk", async () => {
     const scan = createScanAdapter([LAYOUT_FILE], releaseContent("rel-concurrent"));
     const ctx = makeCtx(scan.adapter);
@@ -718,7 +733,10 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
 
       // Fill past the cache ceiling so the first entry ages out.
       for (let i = 0; i < 220; i++) {
-        const filler = createScanAdapter([], releaseContent(`rel-filler-${i}`));
+        const filler = createScanAdapter(
+          [{ path: "/project/app/empty.ts", content: "export {};\n" }],
+          releaseContent(`rel-filler-${i}`),
+        );
         await extractProjectCssImports(makeCtx(filler.adapter));
       }
 
