@@ -23,6 +23,7 @@ import {
   createOpenAIWebSearchToolSet,
 } from "./provider-native-tools.ts";
 import {
+  createMoonshotSchemaExpansionBudget,
   normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
   selectProviderCompatibleTools,
@@ -82,6 +83,10 @@ export function convertToolsToRuntimeTools(
   const compatibleTools = selectProviderCompatibleTools(tools, {
     model: options?.model,
   });
+  // One budget for the whole tool set: a per-schema cap bounds each tool in isolation,
+  // but a source advertising hundreds of admissible schemas would otherwise multiply
+  // the worst-case `$ref` expansion by the tool count.
+  const moonshotExpansionBudget = createMoonshotSchemaExpansionBudget();
 
   for (const def of compatibleTools) {
     if (providerNativeToolNames.has(def.name)) {
@@ -95,6 +100,7 @@ export function convertToolsToRuntimeTools(
         inputSchema: createRuntimeJsonSchema(
           sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
             model: options?.model,
+            moonshotExpansionBudget,
           }),
         ),
       }),
