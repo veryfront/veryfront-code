@@ -9,6 +9,7 @@ import {
   migrateEsmShImports,
   parseCliOptions,
   readProjectPackageJson,
+  writeTextFileInsideProject,
 } from "./migrate-esm-sh-imports.ts";
 
 // ---------------------------------------------------------------------------
@@ -984,6 +985,40 @@ Deno.test(
     }
   },
 );
+
+Deno.test("project writes stay bound to the file opened before a path swap", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const target = `${project}/app.ts`;
+  const originalEntry = `${project}/app.original.ts`;
+  const outsideFile = `${outside}/outside.ts`;
+  const originalTruncate = Deno.FsFile.prototype.truncate;
+  let swapped = false;
+  try {
+    await Deno.writeTextFile(target, "original");
+    await Deno.writeTextFile(outsideFile, "outside");
+
+    Deno.FsFile.prototype.truncate = async function (len?: number): Promise<void> {
+      if (!swapped) {
+        swapped = true;
+        await Deno.rename(target, originalEntry);
+        await Deno.symlink(outsideFile, target);
+      }
+      await Reflect.apply(originalTruncate, this, [len]);
+    };
+
+    await writeTextFileInsideProject(target, await Deno.realPath(project), "updated");
+
+    assertEquals(await Deno.readTextFile(outsideFile), "outside");
+    assertEquals(await Deno.readTextFile(originalEntry), "updated");
+  } finally {
+    Deno.FsFile.prototype.truncate = originalTruncate;
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // main() integration: version conflicts are preflighted

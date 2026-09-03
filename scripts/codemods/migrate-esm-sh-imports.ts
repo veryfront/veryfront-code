@@ -3,6 +3,7 @@
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
+import { isAbsolute, relative } from "node:path";
 
 interface BabelGeneratorResult {
   code: string;
@@ -535,6 +536,53 @@ export async function assertPathInsideProject(
   }
 }
 
+function sameFileIdentity(opened: Deno.FileInfo, current: Deno.FileInfo): boolean {
+  return opened.dev === current.dev && opened.ino !== null && opened.ino === current.ino;
+}
+
+/**
+ * Write through a verified file handle so a later path swap cannot redirect
+ * truncation or content outside the project.
+ */
+export async function writeTextFileInsideProject(
+  path: string,
+  projectRoot: string,
+  content: string,
+  { allowMissing = false }: { allowMissing?: boolean } = {},
+): Promise<void> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true, write: true });
+  } catch (error) {
+    if (!allowMissing || !(error instanceof Deno.errors.NotFound)) {
+      throw error;
+    }
+    // createNew refuses a final-component symlink or a file planted after the
+    // failed open. The post-open containment and identity checks still apply.
+    file = await Deno.open(path, { read: true, write: true, createNew: true });
+  }
+
+  try {
+    await assertPathInsideProject(path, projectRoot);
+    const opened = await file.stat();
+    const current = await Deno.stat(path);
+    if (!sameFileIdentity(opened, current)) {
+      throw new Error(`Refusing to write a path that changed after it was opened: ${path}`);
+    }
+
+    const bytes = new TextEncoder().encode(content);
+    await file.truncate(0);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = await file.write(bytes.subarray(offset));
+      if (written === 0) throw new Error(`Could not finish writing ${path}`);
+      offset += written;
+    }
+  } finally {
+    file.close();
+  }
+}
+
 /**
  * Read and parse the project's package.json.
  *
@@ -757,15 +805,21 @@ async function main(args: string[]): Promise<void> {
   // Resolve the project root once so every subsequent containment check
   // compares against a symlink-free absolute path.
   const projectRoot = await Deno.realPath(projectDir);
-  const rootPrefix = containmentPrefix(projectRoot);
   // Traversal and writes use the resolved root, but the report keeps the
   // spelling the caller passed: a relative project directory stays relative,
   // and no machine-specific filesystem layout leaks into the JSON output.
-  const displayRoot = projectDir.replace(/[/\\]+$/, "");
-  const toReportPath = (absolute: string): string =>
-    absolute.startsWith(rootPrefix)
-      ? `${displayRoot}/${absolute.slice(rootPrefix.length)}`
-      : absolute;
+  const displayRoot = projectDir.replace(/[/\\]+$/, "") || projectDir;
+  const toReportPath = (absolute: string): string => {
+    const projectRelative = relative(projectRoot, absolute);
+    if (
+      isAbsolute(projectRelative) || projectRelative === ".." ||
+      projectRelative.startsWith(`..${PATH_SEPARATOR}`)
+    ) {
+      throw new Error("Refusing to report a path outside the project directory");
+    }
+    const normalizedRelative = projectRelative.replaceAll("\\", "/");
+    return normalizedRelative ? `${displayRoot}/${normalizedRelative}` : displayRoot;
+  };
 
   const sourceFiles: string[] = [];
   await collectSourceFiles(projectRoot, sourceFiles);
@@ -933,17 +987,16 @@ async function main(args: string[]): Promise<void> {
     // specifiers in source files without a corresponding pin entry.
     if (JSON.stringify(updatedDeps) !== JSON.stringify(existingDeps)) {
       pkgJson["dependencies"] = updatedDeps;
-      // Re-check right before the write: writeTextFile follows symlinks, and
-      // the manifest could have been swapped for a link since it was read.
-      await assertPathInsideProject(pkgJsonPath, projectRoot, { allowMissing: true });
-      await Deno.writeTextFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + "\n");
+      await writeTextFileInsideProject(
+        pkgJsonPath,
+        projectRoot,
+        JSON.stringify(pkgJson, null, 2) + "\n",
+        { allowMissing: true },
+      );
     }
 
     for (const { file, code } of fileResults) {
-      // Collected entries were regular files, but re-check before each write
-      // in case one was swapped for a symlink after analysis.
-      await assertPathInsideProject(file, projectRoot);
-      await Deno.writeTextFile(file, code);
+      await writeTextFileInsideProject(file, projectRoot, code);
     }
   }
 
