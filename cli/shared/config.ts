@@ -85,7 +85,7 @@ interface ConfigFileResolution {
   moduleProjectSlug?: string;
   moduleProjectSlugFile?: string;
   /**
-   * Name of a `veryfront.config.ts`/`.js` that exists but was deliberately not
+   * Name of a module config that exists but was deliberately not
    * executed because the caller forbids running local project code. Its
    * `projectSlug` (if any) is therefore unknown, so inferring a reference from
    * project files would silently target a different project.
@@ -125,10 +125,10 @@ async function readConfigFileResolution(
   let moduleProjectSlug: string | undefined;
   let moduleProjectSlugFile: string | undefined;
   let skippedModuleConfigFile: string | undefined;
-  // Importing veryfront.config.ts/.js executes arbitrary code from the working
+  // Importing a veryfront.config module executes arbitrary code from the working
   // tree with full CLI process permissions. Callers that must not run local
   // project code (remote-mode commands) disable this lane entirely.
-  for (const ext of [".ts", ".js"]) {
+  for (const ext of [".ts", ".js", ".mjs"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
     let configExists: boolean;
 
@@ -472,7 +472,7 @@ export const resolveConfigWithAuth = createConfigResolver(true);
  * Resolve config with interactive authentication without executing any local
  * project code.
  *
- * Never imports veryfront.config.ts/.js from the working tree. Remote-mode
+ * Never imports a veryfront.config module from the working tree. Remote-mode
  * commands run source already pushed to Veryfront, so resolving credentials
  * for them must not execute code from a possibly untrusted local checkout.
  * Project identity comes only from veryfront.json, environment variables, the
