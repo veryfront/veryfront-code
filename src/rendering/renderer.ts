@@ -140,6 +140,7 @@ const RENDER_PREWARM_PROBE_MULTIPLIER = 4;
 const RENDER_PREWARM_PROBE_PREFIX_RATIO = 0.5;
 
 type RenderAdmission = "foreground" | "background";
+type PrewarmProbeResult = "resolvable" | "missing" | "timed-out";
 
 const RENDER_PREWARM_MAX_ROUTES = getBoundedEnvNumber(
   "VERYFRONT_RENDER_PREWARM_MAX_ROUTES",
@@ -1310,42 +1311,50 @@ export class Renderer {
     const resolvable: string[] = [];
 
     for (const slug of candidates) {
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) break;
-
-      // Cancel the probe when the batch budget expires so the resolver slot is
-      // released instead of being held until entity resolution's own default
-      // deadline. The deadline is threaded through as well, so the lookup can
-      // never outlive this batch even if it never observes the abort.
-      const probeAbort = new AbortController();
-      const probe = this.pageExists(slug, ctx, { signal: probeAbort.signal, deadline });
-      // The probe outlives a timeout rejection; keep its late outcome handled.
-      void probe.catch(() => {});
-
-      try {
-        if (
-          await withTimeoutThrow(
-            probe,
-            remainingMs,
-            "Production render prewarm route validation",
-            { onTimeout: () => probeAbort.abort() },
-          )
-        ) {
-          resolvable.push(slug);
-          if (resolvable.length >= maxRoutes) break;
-        }
-      } catch (error) {
-        logger.warn("Production render prewarm route validation failed", {
-          slug,
-          projectId: ctx.projectId,
-          releaseId: ctx.releaseId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        if (error instanceof TimeoutError) break;
-      }
+      const result = await this.probePrewarmCandidate(ctx, slug, deadline);
+      if (result === "timed-out") break;
+      if (result !== "resolvable") continue;
+      resolvable.push(slug);
+      if (resolvable.length >= maxRoutes) break;
     }
 
     return resolvable;
+  }
+
+  private async probePrewarmCandidate(
+    ctx: RenderContext,
+    slug: string,
+    deadline: number,
+  ): Promise<PrewarmProbeResult> {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return "timed-out";
+
+    // Cancel the probe when the batch budget expires so the resolver slot is
+    // released instead of being held until entity resolution's own default
+    // deadline. The deadline is threaded through as well, so the lookup can
+    // never outlive this batch even if it never observes the abort.
+    const probeAbort = new AbortController();
+    const probe = this.pageExists(slug, ctx, { signal: probeAbort.signal, deadline });
+    // The probe outlives a timeout rejection; keep its late outcome handled.
+    void probe.catch(() => {});
+
+    try {
+      const exists = await withTimeoutThrow(
+        probe,
+        remainingMs,
+        "Production render prewarm route validation",
+        { onTimeout: () => probeAbort.abort() },
+      );
+      return exists ? "resolvable" : "missing";
+    } catch (error) {
+      logger.warn("Production render prewarm route validation failed", {
+        slug,
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return error instanceof TimeoutError ? "timed-out" : "missing";
+    }
   }
 
   async clearCache(ctx: RenderContext, slug?: string): Promise<void> {
