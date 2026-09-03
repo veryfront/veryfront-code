@@ -64,6 +64,20 @@ workflow. Keep sibling sub-workflows' child IDs distinct as well; completed chil
 state is retained for resuming the owning sub-workflow and is never reused by a
 different sibling.
 
+Two sub-workflows that can run at the same time and declare the same child ID
+fail the run before either one starts. Give them distinct child IDs, or add a
+dependency so they run in sequence, which is allowed.
+
+Veryfront can only compare child IDs it can read from the definition. When a
+sub-workflow builds its `steps` from a callback, references another workflow by
+ID, or sits inside a `map`, its child IDs exist only once the node runs. Such a
+node runs on its own: Veryfront defers it out of any batch that also contains a
+node able to produce child state, and admits it in a later batch. Nodes whose
+child IDs are visible in the definition still run in parallel with each other.
+Two consequences to expect: throughput drops around runtime-defined
+sub-workflows, and their approvals are raised one run at a time instead of
+together.
+
 ## Workflow context persistence
 
 Workflow context must be JSON-representable. Veryfront stores suspended workflow

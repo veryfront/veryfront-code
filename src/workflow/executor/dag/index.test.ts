@@ -3546,6 +3546,119 @@ describe("DAGExecutor", () => {
       assertEquals(executed, []);
     });
 
+    it("rejects colliding siblings inside a callback-defined sub-workflow", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+      const release = (id: string): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-wf`,
+            steps: [
+              waitForApproval("review", { message: "Approve the release" }),
+              { id: `${id}-publish`, dependsOn: ["review"], config: { type: "step" } as any },
+            ],
+          },
+        }),
+        dependsOn: [],
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          ...subWorkflow("outer", {
+            workflow: {
+              id: "outer-wf",
+              steps: () => [release("release-1"), release("release-2")],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'both declare child id "review"');
+      // Neither sibling may park on the shared "review" key, so no approval is
+      // raised and no dependent publish step runs.
+      assertEquals(result.waiting, false);
+      assertEquals(executed, []);
+    });
+
+    it("rejects colliding sibling sub-workflows inside a map processor", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+      const release = (id: string): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-wf`,
+            steps: [waitForApproval("review", { message: "Approve the release" })],
+          },
+        }),
+        dependsOn: [],
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          ...map("releases", {
+            items: [1],
+            processor: {
+              id: "release-processor",
+              steps: [release("release-1"), release("release-2")],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'both declare child id "releases_0/review"');
+      assertEquals(result.waiting, false);
+      assertEquals(executed, []);
+    });
+
+    it("keeps statically defined sibling sub-workflows in one batch", async () => {
+      const staticRelease = (id: string, approvalId: string): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-wf`,
+            steps: [waitForApproval(approvalId, { message: "Approve the release" })],
+          },
+        }),
+        dependsOn: [],
+      });
+      const nodes: WorkflowNode[] = [
+        staticRelease("release-1", "review-1"),
+        staticRelease("release-2", "review-2"),
+        {
+          ...subWorkflow("release-dynamic", {
+            workflow: {
+              id: "release-dynamic-wf",
+              steps: () => [waitForApproval("review-dynamic", { message: "Approve the release" })],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      // Distinct, statically visible child ids cannot collide, so both siblings
+      // raise their approvals together. Only the callback-defined node waits.
+      assertEquals(result.waitingNodes?.map((wait) => wait.nodeId), ["review-1", "review-2"]);
+      assertEquals(result.nodeStates["review-dynamic"], undefined);
+    });
+
     it("rejects sub-workflow child ids that collide with declared parent nodes", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({

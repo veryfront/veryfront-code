@@ -598,6 +598,7 @@ async function reconcileApprovalDecision(
               : { comment: operation.decision.comment }),
             ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
+          error: undefined,
           attempt: currentNodeState?.attempt ?? 1,
           completedAt: decidedAt,
         },

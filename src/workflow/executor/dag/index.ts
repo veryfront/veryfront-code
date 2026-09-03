@@ -118,7 +118,13 @@ function collectStaticSubWorkflowReservations(
           !Array.isArray(node.config.workflow.steps)
         ) break;
         const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
-        reservations.set(ownerPath, collectWorkflowNodeIds(node.config.workflow.steps));
+        const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
+        const existing = reservations.get(ownerPath);
+        if (existing) {
+          for (const childId of childIds) existing.add(childId);
+        } else {
+          reservations.set(ownerPath, childIds);
+        }
         owners.set(ownerPath, node.id);
         collectStaticSubWorkflowReservations(
           node.config.workflow.steps,
@@ -309,14 +315,6 @@ export class DAGExecutor {
       ownedNodeIds.add(nodeId);
       subWorkflowNodeIds.set(ownerPath, ownedNodeIds);
     }
-    const subWorkflowNodeReservations = new Map<string, Set<string>>();
-    const subWorkflowReservationOwners = new Map<string, string>();
-    collectStaticSubWorkflowReservations(
-      nodes,
-      "",
-      subWorkflowNodeReservations,
-      subWorkflowReservationOwners,
-    );
     const scope: ExecutionScope = {
       rootRunId: run.id,
       executionRunId: run.id,
@@ -326,8 +324,8 @@ export class DAGExecutor {
       resumingWait: run.status === "waiting",
       declaredNodeIds: new Set(),
       subWorkflowNodeIds,
-      subWorkflowNodeReservations,
-      subWorkflowReservationOwners,
+      subWorkflowNodeReservations: new Map(),
+      subWorkflowReservationOwners: new Map(),
       subWorkflowPath: "",
       rootKeyspace: true,
       ownership,
@@ -358,6 +356,18 @@ export class DAGExecutor {
       ...scope,
       declaredNodeIds: new Set([...scope.declaredNodeIds, ...graphNodeIds]),
     };
+
+    // Reserve child ids for every graph as it starts, not once for the root
+    // definition. A sub-workflow's `steps` callback, a map processor's
+    // per-item namespaces, and a loop's generated steps all produce their
+    // graph only at execution time, so a collector that ran once over the root
+    // nodes would leave those graphs' batches unprotected.
+    collectStaticSubWorkflowReservations(
+      nodes,
+      scope.subWorkflowPath,
+      scope.subWorkflowNodeReservations,
+      scope.subWorkflowReservationOwners,
+    );
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -499,6 +509,10 @@ export class DAGExecutor {
         scope,
       );
       if (childCollision) {
+        // Reported through the graph result rather than thrown, like every
+        // other refusal this loop raises: the states and context patch earlier
+        // batches already produced must survive, or their side effects run
+        // twice on the next attempt.
         return {
           completed: false,
           waiting: false,
@@ -513,33 +527,30 @@ export class DAGExecutor {
 
       // Runtime-defined sub-workflow children cannot be reserved without
       // invoking project callbacks, potentially before their dependency
-      // context exists. Admit at most one root node that may reach a
-      // sub-workflow, so unknown child IDs cannot write the shared root map
-      // concurrently. Fully visible collisions are rejected above.
-      let hasUnknownReservations = false;
+      // context exists. Nodes whose child ids are statically visible were just
+      // proven distinct above and still run together; only nodes whose
+      // children appear at execution time are serialized, and then only
+      // against other sub-workflow-bearing nodes in the same batch.
+      const unresolvedNodeIds: string[] = [];
+      let hasResolvedSubWorkflow = false;
       for (const nodeId of candidateBatch) {
         const node = nodeMap.get(nodeId);
-        if (node !== undefined && nodeHasUnknownSubWorkflowReservations(node)) {
-          hasUnknownReservations = true;
-          break;
-        }
+        if (node === undefined || !nodeMayExecuteSubWorkflow(node)) continue;
+        if (nodeHasUnknownSubWorkflowReservations(node)) unresolvedNodeIds.push(nodeId);
+        else hasResolvedSubWorkflow = true;
       }
       let batch = candidateBatch;
-      if (hasUnknownReservations) {
-        batch = [];
-        const deferred: string[] = [];
-        let admittedSubWorkflow = false;
-        for (const nodeId of candidateBatch) {
-          const node = nodeMap.get(nodeId);
-          const mayExecuteSubWorkflow = node !== undefined && nodeMayExecuteSubWorkflow(node);
-          if (mayExecuteSubWorkflow && admittedSubWorkflow) {
-            deferred.push(nodeId);
-            continue;
-          }
-          batch.push(nodeId);
-          if (mayExecuteSubWorkflow) admittedSubWorkflow = true;
-        }
-        ready = [...deferred, ...ready];
+      if (
+        unresolvedNodeIds.length > 1 || (unresolvedNodeIds.length === 1 && hasResolvedSubWorkflow)
+      ) {
+        // Keep the first unresolved node only when nothing else in the batch
+        // can write child state, so a batch of unresolved siblings still makes
+        // progress one at a time instead of deadlocking.
+        const deferred = new Set(
+          hasResolvedSubWorkflow ? unresolvedNodeIds : unresolvedNodeIds.slice(1),
+        );
+        batch = candidateBatch.filter((nodeId) => !deferred.has(nodeId));
+        ready = [...candidateBatch.filter((nodeId) => deferred.has(nodeId)), ...ready];
       }
 
       const batchStartedAt = new Date();
