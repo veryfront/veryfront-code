@@ -142,7 +142,7 @@ describe("child-run-result-summary", () => {
       );
     });
 
-    it("skips structured facts that appear beyond the fact extraction input limit", () => {
+    it("preserves structured facts near the end of oversized child output", () => {
       const text = [
         "x".repeat(130_000),
         '"provider_tool_ids": ["web_fetch"]',
@@ -151,6 +151,18 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.truncated, true);
+      assertEquals(result.contractFacts, { providerToolIds: ["web_fetch"] });
+    });
+
+    it("does not return a fact cut at a bounded-window edge", () => {
+      const text = [
+        "x".repeat(63_990),
+        "anthropic/claude-sonnet-4-6",
+        "x".repeat(130_000),
+      ].join("");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
       assertEquals(result.contractFacts, undefined);
     });
 
@@ -164,6 +176,16 @@ describe("child-run-result-summary", () => {
 
       assertEquals(result.contractFacts, {
         toolIds: ["gmail__list_messages"],
+        providerToolIds: ["web_fetch"],
+      });
+    });
+
+    it("preserves leading provider tool ids from oversized arrays", () => {
+      const text = '"provider_tool_ids": ["web_fetch", "' + "a".repeat(2_500) + '"]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, {
         providerToolIds: ["web_fetch"],
       });
     });

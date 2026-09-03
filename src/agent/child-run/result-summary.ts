@@ -4,6 +4,7 @@ const CHILD_RUN_VALUE_SUMMARY_MAX_DEPTH = 5;
 const CHILD_RUN_CONTRACT_FACT_LIMIT = 50;
 const CHILD_RUN_CONTRACT_FACT_VALUE_MAX_LENGTH = 200;
 const CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT = 128_000;
+const CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT = 2_000;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
 const MALFORMED_TOOL_COMMAND_PREFIX_PATTERN =
   /<(?:tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?(?=<(?:tool_response|function_result)(?:\s[^>]*)?>)/gi;
@@ -23,10 +24,8 @@ const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
 const MODEL_FIELD_PATTERN = /(?:^|[,{(\s])["']?model["']?\s*[:=]\s*["']([^"'`\s]+)["']/gim;
 const MODEL_ID_PATTERN =
   /\b(?:veryfront-cloud\/)?(?:anthropic|openai|google|google-ai-studio|mistral|xai|deepseek|moonshot|moonshotai|cohere|perplexity|groq|azure)\/[A-Za-z0-9._:-]+\b/g;
-const TOOL_IDS_FIELD_PATTERN =
-  /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s*\[([^\]]{0,2000})\]/gim;
-const PROVIDER_TOOL_IDS_FIELD_PATTERN =
-  /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[([^\]]{0,2000})\]/gim;
+const TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s*\[/gim;
+const PROVIDER_TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const OBJECT_TOOL_ID_FIELD_PATTERN = /["'](?:id|name)["']\s*:\s*["']([^"']+)["']/g;
@@ -222,11 +221,15 @@ function addToolArrayFieldValues(
   pattern.lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
     const fieldName = match[1];
-    const fieldBody = match[2];
-    if (typeof fieldBody !== "string") {
-      continue;
-    }
+    const bodyStart = match.index + match[0].length;
+    const boundedBody = text.slice(
+      bodyStart,
+      bodyStart + CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT,
+    );
+    const closingBracket = boundedBody.indexOf("]");
+    const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
+    if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
 }
 
@@ -237,14 +240,45 @@ function addProviderToolArrayFieldValues(
 ): void {
   pattern.lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
-    const fieldBody = match[1];
-    if (typeof fieldBody !== "string") {
-      continue;
-    }
+    const bodyStart = match.index + match[0].length;
+    const boundedBody = text.slice(
+      bodyStart,
+      bodyStart + CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT,
+    );
+    const closingBracket = boundedBody.indexOf("]");
+    const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     for (const value of extractQuotedValues(fieldBody)) {
       addToolIdFact(target, value);
     }
+    if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
+}
+
+function isContractFactTokenCharacter(value: string | undefined): boolean {
+  return value !== undefined && /[A-Za-z0-9._:/-]/.test(value);
+}
+
+function boundedContractFactText(text: string): string {
+  if (text.length <= CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT) return text;
+
+  const windowLength = CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2;
+  let headEnd = windowLength;
+  while (
+    headEnd > 0 && isContractFactTokenCharacter(text[headEnd - 1]) &&
+    isContractFactTokenCharacter(text[headEnd])
+  ) {
+    headEnd -= 1;
+  }
+
+  let tailStart = text.length - windowLength;
+  while (
+    tailStart < text.length && isContractFactTokenCharacter(text[tailStart - 1]) &&
+    isContractFactTokenCharacter(text[tailStart])
+  ) {
+    tailStart += 1;
+  }
+
+  return `${text.slice(0, headEnd)}\n${text.slice(tailStart)}`;
 }
 
 function contractFactsOrUndefined(input: {
@@ -270,11 +304,9 @@ function contractFactsOrUndefined(input: {
   return Object.keys(facts).length > 0 ? facts : undefined;
 }
 
-/** Extract structured contract facts from delegated result text. */
+/** Extract structured contract facts from a bounded head-and-tail text window. */
 export function extractChildRunContractFacts(text: string): ChildRunContractFacts | undefined {
-  const boundedText = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
-    ? text.slice(0, CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT)
-    : text;
+  const boundedText = boundedContractFactText(text);
   const modelIds: string[] = [];
   const toolIds: string[] = [];
   const providerToolIds: string[] = [];

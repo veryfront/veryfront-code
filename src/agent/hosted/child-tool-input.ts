@@ -59,7 +59,7 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
       "Max steps override. Omit for the hosted child default. Values below the default are raised to the default.",
     ),
     result_mode: v.enum(HOSTED_CHILD_FORK_RESULT_MODES).optional().describe(
-      'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required. Use "structured" when critical contract ids must survive a bounded summary.',
+      'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required. "structured" extracts contract ids from a bounded 128,000-character head-and-tail window.',
     ),
   })
 );
