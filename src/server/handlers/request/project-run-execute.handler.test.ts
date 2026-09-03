@@ -61,7 +61,10 @@ describe("createKnowledgeEventLogger", () => {
 
 describe("projectWorkflowRedisPrefix", () => {
   it("namespaces durable workflow state per project", () => {
-    assertEquals(projectWorkflowRedisPrefix("proj-1"), "vf:workflow:project:proj-1:");
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1"),
+      "vf:workflow:project:proj-1:target::environment::branch::",
+    );
     assertEquals(
       projectWorkflowRedisPrefix("proj-1") === projectWorkflowRedisPrefix("proj-2"),
       false,
@@ -84,15 +87,35 @@ describe("projectWorkflowRedisPrefix", () => {
     const whitespacePrefixed = projectWorkflowRedisConfig(" proj-1");
 
     assertEquals(canonical, {
-      prefix: "vf:workflow:project:proj-1:",
-      streamKey: "vf:workflow:project:proj-1:stream",
-      groupName: "vf:workflow:project:proj-1:workers",
+      prefix: "vf:workflow:project:proj-1:target::environment::branch::",
+      streamKey: "vf:workflow:project:proj-1:target::environment::branch::stream",
+      groupName: "vf:workflow:project:proj-1:target::environment::branch::workers",
     });
     assertEquals(whitespacePrefixed, {
-      prefix: "vf:workflow:project:.20.proj-1:",
-      streamKey: "vf:workflow:project:.20.proj-1:stream",
-      groupName: "vf:workflow:project:.20.proj-1:workers",
+      prefix: "vf:workflow:project:.20.proj-1:target::environment::branch::",
+      streamKey: "vf:workflow:project:.20.proj-1:target::environment::branch::stream",
+      groupName: "vf:workflow:project:.20.proj-1:target::environment::branch::workers",
     });
+  });
+
+  it("namespaces durable workflow state per runtime target", () => {
+    const main = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "main_branch",
+    });
+    const environment = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+    });
+    const otherEnvironment = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-2",
+    });
+    const preview = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: "branch-1",
+    });
+
+    assertEquals(new Set([main, environment, otherEnvironment, preview]).size, 4);
   });
 
   it("refuses to configure durable persistence without a project scope", () => {
@@ -1632,11 +1655,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(order, ["discover", "create-client", "start"]);
   });
 
-  it("scopes the workflow client to the verified request project", async () => {
-    let clientProjectId: string | undefined;
+  it("scopes the workflow client to the verified project and runtime target", async () => {
+    let clientScope: {
+      projectId: string;
+      runtimeTargetKind?: string;
+      runtimeTargetEnvironmentId?: string | null;
+      runtimeTargetBranchId?: string | null;
+    } | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       createWorkflowClient: (_config, options) => {
-        clientProjectId = options.projectId;
+        clientScope = options;
         return {
           register: () => {},
           start: async (
@@ -1657,6 +1685,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       kind: "workflow",
       target: "workflow:publish",
       projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_workflow_scope_1/execute",
@@ -1668,7 +1698,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals((await result.response.json()).success, true);
-    assertEquals(clientProjectId, "proj-1");
+    assertEquals(clientScope, {
+      projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+      runtimeTargetBranchId: undefined,
+    });
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {

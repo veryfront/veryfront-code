@@ -147,7 +147,7 @@ export interface ProjectRunExecuteHandlerDeps {
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
     config: WorkflowClientConfig | undefined,
-    options: { projectId: string },
+    options: { projectId: string } & ProjectWorkflowRedisTargetScope,
   ): WorkflowClientView | Promise<WorkflowClientView>;
   runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
   createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
@@ -315,24 +315,45 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
 }
 
 /**
- * Build the Redis key prefix for one project's durable workflow state.
+ * Build the Redis key prefix for one project's durable workflow state on one
+ * runtime target.
  *
  * Hosted project runtimes share a single Redis instance, so every durable
- * workflow key must be namespaced per project. Without this isolation the
- * approval decision claim recovery scan in one project's runtime can
- * enumerate and resume runs that belong to a different project. Characters
- * outside a conservative allowlist are escaped so distinct project ids can
- * never produce colliding prefixes or Redis SCAN glob metacharacters.
+ * workflow key must be namespaced per project and runtime target. Without this
+ * isolation the approval decision claim recovery scan in one runtime can
+ * enumerate and resume runs that belong to a different project, environment,
+ * or preview branch. Characters outside a conservative allowlist are escaped
+ * so distinct identifiers cannot produce colliding prefixes or Redis SCAN
+ * glob metacharacters.
  */
-export function projectWorkflowRedisPrefix(projectId: string): string {
-  const scope = projectId.replace(
+function encodeWorkflowRedisScope(value: string): string {
+  return value.replace(
     /[^A-Za-z0-9_-]/g,
     (char) => `.${char.codePointAt(0)!.toString(16)}.`,
   );
-  return `vf:workflow:project:${scope}:`;
 }
 
-export function projectWorkflowRedisConfig(projectId: string): {
+export interface ProjectWorkflowRedisTargetScope {
+  runtimeTargetKind?: ProjectRunExecuteRequest["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
+  runtimeTargetBranchId?: string | null;
+}
+
+export function projectWorkflowRedisPrefix(
+  projectId: string,
+  target: ProjectWorkflowRedisTargetScope = {},
+): string {
+  const projectScope = encodeWorkflowRedisScope(projectId);
+  const targetKind = encodeWorkflowRedisScope(target.runtimeTargetKind ?? "");
+  const environmentScope = encodeWorkflowRedisScope(target.runtimeTargetEnvironmentId ?? "");
+  const branchScope = encodeWorkflowRedisScope(target.runtimeTargetBranchId ?? "");
+  return `vf:workflow:project:${projectScope}:target:${targetKind}:environment:${environmentScope}:branch:${branchScope}:`;
+}
+
+export function projectWorkflowRedisConfig(
+  projectId: string,
+  target: ProjectWorkflowRedisTargetScope = {},
+): {
   prefix: string;
   streamKey: string;
   groupName: string;
@@ -343,7 +364,7 @@ export function projectWorkflowRedisConfig(projectId: string): {
     });
   }
 
-  const prefix = projectWorkflowRedisPrefix(projectId);
+  const prefix = projectWorkflowRedisPrefix(projectId, target);
   return {
     prefix,
     streamKey: `${prefix}stream`,
@@ -353,7 +374,7 @@ export function projectWorkflowRedisConfig(projectId: string): {
 
 async function createRuntimeWorkflowClient(
   config: WorkflowClientConfig | undefined,
-  options: { projectId: string },
+  options: { projectId: string } & ProjectWorkflowRedisTargetScope,
 ): Promise<WorkflowClientView> {
   const clientConfig = withRuntimeStepRegistries(config);
   const redisUrl = getHostEnv("REDIS_URL")?.trim();
@@ -365,7 +386,7 @@ async function createRuntimeWorkflowClient(
 
   const backend = new RedisBackend({
     url: redisUrl,
-    ...projectWorkflowRedisConfig(options.projectId),
+    ...projectWorkflowRedisConfig(options.projectId, options),
     debug: config?.debug,
   });
   if (backend.initialize) {
@@ -489,7 +510,12 @@ async function executeWorkflowRun(
 
   const client = await deps.createWorkflowClient(
     withRuntimeStepRegistries({ debug: ctx.debug }),
-    { projectId: request.projectId },
+    {
+      projectId: request.projectId,
+      runtimeTargetKind: request.runtimeTargetKind,
+      runtimeTargetEnvironmentId: request.runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: request.runtimeTargetBranchId,
+    },
   );
   try {
     client.register(workflow.definition);
