@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
-import { aliasStrategy } from "./alias-strategy.ts";
+import { aliasStrategy, rewriteSsrProjectAliasSpecifier } from "./alias-strategy.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -271,6 +271,90 @@ describe("AliasStrategy", () => {
         // The SSR adapter appends the snapshot together with its other query
         // params, so this intermediate path must remain query-free.
         assertEquals(result.specifier, "/_vf_modules/components/Badge.js");
+      });
+    });
+
+    // The rewrite composes its URL by concatenation, so a dot segment in the
+    // authored path survives into the emitted specifier and is collapsed only
+    // by the browser or the SSR importer — landing the import on an arbitrary
+    // same-origin path that is then cached as an executable module. The check
+    // has to run on every target, not just the one the module cache sees.
+    describe("module-transport containment", () => {
+      const escapes = [
+        "@/../_veryfront/modules/foo",
+        "@/./../_veryfront/modules/foo",
+        "@/components/../../_veryfront/modules/foo",
+        "@/%2e%2e/_veryfront/modules/foo",
+        "@/..\\_veryfront/modules/foo",
+        "@/",
+      ];
+
+      for (const target of ["browser", "ssr"] as const) {
+        for (const specifier of escapes) {
+          it(`refuses ${JSON.stringify(specifier)} for the ${target} target`, () => {
+            assertThrows(
+              () =>
+                aliasStrategy.rewrite(
+                  makeInfo(specifier),
+                  makeCtx({ target, moduleServerUrl: "/_vf_modules" }),
+                ),
+              Error,
+              "escapes the /_vf_modules/ module transport",
+            );
+          });
+        }
+      }
+
+      it("refuses an escaping alias with no moduleServerUrl configured", () => {
+        // The relative fallback concatenates the authored path too, so it is
+        // not exempt.
+        assertThrows(
+          () =>
+            aliasStrategy.rewrite(
+              makeInfo("@/../../etc/passwd"),
+              makeCtx({ filePath: "/project/pages/index.tsx" }),
+            ),
+          Error,
+          "escapes the /_vf_modules/ module transport",
+        );
+      });
+
+      it("omits the authored query and fragment from the rejection message", () => {
+        const error = assertThrows(
+          () =>
+            aliasStrategy.rewrite(
+              makeInfo("@/../secrets?token=EXAMPLE-CREDENTIAL-VALUE#EXAMPLE-FRAGMENT"),
+              makeCtx({ moduleServerUrl: "/_vf_modules" }),
+            ),
+          Error,
+          "escapes the /_vf_modules/ module transport",
+        );
+        // The testing front door types assertThrows as unknown.
+        if (!(error instanceof Error)) throw new Error("Expected an Error");
+        assertEquals(error.message.includes("EXAMPLE-CREDENTIAL-VALUE"), false);
+        assertEquals(error.message.includes("EXAMPLE-FRAGMENT"), false);
+      });
+
+      it("still rewrites a contained alias that merely contains dots", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/my.config.helper"),
+          makeCtx({ moduleServerUrl: "/_vf_modules" }),
+        );
+        assertEquals(result.specifier, "/_vf_modules/lib/my.config.helper.js");
+      });
+
+      // `isUnresolvedTenantImport` in rendering/orchestrator/module-loader
+      // normalizes an already-failed specifier through this helper purely to
+      // classify the error. Throwing there would replace a diagnostic with a
+      // crash, so the uncontained case is a null result, not an exception —
+      // the emitting caller above is the one that rejects it.
+      it("returns null rather than throwing for an escaping alias", () => {
+        assertEquals(rewriteSsrProjectAliasSpecifier("@/../_veryfront/modules/foo"), null);
+        assertEquals(rewriteSsrProjectAliasSpecifier("@/"), null);
+        assertEquals(
+          rewriteSsrProjectAliasSpecifier("@/components/Card"),
+          "/_vf_modules/components/Card.js",
+        );
       });
     });
   });
