@@ -236,9 +236,13 @@ describe("cli/sync/ignore", () => {
         assertEquals(anchoredRootFileChecker.isIgnored(".git"), true);
         assertEquals(warnings.length, 4, "a root file rule must not warn for protected children");
 
+        const anchoredRecursiveFileChecker = createIgnoreChecker([".env*", "!/**.json"]);
+        assertEquals(anchoredRecursiveFileChecker.isIgnored(".env"), true);
+        assertEquals(warnings.length, 5, "an anchored double-star must retain its warning");
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 4, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 5, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

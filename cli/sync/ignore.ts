@@ -101,6 +101,7 @@ interface IgnoreRule {
   negated: boolean;
   regex: RegExp;
   anchored: boolean;
+  leadingDoubleStar: boolean;
   literalPrefix: string;
   descendantPrefixRegexes: RegExp[];
 }
@@ -219,6 +220,7 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
     negated,
     regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
     anchored,
+    leadingDoubleStar: pattern.startsWith("**"),
     literalPrefix,
     descendantPrefixRegexes,
   };
@@ -251,7 +253,7 @@ function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string):
   // any directory, so a protected directory stops that negation from ever
   // being evaluated on a concrete child.
   if (!rule.literalPrefix) {
-    return !rule.anchored ||
+    return !rule.anchored || rule.leadingDoubleStar ||
       rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath));
   }
   if (rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath))) return true;
