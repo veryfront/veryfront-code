@@ -423,18 +423,10 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * `refreshStaleSource`, a stale receipt selects `"none"` and reaches
  * {@link validatePushReceipt} as a refusal instead.
  */
-export function resolveBootstrapPush(
-  receipt: PushReceipt | null,
-  source: DeployProjectRequest["source"],
-  local: LocalSourceObservation | null,
-  target: BootstrapPushTarget,
+function resolveStaleSourceRefresh(
+  receipt: PushReceipt,
+  local: LocalSourceObservation,
 ): BootstrapPushKind {
-  if (source.kind !== "ensure-pushed") return "none";
-  // A project with no receipt has nothing to refuse and nothing to promote, so
-  // its first push is bootstrapped for every ensure-pushed caller.
-  if (!receipt) return "bootstrap";
-  if (!source.refreshStaleSource || !local) return "none";
-  if (!receiptTargetsDeploy(receipt, target)) return "none";
   // A receipt that never recorded a commit has no HEAD to compare against, so
   // the source is refreshed. It is the only state that skips the comparison:
   // a dirty receipt that still names a commit gets compared like a clean one,
@@ -464,6 +456,21 @@ export function resolveBootstrapPush(
   }
   if (!receipt.clean) return "refresh";
   return gitSource.clean ? "none" : "refresh";
+}
+
+export function resolveBootstrapPush(
+  receipt: PushReceipt | null,
+  source: DeployProjectRequest["source"],
+  local: LocalSourceObservation | null,
+  target: BootstrapPushTarget,
+): BootstrapPushKind {
+  if (source.kind !== "ensure-pushed") return "none";
+  // A project with no receipt has nothing to refuse and nothing to promote, so
+  // its first push is bootstrapped for every ensure-pushed caller.
+  if (!receipt) return "bootstrap";
+  if (!source.refreshStaleSource || !local) return "none";
+  if (!receiptTargetsDeploy(receipt, target)) return "none";
+  return resolveStaleSourceRefresh(receipt, local);
 }
 
 /**
