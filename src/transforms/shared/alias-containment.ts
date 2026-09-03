@@ -3,8 +3,8 @@
  *
  * Every rewriter that turns `@/<path>` into a `/_vf_modules/<path>` transport
  * URL composes that URL by concatenation, so the authored path decides where
- * the emitted specifier finally points. Dot segments — raw, percent-encoded
- * (`%2e%2e`) or backslash-separated — survive concatenation untouched and are
+ * the emitted specifier finally points. Dot segments (raw, percent-encoded
+ * `%2e%2e`, or backslash-separated) survive concatenation untouched and are
  * only collapsed later, by the browser, the SSR importer or the module server.
  * `@/../_veryfront/modules/foo` therefore leaves the transport and becomes an
  * ordinary same-origin fetch whose response is cached as an executable module.
@@ -19,18 +19,21 @@
  */
 
 import { splitSpecifierSuffix } from "./specifier-suffix.ts";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 
 const ReflectApply = Reflect.apply;
-const RegExpTest = RegExp.prototype.test;
+const ReflectConstruct = Reflect.construct;
 const StringCharCodeAt = String.prototype.charCodeAt;
-
-function regexpTest(pattern: RegExp, value: string): boolean {
-  return ReflectApply(RegExpTest, pattern, [value]) as boolean;
-}
+const StringStartsWith = String.prototype.startsWith;
+const IntrinsicURL = URL;
+const URLOriginGetter = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
+const URLPathnameGetter = Object.getOwnPropertyDescriptor(URL.prototype, "pathname")?.get;
 
 const BACKSLASH_CODE = 0x5c;
 const DELETE_CODE = 0x7f;
 const LAST_C0_CONTROL_CODE = 0x1f;
+const MODULE_TRANSPORT_ORIGIN = "https://module-transport.invalid";
+const MODULE_TRANSPORT_PREFIX = "/_vf_modules/";
 
 /**
  * True when a path contains a character that changes how the WHATWG URL parser
@@ -56,8 +59,8 @@ function hasUnsafePathCharacter(value: string): boolean {
 }
 
 /**
- * True when `aliasPath` — the text after `@/`, `?query`/`#hash` suffix
- * included — can be concatenated onto `/_vf_modules/` without the result
+ * True when `aliasPath` (the text after `@/`, with any `?query`/`#hash` suffix)
+ * can be concatenated onto `/_vf_modules/` without the result
  * normalizing back out of the transport.
  *
  * The check applies to the path alone: dot segments inside a query or fragment
@@ -71,10 +74,23 @@ function hasUnsafePathCharacter(value: string): boolean {
  */
 export function isContainedProjectAliasPath(aliasPath: string): boolean {
   const { path } = splitSpecifierSuffix(aliasPath);
-  return path !== "" &&
-    !regexpTest(/(^|\/)\.\.?(\/|$)/, path) &&
-    !regexpTest(/%2e/i, path) &&
-    !hasUnsafePathCharacter(path);
+  if (
+    path === "" || hasUnsafePathCharacter(path) || !URLOriginGetter ||
+    !URLPathnameGetter
+  ) return false;
+
+  try {
+    const resolved = ReflectConstruct(IntrinsicURL, [
+      `${MODULE_TRANSPORT_PREFIX}${path}`,
+      MODULE_TRANSPORT_ORIGIN,
+    ]) as URL;
+    const origin = ReflectApply(URLOriginGetter, resolved, []) as string;
+    const pathname = ReflectApply(URLPathnameGetter, resolved, []) as string;
+    return origin === MODULE_TRANSPORT_ORIGIN &&
+      (ReflectApply(StringStartsWith, pathname, [MODULE_TRANSPORT_PREFIX]) as boolean);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -98,7 +114,8 @@ export function assertContainedProjectAliasPath(aliasPath: string): void {
 
   const { path, suffix } = splitSpecifierSuffix(aliasPath);
   const reportedAlias = suffix === "" ? `@/${path}` : `@/${path}<redacted suffix>`;
-  throw new Error(
-    `Refusing to rewrite project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
-  );
+  throw SECURITY_VIOLATION.create({
+    detail:
+      `Refusing to rewrite project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
+  });
 }

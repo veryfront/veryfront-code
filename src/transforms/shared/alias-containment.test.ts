@@ -15,6 +15,10 @@ describe("transforms/shared/alias-containment", () => {
       "styles/globals.css",
       "post.mdx",
       "a/b/c/d/e",
+      ".",
+      "./Button",
+      "components/../Button",
+      "components/..",
       // A single dot inside a segment is a filename, not a dot segment.
       "lib/.eslintrc.json",
       "lib/..hidden/file",
@@ -29,11 +33,9 @@ describe("transforms/shared/alias-containment", () => {
     const escapes: ReadonlyArray<readonly [string, string]> = [
       ["", "an empty path composes bare /_vf_modules/"],
       ["..", "a lone parent segment"],
-      [".", "a lone current segment"],
       ["../_veryfront/modules/foo", "a leading parent segment"],
       ["./../_veryfront/modules/foo", "a parent segment behind a current segment"],
       ["components/../../_veryfront/modules/foo", "parent segments in the middle"],
-      ["components/..", "a trailing parent segment"],
       ["%2e%2e/_veryfront/modules/foo", "percent-encoded dot segments"],
       ["%2E%2E/_veryfront/modules/foo", "upper-case percent-encoded dot segments"],
       // WHATWG parsing maps "\" onto "/" under a special scheme, so this is a
@@ -78,6 +80,7 @@ describe("transforms/shared/alias-containment", () => {
       // The testing front door types assertThrows as unknown.
       if (!(error instanceof Error)) throw new Error("Expected an Error");
       assertEquals(error.message.includes("@/../_veryfront/modules/foo"), true);
+      assertEquals((error as Error & { slug?: string }).slug, "security-violation");
     });
 
     it("redacts the authored query and fragment from the message", () => {

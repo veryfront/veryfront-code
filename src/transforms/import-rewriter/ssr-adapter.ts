@@ -432,8 +432,8 @@ async function getCacheBusterAsync(
 }
 
 /**
- * Rewrite one authored `@/` alias — `specifierPath` is the text after `@/` —
- * into its SSR module-transport URL.
+ * Rewrite one authored `@/` alias into its SSR module-transport URL.
+ * `specifierPath` is the text after `@/`.
  *
  * The URL is composed by concatenating the authored path onto
  * `/_vf_modules/`, so an alias carrying dot segments would be emitted as
@@ -499,52 +499,50 @@ function buildScopedParams(options: SSRRewriteOptions): string {
   return `${projectParam}${branchParam}${dependencyPinningParam}`;
 }
 
-const ALIAS_IMPORT_PATTERNS = [
-  /(\bfrom\s+)["']@\/([^"']+)["']/g,
-  /(\bimport\s+)["']@\/([^"']+)["']/g,
-  /(\bimport\s*\(\s*)["']@\/([^"']+)["']/g,
-];
-
-const RELATIVE_IMPORT_PATTERNS = [
-  /(\bfrom\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-  /(\bimport\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-  /(\bimport\s*\(\s*)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-];
-
-function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
+function rewriteInternalModuleImportsSync(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
-  let result = code;
+  const rewriteSpecifier = (specifier: string): string | null => {
+    const rewrite = specifier.startsWith("@/")
+      ? buildAliasRewrite(specifier.slice(2), options)
+      : /^(?:\.\.?\/|\/)[^?#]+\.js$/.test(specifier)
+      ? buildRelativeRewrite(specifier)
+      : null;
+    if (!rewrite) return null;
+    const cacheBuster = getCacheBusterSync(rewrite.target, options);
+    return `${rewrite.prefix}${scopedParams}&v=${cacheBuster}`;
+  };
+  const scanLimit = code.length || 1;
+  const fromSpans = findStaticImportFromSpans(code, rewriteSpecifier, scanLimit);
+  const dynamicSpans = findDynamicImportSpans(code, rewriteSpecifier, scanLimit);
+  const sideEffectSpans = findStaticSideEffectImportSpans(code, rewriteSpecifier, scanLimit);
+  const replacements: SourceSpanReplacement[] = [];
 
-  for (const pattern of ALIAS_IMPORT_PATTERNS) {
-    result = result.replace(
-      pattern,
-      (_match, prefix: string, path: string) => {
-        const { target, prefix: rewrittenPrefix } = buildAliasRewrite(path, options);
-        const cacheBuster = getCacheBusterSync(target, options);
-        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
-      },
-    );
+  for (const span of fromSpans) {
+    replacements.push({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `from ${JsonStringify(span.path)}`,
+    });
+  }
+  for (const span of dynamicSpans) {
+    replacements.push({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: JsonStringify(span.path),
+    });
+  }
+  for (const span of sideEffectSpans) {
+    replacements.push({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `import ${JsonStringify(span.path)}`,
+    });
   }
 
-  return result;
-}
-
-function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
-  const scopedParams = buildScopedParams(options);
-  let result = code;
-
-  for (const pattern of RELATIVE_IMPORT_PATTERNS) {
-    result = result.replace(
-      pattern,
-      (_match, prefix: string, path: string) => {
-        const { target, prefix: rewrittenPrefix } = buildRelativeRewrite(path);
-        const cacheBuster = getCacheBusterSync(target, options);
-        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
-      },
-    );
-  }
-
-  return result;
+  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
@@ -560,8 +558,7 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
   );
-  result = rewritePathAliases(result, options);
-  result = rewriteRelativeImports(result, options);
+  result = rewriteInternalModuleImportsSync(result, options);
   return result;
 }
 

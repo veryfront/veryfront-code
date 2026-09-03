@@ -490,6 +490,11 @@ describe("ssr-adapter — side-effect and dynamic import rewriting", () => {
     assertEquals(rewriteSSRImportsCompat(code, options), expected);
   });
 
+  it("ignores invalid alias text inside comments in the synchronous rewriter", () => {
+    const comment = `// import x from "@/../example";`;
+    assertEquals(rewriteSSRImportsCompat(comment, options), comment);
+  });
+
   it("rewrites all alias and relative import forms asynchronously", async () => {
     assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
   });
@@ -549,8 +554,8 @@ describe("ssr-adapter — bare import matcher edge cases", () => {
 // The alias rewrite composes `/_vf_modules/<authored path>`, so a dot segment
 // in the authored path survives concatenation and is collapsed only by the SSR
 // importer — landing the import on an arbitrary same-origin path that is then
-// cached as an executable module. Both the sync regex rewriter and the async
-// parser-driven one compose from the same helper and must both refuse it.
+// cached as an executable module. Both synchronous and asynchronous import
+// scanners compose from the same helper and must both refuse it.
 describe("ssr-adapter — @/ alias module-transport containment", () => {
   const opts = { projectSlug: "p", branch: "b", cacheBuster: "v1" };
   const escapes = [
@@ -563,7 +568,7 @@ describe("ssr-adapter — @/ alias module-transport containment", () => {
   for (const specifier of escapes) {
     it(`refuses ${JSON.stringify(specifier)} synchronously`, () => {
       assertThrows(
-        () => rewriteSSRImportsCompat(`import x from "${specifier}";`, opts),
+        () => rewriteSSRImportsCompat(`import x from ${JSON.stringify(specifier)};`, opts),
         Error,
         "escapes the /_vf_modules/ module transport",
       );

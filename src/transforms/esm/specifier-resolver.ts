@@ -8,7 +8,7 @@
  */
 
 import { basename } from "#veryfront/compat/path/index.ts";
-import { BUILD_FAILED } from "#veryfront/errors";
+import { BUILD_FAILED, SECURITY_VIOLATION } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
@@ -129,9 +129,9 @@ function isLocalMappedSpecifier(specifier: string): boolean {
 /**
  * Origin used to canonicalize module-transport paths when the caller has no
  * module-server origin. `.invalid` is reserved (RFC 2606) and can never
- * resolve, so it only ever supplies WHATWG path normalization — the same
+ * resolve, so it only ever supplies WHATWG path normalization, the same
  * normalization the browser or importing runtime applies to the emitted
- * specifier — and never a fetchable target.
+ * specifier, and never a fetchable target.
  */
 const CONTAINMENT_BASE = "https://module-transport.invalid/";
 
@@ -205,13 +205,14 @@ async function resolveSpecifier(
     //
     // The authored suffix is a query string or fragment and can carry tenant
     // credentials (`@/module?token=…`), so the diagnostics below name the
-    // alias by its path alone — AGENTS.md, "Secret and internal-detail
+    // alias by its path alone. AGENTS.md, "Secret and internal-detail
     // safety", forbids echoing such values into error messages.
     const reportedAlias = suffix === "" ? `@/${pathOnly}` : `@/${pathOnly}<redacted suffix>`;
     if (!isContainedProjectAliasPath(pathOnly)) {
-      throw new Error(
-        `Refusing to resolve project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
-      );
+      throw SECURITY_VIOLATION.create({
+        detail:
+          `Refusing to resolve project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
+      });
     }
 
     const mappedAlias = resolveImport(specifier, options.importMap);
@@ -222,9 +223,10 @@ async function resolveSpecifier(
       // normalizes the emitted specifier straight back out of the transport.
       // Validate the resolved target, not its literal prefix.
       if (!isContainedModuleTransportSpecifier(mappedAlias)) {
-        throw new Error(
-          `Refusing to resolve project alias ${reportedAlias}: its import-map target resolves outside the /_vf_modules/ module transport`,
-        );
+        throw SECURITY_VIOLATION.create({
+          detail:
+            `Refusing to resolve project alias ${reportedAlias}: its import-map target resolves outside the /_vf_modules/ module transport`,
+        });
       }
       return mappedAlias;
     }
@@ -241,9 +243,10 @@ async function resolveSpecifier(
     const moduleServerOrigin = parseHttpBase(options.moduleServerOrigin);
     const projectModuleUrl = new URL(projectModulePath, moduleServerOrigin ?? CONTAINMENT_BASE);
     if (!stringStartsWith(projectModuleUrl.pathname, MODULE_TRANSPORT_PREFIX)) {
-      throw new Error(
-        `Refusing to resolve project alias ${reportedAlias}: it resolved outside the /_vf_modules/ module transport`,
-      );
+      throw SECURITY_VIOLATION.create({
+        detail:
+          `Refusing to resolve project alias ${reportedAlias}: it resolved outside the /_vf_modules/ module transport`,
+      });
     }
     if (!moduleServerOrigin) return projectModulePath;
 

@@ -286,7 +286,7 @@ describe("transforms/esm/specifier-resolver", () => {
       const cacheCalls: string[] = [];
       const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
         cacheCalls.push(url);
-        return "/tmp/cache/http-alias.mjs";
+        return "cache/http-alias.mjs";
       });
 
       assertEquals(cacheCalls, []);
@@ -325,7 +325,7 @@ describe("transforms/esm/specifier-resolver", () => {
         { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
         async (url) => {
           cacheCalls.push(url);
-          return "/tmp/cache/http-alias.mjs";
+          return "cache/http-alias.mjs";
         },
       );
 
@@ -334,7 +334,7 @@ describe("transforms/esm/specifier-resolver", () => {
       ]);
       assertEquals(
         result.replacements.get("@/components/ResponsiveImage"),
-        "file:///tmp/cache/http-alias.mjs",
+        "file://cache/http-alias.mjs",
       );
     });
 
@@ -343,7 +343,7 @@ describe("transforms/esm/specifier-resolver", () => {
       const cacheCalls: string[] = [];
       const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
         cacheCalls.push(url);
-        return "/tmp/cache/http-alias.mjs";
+        return "cache/http-alias.mjs";
       });
 
       assertEquals(cacheCalls, []);
@@ -359,7 +359,7 @@ describe("transforms/esm/specifier-resolver", () => {
       const cacheCalls: string[] = [];
       const result = await buildReplacements(code, undefined, defaultOptions, async (url) => {
         cacheCalls.push(url);
-        return "/tmp/cache/http-alias.mjs";
+        return "cache/http-alias.mjs";
       });
 
       assertEquals(cacheCalls, []);
@@ -389,7 +389,7 @@ describe("transforms/esm/specifier-resolver", () => {
             { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
             async (url) => {
               cacheCalls.push(url);
-              return "/tmp/cache/http-alias.mjs";
+              return "cache/http-alias.mjs";
             },
           ),
         Error,
@@ -411,7 +411,7 @@ describe("transforms/esm/specifier-resolver", () => {
             { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
             async (url) => {
               cacheCalls.push(url);
-              return "/tmp/cache/http-alias.mjs";
+              return "cache/http-alias.mjs";
             },
           ),
         Error,
@@ -479,7 +479,7 @@ describe("transforms/esm/specifier-resolver", () => {
             },
             async (url) => {
               cacheCalls.push(url);
-              return "/tmp/cache/http-alias.mjs";
+              return "cache/http-alias.mjs";
             },
           ),
         Error,
