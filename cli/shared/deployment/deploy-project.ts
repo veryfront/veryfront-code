@@ -452,6 +452,13 @@ function resolveStaleSourceRefresh(
     // dirty one proves nothing about the upload and keeps its refresh.
     const checkoutNamesAnotherCommit = gitSource.commitSha !== null;
     if (checkoutNamesAnotherCommit) return "none";
+    // The "a dirty receipt proves nothing" reasoning above predates receipt
+    // digests. A receipt carrying one can still prove its uploaded source even
+    // though the checkout no longer names a commit, so it has to reach
+    // {@link validatePushReceipt} still holding its original commitSha:
+    // refreshing here would rewrite that to null first, and the missing-current
+    // -commit refusal would never fire for provenance that was genuinely lost.
+    if (receipt.localSourceDigest !== undefined) return "none";
     return receipt.clean ? "none" : "refresh";
   }
   // Digests compare the file set push uploads, so where the receipt has one it

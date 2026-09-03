@@ -1236,6 +1236,33 @@ describe("resolveBootstrapPush", () => {
     );
   });
 
+  it("preserves a Git-backed dirty receipt whose digest can still prove its source", () => {
+    // The checkout lost its Git metadata, so it names no commit. Refreshing
+    // here would rewrite the receipt's commitSha to null before
+    // validatePushReceipt ran, and the missing-current-commit refusal would
+    // never fire for provenance that was genuinely lost. The receipt carries a
+    // digest, so it must survive to the gate instead.
+    const localSourceDigest = `sha256:${"2".repeat(64)}`;
+
+    assertEquals(
+      resolveBootstrapPush(
+        {
+          ...receipt,
+          commitSha: "a".repeat(40),
+          clean: false,
+          localSourceDigest,
+        },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, repositoryAvailable: false },
+          sourceDigest: localSourceDigest,
+        },
+        target,
+      ),
+      "none",
+    );
+  });
+
   it("does not refresh when Git provenance is indeterminate", () => {
     assertEquals(
       resolveBootstrapPush(
