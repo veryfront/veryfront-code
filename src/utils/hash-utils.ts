@@ -216,7 +216,7 @@ function wtf8Hex(value: string): string {
  * content source serve another source's transformed modules for the same file
  * path. Identifiers of normal length are encoded losslessly (lowercase hex of
  * their WTF-8 bytes, which preserves unpaired surrogates that UTF-8 encoding
- * would fold to U+FFFD), which makes collisions impossible — including on
+ * would fold to U+FFFD), which makes collisions impossible, including on
  * case-insensitive filesystems, where a case-sensitive encoding would fold
  * distinct segments back together. Oversized identifiers collapse to two
  * domain-separated 64-bit FNV-1a hashes so path segments stay bounded without
