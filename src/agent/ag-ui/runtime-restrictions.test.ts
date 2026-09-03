@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
+import { createEphemeralAgent } from "../factory.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
 import {
   applyAgUiRuntimeRestrictions,
@@ -96,6 +97,53 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.providerTools, ["web_fetch"]);
     assertEquals(restricted.delegates, ["writer"]);
     assertEquals(restricted.skills, true);
+  });
+
+  it("explicitly disables skill infrastructure tools outside the allowlist", () => {
+    // With skills enabled, the factory injects the whole `load_skill` family
+    // unless an entry is explicitly `false`, so removing the names from the
+    // tool map is not enough to keep them out of the rebuilt agent.
+    const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
+      allowedTools: ["load_skill"],
+    });
+
+    assertEquals(restricted.skills, true);
+    assertEquals(restricted.tools, {
+      load_skill: true,
+      load_skill_reference: false,
+      execute_skill_script: false,
+    });
+  });
+
+  it("keeps the factory from injecting non-allowlisted skill tools into the rebuilt agent", () => {
+    // End to end against the factory: `resolveToolsConfiguration` injects the
+    // whole skill family for a skills-enabled agent unless an entry is
+    // explicitly `false`, so the rebuilt ephemeral agent must carry the
+    // stamped denials, not just a narrowed name list.
+    const restrictedAgent = createEphemeralAgent(
+      applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
+        allowedTools: ["load_skill"],
+      }),
+    );
+
+    const tools = (restrictedAgent.config.tools ?? {}) as Record<string, unknown>;
+    assertEquals(Object.keys(tools).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+    assertEquals(typeof tools.load_skill, "object");
+    assertEquals(tools.load_skill_reference, false);
+    assertEquals(tools.execute_skill_script, false);
+  });
+
+  it("disables non-allowlisted skill tools even when the config declares no tools", () => {
+    const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: undefined }), {
+      allowedTools: ["load_skill", "load_skill_reference"],
+    });
+
+    assertEquals(restricted.skills, true);
+    assertEquals(restricted.tools, { execute_skill_script: false });
   });
 
   it("never raises the configured step bound", () => {

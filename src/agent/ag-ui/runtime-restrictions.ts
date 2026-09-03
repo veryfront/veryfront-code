@@ -4,6 +4,15 @@ import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources
 
 const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 
+// The full skill infrastructure family the factory injects whenever skills stay
+// enabled. Kept as a local literal so this security boundary cannot be widened
+// by mutating the public `SKILL_TOOL_IDS` compatibility set.
+const SKILL_INFRASTRUCTURE_TOOL_NAMES = [
+  "load_skill",
+  "load_skill_reference",
+  "execute_skill_script",
+] as const;
+
 /**
  * Ceiling a trusted server caller applies to one AG-UI run.
  *
@@ -99,6 +108,21 @@ export function applyAgUiRuntimeRestrictions(
   // they stay out unless the loader itself is allowlisted.
   if (!SKILL_LOADER_TOOL_NAMES.some((toolName) => allowedTools.has(toolName))) {
     restricted.skills = false;
+  } else {
+    // With skills enabled, the factory injects the whole skill infrastructure
+    // family into the rebuilt agent's tool map unless an entry is explicitly
+    // `false`. The intersection above only removes names, so stamp an explicit
+    // `false` for every family member outside the allowlist -- otherwise a
+    // ceiling naming only `load_skill` would also grant `execute_skill_script`.
+    const tools = restricted.tools === undefined || restricted.tools === true
+      ? {}
+      : { ...restricted.tools };
+    for (const toolName of SKILL_INFRASTRUCTURE_TOOL_NAMES) {
+      if (!allowedTools.has(toolName)) {
+        tools[toolName] = false;
+      }
+    }
+    restricted.tools = tools;
   }
 
   return restricted;
