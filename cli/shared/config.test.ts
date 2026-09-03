@@ -18,7 +18,7 @@ import {
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat";
 import { join } from "veryfront/platform/path";
 import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
