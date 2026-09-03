@@ -315,6 +315,24 @@ describe("server/build-routes", () => {
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.map((r) => r.path), ["/", "/about", "/blog", "/zebra"]);
     });
+
+    it("breaks route-path ties on the source file", async () => {
+      // `about.tsx` and `about/index.tsx` both resolve to `/about`. Consumers
+      // key on the route path -- code splitting derives one entry name per
+      // route -- so the tie must not be left to `readDir` order.
+      const forward = createMockAdapter({
+        "/project/pages/about.tsx": "export default () => <div/>",
+        "/project/pages/about/index.tsx": "export default () => <div/>",
+      });
+      const reversed = createMockAdapter({
+        "/project/pages/about/index.tsx": "export default () => <div/>",
+        "/project/pages/about.tsx": "export default () => <div/>",
+      });
+
+      const expected = ["/project/pages/about.tsx", "/project/pages/about/index.tsx"];
+      assertEquals((await collectPagesRoutes(forward, "/project")).map((r) => r.file), expected);
+      assertEquals((await collectPagesRoutes(reversed, "/project")).map((r) => r.file), expected);
+    });
   });
 
   describe("collectAppRoutes", () => {
@@ -558,6 +576,23 @@ describe("server/build-routes", () => {
       });
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.map((r) => r.path), ["/", "/about", "/docs", "/zebra"]);
+    });
+
+    it("breaks route-path ties on the page file", async () => {
+      // A nested directory named `app` re-roots its subtree, so both page
+      // files below claim `/`. The tie must not be left to `readDir` order.
+      const forward = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/app/page.tsx": "export default function Nested() {}",
+      });
+      const reversed = createMockAdapter({
+        "/project/app/app/page.tsx": "export default function Nested() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+
+      const expected = ["/project/app/app/page.tsx", "/project/app/page.tsx"];
+      assertEquals((await collectAppRoutes(forward, "/project")).map((r) => r.pageFile), expected);
+      assertEquals((await collectAppRoutes(reversed, "/project")).map((r) => r.pageFile), expected);
     });
   });
 });

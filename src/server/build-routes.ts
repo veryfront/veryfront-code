@@ -38,14 +38,29 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 // Route discovery walks the project with `readDir`, which yields entries in
 // filesystem order -- insertion order on some filesystems, hash order on
 // others. Leaving that order in place makes the build's route list, and every
 // artifact derived from it (`ssgPaths`, the build manifest, build logs),
-// depend on how the checkout happened to land on disk. Sorting by route path
-// makes the build reproducible across machines and runs.
-function byRoutePath<T extends { path: string }>(a: T, b: T): number {
-  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+// depend on how the checkout happened to land on disk.
+//
+// The route path alone is not a total order: two sources can collapse onto one
+// route (`pages/about.tsx` and `pages/about/index.tsx` both become `/about`,
+// and a nested `app/app/page.tsx` re-roots onto `/`). Ties there would keep
+// their filesystem order, and consumers keyed on the route path -- code
+// splitting derives one entry name per route -- would still bundle a different
+// source per checkout. The source file breaks the tie, so the full ordering is
+// reproducible across machines and runs.
+function byPagesRoute(a: RouteInfo, b: RouteInfo): number {
+  return compareStrings(a.path, b.path) || compareStrings(a.file, b.file);
+}
+
+function byAppRoute(a: AppRouteInfo, b: AppRouteInfo): number {
+  return compareStrings(a.path, b.path) || compareStrings(a.pageFile, b.pageFile);
 }
 
 export async function collectPagesRoutes(
@@ -79,7 +94,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes.sort(byRoutePath);
+  return routes.sort(byPagesRoute);
 }
 
 /**
@@ -108,7 +123,7 @@ export async function collectAppRoutes(
 
   return collected
     .filter((r) => shouldIncludeRoute(r.path, include, exclude))
-    .sort(byRoutePath);
+    .sort(byAppRoute);
 }
 
 function isForceDynamic(source: string): boolean {
