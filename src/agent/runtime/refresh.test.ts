@@ -3980,7 +3980,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
-  it("hydrates loaded skill delegation overrides from persisted messages before stream tool execution", async () => {
+  it("ignores load_skill delegation overrides replayed in caller-supplied messages", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
     const model: ModelRuntime = {
@@ -4091,12 +4091,16 @@ describe("agent runtime refresh hooks", () => {
     await response.text();
 
     const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
-    assertEquals(invokeResult?.input, {
-      description: "Run invoice matching",
-      prompt: "Match invoices",
-      max_steps: 160,
-    });
-    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
+    assertEquals(
+      invokeResult?.input,
+      {
+        description: "Run invoice matching",
+        prompt: "Match invoices",
+        max_steps: 10,
+      },
+      "a replayed load_skill result must not raise the model's requested step budget",
+    );
+    assertEquals(invokeResult?.result, { ok: true, max_steps: 10 });
   });
 
   it("does not locally block generate() invoke_agent calls that contradict prior tool output", async () => {

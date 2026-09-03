@@ -8,11 +8,17 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
-import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
+import {
+  __resetStaleMdxEsmRecoveryStateForTests,
+  handleMDXPage,
+  prepareMDXPageBundles,
+  recoverStaleMdxEsmPreviewCaches,
+} from "#veryfront/rendering/page-rendering.ts";
 import { PageRenderer } from "./page-renderer.ts";
 import {
   __setServerModuleLoaderForTests,
@@ -40,6 +46,7 @@ describe("rendering/page-rendering", () => {
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);
+    __resetStaleMdxEsmRecoveryStateForTests();
   });
 
   it("keeps SSR module code separate from the browser client bundle", async () => {
@@ -156,6 +163,426 @@ describe("rendering/page-rendering", () => {
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
+  });
+
+  it("does not recover preview caches for an immutable release content source", async () => {
+    const pageInfo = createMDXPageInfo("# MDX Probe");
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    let loadAttempts = 0;
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+
+    mutableRenderer.loadModuleESM = () => {
+      loadAttempts++;
+      throw new Error(
+        "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+      );
+    };
+
+    try {
+      const error = await assertRejects(
+        () =>
+          handleMDXPage(
+            pageInfo,
+            "probe",
+            "/project",
+            {},
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+            adapter,
+            {
+              projectId: "project-release",
+              projectSlug: "project-slug",
+              contentSourceId: "release-abc123",
+              mode: "production",
+            },
+          ),
+        Error,
+        "Failed to import MDX page via ESM",
+      );
+      assertInstanceOf(error, Error);
+
+      assertEquals(
+        sourceRefreshes,
+        0,
+        "a released production source must never flush its source snapshot from a public render error",
+      );
+      assertEquals(
+        loadAttempts,
+        1,
+        "a released production source must not pay a cache-eviction retry for a render error",
+      );
+      assertEquals(
+        error.message.includes("after cache refresh"),
+        false,
+        "no recovery ran, so the failure must not be reported as a post-recovery failure",
+      );
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("recovers a preview content source at most once per cooldown window", async () => {
+    const pageInfo = createMDXPageInfo("# MDX Probe");
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    let loadAttempts = 0;
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+
+    mutableRenderer.loadModuleESM = () => {
+      loadAttempts++;
+      throw new Error(
+        "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+      );
+    };
+
+    // No projectId, so the namespace purge is skipped and the case stays
+    // hermetic; the snapshot refresh alone proves whether recovery ran.
+    const renderOnce = () =>
+      assertRejects(
+        () =>
+          handleMDXPage(
+            pageInfo,
+            "probe",
+            "/project",
+            {},
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+            adapter,
+            {
+              projectSlug: "project-slug",
+              contentSourceId: "preview-main",
+              mode: "production",
+            },
+          ),
+        Error,
+        "Failed to import MDX page via ESM",
+      );
+
+    try {
+      await renderOnce();
+      assertEquals(sourceRefreshes, 1, "the first preview failure must recover once");
+      assertEquals(loadAttempts, 2, "the first preview failure must retry once");
+
+      await renderOnce();
+      await renderOnce();
+
+      assertEquals(
+        sourceRefreshes,
+        1,
+        "a route that keeps failing must not refresh the source snapshot on every request",
+      );
+      assertEquals(
+        loadAttempts,
+        4,
+        "requests inside the cooldown must fail without paying a second recovery retry",
+      );
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("scopes recovery cooldowns and single-flight runs to the source snapshot identity", async () => {
+    let sourceRefreshes = 0;
+    const createAdapter = (identity: string): RuntimeAdapter => ({
+      fs: {
+        getSourceSnapshotIdentity: () => identity,
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter);
+
+    const recover = (adapter: RuntimeAdapter) =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    assertEquals(await recover(createAdapter("branch:project-1:principal-a")), true);
+    assertEquals(await recover(createAdapter("branch:project-1:principal-b")), true);
+    assertEquals(
+      sourceRefreshes,
+      2,
+      "distinct source snapshot identities must not share a recovery cooldown",
+    );
+  });
+
+  it("does not share recovery cooldowns between identity-less adapters", async () => {
+    let sourceRefreshes = 0;
+    const createAdapter = (): RuntimeAdapter => ({
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter);
+
+    const recover = (adapter: RuntimeAdapter) =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    assertEquals(await recover(createAdapter()), true);
+    assertEquals(await recover(createAdapter()), true);
+    assertEquals(
+      sourceRefreshes,
+      2,
+      "identity-less adapters must not share a process-global recovery cooldown",
+    );
+  });
+
+  it("lets a delayed identity lookup join a recovery that started after it", async () => {
+    let sourceRefreshes = 0;
+    const identityResolvers: Array<(identity: string) => void> = [];
+    const adapter = {
+      fs: {
+        getSourceSnapshotIdentity: () =>
+          new Promise<string>((resolve) => identityResolvers.push(resolve)),
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = () =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    const delayed = recover();
+    const fast = recover();
+    assertEquals(identityResolvers.length, 2);
+
+    identityResolvers[1]!("branch:project-1:main");
+    assertEquals(await fast, true);
+    identityResolvers[0]!("branch:project-1:main");
+    assertEquals(
+      await delayed,
+      true,
+      "a request already waiting for its key must retry after a newer recovery succeeds",
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
+  it("lets a later identity lookup join an active recovery", async () => {
+    let sourceRefreshes = 0;
+    let refreshStarted = false;
+    let resolveRefresh!: () => void;
+    const refreshPromise = new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const identityResolvers: Array<(identity: string) => void> = [];
+    const adapter = {
+      fs: {
+        getSourceSnapshotIdentity: () =>
+          new Promise<string>((resolve) => identityResolvers.push(resolve)),
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          refreshStarted = true;
+          return refreshPromise;
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = () =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    const first = recover();
+    assertEquals(identityResolvers.length, 1);
+    identityResolvers[0]!("branch:project-1:main");
+    for (let index = 0; index < 10 && !refreshStarted; index++) await Promise.resolve();
+    assertEquals(refreshStarted, true);
+
+    const later = recover();
+    assertEquals(identityResolvers.length, 2);
+    resolveRefresh();
+    assertEquals(await first, true);
+    identityResolvers[1]!("branch:project-1:main");
+    assertEquals(
+      await later,
+      true,
+      "a lookup that started during recovery must retry after that recovery completes",
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
+  it("starts the recovery cooldown after the refresh completes", async () => {
+    using time = new FakeTime();
+    let sourceRefreshes = 0;
+    let refreshStarted = false;
+    let resolveRefresh!: () => void;
+    const refreshPromise = new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          refreshStarted = true;
+          return refreshPromise;
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = () =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    const first = recover();
+    for (let index = 0; index < 10 && !refreshStarted; index++) await Promise.resolve();
+    assertEquals(refreshStarted, true);
+    time.tick(30_000);
+    resolveRefresh();
+    assertEquals(await first, true);
+
+    assertEquals(
+      await recover(),
+      false,
+      "a slow recovery must keep the full cooldown after it completes",
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
+  it("falls back to adapter-scoped recovery when identity lookup rejects", async () => {
+    let sourceRefreshes = 0;
+    const adapter = {
+      fs: {
+        getSourceSnapshotIdentity: () => Promise.reject(new Error("identity unavailable")),
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    assertEquals(
+      await recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      }),
+      true,
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
+  it("keeps a refreshed namespace from being evicted as the oldest tracked entry", async () => {
+    using time = new FakeTime();
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = (contentSourceId: string) =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectSlug: "project-slug",
+        contentSourceId,
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    // "preview-hot" is tracked first, so with insertion-order eviction it is
+    // the head of the map even after a later recovery refreshes it.
+    assertEquals(await recover("preview-hot"), true);
+
+    // A second namespace stays young enough to survive the prune below, so the
+    // size cap has a genuinely older entry to evict.
+    time.tick(20_000);
+    assertEquals(await recover("preview-cold"), true);
+
+    // Past the cooldown, "preview-hot" recovers again and becomes the most
+    // recently used namespace.
+    time.tick(11_000);
+    assertEquals(await recover("preview-hot"), true);
+
+    // Fill the tracking map to its 512 namespace ceiling. The overflow must
+    // evict "preview-cold", not the namespace that just recovered.
+    for (let index = 0; index < 511; index++) {
+      assertEquals(await recover(`preview-filler-${index}`), true);
+    }
+
+    const refreshesBeforeReprobe = sourceRefreshes;
+    assertEquals(
+      await recover("preview-hot"),
+      false,
+      "the most recently recovered namespace must still be on cooldown after the size cap evicts",
+    );
+    assertEquals(
+      sourceRefreshes,
+      refreshesBeforeReprobe,
+      "an evicted cooldown entry would let the namespace refresh its source snapshot again immediately",
+    );
   });
 
   it("creates MDX elements with the requested project React version", async () => {

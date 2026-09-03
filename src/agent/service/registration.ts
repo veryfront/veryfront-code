@@ -446,6 +446,7 @@ async function sendHeartbeatRequest(
     response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
       method: "POST",
       headers: createHeaders(input.authToken),
+      body: JSON.stringify({}),
       signal: abortSignal,
     });
   } catch (cause) {

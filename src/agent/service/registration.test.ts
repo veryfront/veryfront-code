@@ -288,6 +288,11 @@ describe("agent/agent-service-registration", () => {
       "heartbeats must carry bearer auth",
     );
     assertEquals(calls[1]?.init?.method, "POST", "the heartbeat must be a POST");
+    assertEquals(
+      calls[1]?.init?.body,
+      "{}",
+      "the heartbeat must send the JSON object required by the control plane",
+    );
     assertEquals(JSON.parse(String(calls[0]?.init?.body)), {
       service_name: "docs-agent",
       service_key: "docs-agent:test",
