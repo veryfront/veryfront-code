@@ -5,6 +5,11 @@ import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 const logger = baseLogger.component("token-adapter-integration");
+// Captured before project code runs: this normalization decides between an
+// exported token and the host-private stored login token, so a project that
+// replaces `String.prototype.trim` must not be able to flip that decision.
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
 
 let tokenStorageAdapter: TokenStorageAdapter | null = null;
 let tokenStorageAdapterCreation: Promise<TokenStorageAdapter> | null = null;
@@ -88,6 +93,8 @@ function getEnvVar(name: string): string | undefined {
  */
 function getApiToken(): string | undefined {
   const exported = getEnvVar("VERYFRONT_API_TOKEN");
-  if (exported !== undefined && exported.trim() !== "") return exported;
+  if (exported !== undefined && (applyIntrinsic(stringTrim, exported, []) as string) !== "") {
+    return exported;
+  }
   return getHostEnv("VERYFRONT_API_TOKEN");
 }

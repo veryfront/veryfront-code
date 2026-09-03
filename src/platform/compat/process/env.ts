@@ -49,8 +49,19 @@ const stringTrim = String.prototype.trim;
  * `process.env`, a spawned child's inherited env, or `getEnv()` — is readable
  * by project-authored code, and a hostile project could exfiltrate the token
  * just by being served. Values registered here are resolved only through
- * {@link getHostEnv}, which `veryfront/platform` does not export, so framework
- * code can still read them while project code cannot.
+ * {@link getHostEnv}, which the public `veryfront/*` entry points do not
+ * export, so framework code can still read them while project code reaching
+ * for a supported export cannot.
+ *
+ * The boundary is the export surface, not a realm: project modules are loaded
+ * with a plain dynamic `import()` into this same process, so code that
+ * resolves this file directly rather than through a `veryfront/*` entry shares
+ * the module instance and can still call {@link getHostSecret}. The import map
+ * and the module-boundary lint are what keep that path closed, exactly as for
+ * {@link registerTrustedProjectEnvSnapshot}. What this store buys is that the
+ * credential is no longer reachable through the ordinary, fully supported
+ * readers — `Deno.env`, `process.env`, {@link getEnv}, and a spawned child's
+ * inherited environment.
  */
 const hostSecrets: Map<string, string> = new MapConstructor();
 

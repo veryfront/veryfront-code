@@ -8,6 +8,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { HOST_INTERNAL_EGRESS_OVERRIDE_ENV } from "#veryfront/security/http/outbound-fetch.ts";
 import { MAX_INTEGRATION_TOOL_LIST_ATTEMPTS } from "./limits.ts";
 import {
   __subscribeLogRecordEmitter,
@@ -240,6 +241,44 @@ describe("integrations/remote-tools", () => {
       assertEquals(authorization, "Bearer stored-login-token");
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
+  it("blocks an internal API base unless the host enables internal egress", async () => {
+    // Routing the credentialed integration API through `guardedOutboundFetch`
+    // puts it under the host egress ceiling, which denies private and loopback
+    // destinations by default. Pinning both halves here: a developer or
+    // self-hosted deployment that points `VERYFRONT_API_BASE_URL` at an
+    // internal host must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`, and once
+    // it is set the request goes through unchanged.
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "http://127.0.0.1:8787",
+      VERYFRONT_API_TOKEN: "token",
+    });
+
+    let requests = 0;
+    const respond = () => {
+      requests += 1;
+      return Promise.resolve(Response.json({ tools: [] }));
+    };
+
+    const blocked = await withMockFetch(
+      respond,
+      () => getRemoteIntegrationToolDiscovery(),
+    );
+    assertEquals(blocked, { status: "unavailable", reason: "request_failed" });
+    assertEquals(requests, 0);
+
+    setEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+    try {
+      const allowed = await withMockFetch(
+        respond,
+        () => getRemoteIntegrationToolDiscovery(),
+      );
+      assertEquals(allowed, { status: "ok", tools: [] });
+      assertEquals(requests, 1);
+    } finally {
+      deleteEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV);
     }
   });
 

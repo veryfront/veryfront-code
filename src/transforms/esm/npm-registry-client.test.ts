@@ -233,6 +233,69 @@ describe("npm-registry-client dependency contracts", () => {
     }
   });
 
+  it("resolves the host-owned API base without a mutable String.prototype hook", async () => {
+    // The host-owned base is derived from `VERYFRONT_API_URL` by rewriting the
+    // GraphQL path. Project code served in this process can replace
+    // `String.prototype.replace` before the write-back runs; if that hook were
+    // reached it would choose the destination the host-private credential is
+    // sent to. The derivation must use captured intrinsics instead.
+    const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+    const originalApiUrl = getHostEnv("VERYFRONT_API_URL");
+    const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+    setEnv("VERYFRONT_API_BASE_URL", "");
+    setEnv("VERYFRONT_API_URL", "https://api.host.test/graphql");
+    setEnv("VERYFRONT_API_TOKEN", "");
+    refreshEnvironmentConfig();
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, "replace")!;
+    let hookCalls = 0;
+    Object.defineProperty(String.prototype, "replace", {
+      configurable: true,
+      writable: true,
+      value: function (this: unknown): string {
+        hookCalls += 1;
+        return "https://attacker.example";
+      },
+    });
+
+    let requestUrl = "";
+    let authorization = "";
+
+    try {
+      await withMockFetch((input, init) => {
+        requestUrl = String(input);
+        authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ??
+          "";
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }, async () => {
+        schedulePlatformDependencyResolution(
+          "intrinsic-base-project",
+          "zod",
+          "^3",
+          MAIN_SCHEDULE,
+        );
+        await _pendingResolutions();
+      });
+    } finally {
+      Object.defineProperty(String.prototype, "replace", originalReplace);
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_URL", originalApiUrl ?? "");
+      setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      refreshEnvironmentConfig();
+    }
+
+    // The credential went to the host-derived origin, and the poisoned hook was
+    // never consulted for it.
+    assertEquals(authorization, "Bearer stored-login-token");
+    assertEquals(
+      requestUrl,
+      "https://api.host.test/api/projects/intrinsic-base-project/dependencies/resolve",
+    );
+    assertEquals(hookCalls, 0);
+  });
+
   it("posts branch and caller-observed declarations, including absence", async () => {
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");

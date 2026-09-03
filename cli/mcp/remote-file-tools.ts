@@ -75,6 +75,11 @@ async function apiRequest<T>(
     // A project served by `veryfront dev` runs in this process and can replace
     // the global, and a direct call would hand its replacement the
     // `Authorization` header to read.
+    //
+    // This also puts the call under the host egress ceiling, which denies
+    // private and loopback destinations. A developer pointing the API base at
+    // an internal host must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; only
+    // the host process can set it, so a project overlay cannot.
     const response = await guardedOutboundFetch(url, {
       method,
       headers: {
