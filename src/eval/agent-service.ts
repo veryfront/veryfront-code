@@ -199,14 +199,29 @@ function getInputMetadata(input: unknown): Record<string, unknown> {
   return { ...input.metadata };
 }
 
+/**
+ * Resolve a request scope override.
+ *
+ * Only an omitted (`undefined`) caller value falls back to the eval example's
+ * own data. An explicit `null` is the caller disabling that scope, so untrusted
+ * example data must not be able to reintroduce it.
+ */
+function resolveScopeOverride(
+  configured: string | null | undefined,
+  fromExample: unknown,
+): string | null {
+  if (configured !== undefined) return configured;
+  return readString(fromExample) ?? null;
+}
+
 function getRequestOverrides(input: BuildAgentServiceEvalRequestBodyInput) {
   const record = isRecord(input.input) ? input.input : {};
   return {
     agentId: input.agentId ?? null,
-    projectId: input.projectId ?? readString(record.projectId) ?? null,
-    conversationId: input.conversationId ?? readString(record.conversationId) ?? null,
-    branchId: input.branchId ?? readString(record.branchId) ?? null,
-    model: input.model ?? readString(record.model) ?? null,
+    projectId: resolveScopeOverride(input.projectId, record.projectId),
+    conversationId: resolveScopeOverride(input.conversationId, record.conversationId),
+    branchId: resolveScopeOverride(input.branchId, record.branchId),
+    model: resolveScopeOverride(input.model, record.model),
     allowedTools: input.allowedTools ?? readStringArray(record.allowedTools),
     forceRuntimeOverrides: input.forceRuntimeOverrides ?? record.forceRuntimeOverrides === true,
     maxSteps: input.maxSteps ?? readFiniteNumber(record.maxSteps),

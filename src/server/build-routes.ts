@@ -9,6 +9,7 @@ import { join, relative } from "#veryfront/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { isDynamicRoute, isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
@@ -38,28 +39,24 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
-function compareStrings(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
-}
-
-/**
- * Directory iteration order is filesystem-dependent: neither `readDir` nor the
- * recursive walk built on it promises sorted entries, and on hashed-directory
- * filesystems the order also shifts with the directory's own name, so the same
- * project can enumerate its pages differently between machines and between runs
- * on one machine. Route discovery therefore imposes its own total order instead
- * of inheriting the filesystem's, so build outputs derived from the route list
- * (ssgPaths, manifests, prerender sequences) are reproducible. Paths are
- * compared by code unit, which places a parent ahead of its children ("/" before
- * "/blog"), and the backing file breaks ties between routes that resolve to the
- * same path.
- */
-function compareRoutes(a: RouteInfo, b: RouteInfo): number {
+// Route discovery walks the project with `readDir`, which yields entries in
+// filesystem order -- insertion order on some filesystems, hash order on
+// others. Leaving that order in place makes the build's route list, and every
+// artifact derived from it (`ssgPaths`, the build manifest, build logs),
+// depend on how the checkout happened to land on disk.
+//
+// The route path alone is not a total order: two sources can collapse onto one
+// route (`pages/about.tsx` and `pages/about/index.tsx` both become `/about`,
+// and a nested `app/app/page.tsx` re-roots onto `/`). Ties there would keep
+// their filesystem order, and consumers keyed on the route path -- code
+// splitting derives one entry name per route -- would still bundle a different
+// source per checkout. The source file breaks the tie, so the full ordering is
+// reproducible across machines and runs.
+function byPagesRoute(a: RouteInfo, b: RouteInfo): number {
   return compareStrings(a.path, b.path) || compareStrings(a.file, b.file);
 }
 
-function compareAppRoutes(a: AppRouteInfo, b: AppRouteInfo): number {
+function byAppRoute(a: AppRouteInfo, b: AppRouteInfo): number {
   return compareStrings(a.path, b.path) || compareStrings(a.pageFile, b.pageFile);
 }
 
@@ -94,7 +91,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes.sort(compareRoutes);
+  return routes.sort(byPagesRoute);
 }
 
 /**
@@ -123,7 +120,7 @@ export async function collectAppRoutes(
 
   return collected
     .filter((r) => shouldIncludeRoute(r.path, include, exclude))
-    .sort(compareAppRoutes);
+    .sort(byAppRoute);
 }
 
 function isForceDynamic(source: string): boolean {

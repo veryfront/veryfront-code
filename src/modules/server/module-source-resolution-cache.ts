@@ -25,6 +25,16 @@ export function buildSourceMissCacheKey(options: {
   branch?: string | null;
   releaseId?: string | null;
   basePath: string;
+  /**
+   * The extension suffix already present on the looked-up path (e.g. `.json`),
+   * and the extension the request asked for. Both change which candidate paths
+   * a lookup stats — a non-JSON request never probes `.json` — so a miss
+   * recorded for one extension must not answer for another. Leaving them out
+   * lets a request for `app/page.js` cache a miss that suppresses the later,
+   * resolvable lookup of `app/page.json`.
+   */
+  basePathExtension?: string | null;
+  requestedExtension?: string | null;
   reactVersion?: string;
 }): string {
   return [
@@ -36,6 +46,8 @@ export function buildSourceMissCacheKey(options: {
     options.releaseId ?? "",
     options.reactVersion ?? "",
     options.basePath,
+    options.basePathExtension ?? "",
+    options.requestedExtension ?? "",
   ].join("\0");
 }
 
