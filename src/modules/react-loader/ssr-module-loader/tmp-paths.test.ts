@@ -74,6 +74,7 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
       const contentSourceId of [
         "preview-58x4ga9b",
         `preview-${"a".repeat(56)}`,
+        "X".repeat(32),
         "X".repeat(36),
         "X".repeat(100),
       ]
