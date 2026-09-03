@@ -70,7 +70,7 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
     // part of every cached module path. Hosts without long-path support cap a
     // path at 260 characters, and a realistic deep route must stay under it.
     const tmpDir = buildTmpDirPath(
-      "/Users/example/.cache/veryfront/veryfront-mdx-esm",
+      "/cache/representative-user-cache/veryfront-mdx-esm",
       "3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
       "preview-58x4ga9b",
       "0.1.7",

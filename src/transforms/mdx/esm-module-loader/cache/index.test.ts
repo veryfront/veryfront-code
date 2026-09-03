@@ -101,7 +101,14 @@ describe("MDX module path cache", () => {
         // and every directory returned here is passed to a recursive remove.
         const mdxCacheDir = join(cacheBase, "veryfront-mdx-esm");
         for (
-          const contentSourceId of ["../../escape", "..", ".", "", "/etc", "preview/../../escape"]
+          const contentSourceId of [
+            "../../escape",
+            "..",
+            ".",
+            "",
+            "/outside",
+            "preview/../../escape",
+          ]
         ) {
           for (const cacheDir of getMdxEsmSsrCacheDirs(projectId, contentSourceId)) {
             assertEquals(
