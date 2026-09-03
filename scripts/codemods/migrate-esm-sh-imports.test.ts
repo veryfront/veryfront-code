@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
+import { makeTempDir } from "#veryfront/testing/deno-compat";
 import { parse } from "npm:@babel/parser@7.29.2";
 import {
   assertPathInsideProject,
@@ -804,8 +805,8 @@ Deno.test(
 Deno.test(
   "package.json symlink pointing outside the project aborts without writing through the link",
   async () => {
-    const project = await Deno.makeTempDir();
-    const outside = await Deno.makeTempDir();
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     const outsideContent = JSON.stringify({ name: "victim", dependencies: {} }) + "\n";
     try {
@@ -836,8 +837,8 @@ Deno.test(
 Deno.test(
   "dangling package.json symlink aborts instead of creating the target file",
   async () => {
-    const project = await Deno.makeTempDir();
-    const outside = await Deno.makeTempDir();
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     const target = `${outside}/planted.json`;
     try {
@@ -875,8 +876,8 @@ Deno.test(
 Deno.test(
   "symlinked source files and directories are not collected or rewritten",
   async () => {
-    const project = await Deno.makeTempDir();
-    const outside = await Deno.makeTempDir();
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
     const outsideSource = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     try {
       await Deno.writeTextFile(`${outside}/victim.ts`, outsideSource);
@@ -902,8 +903,8 @@ Deno.test(
 );
 
 Deno.test("assertPathInsideProject rejects an out-of-project real path", async () => {
-  const project = await Deno.makeTempDir();
-  const outside = await Deno.makeTempDir();
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
   try {
     const projectRoot = await Deno.realPath(project);
     await Deno.writeTextFile(`${outside}/file.txt`, "x");
@@ -937,9 +938,99 @@ Deno.test("assertPathInsideProject rejects an out-of-project real path", async (
   }
 });
 
+Deno.test(
+  "assertPathInsideProject rejects a missing file whose parent escapes the project",
+  async () => {
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
+    try {
+      const projectRoot = await Deno.realPath(project);
+      // Intermediate symlink: the leaf does not exist, so lstat reports
+      // NotFound, but creating it would write into `outside`.
+      await Deno.symlink(outside, `${project}/linked-dir`);
+
+      let thrown: unknown;
+      try {
+        await assertPathInsideProject(`${project}/linked-dir/package.json`, projectRoot, {
+          allowMissing: true,
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      assert(
+        thrown instanceof Error,
+        "a missing path reached through a symlinked parent must be rejected",
+      );
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "assertPathInsideProject accepts children of a root that already ends in a separator",
+  async () => {
+    const separator = Deno.build.os === "windows" ? "\\" : "/";
+    const project = await makeTempDir();
+    try {
+      const projectRoot = await Deno.realPath(project);
+      await Deno.writeTextFile(`${project}/inside.txt`, "x");
+      // A filesystem root such as "/" or a drive root already carries the
+      // separator. Doubling it would reject every real child.
+      await assertPathInsideProject(`${project}/inside.txt`, projectRoot + separator);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
 // ---------------------------------------------------------------------------
 // main() integration: version conflicts are preflighted
 // ---------------------------------------------------------------------------
+
+Deno.test(
+  "report paths keep the project directory spelling the caller passed",
+  async () => {
+    // Traversal and writes use the resolved root, but the report must echo the
+    // caller's project argument instead of substituting the resolved path.
+    // A symlinked project directory makes the two differ on every platform,
+    // the same way a relative argument such as "." does.
+    const parent = await makeTempDir();
+    const real = `${parent}/real`;
+    const link = `${parent}/link`;
+    try {
+      await Deno.mkdir(real);
+      await Deno.writeTextFile(
+        `${real}/app.ts`,
+        'import { x } from "https://esm.sh/lodash@4.17.21";\n',
+      );
+      await Deno.writeTextFile(
+        `${real}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n",
+      );
+      await Deno.symlink(real, link);
+
+      let report: { rewrites: Array<{ file: string }> } | undefined;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+      };
+      try {
+        await main(["--", link]);
+      } finally {
+        console.log = origLog;
+      }
+
+      assert(report !== undefined, "main() must print a JSON report");
+      assertEquals(report.rewrites.map((rewrite) => rewrite.file), [`${link}/app.ts`]);
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+);
 
 Deno.test(
   "intra-file version conflict leaves source and package.json unchanged",

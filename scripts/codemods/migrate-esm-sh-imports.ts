@@ -455,31 +455,73 @@ function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
 const PATH_SEPARATOR = Deno.build.os === "windows" ? "\\" : "/";
 
 /**
+ * Prefix that every path strictly inside `root` must start with.
+ *
+ * A filesystem root such as `/` or a drive root already ends in the separator,
+ * so appending another would produce `//` and reject every real child.
+ */
+function containmentPrefix(root: string): string {
+  return root.endsWith(PATH_SEPARATOR) ? root : root + PATH_SEPARATOR;
+}
+
+/** Directory portion of `path`, accepting either separator spelling. */
+function parentDirOf(path: string): string {
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (index < 0) return ".";
+  const parent = path.slice(0, index);
+  return parent === "" ? PATH_SEPARATOR : parent;
+}
+
+/**
  * Fail closed before reading or writing a path collected under the project
  * directory.
  *
  * Deno.readTextFile/Deno.writeTextFile follow symlinks, so a malicious project
- * could plant package.json (or swap a collected source file) as a symlink —
- * possibly dangling — that points outside the project, turning the codemod's
+ * could plant package.json (or swap a collected source file) as a symlink,
+ * possibly dangling, that points outside the project, turning the codemod's
  * --allow-write into an arbitrary file create/overwrite under the operator's
  * account.  Reject every symlink (lstat reports a dangling one too, as
  * isSymlink) and require the resolved path to stay inside the resolved project
  * root.
  *
  * `allowMissing` permits a genuinely absent file: package.json may not exist
- * yet, and creating it directly under the already-resolved project root is
- * safe.
+ * yet.  The parent directory is still resolved and checked, so an intermediate
+ * symlink cannot make the creating write land outside the project.
+ *
+ * Known limitation: a hardlink is indistinguishable from the file it shares an
+ * inode with, so lstat reports a regular file and realPath stays inside the
+ * project.  Rewriting through one edits the outside file.  Creating a hardlink
+ * requires write access to the target's filesystem and directory, so this
+ * residual is out of scope for this guard.
  */
 export async function assertPathInsideProject(
   path: string,
   projectRoot: string,
   { allowMissing = false }: { allowMissing?: boolean } = {},
 ): Promise<void> {
+  const prefix = containmentPrefix(projectRoot);
   let info: Deno.FileInfo;
   try {
     info = await Deno.lstat(path);
   } catch (e) {
-    if (allowMissing && e instanceof Deno.errors.NotFound) return;
+    if (allowMissing && e instanceof Deno.errors.NotFound) {
+      // The file may still be created, but only where its existing parent
+      // resolves inside the project.
+      let realParent: string;
+      try {
+        realParent = await Deno.realPath(parentDirOf(path));
+      } catch (parentError) {
+        throw new Error(
+          `Refusing to create ${path}: ${
+            parentError instanceof Error ? parentError.message : String(parentError)
+          }`,
+        );
+      }
+      if (realParent !== projectRoot && !realParent.startsWith(prefix)) {
+        throw new Error(`Refusing to create a path outside the project directory: ${path}`);
+      }
+      return;
+    }
     throw new Error(
       `Refusing to touch ${path}: ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -488,7 +530,7 @@ export async function assertPathInsideProject(
     throw new Error(`Refusing to follow symlink: ${path}`);
   }
   const real = await Deno.realPath(path);
-  if (real !== projectRoot && !real.startsWith(projectRoot + PATH_SEPARATOR)) {
+  if (real !== projectRoot && !real.startsWith(prefix)) {
     throw new Error(`Refusing to access path outside the project directory: ${path}`);
   }
 }
@@ -715,6 +757,15 @@ async function main(args: string[]): Promise<void> {
   // Resolve the project root once so every subsequent containment check
   // compares against a symlink-free absolute path.
   const projectRoot = await Deno.realPath(projectDir);
+  const rootPrefix = containmentPrefix(projectRoot);
+  // Traversal and writes use the resolved root, but the report keeps the
+  // spelling the caller passed: a relative project directory stays relative,
+  // and no machine-specific filesystem layout leaks into the JSON output.
+  const displayRoot = projectDir.replace(/[/\\]+$/, "");
+  const toReportPath = (absolute: string): string =>
+    absolute.startsWith(rootPrefix)
+      ? `${displayRoot}/${absolute.slice(rootPrefix.length)}`
+      : absolute;
 
   const sourceFiles: string[] = [];
   await collectSourceFiles(projectRoot, sourceFiles);
@@ -735,13 +786,14 @@ async function main(args: string[]): Promise<void> {
   const analyzedFiles: Array<{ file: string; source: string; result: EsmShFileResult }> = [];
 
   for (const file of sourceFiles) {
+    const reportFile = toReportPath(file);
     const source = await Deno.readTextFile(file);
     let result: EsmShFileResult;
     try {
       result = migrateEsmShImports(source);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to migrate ${file}: ${message}`, {
+      throw new Error(`Failed to migrate ${reportFile}: ${message}`, {
         cause: error,
       });
     }
@@ -750,7 +802,7 @@ async function main(args: string[]): Promise<void> {
     analyzedFiles.push({ file, source, result });
     // Collect every conflict before deciding which transformations are safe.
     for (const c of result.conflicts) {
-      report.conflicts.push({ ...c, file });
+      report.conflicts.push({ ...c, file: reportFile });
     }
 
     for (const [pkg, version] of Object.entries(result.pins)) {
@@ -765,12 +817,12 @@ async function main(args: string[]): Promise<void> {
           pkg,
           existing: existing.version,
           fromVersion: version,
-          file,
+          file: reportFile,
           specifier,
         });
       } else if (existing === undefined) {
         const specifier = pickSpecifier(result.rewrites, pkg, version);
-        allPins.set(pkg, { version, file, specifier });
+        allPins.set(pkg, { version, file: reportFile, specifier });
       }
     }
   }
@@ -856,7 +908,7 @@ async function main(args: string[]): Promise<void> {
     fileResults.push({ file, code: result.code });
     report.filesChanged++;
     for (const rw of result.rewrites) {
-      report.rewrites.push({ file, from: rw.from, to: rw.to });
+      report.rewrites.push({ file: toReportPath(file), from: rw.from, to: rw.to });
     }
     for (const pkg of result.needsResolution) {
       allNeedsResolution.add(pkg);
