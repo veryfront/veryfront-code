@@ -2965,6 +2965,37 @@ describe("Renderer dependency pin cache isolation", () => {
     );
   });
 
+  it("returns no render cache key for an admitted application identity", () => {
+    const renderer = new Renderer();
+    const buildCacheKey = (renderer as unknown as {
+      buildCacheKey(
+        slug: string,
+        ctx: RenderContext,
+        options?: RenderOptions,
+      ): string | null;
+    }).buildCacheKey.bind(renderer);
+    const ctx = makeRenderContext();
+
+    // Trusted-proxy auth strips identity headers from the application request,
+    // so the request itself carries no cache-sensitive state; only the
+    // admitted identity marks this render as personalized.
+    assertEquals(
+      buildCacheKey("/", ctx, {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+        applicationIdentity: {
+          issuer: "https://issuer.example.test",
+          subject: "user-123",
+          groups: ["engineering"],
+          roles: ["reader"],
+          groupsComplete: true,
+          claims: { sub: "user-123" },
+        },
+      }),
+      null,
+    );
+  });
+
   it("misses the outer render cache when the package map changes", async () => {
     const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
     const projectDir = await Deno.makeTempDir({ prefix: "vf-renderer-pins-" });

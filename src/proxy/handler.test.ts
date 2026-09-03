@@ -4091,6 +4091,58 @@ describe("Proxy Handler", () => {
       assertEquals(injected.headers.get("x-environment-name"), null);
     });
 
+    it("strips the authToken cookie before the request reaches project code", () => {
+      const req = new Request("http://example.com/api/test", {
+        headers: {
+          cookie: "session=abc; authToken=deployer-session-jwt; theme=dark",
+        },
+      });
+      const ctx: ProxyContext = {
+        token: "test-token",
+        projectSlug: "my-project",
+        environment: "preview",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const injected = injectContextHeaders(req, ctx);
+      assertEquals(injected.headers.get("cookie"), "session=abc; theme=dark");
+    });
+
+    it("drops the cookie header entirely when authToken is the only cookie", () => {
+      const req = new Request("http://example.com/api/test", {
+        headers: { cookie: "authToken=deployer-session-jwt" },
+      });
+      const ctx: ProxyContext = {
+        token: "test-token",
+        projectSlug: "my-project",
+        environment: "preview",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      const injected = injectContextHeaders(req, ctx);
+      assertEquals(injected.headers.get("cookie"), null);
+    });
+
     it("refuses to forward a partial environment identity", () => {
       const req = new Request("http://example.com/api/test");
       const ctx: ProxyContext = {
