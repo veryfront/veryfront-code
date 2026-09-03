@@ -409,6 +409,17 @@ function extractMessageInputText(message: Message): string[] {
  * form the converters can produce. A blank message does not end a run: the
  * converter drops it outright, leaving the messages on either side adjacent.
  *
+ * A `tool` message does not end a *user* run. Anthropic has no tool role: a
+ * tool result is a `tool_result` block inside a user turn, so the builder
+ * either appends it to the run's user turn or, when no pending `tool_use` id
+ * matches it (the shape a caller can supply directly, since nothing precedes
+ * it that could have opened one), drops it entirely and leaves the two user
+ * messages' text blocks back to back. Either way it never emits a turn that
+ * separates them. That follows from the Anthropic message format rather than
+ * from converter internals, and it costs no false positives: a tool result
+ * with a matching id can only follow the assistant `tool_use` that opened it,
+ * and that assistant message does end the run.
+ *
  * Messages of other roles end the run even when provider conversion would drop
  * them (an assistant message with no sendable content, a tool message with no
  * surviving results). Mirroring the converter's drop rules here would pin
@@ -430,6 +441,7 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
 
   for (const message of messages) {
     if (message.role !== role) {
+      if (role === "user" && message.role === "tool") continue;
       flushRun();
       continue;
     }
