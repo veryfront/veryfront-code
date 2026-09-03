@@ -1,7 +1,12 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -88,6 +93,18 @@ describe("projectWorkflowRedisPrefix", () => {
       streamKey: "vf:workflow:project:.20.proj-1:stream",
       groupName: "vf:workflow:project:.20.proj-1:workers",
     });
+  });
+
+  it("refuses to configure durable persistence without a project scope", () => {
+    // An unscoped prefix would let one project's recovery scan enumerate
+    // every other project's durable workflow keys, so an empty scope must
+    // fail closed instead of falling back to a shared namespace.
+    const error = assertThrows(() => projectWorkflowRedisConfig("")) as {
+      slug?: string;
+      detail?: string;
+    };
+    assertEquals(error.slug, "input-validation-failed");
+    assertStringIncludes(error.detail ?? "", "requires a project scope");
   });
 });
 
