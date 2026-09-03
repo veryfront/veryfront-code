@@ -4360,6 +4360,151 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("deletes leaked protected remote files during prune", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const deleted: string[] = [];
+        const deleteUrls: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000010",
+                },
+                ...(deleted.includes(".env.production.json") ? [] : [{
+                  path: ".env.production.json",
+                  content: '{"apiKey":"<REDACTED>"}\n',
+                  version_id: "00000000-0000-4000-8000-000000000020",
+                }]),
+                ...(deleted.includes(".veryfront/state.json") ? [] : [{
+                  path: ".veryfront/state.json",
+                  content: '{"branch":"main"}\n',
+                  version_id: "00000000-0000-4000-8000-000000000030",
+                }]),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            deleteUrls.push(`${url.pathname}${url.search}`);
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, quiet: true });
+
+        assertEquals([...deleted].sort(), [".env.production.json", ".veryfront/state.json"]);
+        // Each delete carries the observed version as an optimistic precondition.
+        assertEquals(
+          deleteUrls.some((url) =>
+            url.includes("expected_version_id=00000000-0000-4000-8000-000000000020")
+          ),
+          true,
+        );
+        assertEquals(
+          deleteUrls.some((url) =>
+            url.includes("expected_version_id=00000000-0000-4000-8000-000000000030")
+          ),
+          true,
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("leaves leaked protected remote files alone without prune", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(
+          `${projectDir}/.vfignore`,
+          "!.env*.json\n!.veryfront\n!.veryfront/**\n",
+        );
+        await runGit("add", ".vfignore");
+        await runGit("commit", "--quiet", "-m", "negate protected defaults");
+        await Deno.writeTextFile(
+          `${projectDir}/.env.production.json`,
+          '{"apiKey":"<REDACTED>"}\n',
+        );
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const requests: string[] = [];
+        const uploaded: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requests.push(`${request.method} ${url.pathname}`);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000010",
+                },
+                {
+                  path: ".veryfront/state.json",
+                  content: '{"branch":"main"}\n',
+                  version_id: "00000000-0000-4000-8000-000000000030",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") {
+            uploaded.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", quiet: true });
+
+        // Without prune the leaked remote CLI state stays untouched.
+        assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
+        // The .vfignore negation never re-includes the local secret for upload.
+        assertEquals(uploaded, []);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("preserves unsupported remote files during prune", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];

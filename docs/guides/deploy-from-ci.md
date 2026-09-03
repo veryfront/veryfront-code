@@ -68,6 +68,12 @@ secrets and CLI state are never uploaded. Run `veryfront push --prune` once
 after upgrading to remove any of those protected paths that an older CLI
 uploaded. Rotate any credential that was previously exposed.
 
+`push --prune` deletes every protected remote path, including one that was
+authored in the web editor rather than uploaded by an older CLI, and `.env*`
+also matches directories such as `.env.d/`. Push lists those paths before it
+deletes them. Use `veryfront push --prune --dry-run` to review the list first,
+and move any file you must keep to a path outside the protected set.
+
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
 `.vfignore` files are rejected. Git cleanliness is recorded as provenance

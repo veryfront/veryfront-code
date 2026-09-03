@@ -36,11 +36,20 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
 
 /**
  * Safety patterns that project-controlled `.vfignore` rules can never re-include.
- * They hold credentials and local CLI state, so a negation such as `!.env*.json`
- * must not make `veryfront push` read and upload them.
+ * They hold credentials, local CLI state, and Git internals, so a negation such
+ * as `!.env*.json` must not make `veryfront push` read and upload them.
+ *
+ * The trailing-slash `.env` entry also covers the plain file form, because a
+ * directory-only pattern compiles to a suffix of `(/` or end of string. It
+ * matches `.env.production.json` and `.env/credentials.json` alike, so a
+ * separate `.env` glob entry would be redundant.
+ *
+ * The set stays narrower than `DEFAULT_IGNORE_PATTERNS`. Build caches and
+ * third-party tool metadata such as `.cache`, `.deno`, `.turbo`, `.vercel`, and
+ * `.netlify` hold no Veryfront credential, and a project can have a real reason
+ * to publish a file under them, so those stay negatable.
  */
 const PROTECTED_IGNORE_PATTERNS: readonly string[] = [
-  ".env*",
   ".env*/",
   ".veryfront",
   ".git",
@@ -223,7 +232,9 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
     }
 
     if (!ignored && isProtectedPath(normalizedPath)) {
-      cliLogger.debug("Keeping protected path ignored: .vfignore cannot re-include it.");
+      cliLogger.debug(
+        `Keeping protected path ignored: .vfignore cannot re-include "${normalizedPath}".`,
+      );
       return true;
     }
 

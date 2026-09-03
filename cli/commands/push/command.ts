@@ -32,7 +32,7 @@ import {
   slugConflictAction,
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { isVerbose, logInfo, logSuccess } from "#cli/utils";
+import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import {
   INVALID_ARGUMENT,
   PREVIEW_HOSTNAME_TOO_LONG,
@@ -1263,6 +1263,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
 
       spinner.stop();
+
+      if (protectedDeletePaths.length > 0 && !quiet && !jsonOutput) {
+        logWarning(
+          `Prune removes ${protectedDeletePaths.length} protected remote ${
+            protectedDeletePaths.length === 1 ? "path" : "paths"
+          } that .vfignore cannot re-include: ${protectedDeletePaths.join(", ")}.`,
+        );
+        logInfo(
+          "Use veryfront push --prune --dry-run first to review them.",
+        );
+      }
 
       if (!quiet && !jsonOutput && (dryRun || isVerbose())) {
         const parts = buildSummaryParts(uploadOps, deleteOps.map((op) => op.path));
