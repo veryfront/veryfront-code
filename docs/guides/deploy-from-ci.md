@@ -67,8 +67,10 @@ extensions are not reconciled with Veryfront.
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
 `.vfignore` files are rejected. Git cleanliness is recorded as provenance
-metadata; Deploy promotes the source digest recorded by Push rather than
-recomputing production bytes from the working tree.
+metadata and is measured over the project directory only; Deploy promotes the
+source digest recorded by Push rather than recomputing production bytes from the
+working tree, refreshing that Push first when the checkout no longer matches the
+receipt.
 
 ## Preview the Push
 
@@ -99,15 +101,28 @@ veryfront push --branch main --prune --force --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
-Push records the checked-out commit and source digest in
-`.veryfront/push-receipt.json`. Deploy uses that last verified Push receipt,
-requires it to match the same project, branch, and Git commit, then verifies the
-release source digest before assigning it to the environment. Uncommitted edits
-made after Push are not promoted and do not invalidate that receipt; run Push
-again to update the preview before deploying those bytes. If no receipt exists,
-Deploy bootstraps one with a quiet Push, but CI should keep the explicit Push
-step so review and production promotion remain separate. Do not split the two
-commands across CI jobs or clean the checkout between them.
+Push records the checked-out commit, the source digest, and whether the checkout
+was clean in `.veryfront/push-receipt.json`. Deploy uses that last verified Push
+receipt and requires it to match the same control plane, project, branch, and
+Git commit, then verifies the release source digest before assigning it to the
+environment. A receipt from a different commit is refused rather than replaced,
+so committed work is never uploaded behind the operator's back: check out the
+pushed commit, or run Push again from the commit you want deployed.
+
+Uncommitted edits are the one change no commit check can see, because they leave
+`HEAD` where the receipt left it. When the receipt came from a clean checkout and
+the working tree is no longer clean, Deploy pushes the working tree again before
+creating the release, so the release carries the bytes on disk rather than the
+ones the earlier Push uploaded. That refresh is an ordinary push: it keeps the
+remote-conflict checks that `--force` would waive, and it prunes only files this
+checkout deleted from Git, so remote-only files stay in place. Deploying a
+project named with `--project` promotes what that project already has and never
+uploads the working directory, so local edits are neither pushed nor treated as a
+mismatch on that path.
+
+If no receipt exists, Deploy bootstraps one with a quiet Push, but CI should keep
+the explicit Push step so review and production promotion remain separate. Do not
+split the two commands across CI jobs or clean the checkout between them.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.

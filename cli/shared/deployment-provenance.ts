@@ -47,6 +47,16 @@ interface PushReceiptExpectation {
   commitSha?: string | null;
   /** Whether the local checkout is clean right now, from {@link resolveGitSource}. */
   clean: boolean;
+  /**
+   * Whether a clean receipt has to be backed by a clean checkout.
+   *
+   * Only an operation that owns the local source can read the working tree as
+   * evidence about the upload. Promoting a project named by slug never uploads
+   * this directory, so its edits say nothing about what was pushed and must not
+   * refuse the promotion. Omitting this enforces the check, so a caller that
+   * forgets it fails closed; `clean` still reports what was observed either way.
+   */
+  enforceClean?: boolean;
 }
 
 function receiptPath(projectDir: string): string {
@@ -163,6 +173,21 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
         // Porcelain v1 otherwise reports paths relative to the repository root,
         // so parsing for a leading `.veryfront/` fails when projectDir is a
         // nested monorepo package.
+        //
+        // The `.` pathspec that carries the exclusion also scopes cleanliness
+        // to projectDir. That is the honest reading for a nested package: only
+        // projectDir is uploaded, so an edit in a sibling package cannot change
+        // the pushed source and must not be reported as a source change. It
+        // narrows the flag every push receipt records, not just deploy's gate.
+        //
+        // Cleanliness stays a proxy for source equality, not a proof of it. A
+        // supported file that `.gitignore` hides but `.vfignore` and
+        // DEFAULT_IGNORE_PATTERNS do not (cli/sync/ignore.ts reads only
+        // `.vfignore`) is uploaded by push yet stays invisible here, so editing
+        // one leaves the checkout clean and a clean receipt usable. Closing
+        // that needs a local source digest rather than a Git observation, and
+        // the receipt digests the resulting remote tree rather than the local
+        // snapshot, so it cannot be compared against one directly.
         args: [
           "status",
           "--porcelain=v1",
@@ -203,7 +228,16 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   };
 }
 
-/** Return tracked source paths deleted from the current checkout. */
+/**
+ * Return tracked source paths deleted from the current checkout.
+ *
+ * Git only knows about deletions of files it tracks, so a file that was
+ * uploaded while untracked and then deleted locally is not listed and stays on
+ * the remote through a refresh push. The refresh is therefore a source update,
+ * not a full mirror; `veryfront push --prune` remains the way to reconcile
+ * remote-only files. The digest stays consistent either way, because the
+ * receipt records the remote tree the push produced.
+ */
 export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<string[]> {
   const gitEnv = env();
   for (const key of Object.keys(gitEnv)) {
@@ -332,7 +366,7 @@ export function validatePushReceipt(
   // provably not what was pushed and must not be deployed as if it were. A
   // receipt that was already dirty proves nothing either way, so it keeps the
   // push-then-deploy flow it has always had.
-  if (receipt.clean && !expected.clean) {
+  if (expected.enforceClean !== false && receipt.clean && !expected.clean) {
     // With no current commit to name, "uncommitted changes" would misdescribe
     // a project that is no longer a Git checkout at all; the refusal is the
     // same, only the reason shown to the operator differs.

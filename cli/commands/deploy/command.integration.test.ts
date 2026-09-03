@@ -504,6 +504,52 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
   });
 });
 
+it("promotes the recorded push from a dirty worktree when deploy names a project", async () => {
+  // Naming a project promotes what that project already has and never uploads
+  // this directory, so a local edit is not evidence about the pushed source and
+  // must neither be promoted nor refuse the promotion. Only the deploy that
+  // owns the local source refreshes it.
+  const projectDir = await makeTempDir();
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        deployCommand({
+          projectSlug: "my-project",
+          projectDir,
+          branch: "main",
+          env: "production",
+          dryRun: false,
+          force: false,
+          quiet: true,
+          deployProject: boundedDeployProject(),
+        }),
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  });
+});
+
 it("defaults omitted deploy branch to main instead of promoting a feature push receipt", async () => {
   for (const jsonMode of [false, true]) {
     const projectDir = await Deno.makeTempDir();

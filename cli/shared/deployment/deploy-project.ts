@@ -385,6 +385,12 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * deploy's standing contract intact: committed work is never uploaded behind
  * the operator's back, and neither a dirty tree nor a dirty receipt converts a
  * refusal into an upload.
+ *
+ * Known limit: Git cleanliness is a proxy for source equality, so a supported
+ * file hidden by `.gitignore` but not by `.vfignore` is pushed yet invisible to
+ * {@link resolveGitSource}, and editing it leaves a clean receipt usable. See
+ * the note in {@link resolveGitSource} for why a digest comparison cannot
+ * replace the observation today.
  */
 export async function resolveBootstrapPush(
   receipt: PushReceipt | null,
@@ -448,7 +454,8 @@ export async function resolvePushedSource(input: {
     projectSlug: input.projectSlug,
     branch: input.branch,
     commitSha: gitSource.commitSha,
-    clean: input.enforceWorkingTreeClean === false ? true : gitSource.clean,
+    clean: gitSource.clean,
+    enforceClean: input.enforceWorkingTreeClean !== false,
   });
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
