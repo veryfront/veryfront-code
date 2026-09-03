@@ -43,6 +43,7 @@ import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
 import {
   pinSameOriginSSRModuleImports,
+  retainJsxArtifactsReferencedIn,
   rewriteMdxRootDependencyImports,
   rewriteProjectAliasImports,
   transformJsxImports,
@@ -193,6 +194,9 @@ export async function doLoadModuleESM(
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} loadModuleESM START`, { projectSlug });
 
+  /** Releases the JSX artifacts this render pins once its import settles. */
+  let releaseJsxArtifacts: (() => void) | undefined;
+
   try {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter START`, { projectSlug });
     if (!context.adapter) {
@@ -273,6 +277,12 @@ export async function doLoadModuleESM(
       { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
+
+    // Pin every JSX cache artifact the rewritten module imports for the rest
+    // of this load: HTTP caching and bundle recovery below have no time bound,
+    // and the grace period alone must not be what keeps a prune pass from
+    // deleting an artifact before the dynamic import consumes it.
+    releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten);
 
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
@@ -579,5 +589,7 @@ export async function doLoadModuleESM(
     getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
 
     throw error;
+  } finally {
+    releaseJsxArtifacts?.();
   }
 }

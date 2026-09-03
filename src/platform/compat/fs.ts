@@ -108,6 +108,8 @@ export interface FileSystem {
   makeTempDir(options?: { prefix?: string }): Promise<string>;
   /** Change permissions, rejecting operational failures. */
   chmod(path: string, mode: number): Promise<void>;
+  /** Update access and modification times, rejecting operational failures. */
+  utime?(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 interface NodeFsPromises {
@@ -153,6 +155,7 @@ interface NodeFsPromises {
   rmdir(path: string): Promise<void>;
   mkdtemp(prefix: string): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
+  utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -335,6 +338,11 @@ class NodeFileSystem implements FileSystem {
       throw error;
     }
   }
+
+  async utime(path: string, atime: Date, mtime: Date): Promise<void> {
+    await this.ensureInitialized();
+    await this.getFs().utimes(path, atime, mtime);
+  }
 }
 
 class DenoFileSystem implements FileSystem {
@@ -442,6 +450,10 @@ class DenoFileSystem implements FileSystem {
       }
       throw error;
     }
+  }
+
+  async utime(path: string, atime: Date, mtime: Date): Promise<void> {
+    await denoGlobal().utime(path, atime, mtime);
   }
 }
 

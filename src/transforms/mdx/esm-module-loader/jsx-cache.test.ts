@@ -14,6 +14,7 @@ import {
   readDir,
   readTextFile,
   remove,
+  stat,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
@@ -27,8 +28,10 @@ import {
 } from "./cache-format.ts";
 import {
   __importTransformerInternals,
+  JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
   JSX_CACHE_VARIANT_MIN_AGE_MS,
   MAX_JSX_CACHE_VARIANTS_PER_PATH,
+  retainJsxArtifactsReferencedIn,
   transformJsxImports,
 } from "./import-transformer.ts";
 import { __jsxCacheInternals, ensureCachedJsxModulePatched } from "./jsx-cache.ts";
@@ -161,6 +164,13 @@ describe("ensureCachedJsxModulePatched", () => {
 });
 
 describe("transformJsxImports", () => {
+  afterEach(() => {
+    // Every prune pass now arms an unref'd follow-up timer (idle collection
+    // never depends on a future write); drop it so no test observes a
+    // neighbour's pending cleanup.
+    __importTransformerInternals.cancelScheduledJsxCachePrunes();
+  });
+
   it("uses a distinct cached JSX module when source content changes at the same path", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-content-cache-test-" });
     const sourcePath = "/tmp/source/PlatformOverview.tsx";
@@ -624,7 +634,9 @@ describe("pruneSupersededJsxArtifacts", () => {
     markJsxArtifactServed,
     pruneSupersededJsxArtifacts,
     readArtifactModifiedAtMs,
+    releaseJsxArtifact,
     removeJsxArtifactUnlessServed,
+    retainJsxArtifact,
     withJsxArtifactLock,
   } = __importTransformerInternals;
 
@@ -1068,6 +1080,224 @@ describe("pruneSupersededJsxArtifacts", () => {
         true,
         "removal must observe a served mark recorded before it acquired the lock",
       );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports when a preserved artifact next becomes collectable", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-retry-report-test-" });
+    const artifactPath = join(tempDir, "jsx-preserved.mjs");
+    const nowMs = afterGracePeriod();
+
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      markJsxArtifactServed(artifactPath, nowMs);
+
+      const removal = await removeJsxArtifactUnlessServed(artifactPath, nowMs);
+      if (removal.removed) throw new Error("a just-served artifact must be preserved");
+      assertEquals(
+        removal.retryAtMs,
+        nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS,
+        "a preserved artifact must name the moment its grace period ends",
+      );
+      assertEquals((await readTextFile(artifactPath)).length > 0, true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps a referenced artifact and schedules a follow-up for its release", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-active-ref-test-" });
+    const sourcePath = "/tmp/source/Referenced.tsx";
+    const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
+    const overWindow = MAX_JSX_CACHE_VARIANTS_PER_PATH + 4;
+
+    try {
+      const names = await writeVariants(tempDir, sourcePath, overWindow);
+      for (const name of names) retainJsxArtifact(join(tempDir, name));
+
+      try {
+        // Long past the grace period, but every variant is pinned by a render
+        // whose module-recovery phase may run arbitrarily long: nothing may go.
+        await collectExcessJsxArtifacts(tempDir, new Map(), afterGracePeriod());
+        assertEquals(
+          (await namesWithPrefix(tempDir, prefix)).length,
+          overWindow,
+          "an active reference must protect an artifact past any fixed-age lease",
+        );
+        assertEquals(
+          hasScheduledJsxCachePrune(tempDir),
+          true,
+          "a pass that preserves referenced artifacts must arrange its own retry",
+        );
+      } finally {
+        for (const name of names) releaseJsxArtifact(join(tempDir, name));
+      }
+
+      cancelScheduledJsxCachePrunes();
+      await collectExcessJsxArtifacts(tempDir, new Map(), afterGracePeriod());
+      assertEquals(
+        (await namesWithPrefix(tempDir, prefix)).length,
+        MAX_JSX_CACHE_VARIANTS_PER_PATH,
+        "releasing the references must make the excess collectable again",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("retires a renamed-away path's last variant once it goes idle", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-idle-test-" });
+    const churnedPath = "/tmp/source/Button.tsx";
+    const writtenPath = "/tmp/source/Button2.tsx";
+
+    try {
+      // A tenant that renames its imported source on each edit leaves one
+      // variant per retired path — each in a group too small for the per-path
+      // window to ever touch.
+      await writeVariants(tempDir, churnedPath, 1);
+      const written = await writeVariants(tempDir, writtenPath, 1);
+
+      const beyondIdle = Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS + 60_000;
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[writtenPath, written[0] ?? ""]]),
+        beyondIdle,
+      );
+
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(churnedPath))).length,
+        0,
+        "a retired path's variants must not outlive the idle floor",
+      );
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(writtenPath))).length,
+        1,
+        "the artifact the caller just wrote must never be idle-collected",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps a variant that is not yet idle and schedules its idle follow-up", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-not-idle-test-" });
+    const churnedPath = "/tmp/source/StillWarm.tsx";
+    const writtenPath = "/tmp/source/StillWarm2.tsx";
+
+    try {
+      await writeVariants(tempDir, churnedPath, 1);
+      const written = await writeVariants(tempDir, writtenPath, 1);
+
+      // Past the grace period but inside the idle floor: an under-window
+      // variant may still be a page's live cache entry, so it stays — but the
+      // pass must arrange the follow-up that collects it if it stays unused.
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[writtenPath, written[0] ?? ""]]),
+        afterGracePeriod(),
+      );
+
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(churnedPath))).length,
+        1,
+        "a variant used within the idle floor is still the cache, not garbage",
+      );
+      assertEquals(
+        hasScheduledJsxCachePrune(tempDir),
+        true,
+        "idle collection must not depend on an unrelated future write",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("jsx artifact references", () => {
+  const {
+    cancelScheduledJsxCachePrunes,
+    jsxArtifactActiveRefCount,
+    refreshJsxArtifactMtime,
+    wasJsxArtifactRecentlyServed,
+  } = __importTransformerInternals;
+
+  afterEach(() => {
+    cancelScheduledJsxCachePrunes();
+  });
+
+  it("pins the artifacts a rewritten module imports until released", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-retain-test-" });
+
+    try {
+      const cachedCode = "export const v = 1;";
+      const artifactPath = join(
+        tempDir,
+        buildMdxJsxCacheFileName("/tmp/source/Pinned.tsx", cachedCode),
+      );
+      await writeTextFile(artifactPath, cachedCode);
+      const code = [
+        `import Pinned from "file://${artifactPath}";`,
+        `import { other } from "https://example.com/other.js";`,
+        `export default Pinned;`,
+      ].join("\n");
+
+      const release = await retainJsxArtifactsReferencedIn(code);
+      assertEquals(
+        jsxArtifactActiveRefCount(artifactPath),
+        1,
+        "every JSX artifact the module imports must be pinned",
+      );
+
+      release();
+      assertEquals(jsxArtifactActiveRefCount(artifactPath), 0);
+      assertEquals(
+        wasJsxArtifactRecentlyServed(artifactPath, Date.now()),
+        true,
+        "release must leave the served mark that bridges an immediate prune",
+      );
+
+      // The release a `finally` runs must stay safe to call more than once.
+      release();
+      assertEquals(jsxArtifactActiveRefCount(artifactPath), 0);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("holds no references for a module that imports no JSX artifacts", async () => {
+    const release = await retainJsxArtifactsReferencedIn(
+      `import { a } from "https://example.com/a.js";\nexport const b = a;`,
+    );
+    release();
+  });
+
+  it("refreshes a stale artifact mtime so other processes see the use", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-touch-test-" });
+    const artifactPath = join(tempDir, "jsx-touched.mjs");
+
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      const before = (await stat(artifactPath)).mtime?.getTime() ?? 0;
+
+      // A refresh interval ahead of the recorded mtime: the hit must write
+      // through to the file so a prune in another process sees the use.
+      await refreshJsxArtifactMtime(
+        artifactPath,
+        before,
+        before + JSX_CACHE_VARIANT_MIN_AGE_MS,
+      );
+      const after = (await stat(artifactPath)).mtime?.getTime() ?? 0;
+      assertEquals(
+        after > before,
+        true,
+        "a stale mtime must be refreshed on use",
+      );
+
+      // A fresh mtime is left alone so hits cost no metadata write.
+      await refreshJsxArtifactMtime(artifactPath, after, after + 1_000);
+      assertEquals((await stat(artifactPath)).mtime?.getTime() ?? 0, after);
     } finally {
       await remove(tempDir, { recursive: true });
     }
