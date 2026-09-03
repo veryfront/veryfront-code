@@ -604,6 +604,52 @@ Deno.test("readProjectPackageJson extracts dependencies from a valid file", asyn
   }
 });
 
+Deno.test("manifest writes remain bound to the file identity that was read", async () => {
+  const project = await makeTempDir();
+  const pkgPath = `${project}/package.json`;
+  try {
+    await Deno.writeTextFile(pkgPath, '{"dependencies":{}}\n');
+    const projectRoot = await Deno.realPath(project);
+    const result = await readProjectPackageJson(pkgPath, projectRoot);
+    assert(result.fileIdentity, "a guarded manifest read must return its file identity");
+
+    await Deno.writeTextFile(`${project}/replacement.json`, '{"name":"replacement"}\n');
+    await Deno.rename(`${project}/replacement.json`, pkgPath);
+
+    const error = await assertRejects(
+      () =>
+        writeTextFileInsideProject(pkgPath, projectRoot, '{"name":"codemod"}\n', {
+          expectedIdentity: result.fileIdentity,
+        }),
+      Error,
+    );
+    assertStringIncludes(error.message, "changed after being read");
+    assertEquals(await Deno.readTextFile(pkgPath), '{"name":"replacement"}\n');
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("guarded manifest read errors do not expose resolved paths", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const pkgPath = `${project}/package.json`;
+  try {
+    await Deno.writeTextFile(`${outside}/victim.json`, "{}\n");
+    await Deno.symlink(`${outside}/victim.json`, pkgPath);
+
+    const result = await readProjectPackageJson(pkgPath, await Deno.realPath(project));
+
+    assert(result.parseError);
+    assertStringIncludes(result.parseError, "could not be read safely");
+    assert(!result.parseError.includes(project));
+    assert(!result.parseError.includes(outside));
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
 Deno.test("readProjectPackageJson collects declarations from other dependency fields", async () => {
   const dir = await Deno.makeTempDir();
   try {

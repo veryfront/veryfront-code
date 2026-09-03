@@ -146,6 +146,8 @@ export interface PackageJsonReadResult {
   otherFieldDeps: Record<string, { field: string; version: string }>;
   /** Set when the file could not be read, parsed, or validated; it must not be overwritten. */
   parseError: string | null;
+  /** Identity of the manifest handle whose bytes were parsed. */
+  fileIdentity?: Deno.FileInfo;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +546,7 @@ async function replaceTextFileInsideProject(
   path: string,
   projectRoot: string,
   content: string,
+  expectedIdentity?: Deno.FileInfo,
 ): Promise<void> {
   const parent = parentDirOf(path);
   const tempPath = `${parent}${PATH_SEPARATOR}.veryfront-codemod-${crypto.randomUUID()}.tmp`;
@@ -567,6 +570,9 @@ async function replaceTextFileInsideProject(
     // path no longer resolves and the rename fails without touching a target.
     await assertPathInsideProject(path, projectRoot);
     await assertPathInsideProject(tempPath, projectRoot);
+    if (expectedIdentity && !sameFileIdentity(expectedIdentity, await Deno.stat(path))) {
+      throw new Error("Refusing to write package.json because it changed after being read.");
+    }
     await Deno.rename(tempPath, path);
   } finally {
     if (tempFileOpen) tempFile.close();
@@ -585,7 +591,10 @@ export async function writeTextFileInsideProject(
   path: string,
   projectRoot: string,
   content: string,
-  { allowMissing = false }: { allowMissing?: boolean } = {},
+  { allowMissing = false, expectedIdentity }: {
+    allowMissing?: boolean;
+    expectedIdentity?: Deno.FileInfo;
+  } = {},
 ): Promise<void> {
   await assertPathInsideProject(path, projectRoot, { allowMissing });
   if (Deno.build.os === "windows") {
@@ -599,7 +608,7 @@ export async function writeTextFileInsideProject(
       }
       throw error;
     }
-    await replaceTextFileInsideProject(path, projectRoot, content);
+    await replaceTextFileInsideProject(path, projectRoot, content, expectedIdentity);
     return;
   }
 
@@ -623,7 +632,10 @@ export async function writeTextFileInsideProject(
     const opened = await file.stat();
     const current = await Deno.stat(path);
     if (!sameFileIdentity(opened, current)) {
-      throw new Error(`Refusing to write a path that changed after it was opened: ${path}`);
+      throw new Error("Refusing to write a path that changed after it was opened.");
+    }
+    if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
+      throw new Error("Refusing to write package.json because it changed after being read.");
     }
 
     const bytes = new TextEncoder().encode(content);
@@ -636,6 +648,31 @@ export async function writeTextFileInsideProject(
     }
   } finally {
     file.close();
+  }
+}
+
+async function readTextFileInsideProject(
+  path: string,
+  projectRoot: string,
+): Promise<{ text: string; identity: Deno.FileInfo }> {
+  await assertPathInsideProject(path, projectRoot);
+  const file = await Deno.open(path, { read: true });
+  try {
+    const identity = await file.stat();
+    await assertPathInsideProject(path, projectRoot);
+    if (!sameFileIdentity(identity, await Deno.stat(path))) {
+      throw new Error("package.json changed while it was being opened.");
+    }
+    const text = await new Response(file.readable).text();
+    await assertPathInsideProject(path, projectRoot);
+    if (!sameFileIdentity(identity, await Deno.stat(path))) {
+      throw new Error("package.json changed while it was being read.");
+    }
+    return { text, identity };
+  } finally {
+    try {
+      file.close();
+    } catch { /* the readable may already have closed the handle */ }
   }
 }
 
@@ -657,18 +694,26 @@ export async function readProjectPackageJson(
   if (projectRoot !== undefined) {
     try {
       await assertPathInsideProject(path, projectRoot, { allowMissing: true });
-    } catch (e) {
+    } catch {
       return {
         data: {},
         existingDeps: {},
         otherFieldDeps: {},
-        parseError: `package.json could not be read: ${e instanceof Error ? e.message : String(e)}`,
+        parseError:
+          "package.json could not be read safely; check that it is a stable regular file, not a symlink.",
       };
     }
   }
   let text: string;
+  let fileIdentity: Deno.FileInfo | undefined;
   try {
-    text = await Deno.readTextFile(path);
+    if (projectRoot === undefined) {
+      text = await Deno.readTextFile(path);
+    } else {
+      const opened = await readTextFileInsideProject(path, projectRoot);
+      text = opened.text;
+      fileIdentity = opened.identity;
+    }
   } catch (e) {
     if (e instanceof Deno.errors.NotFound) {
       // File does not exist, treat as absent and start with empty deps.
@@ -681,7 +726,8 @@ export async function readProjectPackageJson(
       data: {},
       existingDeps: {},
       otherFieldDeps: {},
-      parseError: `package.json could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      parseError:
+        "package.json could not be read safely; check that it is a stable regular file, not a symlink.",
     };
   }
   try {
@@ -740,7 +786,13 @@ export async function readProjectPackageJson(
 
     const existingDeps = (dependencies ?? {}) as Record<string, string>;
     const data = parsed;
-    return { data, existingDeps, otherFieldDeps, parseError: null };
+    return {
+      data,
+      existingDeps,
+      otherFieldDeps,
+      parseError: null,
+      ...(fileIdentity ? { fileIdentity } : {}),
+    };
   } catch (e) {
     return {
       data: {},
@@ -947,6 +999,7 @@ async function main(args: string[]): Promise<void> {
     existingDeps,
     otherFieldDeps,
     parseError: pkgJsonParseError,
+    fileIdentity: pkgJsonFileIdentity,
   } = await readProjectPackageJson(pkgJsonPath, projectRoot);
 
   const candidatePins = Object.fromEntries(
@@ -1049,7 +1102,7 @@ async function main(args: string[]): Promise<void> {
         pkgJsonPath,
         projectRoot,
         JSON.stringify(pkgJson, null, 2) + "\n",
-        { allowMissing: true },
+        { allowMissing: true, expectedIdentity: pkgJsonFileIdentity },
       );
     }
 
