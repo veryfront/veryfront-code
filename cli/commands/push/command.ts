@@ -284,17 +284,32 @@ async function sourceFilesForGitTracking(
   return [...files, { path: ".vfignore", content: "" }];
 }
 
+/**
+ * Scan the file set this directory uploads, and digest it.
+ *
+ * Push records the digest on the receipt as `localSourceDigest`, and deploy
+ * recomputes it to prove the receipt still describes the directory. Both go
+ * through here so the two source sets cannot drift apart: a filter added to the
+ * scan, or a change to how the digest is taken, moves both sides at once
+ * instead of making every receipt already on disk permanently unmatchable.
+ */
+export async function capturePushSourceDigest(
+  projectDir: string,
+  ignoreChecker?: IgnoreChecker,
+): Promise<{ files: UploadOp[]; sourceDigest: string }> {
+  const checker = ignoreChecker ?? createIgnoreChecker(await loadIgnorePatterns(projectDir));
+  const files = await scanLocalFiles(projectDir, checker);
+  return { files, sourceDigest: await computeSourceDigest(files) };
+}
+
 export async function capturePushSourceSnapshot(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
-  const files = await scanLocalFiles(projectDir, ignoreChecker);
+  const { files, sourceDigest } = await capturePushSourceDigest(projectDir, ignoreChecker);
   const trackedSourceFiles = await sourceFilesForGitTracking(projectDir, files);
-  const [sourceDigest, filesTracked] = await Promise.all([
-    computeSourceDigest(files),
-    areSourceFilesTracked(projectDir, trackedSourceFiles),
-  ]);
+  const filesTracked = await areSourceFilesTracked(projectDir, trackedSourceFiles);
   const gitSource = await resolveGitSource(projectDir);
 
   if (!gitSourcesMatch(gitSourceBefore, gitSource)) throw sourceChangedError();

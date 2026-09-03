@@ -22,6 +22,8 @@ import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
+import { capturePushSourceSnapshot } from "../../commands/push/command.ts";
+import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -1061,6 +1063,35 @@ describe("pushed source provenance", () => {
             },
           ),
           "refresh",
+        );
+      })
+    );
+  });
+
+  it("recomputes exactly the digest push records on the receipt", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        // The receipt's localSourceDigest is only usable while deploy rebuilds
+        // the same file set push digested. Assert that parity directly: a
+        // filter that lands on one side alone would make every receipt
+        // unmatchable and turn each deploy into a refusal.
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "notes.md\n");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        await Deno.writeTextFile(`${projectDir}/notes.md`, "# notes\n");
+        await Deno.mkdir(`${projectDir}/pages`);
+        await Deno.writeTextFile(`${projectDir}/pages/index.tsx`, "export default () => null;\n");
+        await commitProject(projectDir);
+
+        const pushed = await capturePushSourceSnapshot(
+          projectDir,
+          createIgnoreChecker(await loadIgnorePatterns(projectDir)),
+        );
+        const observed = await observeLocalSource(projectDir);
+
+        assertEquals(
+          observed.sourceDigest,
+          pushed.sourceDigest,
+          "deploy must rebuild the file set push digests, byte for byte",
         );
       })
     );

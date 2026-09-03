@@ -45,7 +45,6 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../deployment-provenance.ts";
-import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { normalizeProjectSlug } from "../slug.ts";
 import { reserveProjectSlug } from "../reserve-slug.ts";
 import {
@@ -65,7 +64,7 @@ import {
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
 } from "../config.ts";
-import { pushCommand, scanLocalFiles } from "../../commands/push/index.ts";
+import { capturePushSourceDigest, pushCommand } from "../../commands/push/index.ts";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -435,7 +434,8 @@ export function resolveBootstrapPush(
     // to any commit, a clean receipt still fails closed the same way, while a
     // dirty one proves nothing about the upload and keeps its refresh.
     const checkoutNamesAnotherCommit = gitSource.commitSha !== null;
-    return checkoutNamesAnotherCommit || receipt.clean ? "none" : "refresh";
+    if (checkoutNamesAnotherCommit) return "none";
+    return receipt.clean ? "none" : "refresh";
   }
   // Digests compare the file set push uploads, so where both sides have one
   // they decide outright: an edit Git cannot see is caught, and a tree dirty
@@ -479,8 +479,9 @@ export async function observeLocalSource(projectDir: string): Promise<LocalSourc
 
 async function computeLocalSourceDigest(projectDir: string): Promise<string | null> {
   try {
-    const ignoreChecker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
-    return await computeSourceDigest(await scanLocalFiles(projectDir, ignoreChecker));
+    // The same helper push digests its upload with, so a receipt's
+    // `localSourceDigest` stays recomputable however that file set changes.
+    return (await capturePushSourceDigest(projectDir)).sourceDigest;
   } catch {
     // A directory push itself cannot read, such as one holding a symlinked
     // `.vfignore`, has no digest to compare. Fall back to the Git observation
@@ -522,7 +523,14 @@ export async function resolvePushedSource(input: {
     );
   }
 
-  const local = input.local ?? await observeLocalSource(input.projectDir);
+  const enforceClean = input.enforceWorkingTreeClean !== false;
+  // Promoting a project named by slug never uploads this directory, so its
+  // digest would be scanned only to be discarded. Read Git alone there: the
+  // commit comparison still runs, and the O(project size) read does not.
+  const local = input.local ??
+    (enforceClean
+      ? await observeLocalSource(input.projectDir)
+      : { gitSource: await resolveGitSource(input.projectDir), sourceDigest: null });
   const commitSha = validatePushReceipt(receipt, {
     controlPlane: input.controlPlane,
     projectId: input.projectId,
@@ -531,7 +539,7 @@ export async function resolvePushedSource(input: {
     commitSha: local.gitSource.commitSha,
     clean: local.gitSource.clean,
     localSourceDigest: local.sourceDigest,
-    enforceClean: input.enforceWorkingTreeClean !== false,
+    enforceClean,
   });
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
