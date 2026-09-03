@@ -21,6 +21,7 @@ import {
 } from "./shared/json-output.ts";
 import { detectCI, setAutoConfirm, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
+import { redactForSerialization } from "veryfront/utils";
 
 type CommandHandler = (args: ParsedArgs) => Promise<void>;
 type CommandLoader = () => Promise<CommandHandler>;
@@ -133,6 +134,14 @@ function showHelp(command?: string, showAll = false): void {
 function commandNameForJson(args: ParsedArgs): string {
   const command = args._[0];
   return typeof command === "string" && command.length > 0 ? command : "cli";
+}
+
+function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
+  if (context === undefined) return undefined;
+  const redacted = redactForSerialization(context);
+  return redacted !== null && typeof redacted === "object" && !Array.isArray(redacted)
+    ? redacted as Record<string, unknown>
+    : undefined;
 }
 
 async function outputCliJsonError(
@@ -301,6 +310,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         slug: classification.slug,
         registrySlug: vfError.slug,
         message: vfError.detail ?? message,
+        context: safeJsonErrorContext(vfError.context),
       });
     },
     getExitCode: (_error, vfError) => classifyCliError(vfError).exitCode,

@@ -34,9 +34,11 @@ import {
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import {
+  DEPLOYMENT_ERROR,
   INVALID_ARGUMENT,
   PREVIEW_HOSTNAME_TOO_LONG,
   PUSH_CONFLICT,
+  sanitizeTerminalDiagnosticText,
   VeryfrontError,
 } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
@@ -45,7 +47,6 @@ import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isNotFoundError, lstat } from "veryfront/fs";
-import { sanitizeLogText } from "#veryfront/utils/logger/core.ts";
 import {
   areSourceFilesTracked,
   clearPushReceipt,
@@ -421,7 +422,7 @@ function outputPushResult(
 
 function warnProtectedRemotePaths(paths: readonly string[], dryRun: boolean): void {
   if (paths.length === 0 || isJsonMode()) return;
-  const protectedPathList = paths.map(sanitizeLogText).join(", ");
+  const protectedPathList = paths.map(sanitizeTerminalDiagnosticText).join(", ");
   logWarning(
     `Prune ${dryRun ? "would remove" : "removes"} ${paths.length} protected remote ${
       paths.length === 1 ? "path" : "paths"
@@ -700,13 +701,26 @@ function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
   return buildOpParts(ops, toDelete, (count) => `upload ${count}`, (count) => `delete ${count}`);
 }
 
-function pushConflictError(paths: readonly string[]): Error {
+function pushConflictError(
+  paths: readonly string[],
+  protectedDeleted: readonly string[] = [],
+): Error {
   const files = paths.map((path) => `"${path}"`).join(", ");
   return PUSH_CONFLICT.create({
     detail: `Push rejected because remote files changed since your last pull or push: ${files}. ` +
       "Commit or stash local changes, run veryfront pull, reconcile the changes with Git, then push again. " +
       "Use veryfront push --force only to intentionally overwrite remote changes.",
-    context: { paths: [...paths] },
+    context: {
+      paths: [...paths],
+      ...(protectedDeleted.length > 0 ? { protectedDeleted: [...protectedDeleted] } : {}),
+    },
+  });
+}
+
+function pushMutationError(detail: string, protectedDeleted: readonly string[]): Error {
+  return DEPLOYMENT_ERROR.create({
+    detail,
+    context: protectedDeleted.length > 0 ? { protectedDeleted: [...protectedDeleted] } : undefined,
   });
 }
 
@@ -1128,6 +1142,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         for (const path of newlyApplied) appliedProtectedDeletePaths.add(path);
         warnProtectedRemotePaths(newlyApplied, false);
       };
+      const protectedDeleteContext = () =>
+        [...appliedProtectedDeletePaths].map(sanitizeTerminalDiagnosticText);
       // Protected paths are planner input only. The sync baseline must never
       // record them, because `plan.nextFiles` excludes them and no later pull or
       // push would ever reconcile such an entry away.
@@ -1216,13 +1232,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               forcedPruneDeleteCount = lateDeleteResult.deleted;
               recordAppliedProtectedDeletes(lateDeleteResult.applied);
               if (lateDeleteResult.conflicts.length > 0) {
-                throw pushConflictError(lateDeleteResult.conflicts);
+                throw pushConflictError(lateDeleteResult.conflicts, protectedDeleteContext());
               }
               if (lateDeleteResult.failed > 0) {
-                throw new Error(
+                throw pushMutationError(
                   `Push failed for ${lateDeleteResult.failed} file${
                     lateDeleteResult.failed === 1 ? "" : "s"
                   } during forced prune reconciliation`,
+                  protectedDeleteContext(),
                 );
               }
               if (lateDeleteResult.deleted > 0) {
@@ -1237,7 +1254,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false, true),
               );
               if (conflicts.length > 0) {
-                throw pushConflictError(conflicts);
+                throw pushConflictError(conflicts, protectedDeleteContext());
               }
               pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
             } else {
@@ -1489,16 +1506,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           uploadOps.filter((op) => appliedUploads.has(op.path)),
           deleteOps.filter((op) => appliedDeletes.has(op.path)),
         );
-        throw pushConflictError(deleteResult.conflicts);
+        throw pushConflictError(deleteResult.conflicts, protectedDeleteContext());
       }
 
       if (deleteResult.failed > 0) {
         spinner.stop();
         await writeVerifiedAppliedSyncTarget();
-        throw new Error(
+        throw pushMutationError(
           `Push failed for ${deleteResult.failed} file${
             deleteResult.failed === 1 ? "" : "s"
           } during deletion`,
+          protectedDeleteContext(),
         );
       }
 
@@ -1595,14 +1613,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             };
             if (lateDeleteResult.conflicts.length > 0) {
               await writeVerifiedAppliedSyncTarget();
-              throw pushConflictError(lateDeleteResult.conflicts);
+              throw pushConflictError(lateDeleteResult.conflicts, protectedDeleteContext());
             }
             if (lateDeleteResult.failed > 0) {
               await writeVerifiedAppliedSyncTarget();
-              throw new Error(
+              throw pushMutationError(
                 `Push failed for ${lateDeleteResult.failed} file${
                   lateDeleteResult.failed === 1 ? "" : "s"
                 } during forced prune reconciliation`,
+                protectedDeleteContext(),
               );
             }
           }

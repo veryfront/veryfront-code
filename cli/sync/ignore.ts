@@ -7,7 +7,7 @@ import { createFileSystem } from "veryfront/platform";
 import { cliLogger, logWarning } from "#cli/utils";
 import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
-import { sanitizeLogText } from "#veryfront/utils/logger/core.ts";
+import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -290,7 +290,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
       if (droppedNegation && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
         warnedOverrides.add(normalizedPath);
         logWarning(
-          `Ignoring protected path "${sanitizeLogText(normalizedPath)}". ` +
+          `Ignoring protected path "${sanitizeTerminalDiagnosticText(normalizedPath)}". ` +
             "A .vfignore negation cannot re-include " +
             "a path under .env, .veryfront, or .git.",
         );

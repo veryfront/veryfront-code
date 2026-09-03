@@ -3747,7 +3747,7 @@ describe("push failure ordering", () => {
 
         const remoteFiles = new Map([
           ["app.ts", "export const remote = true;\n"],
-          ["stale-a.ts", "export const staleA = true;\n"],
+          [".env.production", "SECRET=<REDACTED>\n"],
           ["stale-b.ts", "export const staleB = true;\n"],
         ]);
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -3784,10 +3784,14 @@ describe("push failure ordering", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await assertRejects(
+        const error = await assertRejects(
           () => pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true }),
           Error,
           "during deletion",
+        );
+        assertEquals(
+          (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
+          [".env.production"],
         );
 
         assertEquals(await readPushReceipt(projectDir), null);
@@ -3800,7 +3804,7 @@ describe("push failure ordering", () => {
           target?.files["app.ts"]?.digest,
           await computeContentDigest("export const value = 1;\n"),
         );
-        assertEquals(target?.files["stale-a.ts"], undefined);
+        assertEquals(target?.files[".env.production"], undefined);
         assertEquals(
           target?.files["stale-b.ts"]?.digest,
           await computeContentDigest("export const staleB = true;\n"),
