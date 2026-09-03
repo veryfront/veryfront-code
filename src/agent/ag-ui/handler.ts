@@ -31,6 +31,7 @@ import {
   parseAgUiRequestOrError,
 } from "./host-support.ts";
 import { extractRequest } from "./request-shared.ts";
+import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   type AgUiRuntimeRestrictions,
@@ -389,6 +390,12 @@ async function createAgUiDirectStreamResponse(
     // metadata.
     const runtime = new AgentRuntime(agent.id, {
       ...applyAgUiRuntimeRestrictions(agent.config, restrictions),
+      // `agent.config.system` is the raw authored prompt. The factory composes
+      // project context, environment context, and the skill catalog into a
+      // separate resolver that the agent's own runtime uses, so a restricted
+      // run reads that effective resolver to stream against the same prompt a
+      // normal run would.
+      system: getEffectiveAgentSystem(agent),
       // The agent's own runtime carries the security middleware the factory
       // resolved for it, so a restricted run resolves the same chain rather
       // than dropping input and output protection.
@@ -451,6 +458,7 @@ async function createAgUiInjectedToolsStreamResponse(
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
   beforeStream?: AgUiBeforeStream,
   onComplete?: AgUiOnComplete,
+  restrictions?: AgUiRuntimeRestrictions,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
@@ -483,8 +491,14 @@ async function createAgUiInjectedToolsStreamResponse(
     throw error;
   }
 
+  // Only a step-only ceiling reaches here: a tool allowlist refuses the
+  // injected-tools path outright, so this narrows the step budget without
+  // touching the merged client tool surface.
+  const restrictedConfig = hasAgUiRuntimeRestrictions(restrictions)
+    ? applyAgUiRuntimeRestrictions(agent.config, restrictions)
+    : agent.config;
   const runtime = new AgentRuntime(agent.id, {
-    ...agent.config,
+    ...restrictedConfig,
     tools: buildMergedAgUiTools(agent, runId, request.tools, sessionManager),
   });
 
@@ -629,10 +643,12 @@ export function createAgUiHandler(
       }
 
       if (parsed.tools.length > 0) {
-        if (hasAgUiRuntimeRestrictions(options?.runtimeRestrictions)) {
+        if (options?.runtimeRestrictions?.allowedTools !== undefined) {
           // The injected-tools path merges client tool definitions into the
-          // agent runtime, which the restriction ceiling does not cover. Refuse
-          // the run rather than execute it outside the ceiling.
+          // agent runtime, so those tools would run outside a tool allowlist.
+          // Refuse the run rather than execute it outside the ceiling. A
+          // step-only ceiling has no allowlist to bypass, so it still runs and
+          // the bound is applied to the merged runtime below.
           return Response.json(
             {
               error: "Injected AG-UI tools are not available on a restricted AG-UI run.",
@@ -663,6 +679,7 @@ export function createAgUiHandler(
           options.sessionManager,
           options?.beforeStream,
           options?.onComplete,
+          options?.runtimeRestrictions,
         );
       }
 

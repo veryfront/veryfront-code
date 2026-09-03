@@ -60,6 +60,19 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.tools, { web_search: true, read_file: true });
   });
 
+  it("keeps provider-native tool names out of the generated local selector", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({ tools: true, providerTools: ["web_fetch"] }),
+      { allowedTools: ["web_fetch", "read_file"] },
+    );
+
+    // The runtime resolves every `true` entry against the tool registries and
+    // throws `Unknown tool reference` for a provider-native name, so the
+    // allowed provider tool travels in `providerTools` alone.
+    assertEquals(restricted.tools, { read_file: true });
+    assertEquals(restricted.providerTools, ["web_fetch"]);
+  });
+
   it("keeps allowlisted provider tools, delegates, and skills", () => {
     const restricted = applyAgUiRuntimeRestrictions(createConfig(), {
       allowedTools: ["web_fetch", "agent_writer", "load_skill"],

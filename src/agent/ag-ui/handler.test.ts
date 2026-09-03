@@ -9,6 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type AgUiCompletion, AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
 import { AgentRuntime, RunResumeSessionManager } from "../index.ts";
+import { setEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 
 const encoder = new TextEncoder();
@@ -593,6 +594,136 @@ describe("agent/ag-ui-handler", () => {
 
     assertEquals(response.status, 400);
     assertEquals(testAgent.capturedMessages.length, 0);
+  });
+
+  it("streams a restricted run against the agent's effective system prompt", async () => {
+    const testAgent = createTestAgent();
+    const augmentedSystem = () => Promise.resolve("You are helpful.\n<project-context>repo</>");
+    setEffectiveAgentSystem(testAgent.agent, augmentedSystem);
+
+    const originalStream = AgentRuntime.prototype.stream;
+    let capturedConfig: Record<string, unknown> | undefined;
+
+    AgentRuntime.prototype.stream = function (
+      this: AgentRuntime,
+    ): Promise<ReadableStream<Uint8Array>> {
+      capturedConfig = (this as unknown as { config: Record<string, unknown> }).config;
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "restricted" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            controller.close();
+          },
+        }),
+      );
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent: testAgent.agent,
+        runtimeRestrictions: { allowedTools: [] },
+      });
+
+      await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_restricted_system_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+          }),
+        }),
+      );
+
+      // The factory keeps the augmented prompt off `config.system`, so a
+      // restricted run must read the effective resolver to stream against the
+      // same prompt a normal run would.
+      assertEquals(capturedConfig?.system, augmentedSystem);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("allows injected client tools under a step-only restriction and applies the bound", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const testAgent = createTestAgent();
+    const agent: Agent = {
+      ...testAgent.agent,
+      config: { ...testAgent.agent.config, maxSteps: 20 } as Agent["config"],
+    };
+    const originalStream = AgentRuntime.prototype.stream;
+    let capturedConfig: Record<string, unknown> | undefined;
+
+    AgentRuntime.prototype.stream = function (
+      this: AgentRuntime,
+    ): Promise<ReadableStream<Uint8Array>> {
+      capturedConfig = (this as unknown as { config: Record<string, unknown> }).config;
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "stepped" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            controller.close();
+          },
+        }),
+      );
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent,
+        sessionManager,
+        runtimeRestrictions: { maxSteps: 3 },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_restricted_steps_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      const body = await response.text();
+      assertEquals(response.status, 200);
+      assertStringIncludes(body, "stepped");
+      // No allowlist exists for the injected tools to bypass, so the run
+      // proceeds with the merged tool surface under the narrowed step bound.
+      assertEquals(capturedConfig?.maxSteps, 3);
+      assert(capturedConfig?.tools !== undefined);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
   });
 
   it("runs beforeStream before direct AG-UI streaming", async () => {

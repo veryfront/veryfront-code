@@ -28,12 +28,22 @@ export function hasAgUiRuntimeRestrictions(
 function restrictConfiguredTools(
   tools: AgentConfig["tools"],
   allowedTools: ReadonlySet<string>,
+  providerToolNames: ReadonlySet<string>,
 ): AgentConfig["tools"] {
   if (tools === undefined) return undefined;
   if (tools === true) {
     // `true` authorizes the whole scoped catalog. An explicit allowlist replaces
     // it with registry lookups for exactly the allowlisted names.
-    return Object.fromEntries([...allowedTools].map((toolName) => [toolName, true]));
+    //
+    // Provider-native tools stay out of this selector: the runtime resolves
+    // every `true` entry against the local and remote tool registries and
+    // throws `Unknown tool reference` for a name that only exists as a
+    // provider-native definition. Those names travel in `providerTools` alone.
+    return Object.fromEntries(
+      [...allowedTools]
+        .filter((toolName) => !providerToolNames.has(toolName))
+        .map((toolName) => [toolName, true]),
+    );
   }
   return Object.fromEntries(
     Object.entries(tools).filter(([toolName]) => allowedTools.has(toolName)),
@@ -64,7 +74,8 @@ export function applyAgUiRuntimeRestrictions(
   }
 
   const allowedTools = new Set(restrictions.allowedTools);
-  restricted.tools = restrictConfiguredTools(config.tools, allowedTools);
+  const providerToolNames = new Set(config.providerTools ?? []);
+  restricted.tools = restrictConfiguredTools(config.tools, allowedTools, providerToolNames);
   restricted.providerTools = config.providerTools?.filter((toolName) => allowedTools.has(toolName));
   restricted.delegates = config.delegates?.filter((delegateId) =>
     allowedTools.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`)

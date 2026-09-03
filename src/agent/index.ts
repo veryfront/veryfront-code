@@ -1788,7 +1788,10 @@ export {
   type AgUiOnComplete,
   type AgUiRequest,
   AgUiRequestSchema,
+  type AgUiRuntimeRestrictions,
+  applyAgUiRuntimeRestrictions,
   createAgUiHandler,
+  hasAgUiRuntimeRestrictions,
 } from "./ag-ui/handler.ts";
 export {
   createHostedFormInputTool,
