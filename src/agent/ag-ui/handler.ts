@@ -387,7 +387,14 @@ async function createAgUiDirectStreamResponse(
   // the skill catalog only when the loader survives the ceiling), security
   // middleware, resolved skill-selector context, and private runtime dispatch.
   const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
-    ? createEphemeralAgent(applyAgUiRuntimeRestrictions(agent.config, restrictions))
+    ? createEphemeralAgent({
+      ...applyAgUiRuntimeRestrictions(agent.config, restrictions),
+      // A factory-assigned id lives on `agent.id` while `agent.config.id`
+      // stays undefined. Rebuilding without it would mint a fresh id, hiding
+      // owner-scoped registry tools and skills from the restricted run and
+      // handing hooks such as `resolveModelTransport` the wrong identity.
+      id: agent.id,
+    })
     : agent;
 
   const result = await streamAgent.stream({

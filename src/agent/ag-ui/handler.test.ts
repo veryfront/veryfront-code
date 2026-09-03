@@ -618,6 +618,65 @@ describe("agent/ag-ui-handler", () => {
     }
   });
 
+  it("preserves a factory-assigned agent id on the rebuilt restricted agent", async () => {
+    const observedAgentIds: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: () =>
+        Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "identity-preserved" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        }),
+    };
+
+    // No `config.id`: the factory assigns `agent.id` and leaves `config.id`
+    // undefined, so rebuilding the restricted agent from the config alone
+    // would mint a fresh id, hiding owner-scoped registry tools and skills
+    // and handing hooks such as `resolveModelTransport` the wrong identity.
+    const agent = createEphemeralAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "You are helpful.",
+      resolveModelTransport: (request) => {
+        observedAgentIds.push(request.agentId);
+        return Promise.resolve({ model });
+      },
+    });
+
+    const handler = createAgUiHandler({
+      agent,
+      runtimeRestrictions: { allowedTools: [], maxSteps: 2 },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_identity_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "identity-preserved");
+    assertEquals(observedAgentIds, [agent.id]);
+  });
+
   it("refuses injected client tools on a restricted AG-UI run", async () => {
     const sessionManager = new RunResumeSessionManager<{
       result: unknown;

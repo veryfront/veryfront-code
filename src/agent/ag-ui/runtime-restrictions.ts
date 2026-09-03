@@ -1,5 +1,6 @@
 import type { AgentConfig } from "../types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import { DEFAULT_MAX_STEPS } from "../runtime/constants.ts";
 import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
 import {
   resolveRuntimeToolLoading,
@@ -16,6 +17,45 @@ const SKILL_INFRASTRUCTURE_TOOL_NAMES = [
   "load_skill_reference",
   "execute_skill_script",
 ] as const;
+
+// Reflection intrinsics captured at module evaluation, before any project
+// module loaded for a local eval can run in this realm and replace them. The
+// intersection below invokes only these captured references plus syntax-level
+// operations (index loops, property access, object literals and spreads), so
+// replacing globals or prototype methods such as `Object.entries`,
+// `Object.fromEntries`, `Set.prototype.has`, `Array.prototype.filter`, or the
+// iteration protocol cannot preserve or inject a denied tool.
+const ObjectKeys = Object.keys;
+const createNullPrototypeObject = Object.create;
+
+/** Name allowlist as a null-prototype lookup so `Object.prototype` names never read as allowlisted. */
+type ToolNameLookup = Record<string, true>;
+
+function toToolNameLookup(names: readonly string[]): ToolNameLookup {
+  const lookup = createNullPrototypeObject(null) as ToolNameLookup;
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (name === undefined) continue;
+    lookup[name] = true;
+  }
+  return lookup;
+}
+
+function filterAllowedNames(
+  names: readonly string[],
+  allowedTools: ToolNameLookup,
+  toolNamePrefix = "",
+): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (name === undefined) continue;
+    if (allowedTools[toolNamePrefix + name] === true) {
+      kept[kept.length] = name;
+    }
+  }
+  return kept;
+}
 
 /**
  * Ceiling a trusted server caller applies to one AG-UI run.
@@ -41,8 +81,9 @@ export function hasAgUiRuntimeRestrictions(
 
 function restrictConfiguredTools(
   tools: AgentConfig["tools"],
-  allowedTools: ReadonlySet<string>,
-  providerToolNames: ReadonlySet<string>,
+  allowedToolNames: readonly string[],
+  allowedTools: ToolNameLookup,
+  providerToolNames: ToolNameLookup,
 ): AgentConfig["tools"] {
   if (tools === undefined) return undefined;
   if (tools === true) {
@@ -53,23 +94,36 @@ function restrictConfiguredTools(
     // every `true` entry against the local and remote tool registries and
     // throws `Unknown tool reference` for a name that only exists as a
     // provider-native definition. Those names travel in `providerTools` alone.
-    return Object.fromEntries(
-      [...allowedTools]
-        .filter((toolName) => !providerToolNames.has(toolName))
-        .map((toolName) => [toolName, true]),
-    );
+    const selected: Exclude<AgentConfig["tools"], true | undefined> = {};
+    for (let index = 0; index < allowedToolNames.length; index++) {
+      const toolName = allowedToolNames[index];
+      if (toolName === undefined) continue;
+      if (providerToolNames[toolName] !== true) {
+        selected[toolName] = true;
+      }
+    }
+    return selected;
   }
-  return Object.fromEntries(
-    Object.entries(tools).filter(([toolName]) => allowedTools.has(toolName)),
-  );
+  const intersected: Exclude<AgentConfig["tools"], true | undefined> = {};
+  const configuredToolNames = ObjectKeys(tools);
+  for (let index = 0; index < configuredToolNames.length; index++) {
+    const toolName = configuredToolNames[index];
+    if (toolName === undefined) continue;
+    const configuredTool = tools[toolName];
+    if (configuredTool !== undefined && allowedTools[toolName] === true) {
+      intersected[toolName] = configuredTool;
+    }
+  }
+  return intersected;
 }
 
 /**
  * Narrow an agent configuration to a restriction ceiling.
  *
  * Every branch only removes capability: tools, provider tools, and delegates
- * are intersected with the allowlist, and the step bound keeps the lower of the
- * configured and requested values.
+ * are intersected with the allowlist, and the step bound keeps the lower of
+ * the requested value and the configured bound (or the runtime default when
+ * the agent configures none).
  */
 export function applyAgUiRuntimeRestrictions(
   config: AgentConfig,
@@ -78,16 +132,22 @@ export function applyAgUiRuntimeRestrictions(
   const restricted: AgentConfig = { ...config };
 
   if (restrictions.maxSteps !== undefined) {
-    restricted.maxSteps = config.maxSteps === undefined
+    // An agent that configures no bound still runs at the runtime default, so
+    // the ceiling intersects with that effective bound too. A restriction can
+    // narrow the default but never raise it.
+    const configuredMaxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
+    restricted.maxSteps = restrictions.maxSteps < configuredMaxSteps
       ? restrictions.maxSteps
-      : Math.min(config.maxSteps, restrictions.maxSteps);
+      : configuredMaxSteps;
     // `computeMaxSteps` prefers an enabled edge limit over the top-level
     // bound, so narrow that limit too -- otherwise an edge-enabled agent
     // would run its full edge step budget past the ceiling.
     if (config.edge?.enabled && config.edge.maxSteps !== undefined) {
       restricted.edge = {
         ...config.edge,
-        maxSteps: Math.min(config.edge.maxSteps, restrictions.maxSteps),
+        maxSteps: restrictions.maxSteps < config.edge.maxSteps
+          ? restrictions.maxSteps
+          : config.edge.maxSteps,
       };
     }
   }
@@ -96,9 +156,15 @@ export function applyAgUiRuntimeRestrictions(
     return restricted;
   }
 
-  const allowedTools = new Set(restrictions.allowedTools);
-  const providerToolNames = new Set(config.providerTools ?? []);
-  restricted.tools = restrictConfiguredTools(config.tools, allowedTools, providerToolNames);
+  const allowedToolNames = restrictions.allowedTools;
+  const allowedTools = toToolNameLookup(allowedToolNames);
+  const providerToolNames = toToolNameLookup(config.providerTools ?? []);
+  restricted.tools = restrictConfiguredTools(
+    config.tools,
+    allowedToolNames,
+    allowedTools,
+    providerToolNames,
+  );
   if (config.tools === true) {
     // Replacing the authored `tools: true` selector with an explicit map would
     // flip `resolveRuntimeToolLoading` from deferred to eager, sending every
@@ -108,10 +174,12 @@ export function applyAgUiRuntimeRestrictions(
     (restricted as RuntimeToolFilterConfig).__vfToolLoadingMode =
       resolveRuntimeToolLoading(config).mode;
   }
-  restricted.providerTools = config.providerTools?.filter((toolName) => allowedTools.has(toolName));
-  restricted.delegates = config.delegates?.filter((delegateId) =>
-    allowedTools.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`)
-  );
+  restricted.providerTools = config.providerTools === undefined
+    ? undefined
+    : filterAllowedNames(config.providerTools, allowedTools);
+  restricted.delegates = config.delegates === undefined
+    ? undefined
+    : filterAllowedNames(config.delegates, allowedTools, AGENT_DELEGATE_TOOL_PREFIX);
   // MCP servers publish their tool names when the run connects to them, so a
   // name allowlist resolved before the run cannot bound that surface. Drop the
   // servers instead of leaving remote tools reachable.
@@ -128,7 +196,15 @@ export function applyAgUiRuntimeRestrictions(
   remoteToolConfig.__vfAllowedRemoteTools = [];
   // Skills reach further instructions and tools through the skill loader, so
   // they stay out unless the loader itself is allowlisted.
-  if (!SKILL_LOADER_TOOL_NAMES.some((toolName) => allowedTools.has(toolName))) {
+  let skillLoaderAllowed = false;
+  for (let index = 0; index < SKILL_LOADER_TOOL_NAMES.length; index++) {
+    const loaderToolName = SKILL_LOADER_TOOL_NAMES[index];
+    if (loaderToolName !== undefined && allowedTools[loaderToolName] === true) {
+      skillLoaderAllowed = true;
+      break;
+    }
+  }
+  if (!skillLoaderAllowed) {
     restricted.skills = false;
   } else {
     // With skills enabled, the factory injects the whole skill infrastructure
@@ -139,8 +215,9 @@ export function applyAgUiRuntimeRestrictions(
     const tools = restricted.tools === undefined || restricted.tools === true
       ? {}
       : { ...restricted.tools };
-    for (const toolName of SKILL_INFRASTRUCTURE_TOOL_NAMES) {
-      if (!allowedTools.has(toolName)) {
+    for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAMES.length; index++) {
+      const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
+      if (toolName !== undefined && allowedTools[toolName] !== true) {
         tools[toolName] = false;
       }
     }
