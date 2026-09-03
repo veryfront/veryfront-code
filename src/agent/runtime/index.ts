@@ -62,7 +62,10 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { getTurnMessageValidator } from "../middleware/security/validator.ts";
+import {
+  getTurnInputValidator,
+  getTurnMessageValidator,
+} from "#veryfront/agent/middleware/security/validator.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -1364,6 +1367,15 @@ export class AgentRuntime {
     inputMessages: Message[],
     context?: AgentContext,
   ): Promise<Message[]> {
+    // The security middleware validated `context.input` when it ran, but a
+    // later middleware can replace the array or mutate a message in place, and
+    // the resolved value is exactly what gets persisted and dispatched below.
+    // The registered hook re-validates the resolved input (skipping texts the
+    // middleware already approved), including on a first turn where the
+    // cross-turn validator has no history to check.
+    const validateTurnInput = context && getTurnInputValidator(context);
+    if (validateTurnInput) await validateTurnInput(inputMessages);
+
     const validateTurnMessages = context && getTurnMessageValidator(context);
     let validated: Message[] = inputMessages;
     if (validateTurnMessages) {

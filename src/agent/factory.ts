@@ -18,7 +18,7 @@ import {
   streamWithAgentRuntimeDispatch,
 } from "./runtime/index.ts";
 import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
-import { normalizeInput } from "./runtime/input-utils.ts";
+import { normalizeInput } from "#veryfront/agent/runtime/input-utils.ts";
 import {
   detectPlatform,
   validatePlatformCompatibility,

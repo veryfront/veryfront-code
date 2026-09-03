@@ -2,6 +2,7 @@ import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "../../output-schema.ts";
 import { createProviderDroppedMessageTracker } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -545,7 +546,12 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
 
     if (!messageChanged) return message;
     changed = true;
-    return { ...message, parts };
+    const rewritten = { ...message, parts };
+    // Rewriting replaces the object, and the synthetic id/timestamp marks are
+    // keyed by identity; without them cache keys would treat the synthesized
+    // values as caller-supplied and miss on every request.
+    propagateSyntheticMessageMarks(message, rewritten);
+    return rewritten;
   });
 
   return changed ? sanitizedMessages : messages;
@@ -590,7 +596,12 @@ function sanitizeAdjacentSystemRuns(validator: InputValidator, messages: Message
   if (rewrites.size === 0) return messages;
   return messages.map((message) => {
     const parts = rewrites.get(message);
-    return parts === undefined ? message : { ...message, parts };
+    if (parts === undefined) return message;
+    const rewritten = { ...message, parts };
+    // See sanitizeStructuredInput: the synthetic-origin marks must follow the
+    // rewritten object or cache identity breaks.
+    propagateSyntheticMessageMarks(message, rewritten);
+    return rewritten;
   });
 }
 
@@ -636,9 +647,10 @@ async function assertInputTextsValid(
  * change here, and failing closed keeps it away from the provider without
  * poisoning memory.
  */
-function assertRunTextsNeedNoSanitization(
+function assertTextsNeedNoSanitization(
   validator: InputValidator,
   values: string[],
+  reason: string,
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
   for (const value of values) {
@@ -646,7 +658,7 @@ function assertRunTextsNeedNoSanitization(
 
     const violation: SecurityViolation = {
       type: "input",
-      reason: "Merged system messages assemble content sanitization removes",
+      reason,
       content: value,
     };
     reportViolations([violation], onViolation);
@@ -702,6 +714,30 @@ export function getTurnMessageValidator(
   return turnMessageValidators.get(context);
 }
 
+/** Validate the resolved post-middleware input for one turn. */
+export type TurnInputValidator = (messages: Message[]) => Promise<void>;
+
+/**
+ * Post-middleware input validation hooks, keyed by the turn's middleware
+ * context.
+ *
+ * The security middleware validates `context.input` as it stands when the
+ * middleware runs, but a later middleware in the chain can still replace the
+ * array or mutate a message in place before the runtime persists and
+ * dispatches the turn. Only the runtime sees the resolved value, so it invokes
+ * the registered hook with exactly the messages it is about to commit; input
+ * whose extracted texts match what the middleware already approved is skipped,
+ * anything else is validated from scratch.
+ */
+const turnInputValidators = new WeakMap<AgentContext, TurnInputValidator>();
+
+/** Resolve the post-middleware input validator registered for a turn's context, if any. */
+export function getTurnInputValidator(
+  context: AgentContext,
+): TurnInputValidator | undefined {
+  return turnInputValidators.get(context);
+}
+
 /**
  * Create security middleware for agents
  */
@@ -724,12 +760,18 @@ export function securityMiddleware(
       if (previousTurnValidator) await previousTurnValidator(messages);
       const runTexts = extractAdjacentSystemRunTexts(messages);
       await assertInputTextsValid(inputValidator, runTexts, config.onViolation);
-      assertRunTextsNeedNoSanitization(inputValidator, runTexts, config.onViolation);
+      assertTextsNeedNoSanitization(
+        inputValidator,
+        runTexts,
+        "Merged system messages assemble content sanitization removes",
+        config.onViolation,
+      );
     });
 
     const inputValues = extractInputValidationTexts(context.input);
     await assertInputTextsValid(inputValidator, inputValues, config.onViolation);
 
+    let approvedInputTexts = inputValues;
     const sanitizedInput = sanitizeAgentInput(inputValidator, context.input);
     if (sanitizedInput !== context.input) {
       context.input = sanitizedInput;
@@ -742,7 +784,30 @@ export function securityMiddleware(
       if (!sameTexts(inputValues, sanitizedValues)) {
         await assertInputTextsValid(inputValidator, sanitizedValues, config.onViolation);
       }
+      approvedInputTexts = sanitizedValues;
     }
+
+    // A middleware later in the chain can still replace `context.input` or
+    // mutate a message in place after this middleware approved it, and the
+    // runtime persists and dispatches that resolved value. Register a hook the
+    // runtime invokes with the resolved input before committing the turn:
+    // texts identical to what was approved here are skipped, anything else is
+    // validated from scratch and must need no sanitization, which can no
+    // longer rewrite it at that point. Compose with any validator an earlier
+    // security middleware registered on the same context.
+    const previousInputValidator = turnInputValidators.get(context);
+    turnInputValidators.set(context, async (messages) => {
+      if (previousInputValidator) await previousInputValidator(messages);
+      const resolvedTexts = extractInputValidationTexts(messages);
+      if (sameTexts(resolvedTexts, approvedInputTexts)) return;
+      await assertInputTextsValid(inputValidator, resolvedTexts, config.onViolation);
+      assertTextsNeedNoSanitization(
+        inputValidator,
+        resolvedTexts,
+        "Middleware-rewritten input contains content sanitization removes",
+        config.onViolation,
+      );
+    });
 
     const result = await next();
 

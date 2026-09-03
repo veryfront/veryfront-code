@@ -23,6 +23,20 @@ export function hasSyntheticMessageTimestamp(message: object): boolean {
   return syntheticMessageTimestamps.has(message);
 }
 
+/**
+ * Carry synthetic-origin marks over to a rewritten copy of a message.
+ *
+ * The marks live in WeakSets keyed by object identity, so middleware that
+ * rewrites a message (sanitization clones it with new parts) silently strips
+ * them. Downstream identity consumers, such as cache keys that exclude
+ * runtime-synthesized `id`/`timestamp` values, would then treat the wall-clock
+ * values as caller intent and miss on every request.
+ */
+export function propagateSyntheticMessageMarks(source: object, target: object): void {
+  if (syntheticMessageIds.has(source)) syntheticMessageIds.add(target);
+  if (syntheticMessageTimestamps.has(source)) syntheticMessageTimestamps.add(target);
+}
+
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
 
