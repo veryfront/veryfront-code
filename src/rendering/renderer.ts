@@ -80,6 +80,7 @@ import { RenderPipeline } from "./orchestrator/pipeline.ts";
 import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
+import type { EntityResolutionOptions } from "#veryfront/types/entities/getEntityInfo.ts";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
 import { Singleflight, SingleflightFollowerLimitError } from "#veryfront/utils/singleflight.ts";
 import {
@@ -105,6 +106,7 @@ import {
 import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
+const IntrinsicDateNow = Date.now;
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -121,8 +123,25 @@ const DEFAULT_RENDER_PREWARM_MAX_ROUTES = 12;
 const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
 /** Bound remembered release contexts so multi-tenant processes cannot grow without limit. */
 const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
+/** Total time allowed for one background prewarm resolver probe batch. */
+const RENDER_PREWARM_PROBE_BUDGET_MS = 5_000;
+/**
+ * Bound resolver probes per prewarm run to a small multiple of the route cap.
+ * Tenant-controlled sources can surface many page-like candidates that never
+ * resolve, so validation work must stay bounded alongside the render count.
+ */
+const RENDER_PREWARM_PROBE_MULTIPLIER = 4;
+/**
+ * Share of the probe budget reserved for the highest-priority candidates.
+ * `selectPrewarmSlugs` ranks candidates against the slug being rendered, so the
+ * prefix holds the route-family siblings that prewarming exists to warm; the
+ * rest of the budget spreads across the remainder so an unresolvable prefix
+ * cannot hide every valid route.
+ */
+const RENDER_PREWARM_PROBE_PREFIX_RATIO = 0.5;
 
 type RenderAdmission = "foreground" | "background";
+type PrewarmProbeResult = "resolvable" | "missing" | "timed-out";
 
 const RENDER_PREWARM_MAX_ROUTES = getBoundedEnvNumber(
   "VERYFRONT_RENDER_PREWARM_MAX_ROUTES",
@@ -136,6 +155,59 @@ const RENDER_PREWARM_CONCURRENCY = getBoundedEnvNumber(
   1,
   8,
 );
+
+/**
+ * Choose which prewarm candidates may reach the resolver once the candidate
+ * list exceeds the probe budget.
+ *
+ * The budget is split in two so neither failure mode wins outright:
+ *
+ *  - a prioritized prefix keeps the route-family ordering `selectPrewarmSlugs`
+ *    established, so siblings of the slug being rendered are still probed
+ *    first instead of being thinned out by a uniform stride;
+ *  - the remaining budget samples the suffix at an even stride and always ends
+ *    on the final candidate, so a long unresolvable prefix cannot hide every
+ *    route the selected router would accept.
+ *
+ * Sampling is positional rather than router-aware because `getAllPages()`
+ * returns slugs without provenance. The prefix carries most of the weight
+ * anyway: ranking is anchored on the currently rendering slug, which the
+ * selected router already resolved, so its nearest neighbours come from that
+ * same router in practice.
+ */
+function selectPrewarmProbeCandidates(slugs: string[], maxProbes: number): string[] {
+  if (slugs.length <= maxProbes) return slugs;
+
+  const prefixCount = Math.max(
+    1,
+    Math.min(
+      maxProbes - 1,
+      Math.floor(maxProbes * RENDER_PREWARM_PROBE_PREFIX_RATIO),
+    ),
+  );
+  const sampleCount = maxProbes - prefixCount;
+  const selected = new Array<string>(maxProbes);
+  for (let prefixIndex = 0; prefixIndex < prefixCount; prefixIndex += 1) {
+    selected[prefixIndex] = slugs[prefixIndex]!;
+  }
+
+  const lastIndex = slugs.length - 1;
+  if (sampleCount === 1) {
+    selected[prefixCount] = slugs[lastIndex]!;
+    return selected;
+  }
+
+  // slugs.length > maxProbes, so the suffix is at least `sampleCount` wide and
+  // the stride below never repeats an index.
+  const suffixSpan = lastIndex - prefixCount;
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+    const sourceIndex = prefixCount + Math.floor(
+      (sampleIndex * suffixSpan) / (sampleCount - 1),
+    );
+    selected[prefixCount + sampleIndex] = slugs[sourceIndex]!;
+  }
+  return selected;
+}
 
 /**
  * Options for initializing the Renderer
@@ -285,6 +357,8 @@ export class Renderer {
   /** Lets foreground followers recover when a background leader fails fast at capacity. */
   private renderFlightAdmissions = new Map<string, RenderAdmission>();
   private productionPrewarmContexts = new Map<string, Promise<void>>();
+  /** Clock captured before tenant modules can replace `Date.now`. */
+  private prewarmNow = IntrinsicDateNow;
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
@@ -458,7 +532,8 @@ export class Renderer {
 
   /**
    * Compute a cache key that is query-aware and avoids caching personalized responses
-   * (Authorization / Cookie / x-api-key) unless the caller explicitly provides one.
+   * (Authorization / Cookie / x-api-key / admitted application identity) unless the
+   * caller explicitly provides one.
    *
    * Query param handling is configurable via `config.cache.queryParams`:
    * - "ignore-all": Ignore all query params (pages share cache regardless of URL params)
@@ -485,6 +560,10 @@ export class Renderer {
       );
     }
 
+    // Trusted-proxy identities arrive via headers that are stripped from the
+    // application request before this check runs, so an identity-bearing
+    // render must never share the anonymous slug-based cache key.
+    if (options?.applicationIdentity != null) return null;
     const req = options?.request;
     if (req) {
       if (requestHasCacheSensitiveState(req)) return null;
@@ -1188,16 +1267,32 @@ export class Renderer {
     return createPageResolver(ctx).getAllPages();
   }
 
-  async pageExists(slug: string, ctx: RenderContext): Promise<boolean> {
+  async pageExists(
+    slug: string,
+    ctx: RenderContext,
+    options: EntityResolutionOptions = {},
+  ): Promise<boolean> {
     if (!this.initialized) {
       throw INITIALIZATION_ERROR.create({
         detail: "Renderer not initialized. Call initialize() first.",
       });
     }
 
-    return createPageResolver(ctx).pageExists(slug);
+    return createPageResolver(ctx).pageExists(slug, options);
   }
 
+  /**
+   * Probe prewarm candidates for resolvability under a bounded probe budget.
+   *
+   * Prewarming degrades gracefully rather than exhaustively: at most
+   * `maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER` candidates reach the
+   * resolver, and the whole batch shares one `RENDER_PREWARM_PROBE_BUDGET_MS`
+   * deadline. A project whose candidate list is dominated by slugs the
+   * selected router cannot resolve can therefore end up prewarming nothing.
+   * That is the accepted trade: prewarming is a cache optimization, while an
+   * unbounded probe loop is a resource-exhaustion vector on shared renderer
+   * pods. Truncation is logged so the degraded case stays visible.
+   */
   private async filterResolvablePrewarmSlugs(
     ctx: RenderContext,
     slugs: string[],
@@ -1205,25 +1300,64 @@ export class Renderer {
   ): Promise<string[]> {
     if (maxRoutes <= 0) return [];
 
+    const maxProbes = maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER;
+    const deadline = this.prewarmNow() + RENDER_PREWARM_PROBE_BUDGET_MS;
+    const candidates = selectPrewarmProbeCandidates(slugs, maxProbes);
+    if (candidates.length < slugs.length) {
+      logger.debug("Production render prewarm probe budget truncated candidates", {
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        candidateCount: slugs.length,
+        probeCount: candidates.length,
+      });
+    }
     const resolvable: string[] = [];
 
-    for (const slug of slugs) {
-      try {
-        if (await this.pageExists(slug, ctx)) {
-          resolvable.push(slug);
-          if (resolvable.length >= maxRoutes) break;
-        }
-      } catch (error) {
-        logger.warn("Production render prewarm route validation failed", {
-          slug,
-          projectId: ctx.projectId,
-          releaseId: ctx.releaseId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+    for (const slug of candidates) {
+      const result = await this.probePrewarmCandidate(ctx, slug, deadline);
+      if (result === "timed-out") break;
+      if (result !== "resolvable") continue;
+      resolvable.push(slug);
+      if (resolvable.length >= maxRoutes) break;
     }
 
     return resolvable;
+  }
+
+  private async probePrewarmCandidate(
+    ctx: RenderContext,
+    slug: string,
+    deadline: number,
+  ): Promise<PrewarmProbeResult> {
+    const remainingMs = deadline - this.prewarmNow();
+    if (remainingMs <= 0) return "timed-out";
+
+    // Cancel the probe when the batch budget expires so the resolver slot is
+    // released instead of being held until entity resolution's own default
+    // deadline. The deadline is threaded through as well, so the lookup can
+    // never outlive this batch even if it never observes the abort.
+    const probeAbort = new AbortController();
+    const probe = this.pageExists(slug, ctx, { signal: probeAbort.signal, deadline });
+    // The probe outlives a timeout rejection; keep its late outcome handled.
+    void probe.catch(() => {});
+
+    try {
+      const exists = await withTimeoutThrow(
+        probe,
+        remainingMs,
+        "Production render prewarm route validation",
+        { onTimeout: () => probeAbort.abort() },
+      );
+      return exists ? "resolvable" : "missing";
+    } catch (error) {
+      logger.warn("Production render prewarm route validation failed", {
+        slug,
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return error instanceof TimeoutError ? "timed-out" : "missing";
+    }
   }
 
   async clearCache(ctx: RenderContext, slug?: string): Promise<void> {

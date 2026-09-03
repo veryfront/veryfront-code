@@ -272,6 +272,7 @@ async function resolveApiCredentialCandidates(
   configFile: VeryfrontConfig | null,
   interactive: boolean,
   validationEnv: EnvironmentConfig,
+  configFileValidationEnv: EnvironmentConfig = validationEnv,
 ): Promise<ApiCredentialCandidate[]> {
   const envToken = env.apiToken;
   const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
@@ -295,7 +296,7 @@ async function resolveApiCredentialCandidates(
     candidates.push({
       apiToken: configFile.apiToken,
       apiTokenSource: "config-file",
-      validationEnv,
+      validationEnv: configFileValidationEnv,
       authoritative: true,
     });
   }
@@ -336,12 +337,27 @@ export async function resolveApiCredentialCandidatesForAuth(
   interactive = true,
 ): Promise<ApiCredentialCandidate[]> {
   const configFile = await readConfigJsonFile(projectDir);
+  // A checked-in veryfront.json apiUrl only steers the credential that came
+  // from that same file. Shell-environment, .env-file, and token-store
+  // credentials validate against the environment-derived API URL, so a
+  // malicious repository config cannot redirect their Authorization headers
+  // to an attacker-controlled host.
   const validationEnv = {
+    ...env,
+    apiUrl: resolveCliApiUrl(env),
+  };
+  const configFileValidationEnv = {
     ...env,
     apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
   };
 
-  return resolveApiCredentialCandidates(env, configFile, interactive, validationEnv);
+  return resolveApiCredentialCandidates(
+    env,
+    configFile,
+    interactive,
+    validationEnv,
+    configFileValidationEnv,
+  );
 }
 
 async function resolveConfigBase(

@@ -16,6 +16,7 @@ import {
 } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
+import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 
 const logger = serverLogger.component("reset-api-handler");
 
@@ -140,6 +141,12 @@ function getCacheKey(ctx: HandlerContext): string {
 
 function shouldCacheApiHandler(ctx: HandlerContext): boolean {
   if (!ctx.projectSlug) return true;
+
+  // A config-less hosted handler has no environment fingerprint in its outer
+  // cache key. Recreate it for each request so route loading reaches the
+  // environment-scoped module discriminator instead of returning a route
+  // initialized under an earlier environment snapshot.
+  if (ctx.config === undefined && getProjectEnvSnapshot() !== undefined) return false;
 
   // Cannot confirm a production context → do not cache.
   return getApiHandlerCacheContext(ctx)?.mode === "production";

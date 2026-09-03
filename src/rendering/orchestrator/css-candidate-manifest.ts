@@ -20,6 +20,7 @@ interface CandidateManifest {
 
 interface RouteCandidateOptions {
   projectScope: string;
+  projectPartition?: string;
   projectVersion: string;
   projectDir: string;
   styleProfile?: StyleScopeProfile;
@@ -31,11 +32,14 @@ interface RouteCandidateOptions {
 
 interface ProjectCandidateOptions {
   projectScope: string;
+  projectPartition?: string;
   projectVersion: string;
   projectDir: string;
   styleProfile?: StyleScopeProfile;
   files: SourceFileLike[];
   developmentMode: boolean;
+  /** Store a newly built manifest only while its source snapshot is current. */
+  shouldCache?: () => boolean;
 }
 
 const logger = rendererLogger.component("css-candidate-manifest");
@@ -100,10 +104,13 @@ function toDiagnosticProjectPath(path: string, projectDir: string): string {
 
 function buildManifestCacheKey(
   projectScope: string,
+  projectPartition: string,
   projectVersion: string,
   styleProfileHash?: string,
 ): string {
-  return `${projectScope}:${projectVersion}:${styleProfileHash ?? "default"}`;
+  return `${projectScope}\u0000${projectPartition}\u0000${projectVersion}\u0000${
+    styleProfileHash ?? "default"
+  }`;
 }
 
 function shouldRebuildManifest(
@@ -168,11 +175,19 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
 function getOrBuildManifest(
   options: Pick<
     ProjectCandidateOptions,
-    "projectScope" | "projectVersion" | "projectDir" | "files" | "developmentMode" | "styleProfile"
+    | "projectScope"
+    | "projectPartition"
+    | "projectVersion"
+    | "projectDir"
+    | "files"
+    | "developmentMode"
+    | "styleProfile"
+    | "shouldCache"
   >,
 ): CandidateManifest {
   const manifestKey = buildManifestCacheKey(
     options.projectScope,
+    options.projectPartition ?? options.projectScope,
     options.projectVersion,
     options.styleProfile?.hash,
   );
@@ -184,7 +199,7 @@ function getOrBuildManifest(
     ? buildCandidateManifest(scopedFiles, options.projectDir)
     : existingManifest!;
 
-  if (manifest !== existingManifest) {
+  if (manifest !== existingManifest && (options.shouldCache?.() ?? true)) {
     manifestCache.set(manifestKey, manifest);
 
     for (const key of routeCandidateCache.keys()) {
@@ -215,6 +230,7 @@ function addCandidatesForPath(
 export function getRouteCandidates(options: RouteCandidateOptions): Set<string> {
   const manifestKey = buildManifestCacheKey(
     options.projectScope,
+    options.projectPartition ?? options.projectScope,
     options.projectVersion,
     options.styleProfile?.hash,
   );
@@ -285,10 +301,10 @@ export function invalidateProjectCandidateManifests(projectScope?: string): void
   }
 
   for (const key of manifestCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) manifestCache.delete(key);
+    if (key.startsWith(`${projectScope}\u0000`)) manifestCache.delete(key);
   }
 
   for (const key of routeCandidateCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) routeCandidateCache.delete(key);
+    if (key.startsWith(`${projectScope}\u0000`)) routeCandidateCache.delete(key);
   }
 }

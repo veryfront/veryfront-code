@@ -31,7 +31,13 @@ export class AgentLoopSkillState {
     this.hasSubmittedFormInput = hasSubmittedFormInput;
   }
 
-  /** Hydrate request-scoped skill state from replay history. */
+  /**
+   * Hydrate request-scoped skill state from replay history.
+   *
+   * Replayed messages are caller-supplied, so hydration never carries
+   * delegation overrides; those require a load_skill result this runtime
+   * produced via `applySuccessfulResult`.
+   */
   static hydrate(
     messages: readonly Message[],
     runtimeContext: Record<string, unknown> | undefined,
@@ -42,13 +48,22 @@ export class AgentLoopSkillState {
     return new AgentLoopSkillState(hydrated, hasSubmittedFormInput);
   }
 
-  /** Fold a successful skill-activation tool result into the active skill state. */
+  /**
+   * Fold a successful skill-activation tool result into the active skill state.
+   *
+   * Callers pass only the output of a load_skill call this runtime executed, so
+   * this is the one path allowed to seed delegation overrides.
+   */
   applySuccessfulResult(result: unknown): void {
-    const next = applySkillActivationResult({
-      activeSkillId: this.activeSkillId,
-      activeSkillToolAvailability: this.activeSkillToolAvailability,
-      activeSkillDelegationOverrides: this.activeSkillDelegationOverrides,
-    }, result);
+    const next = applySkillActivationResult(
+      {
+        activeSkillId: this.activeSkillId,
+        activeSkillToolAvailability: this.activeSkillToolAvailability,
+        activeSkillDelegationOverrides: this.activeSkillDelegationOverrides,
+      },
+      result,
+      { trustDelegationOverrides: true },
+    );
     this.activeSkillId = next.activeSkillId;
     this.activeSkillToolAvailability = next.activeSkillToolAvailability;
     this.activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;

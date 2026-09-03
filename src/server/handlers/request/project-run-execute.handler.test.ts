@@ -1,7 +1,12 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -20,6 +25,8 @@ import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  projectWorkflowRedisConfig,
+  projectWorkflowRedisPrefix,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -49,6 +56,149 @@ describe("createKnowledgeEventLogger", () => {
 
     assertEquals(encoder.encode(lines.join("\n")).byteLength <= 256 * 1_024, true);
     assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+});
+
+describe("projectWorkflowRedisPrefix", () => {
+  it("namespaces durable workflow state per project", () => {
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1"),
+      "vf:workflow:project:proj-1:target:main_branch:environment::branch::",
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1") === projectWorkflowRedisPrefix("proj-2"),
+      false,
+    );
+  });
+
+  it("escapes characters that could collide or match Redis SCAN globs", () => {
+    const prefix = projectWorkflowRedisPrefix("proj*:[a]?");
+    assertEquals(/^[A-Za-z0-9_.:-]+$/.test(prefix), true);
+    // Escaping is injective: ids that differ only in escaped characters
+    // never produce the same namespace.
+    assertEquals(
+      projectWorkflowRedisPrefix("a.b") === projectWorkflowRedisPrefix("a.2e.b"),
+      false,
+    );
+  });
+
+  it("does not use project-controlled string encoding methods", () => {
+    const originalReplace = String.prototype.replace;
+    const originalCharCodeAt = String.prototype.charCodeAt;
+    const originalNumberToString = Number.prototype.toString;
+    let first: string | undefined;
+    let second: string | undefined;
+    try {
+      String.prototype.replace = () => "shared";
+      String.prototype.charCodeAt = () => 0;
+      Number.prototype.toString = () => "0";
+      first = projectWorkflowRedisPrefix("project.*");
+      second = projectWorkflowRedisPrefix("project.?");
+    } finally {
+      String.prototype.replace = originalReplace;
+      String.prototype.charCodeAt = originalCharCodeAt;
+      Number.prototype.toString = originalNumberToString;
+    }
+
+    assertEquals(first === second, false);
+  });
+
+  it("preserves whitespace in the verified project id when configuring Redis", () => {
+    const canonical = projectWorkflowRedisConfig("proj-1");
+    const whitespacePrefixed = projectWorkflowRedisConfig(" proj-1");
+
+    assertEquals(canonical, {
+      prefix: "vf:workflow:project:proj-1:target:main_branch:environment::branch::",
+      streamKey: "vf:workflow:project:proj-1:target:main_branch:environment::branch::stream",
+      groupName: "vf:workflow:project:proj-1:target:main_branch:environment::branch::workers",
+    });
+    assertEquals(whitespacePrefixed, {
+      prefix: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::",
+      streamKey: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::stream",
+      groupName: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::workers",
+    });
+  });
+
+  it("canonicalizes an omitted runtime target kind to the default branch", () => {
+    // The control-plane wire format leaves runtimeTargetKind optional and
+    // resolveControlPlaneBranchBinding reads an omitted kind as main_branch.
+    // Both spellings must land in one namespace or an approval waiting under
+    // the explicit spelling is invisible to a recovery scan started under the
+    // implicit one.
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {}),
+      projectWorkflowRedisPrefix("proj-1", { runtimeTargetKind: "main_branch" }),
+    );
+  });
+
+  it("ignores identifiers that do not belong to the selected target kind", () => {
+    // A default-branch or environment run carries no preview branch id, so a
+    // stray identifier must not split one target across two namespaces.
+    const mainBranch = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "main_branch",
+    });
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "main_branch",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      mainBranch,
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+      }),
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "branch-1",
+      }),
+    );
+  });
+
+  it("namespaces durable workflow state per runtime target", () => {
+    const main = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "main_branch",
+    });
+    const environment = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+    });
+    const otherEnvironment = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-2",
+    });
+    const preview = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: "branch-1",
+    });
+
+    assertEquals(new Set([main, environment, otherEnvironment, preview]).size, 4);
+  });
+
+  it("refuses to configure durable persistence without a project scope", () => {
+    // An unscoped prefix would let one project's recovery scan enumerate
+    // every other project's durable workflow keys, so an empty scope must
+    // fail closed instead of falling back to a shared namespace.
+    const error = assertThrows(() => projectWorkflowRedisConfig("")) as {
+      slug?: string;
+      detail?: string;
+    };
+    assertEquals(error.slug, "input-validation-failed");
+    assertStringIncludes(error.detail ?? "", "requires a project scope");
   });
 });
 
@@ -1576,6 +1726,57 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(order, ["discover", "create-client", "start"]);
   });
 
+  it("scopes the workflow client to the verified project and runtime target", async () => {
+    let clientScope: {
+      projectId: string;
+      runtimeTargetKind?: string;
+      runtimeTargetEnvironmentId?: string | null;
+      runtimeTargetBranchId?: string | null;
+    } | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: (_config, options) => {
+        clientScope = options;
+        return {
+          register: () => {},
+          start: async (
+            _workflowId: string,
+            _input: unknown,
+            startOptions?: { runId?: string },
+          ) => ({ runId: startOptions?.runId ?? "workflow-run" }),
+          getRun: async () => ({
+            status: "completed",
+            output: { deployed: true },
+          }),
+          destroy: async () => {},
+        };
+      },
+    }));
+    const body = {
+      runId: "run_workflow_scope_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_scope_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(clientScope, {
+      projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+      runtimeTargetBranchId: undefined,
+    });
+  });
+
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
     agentRegistry.clearAll();
@@ -1893,5 +2094,84 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 401);
     assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
+  });
+
+  it("rejects runtime targets that carry no identifier for their kind", async () => {
+    // Both selections would canonicalize to the empty identifier, so every
+    // environment run missing its environment id — and every preview run
+    // missing its branch id — would share one durable workflow namespace and
+    // could resume another target's runs and approval decision claims.
+    const handler = new ProjectRunExecuteHandler(createDeps());
+
+    for (
+      const body of [
+        {
+          runId: "run_bad_environment",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "environment",
+        },
+        {
+          runId: "run_bad_preview",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+        },
+      ]
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${body.runId}/execute`,
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+    }
+  });
+
+  it("rejects runtime targets carrying an identifier from a different kind", async () => {
+    // A selection that names both an environment and a preview branch is
+    // malformed rather than a namespace: it is exactly what
+    // validateRuntimeAgentTargetSelection rejects on the agent invocation
+    // contract, and accepting it here would let one request choose which
+    // target's durable state it resumes.
+    const handler = new ProjectRunExecuteHandler(createDeps());
+
+    for (
+      const body of [
+        {
+          runId: "run_cross_environment",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: "env-1",
+          runtimeTargetBranchId: "branch-1",
+        },
+        {
+          runId: "run_cross_preview",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetEnvironmentId: "env-1",
+          runtimeTargetBranchId: "branch-1",
+        },
+      ]
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${body.runId}/execute`,
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+    }
   });
 });

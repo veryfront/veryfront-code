@@ -33,8 +33,13 @@ function removeReservedRuntimeContextBlocks(instructions: string): string {
     const contentStart = openIndex + openingTag.length;
     const closeOffset = result.slice(contentStart).search(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN);
     if (closeOffset < 0) {
-      result = result.slice(0, openIndex);
-      break;
+      // An unclosed authored tag must not swallow everything after it: later
+      // framework-authored blocks are appended behind authored instructions, so
+      // truncating here would let authored content delete those guardrails.
+      // Drop only the reserved opening tag and keep scanning the remainder.
+      result = result.slice(0, openIndex) + result.slice(contentStart);
+      openIndex = result.search(RUNTIME_CONTEXT_OPEN_TAG_PATTERN);
+      continue;
     }
 
     const closeIndex = contentStart + closeOffset;
