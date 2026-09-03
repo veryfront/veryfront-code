@@ -91,6 +91,32 @@ describe("MDX module path cache", () => {
     }
   });
 
+  it("keeps traversal-shaped content source ids inside the cache root", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-traversal-guard-" });
+    const projectId = "project-traversal-guard";
+
+    try {
+      await runWithCacheDir(cacheBase, () => {
+        // Content source ids come from the x-content-source-id request header,
+        // and every directory returned here is passed to a recursive remove.
+        const mdxCacheDir = join(cacheBase, "veryfront-mdx-esm");
+        for (
+          const contentSourceId of ["../../escape", "..", ".", "", "/etc", "preview/../../escape"]
+        ) {
+          for (const cacheDir of getMdxEsmSsrCacheDirs(projectId, contentSourceId)) {
+            assertEquals(
+              cacheDir.startsWith(`${mdxCacheDir}/`),
+              true,
+              `cache dir must stay under the cache root: ${cacheDir}`,
+            );
+          }
+        }
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+    }
+  });
+
   it("clears a project/content-source namespace from disk and memory", async () => {
     clearModulePathCache();
 

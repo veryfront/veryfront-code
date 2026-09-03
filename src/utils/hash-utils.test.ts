@@ -10,6 +10,7 @@ import {
   computeHash,
   fnv1aHash,
   hashCodeHex,
+  MAX_CACHE_NAMESPACE_SEGMENT_LENGTH,
   shortHash,
   simpleHash,
 } from "./hash-utils.ts";
@@ -271,12 +272,51 @@ describe("hash-utils", () => {
     });
 
     it("produces filesystem- and URL-safe segments", () => {
-      for (const id of ["my/project", "a b\\c%2F", "preview-feature/refactor", "こんにちは", ""]) {
+      const ids = [
+        "my/project",
+        "a b\\c%2F",
+        "preview-feature/refactor",
+        "こんにちは",
+        "",
+        "preview_main-1",
+        "x".repeat(4096),
+      ];
+      for (const id of ids) {
         const segment = cacheNamespaceSegment(id);
         assertEquals(
-          /^[a-z0-9-]+$/.test(segment),
+          /^[a-z0-9_-]+$/.test(segment),
           true,
           `segment must be path-safe and case-insensitive: ${segment}`,
+        );
+        assertEquals(
+          segment.length <= MAX_CACHE_NAMESPACE_SEGMENT_LENGTH,
+          true,
+          `segment must stay within the documented bound: ${segment.length}`,
+        );
+      }
+    });
+
+    it("keeps path-safe identifiers verbatim so cached module paths stay short", () => {
+      // Two of these segments nest per cached SSR module path, so doubling
+      // every id as hex would push deep routes past the 260-character path
+      // limit on hosts without long-path support.
+      assertEquals(cacheNamespaceSegment("preview-58x4ga9b"), "id-preview-58x4ga9b");
+      assertEquals(
+        cacheNamespaceSegment("3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90"),
+        "id-3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
+      );
+      assertEquals(cacheNamespaceSegment("preview_main"), "id-preview_main");
+    });
+
+    it("does not keep identifiers verbatim when a filesystem could fold them", () => {
+      // A leading separator-like character, an uppercase letter, or a trailing
+      // dot (which Windows strips from directory names) must not survive into
+      // the segment as written.
+      for (const id of ["-leading", "_leading", "Preview", "trailing.", "with.dot"]) {
+        assertEquals(
+          cacheNamespaceSegment(id).startsWith("hx-"),
+          true,
+          `id must be hex-encoded: ${id}`,
         );
       }
     });
@@ -315,14 +355,14 @@ describe("hash-utils", () => {
       assertEquals(/^[a-z0-9-]+$/.test(cacheNamespaceSegment("\uD800")), true);
     });
 
-    it("encodes well-formed identifiers as their UTF-8 bytes", () => {
+    it("encodes well-formed non-verbatim identifiers as their UTF-8 bytes", () => {
       const utf8Hex = (value: string) =>
         Array.from(new TextEncoder().encode(value))
           .map((byte) => byte.toString(16).padStart(2, "0"))
           .join("");
 
-      for (const id of ["branch-main", "こんにちは", "😀", "a b\\c%2F", ""]) {
-        assertEquals(cacheNamespaceSegment(id), `id-${utf8Hex(id)}`);
+      for (const id of ["Branch-Main", "こんにちは", "😀", "a b\\c%2F", ""]) {
+        assertEquals(cacheNamespaceSegment(id), `hx-${utf8Hex(id)}`);
       }
     });
 
@@ -349,15 +389,18 @@ describe("hash-utils", () => {
       }
 
       assertEquals(segment, cacheNamespaceSegment(oversized));
-      assertNotEquals(segment, "h-x-x");
+      assertEquals(segment?.endsWith("-x-x"), false);
       assertNotEquals(segment, cacheNamespaceSegment(`${"z".repeat(4096)}other`));
     });
 
-    it("keeps inline and hashed forms in disjoint namespaces", () => {
-      const inline = cacheNamespaceSegment("short-id");
-      const hashed = cacheNamespaceSegment("y".repeat(4096));
-      assertEquals(inline.startsWith("id-"), true);
-      assertEquals(hashed.startsWith("h-"), true);
+    it("keeps verbatim, hex and hashed forms in disjoint namespaces", () => {
+      // An identifier whose hex encoding reads back as another identifier must
+      // not land in that identifier's namespace, so the three forms carry
+      // prefixes that no other form can produce.
+      assertEquals(cacheNamespaceSegment("short-id").startsWith("id-"), true);
+      assertEquals(cacheNamespaceSegment("Short-Id").startsWith("hx-"), true);
+      assertEquals(cacheNamespaceSegment("y".repeat(4096)).startsWith("h-"), true);
+      assertNotEquals(cacheNamespaceSegment("ab"), cacheNamespaceSegment("6162"));
     });
   });
 });

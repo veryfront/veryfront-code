@@ -4,6 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
 import { cacheNamespaceSegment, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
   it("builds a stable tmp dir cache key with encoded project id", () => {
@@ -39,6 +42,51 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
     const firstKey = getTmpDirCacheKey("/cache/mdx", "my/project", "preview-58x4ga9b", "0.1.7");
     const secondKey = getTmpDirCacheKey("/cache/mdx", "my/project", "preview-5icz6rpk", "0.1.7");
     assert(firstKey !== secondKey, "colliding source ids must not share a tmp dir cache key");
+  });
+
+  it("derives the same directory as the MDX ESM SSR cache", () => {
+    // The SSR loader writes transformed modules into buildTmpDirPath and the
+    // MDX cache reads them back from getMdxEsmSsrCacheDir. If the two
+    // derivations drift, the loader writes into a directory the MDX cache
+    // never reads.
+    runWithCacheDir("/cache", () => {
+      for (
+        const [projectId, contentSourceId] of [
+          ["project-parity", "preview-main"],
+          ["My/Project", "preview-feature/refactor"],
+          ["project-parity", "s".repeat(4096)],
+        ] as const
+      ) {
+        assertEquals(
+          buildTmpDirPath(getMdxEsmCacheDir(), projectId, contentSourceId, RUNTIME_VERSION),
+          getMdxEsmSsrCacheDir(projectId, contentSourceId),
+        );
+      }
+    });
+  });
+
+  it("keeps cached module paths within platform path limits", () => {
+    // Namespace segments are lossless rather than hashed, so their length is
+    // part of every cached module path. Hosts without long-path support cap a
+    // path at 260 characters, and a realistic deep route must stay under it.
+    const tmpDir = buildTmpDirPath(
+      "/Users/example/.cache/veryfront/veryfront-mdx-esm",
+      "3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
+      "preview-58x4ga9b",
+      "0.1.7",
+    );
+    const modulePath = buildTempModulePath(
+      tmpDir,
+      "/project/_vf_modules/app/(marketing)/docs/[category]/[slug]/page.tsx",
+      "/project",
+      "0.1.7",
+      "deadbeefcafebabe",
+    );
+
+    assert(
+      modulePath.length < 260,
+      `cached module path must stay within platform path limits: ${modulePath.length}`,
+    );
   });
 
   it("isolates tmp directories by runtime version", () => {

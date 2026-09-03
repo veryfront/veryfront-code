@@ -251,7 +251,9 @@ export async function registerCycleManifestSources(
 
 export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
   // Must stay in sync with buildTmpDirPath in
-  // modules/react-loader/ssr-module-loader/tmp-paths.ts. The segments are
+  // modules/react-loader/ssr-module-loader/tmp-paths.ts, which writes the
+  // modules this directory is read back from. The parity test lives in
+  // modules/react-loader/ssr-module-loader/tmp-paths.test.ts. The segments are
   // collision-free: the previous 32-bit hashCodeHex keying let two content
   // sources of one project share an SSR cache namespace and serve each
   // other's transformed modules.
@@ -276,17 +278,36 @@ function getLegacyHashedMdxEsmSsrCacheDir(projectId: string, contentSourceId: st
   return join(getMdxEsmCacheDir(), hashCodeHex(projectId), hashCodeHex(contentSourceId));
 }
 
-function getLegacyRawMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
-  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+/** Whether cacheDir is strictly below parentDir, on either path separator. */
+function isDescendantCachePath(cacheDir: string, parentDir: string): boolean {
+  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalize(cacheDir).startsWith(`${normalize(parentDir)}/`);
+}
+
+/**
+ * The oldest cache layout joined the raw content source id into the path. That
+ * id is request-controlled (the `x-content-source-id` header), and every
+ * directory returned by getMdxEsmSsrCacheDirs is passed to a recursive remove,
+ * so a traversal-shaped id would delete directories outside the cache root.
+ * Only ids that stay below the project's legacy cache directory can name one.
+ */
+function getLegacyRawMdxEsmSsrCacheDir(
+  projectId: string,
+  contentSourceId: string,
+): string | undefined {
+  const legacyProjectDir = join(getMdxEsmCacheDir(), hashCodeHex(projectId));
+  const cacheDir = join(legacyProjectDir, contentSourceId);
+  return isDescendantCachePath(cacheDir, legacyProjectDir) ? cacheDir : undefined;
 }
 
 export function getMdxEsmSsrCacheDirs(projectId: string, contentSourceId: string): string[] {
-  return [
+  const cacheDirs = [
     getMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyWeakHashMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyHashedMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId),
-  ].filter((cacheDir, index, cacheDirs) => cacheDirs.indexOf(cacheDir) === index);
+  ].filter((cacheDir) => cacheDir !== undefined);
+  return cacheDirs.filter((cacheDir, index) => cacheDirs.indexOf(cacheDir) === index);
 }
 
 function getModulePathCacheEntryCount(): number {

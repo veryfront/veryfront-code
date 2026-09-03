@@ -6,10 +6,21 @@ const SHORT_HASH_LENGTH = 8;
 
 /**
  * Maximum encoded identifier length kept losslessly by cacheNamespaceSegment.
- * 200 hex characters cover identifiers up to 100 UTF-8 bytes while keeping the
+ * 200 hex characters cover identifiers up to 100 WTF-8 bytes while keeping the
  * resulting path segment far below the 255-byte filename limit.
  */
 const MAX_INLINE_NAMESPACE_SEGMENT_LENGTH = 200;
+
+/** Longest identifier cacheNamespaceSegment keeps verbatim (ASCII, 1 byte each). */
+const MAX_VERBATIM_NAMESPACE_ID_LENGTH = MAX_INLINE_NAMESPACE_SEGMENT_LENGTH / 2;
+
+/**
+ * Upper bound on any cacheNamespaceSegment result: a three-character prefix
+ * plus the longest inline encoding. Cached SSR module paths nest two of these
+ * segments, so this is the budget callers must leave room for when they append
+ * a base cache directory, a version segment, and a relative module path.
+ */
+export const MAX_CACHE_NAMESPACE_SEGMENT_LENGTH = 3 + MAX_INLINE_NAMESPACE_SEGMENT_LENGTH;
 
 const FNV1A_OFFSET_BASIS_64 = 14695981039346656037n;
 const FNV1A_PRIME_64 = 1099511628211n;
@@ -209,26 +220,68 @@ function wtf8Hex(value: string): string {
 }
 
 /**
+ * Whether an identifier is already a safe, case-fold-stable path segment and
+ * can be kept verbatim instead of doubling in length as hex.
+ *
+ * Cached SSR module paths nest two namespace segments before the relative
+ * module path, so segment length is a real budget: hosts without long-path
+ * support cap a path at 260 characters. Lowercase ASCII letters, digits, "-"
+ * and "_" survive every supported filesystem unchanged, and an all-lowercase
+ * segment cannot fold into a different one on a case-insensitive filesystem.
+ *
+ * The first character must be a letter or a digit so a segment never starts
+ * with a separator-like character, and "." is excluded because Windows strips
+ * trailing dots from directory names, which would fold "x." and "x" into one
+ * namespace.
+ */
+function isVerbatimNamespaceId(id: string): boolean {
+  const length = id.length;
+  if (length === 0 || length > MAX_VERBATIM_NAMESPACE_ID_LENGTH) return false;
+
+  for (let index = 0; index < length; index++) {
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, id, [index]) as number;
+    if (codeUnit >= 0x30 && codeUnit <= 0x39) continue;
+    if (codeUnit >= 0x61 && codeUnit <= 0x7a) continue;
+    if (index > 0 && (codeUnit === 0x2d || codeUnit === 0x5f)) continue;
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Filesystem-safe cache namespace segment for an identifier.
  *
- * These segments partition on-disk SSR caches by project and content source,
- * so two distinct identifiers must never share a segment: a collision lets one
- * content source serve another source's transformed modules for the same file
- * path. Identifiers of normal length are encoded losslessly (lowercase hex of
- * their WTF-8 bytes, which preserves unpaired surrogates that UTF-8 encoding
- * would fold to U+FFFD), which makes collisions impossible, including on
- * case-insensitive filesystems, where a case-sensitive encoding would fold
- * distinct segments back together. Oversized identifiers collapse to two
- * domain-separated 64-bit FNV-1a hashes so path segments stay bounded without
- * returning to the collision-prone 32-bit hashCodeHex digest used here
- * previously. The two forms carry disjoint prefixes so they can never collide
- * with each other.
+ * These segments partition on-disk SSR caches by project and content source, so
+ * a shared segment lets one content source serve another source's transformed
+ * modules for the same file path.
+ *
+ * Identifiers up to 100 WTF-8 bytes are encoded losslessly under two disjoint
+ * prefixes: verbatim under "id-" when they are already a lowercase path-safe
+ * token, otherwise as lowercase hex of their WTF-8 bytes under "hx-". Both
+ * encodings are injective, so distinct identifiers of that size provably never
+ * share a segment, including on case-insensitive filesystems, where a
+ * case-sensitive encoding would fold distinct segments back together. Hex of
+ * the WTF-8 bytes is used rather than UTF-8 encoding because `TextEncoder`
+ * folds an unpaired surrogate to U+FFFD, which would merge two namespaces.
+ *
+ * Longer identifiers cannot stay inline without unbounded path segments, so
+ * they collapse under a third disjoint prefix, "h-", to their WTF-8 byte length
+ * plus two domain-separated 64-bit FNV-1a digests. That is 128 bits of a
+ * non-cryptographic hash, further restricted to identifiers of equal byte
+ * length: collisions there are impractical rather than impossible, so the
+ * "never share a segment" guarantee is scoped to the inline forms. Callers that
+ * derive segments from untrusted identifiers must bound their length upstream
+ * to stay on the lossless path.
  */
 export function cacheNamespaceSegment(id: string): string {
-  const encoded = wtf8Hex(id);
-  if (encoded.length <= MAX_INLINE_NAMESPACE_SEGMENT_LENGTH) return `id-${encoded}`;
+  if (isVerbatimNamespaceId(id)) return `id-${id}`;
 
-  return `h-${fnv1a64Base36(`cache-namespace:a:${id}`)}-${
+  const encoded = wtf8Hex(id);
+  if (encoded.length <= MAX_INLINE_NAMESPACE_SEGMENT_LENGTH) return `hx-${encoded}`;
+
+  const byteLength = ReflectApply(NumberPrototypeToString, encoded.length / 2, [36]) as string;
+  return `h-${byteLength}-${fnv1a64Base36(`cache-namespace:a:${id}`)}-${
     fnv1a64Base36(`cache-namespace:b:${id}`)
   }`;
 }
