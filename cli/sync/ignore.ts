@@ -102,6 +102,7 @@ interface IgnoreRule {
   regex: RegExp;
   anchored: boolean;
   literalPrefix: string;
+  descendantPrefixRegexes: RegExp[];
 }
 
 /**
@@ -208,12 +209,18 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
   const wildcardIndex = pattern.search(/[*?]/);
   const literalPrefix = (wildcardIndex === -1 ? pattern : pattern.slice(0, wildcardIndex))
     .replace(/\/+$/, "");
+  const pathSegments = pattern.split("/");
+  const descendantPrefixRegexes = pathSegments.slice(0, -1).map((_, index) => {
+    const prefixBody = globToRegex(pathSegments.slice(0, index + 1).join("/"));
+    return new RegExp(`${anchored ? "^" : "(^|/)"}${prefixBody}$`, caseInsensitive ? "i" : "");
+  });
 
   return {
     negated,
     regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
     anchored,
     literalPrefix,
+    descendantPrefixRegexes,
   };
 }
 
@@ -244,6 +251,7 @@ function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string):
   // any directory, so a protected directory stops that negation from ever
   // being evaluated on a concrete child.
   if (!rule.literalPrefix) return true;
+  if (rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath))) return true;
   const candidates = rule.anchored
     ? [normalizedPath]
     : normalizedPath.split("/").map((_, index, parts) => parts.slice(index).join("/"));

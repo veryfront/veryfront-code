@@ -225,9 +225,16 @@ describe("cli/sync/ignore", () => {
         assertEquals(wildcardChecker.isIgnored(".env"), true);
         assertEquals(warnings.length, 3, "a recursive prefix must not hide the warning");
 
+        const internalWildcardChecker = createIgnoreChecker([
+          "src/.env*",
+          "!src/**/.env/**",
+        ]);
+        assertEquals(internalWildcardChecker.isIgnored("src/.env"), true);
+        assertEquals(warnings.length, 4, "an internal wildcard must not hide the warning");
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 3, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 4, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();
