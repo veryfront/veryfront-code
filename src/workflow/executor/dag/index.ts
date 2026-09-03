@@ -49,7 +49,7 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
-import { collectWorkflowNodeIds } from "../../dsl/validation.ts";
+import { collectWorkflowNodeIds } from "#veryfront/workflow/dsl/validation";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import {
   executeCompositeNodeWithPolicy,
