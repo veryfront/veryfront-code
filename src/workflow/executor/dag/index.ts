@@ -395,7 +395,15 @@ function collectCompletedCompositeChildIds(
     if (node.config.type === "map") {
       const output = nodeStates[node.id]?.output;
       if (Array.isArray(output)) {
-        for (let index = 0; index < output.length; index++) target.add(`${node.id}_${index}`);
+        for (let index = 0; index < output.length; index++) {
+          const wrapperId = `${node.id}_${index}`;
+          target.add(wrapperId);
+          const wrapperOutput = nodeStates[wrapperId]?.output;
+          if (typeof wrapperOutput !== "object" || wrapperOutput === null) continue;
+          for (const childId of Object.keys(wrapperOutput)) {
+            if (childId.startsWith(`${wrapperId}/`)) target.add(childId);
+          }
+        }
       }
       continue;
     }
@@ -755,23 +763,21 @@ export class DAGExecutor {
       // above; unresolved producers are serialized against other composite
       // producers in the same batch.
       const unresolvedNodeIds: string[] = [];
-      let hasResolvedSubWorkflow = false;
+      const resolvedProducerIds: string[] = [];
       for (const nodeId of candidateBatch) {
         const node = nodeMap.get(nodeId);
         if (node === undefined || !nodeMayProduceSharedChildState(node)) continue;
         if (nodeHasUnknownSharedChildReservations(node)) unresolvedNodeIds.push(nodeId);
-        else hasResolvedSubWorkflow = true;
+        else resolvedProducerIds.push(nodeId);
       }
       let batch = candidateBatch;
       if (
-        unresolvedNodeIds.length > 1 || (unresolvedNodeIds.length === 1 && hasResolvedSubWorkflow)
+        unresolvedNodeIds.length > 0 && unresolvedNodeIds.length + resolvedProducerIds.length > 1
       ) {
-        // Keep the first unresolved node only when nothing else in the batch
-        // can write child state, so a batch of unresolved siblings still makes
-        // progress one at a time instead of deadlocking.
-        const deferred = new Set(
-          hasResolvedSubWorkflow ? unresolvedNodeIds : unresolvedNodeIds.slice(1),
-        );
+        // Admit the first unresolved producer before any known producer. Its
+        // selected child IDs then become historical state that the later
+        // producer's ownership checks cannot mistake for its own children.
+        const deferred = new Set([...unresolvedNodeIds.slice(1), ...resolvedProducerIds]);
         batch = candidateBatch.filter((nodeId) => !deferred.has(nodeId));
         ready = [...candidateBatch.filter((nodeId) => deferred.has(nodeId)), ...ready];
       }

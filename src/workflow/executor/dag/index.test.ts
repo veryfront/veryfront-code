@@ -3716,8 +3716,8 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
 
       assertEquals(result.waiting, true);
-      assertEquals(result.nodeStates.orders, undefined);
-      assertEquals(result.nodeStates.direct?.status, "running");
+      assertEquals(result.nodeStates.orders?.status, "running");
+      assertEquals(result.nodeStates.direct, undefined);
       assertEquals(result.nodeStates["orders_0/review"]?.status, "running");
     });
 
@@ -3806,6 +3806,60 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates.release?.status, "completed");
     });
 
+    it("tracks descendants evidenced by a completed map wrapper output", async () => {
+      const nodes: WorkflowNode[] = [
+        map("orders", {
+          items: [{}],
+          processor: {
+            id: "order-workflow",
+            steps: [waitForApproval("review", { message: "Map review" })],
+          },
+        }),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("orders_0/review", { message: "Release review" })],
+            },
+          }),
+          dependsOn: ["orders"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            orders: {
+              nodeId: "orders",
+              status: "completed",
+              output: [{}],
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            orders_0: {
+              nodeId: "orders_0",
+              status: "completed",
+              output: { "orders_0/review": { approved: true } },
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "orders_0/review": {
+              nodeId: "orders_0/review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.nodeStates.release?.status, "running");
+    });
+
     it("does not seed a completed parallel child into a later sub-workflow", async () => {
       const nodes: WorkflowNode[] = [
         parallel("group", [waitForApproval("review", { message: "Group review" })]),
@@ -3874,10 +3928,11 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
 
       assertEquals(result.waiting, true);
-      // Distinct, statically visible child ids cannot collide, so both siblings
-      // raise their approvals together. Only the callback-defined node waits.
-      assertEquals(result.waitingNodes?.map((wait) => wait.nodeId), ["review-1", "review-2"]);
-      assertEquals(result.nodeStates["review-dynamic"], undefined);
+      // The callback-defined producer runs first so its runtime child IDs
+      // become historical before the static siblings are admitted.
+      assertEquals(result.waitingNodes?.map((wait) => wait.nodeId), ["review-dynamic"]);
+      assertEquals(result.nodeStates["review-1"], undefined);
+      assertEquals(result.nodeStates["review-2"], undefined);
     });
 
     it("admits a branch whose untaken arm would collide with a concurrent sibling", async () => {
@@ -3928,9 +3983,40 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.error, undefined);
       assertEquals(result.completed, true);
-      // The branch is deferred out of the batch holding "direct", so the two
-      // never produce child state at the same time.
-      assertEquals(executed, ["shipped", "taken-child"]);
+      // The unresolved branch runs first, so the two never produce child state
+      // at the same time and its selected arm decides the historical IDs.
+      assertEquals(executed, ["taken-child", "shipped"]);
+    });
+
+    it("admits an unresolved branch before a colliding static producer", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [waitForApproval("gate/then/review", { message: "Branch review" })],
+            else: [],
+          } as any,
+        },
+        {
+          ...subWorkflow("static-release", {
+            workflow: {
+              id: "static-release-workflow",
+              steps: [waitForApproval("gate/then/review", { message: "Static review" })],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "gate/then/review");
+      assertEquals(result.nodeStates.gate?.status, "running");
+      assertEquals(result.nodeStates["static-release"], undefined);
     });
 
     it("admits a sub-workflow whose untaken branch arm would collide with a sibling", async () => {
