@@ -166,6 +166,18 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("does not join an array opener across the omitted window gap", () => {
+      const opener = '"provider_tool_ids": [';
+      const head = `${"x".repeat(64_000 - opener.length - 1)} ${opener}`;
+      const middle = `]${"m".repeat(9_999)}`;
+      const tailValue = '"web_fetch"]';
+      const tail = `${tailValue}${" ".repeat(64_000 - tailValue.length)}`;
+
+      const result = buildChildRunResultSummary(head + middle + tail, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("ignores tool array bodies longer than the array field body limit", () => {
       const text = [
         '"tool_ids": ["gmail__list_messages", "' + "a".repeat(2_500) + '"]',

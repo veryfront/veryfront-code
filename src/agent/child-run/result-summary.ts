@@ -258,8 +258,8 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
   return value !== undefined && /[A-Za-z0-9._:/-]/.test(value);
 }
 
-function boundedContractFactText(text: string): string {
-  if (text.length <= CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT) return text;
+function boundedContractFactWindows(text: string): string[] {
+  if (text.length <= CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT) return [text];
 
   const windowLength = CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2;
   let headEnd = windowLength;
@@ -278,7 +278,7 @@ function boundedContractFactText(text: string): string {
     tailStart += 1;
   }
 
-  return `${text.slice(0, headEnd)}\n${text.slice(tailStart)}`;
+  return [text.slice(0, headEnd), text.slice(tailStart)];
 }
 
 function contractFactsOrUndefined(input: {
@@ -306,20 +306,21 @@ function contractFactsOrUndefined(input: {
 
 /** Extract structured contract facts from a bounded head-and-tail text window. */
 export function extractChildRunContractFacts(text: string): ChildRunContractFacts | undefined {
-  const boundedText = boundedContractFactText(text);
   const modelIds: string[] = [];
   const toolIds: string[] = [];
   const providerToolIds: string[] = [];
   const importPaths: string[] = [];
 
-  addPatternMatches(modelIds, boundedText, MODEL_FIELD_PATTERN, 1);
-  addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
-  addToolArrayFieldValues(toolIds, boundedText, TOOL_IDS_FIELD_PATTERN);
-  addProviderToolArrayFieldValues(providerToolIds, boundedText, PROVIDER_TOOL_IDS_FIELD_PATTERN);
-  addPatternMatches(toolIds, boundedText, INTEGRATION_TOOL_ID_PATTERN);
-  addPatternMatches(importPaths, boundedText, IMPORT_FROM_PATTERN, 1);
-  addPatternMatches(importPaths, boundedText, BARE_IMPORT_PATTERN, 1);
-  addPatternMatches(importPaths, boundedText, DYNAMIC_IMPORT_PATTERN, 1);
+  for (const boundedText of boundedContractFactWindows(text)) {
+    addPatternMatches(modelIds, boundedText, MODEL_FIELD_PATTERN, 1);
+    addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
+    addToolArrayFieldValues(toolIds, boundedText, TOOL_IDS_FIELD_PATTERN);
+    addProviderToolArrayFieldValues(providerToolIds, boundedText, PROVIDER_TOOL_IDS_FIELD_PATTERN);
+    addPatternMatches(toolIds, boundedText, INTEGRATION_TOOL_ID_PATTERN);
+    addPatternMatches(importPaths, boundedText, IMPORT_FROM_PATTERN, 1);
+    addPatternMatches(importPaths, boundedText, BARE_IMPORT_PATTERN, 1);
+    addPatternMatches(importPaths, boundedText, DYNAMIC_IMPORT_PATTERN, 1);
+  }
 
   return contractFactsOrUndefined({
     modelIds,
