@@ -39,7 +39,12 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
  * They hold credentials and local CLI state, so a negation such as `!.env*.json`
  * must not make `veryfront push` read and upload them.
  */
-const PROTECTED_IGNORE_PATTERNS: readonly string[] = [".env*", ".veryfront", ".git"];
+const PROTECTED_IGNORE_PATTERNS: readonly string[] = [
+  ".env*",
+  ".env*/",
+  ".veryfront",
+  ".git",
+];
 
 /** Supported file extensions for sync */
 const SUPPORTED_EXTENSIONS = new Set([
@@ -68,6 +73,9 @@ const SUPPORTED_EXTENSIONS = new Set([
 export interface IgnoreChecker {
   /** Check if a path should be ignored */
   isIgnored(relativePath: string): boolean;
+
+  /** Check if a path is protected even when a project ignore rule negates it. */
+  isProtected(relativePath: string): boolean;
 
   /** Check if a file extension is supported */
   isSupportedExtension(filename: string): boolean;
@@ -159,7 +167,7 @@ function globToRegex(pattern: string): string {
   return source;
 }
 
-function patternToRule(rawPattern: string): IgnoreRule | null {
+function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule | null {
   let pattern = rawPattern.trim();
   if (!pattern || pattern.startsWith("#")) return null;
 
@@ -182,18 +190,18 @@ function patternToRule(rawPattern: string): IgnoreRule | null {
 
   return {
     negated,
-    regex: new RegExp(`${prefix}${body}${suffix}`),
+    regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
   };
 }
 
-function toRules(patterns: readonly string[]): IgnoreRule[] {
+function toRules(patterns: readonly string[], caseInsensitive = false): IgnoreRule[] {
   return patterns.flatMap((pattern) => {
-    const rule = patternToRule(pattern);
+    const rule = patternToRule(pattern, caseInsensitive);
     return rule ? [rule] : [];
   });
 }
 
-const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS);
+const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS, true);
 
 function isProtectedPath(normalizedPath: string): boolean {
   return PROTECTED_RULES.some((rule) => rule.regex.test(normalizedPath));
@@ -215,11 +223,15 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
     }
 
     if (!ignored && isProtectedPath(normalizedPath)) {
-      cliLogger.debug(`Keeping ${normalizedPath} ignored: .vfignore cannot re-include this path.`);
+      cliLogger.debug("Keeping protected path ignored: .vfignore cannot re-include it.");
       return true;
     }
 
     return ignored;
+  }
+
+  function isProtected(relativePath: string): boolean {
+    return isProtectedPath(relativePath.replace(/\\/g, "/"));
   }
 
   function isSupportedExtension(filename: string): boolean {
@@ -228,7 +240,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
     return SUPPORTED_EXTENSIONS.has(filename.slice(lastDot).toLowerCase());
   }
 
-  return { isIgnored, isSupportedExtension };
+  return { isIgnored, isProtected, isSupportedExtension };
 }
 
 /**

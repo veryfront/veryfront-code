@@ -708,9 +708,10 @@ function findRemoteFilesMissingLocally(
   return remoteFiles
     .map((file) => file.path)
     .filter((path) =>
-      ignoreChecker.isSupportedExtension(path) &&
-      !ignoreChecker.isIgnored(path) &&
-      !localPaths.has(path)
+      ignoreChecker.isProtected(path) ||
+      (ignoreChecker.isSupportedExtension(path) &&
+        !ignoreChecker.isIgnored(path) &&
+        !localPaths.has(path))
     );
 }
 
@@ -1093,13 +1094,16 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         })
         : null;
       const managedRemoteFiles = target.remoteFiles.filter((file) =>
-        ignoreChecker.isSupportedExtension(file.path) && !ignoreChecker.isIgnored(file.path)
+        (pruneRemoteMissing && ignoreChecker.isProtected(file.path)) ||
+        (ignoreChecker.isSupportedExtension(file.path) && !ignoreChecker.isIgnored(file.path))
       );
+      const protectedDeletePaths = toDelete.filter((path) => ignoreChecker.isProtected(path));
       const plan = await planPushChanges({
         localFiles: ops,
         remoteFiles: managedRemoteFiles,
         baselineFiles: baseline?.files ?? {},
         deletePaths: toDelete,
+        protectedDeletePaths,
         force,
         remoteFilesAreBaseline,
       });

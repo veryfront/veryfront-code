@@ -131,6 +131,8 @@ describe("cli/sync/ignore", () => {
         ".veryfront",
         ".git",
         "!.env*.json",
+        "!.env/**",
+        "!.envs/**",
         "!.veryfront",
         "!.veryfront/**",
         "!.git/**",
@@ -138,9 +140,16 @@ describe("cli/sync/ignore", () => {
 
       assertEquals(checker.isIgnored(".env.production.json"), true);
       assertEquals(checker.isIgnored("config/.env.staging.yaml"), true);
+      assertEquals(checker.isIgnored(".env/credentials.json"), true);
+      assertEquals(checker.isIgnored(".env.d/production.json"), true);
+      assertEquals(checker.isIgnored(".envs/production.json"), true);
+      assertEquals(checker.isIgnored(".ENV.PRODUCTION.JSON"), true);
+      assertEquals(checker.isIgnored(".ENV/credentials.json"), true);
       assertEquals(checker.isIgnored(".veryfront"), true);
       assertEquals(checker.isIgnored(".veryfront/state.json"), true);
       assertEquals(checker.isIgnored(".git/config"), true);
+      assertEquals(checker.isProtected(".env/credentials.json"), true);
+      assertEquals(checker.isProtected("src/app.ts"), false);
     });
 
     it("should handle directory-trailing-slash patterns", () => {

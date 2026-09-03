@@ -64,7 +64,9 @@ this handoff. Manage those files through another reviewed delivery path.
 Both commands use the same `.vfignore` rules. Ignored files and unsupported
 extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
 re-include `.env*`, `.veryfront`, or `.git` paths: those stay ignored so local
-secrets and CLI state are never uploaded.
+secrets and CLI state are never uploaded. Run `veryfront push --prune` once
+after upgrading to remove any of those protected paths that an older CLI
+uploaded. Rotate any credential that was previously exposed.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
