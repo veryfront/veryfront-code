@@ -7,6 +7,7 @@ import {
   AgentRuntime,
   RunAlreadyExistsError,
   type RunResumeSessionManager,
+  streamWithAgentRuntimeDispatch,
 } from "../runtime/index.ts";
 import {
   createStreamTransformState,
@@ -478,12 +479,22 @@ async function createAgUiInjectedToolsStreamResponse(
     ...restrictedConfig,
     tools: buildMergedAgUiTools(agent, runId, request.tools, sessionManager),
   });
+  // A ceiling-bound run must not reach the model through the mutable
+  // `AgentRuntime.prototype.stream`: project code can replace that method and
+  // run outside the narrowed configuration, so the restricted run dispatches
+  // through the framework-owned private capability instead. An unrestricted
+  // run keeps the public method, which stays available as an extension seam.
+  const streamRun: (
+    ...args: Parameters<AgentRuntime["stream"]>
+  ) => Promise<ReadableStream<Uint8Array>> = hasAgUiRuntimeRestrictions(restrictions)
+    ? (...args) => streamWithAgentRuntimeDispatch(runtime, ...args)
+    : (...args) => runtime.stream(...args);
 
   let upstreamBody: ReadableStream<Uint8Array>;
   let completedResponse: AgentResponse | null = null;
   const toolDataEvents = createToolDataEventBridge();
   try {
-    upstreamBody = await runtime.stream(
+    upstreamBody = await streamRun(
       messages,
       {
         ...finalContext,

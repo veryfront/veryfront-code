@@ -1,6 +1,10 @@
 import type { AgentConfig } from "../types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
+import {
+  resolveRuntimeToolLoading,
+  type RuntimeToolFilterConfig,
+} from "../runtime/runtime-tool-config.ts";
 
 const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 
@@ -77,6 +81,15 @@ export function applyAgUiRuntimeRestrictions(
     restricted.maxSteps = config.maxSteps === undefined
       ? restrictions.maxSteps
       : Math.min(config.maxSteps, restrictions.maxSteps);
+    // `computeMaxSteps` prefers an enabled edge limit over the top-level
+    // bound, so narrow that limit too -- otherwise an edge-enabled agent
+    // would run its full edge step budget past the ceiling.
+    if (config.edge?.enabled && config.edge.maxSteps !== undefined) {
+      restricted.edge = {
+        ...config.edge,
+        maxSteps: Math.min(config.edge.maxSteps, restrictions.maxSteps),
+      };
+    }
   }
 
   if (restrictions.allowedTools === undefined) {
@@ -86,6 +99,15 @@ export function applyAgUiRuntimeRestrictions(
   const allowedTools = new Set(restrictions.allowedTools);
   const providerToolNames = new Set(config.providerTools ?? []);
   restricted.tools = restrictConfiguredTools(config.tools, allowedTools, providerToolNames);
+  if (config.tools === true) {
+    // Replacing the authored `tools: true` selector with an explicit map would
+    // flip `resolveRuntimeToolLoading` from deferred to eager, sending every
+    // allowlisted schema on the first provider call instead of exposing
+    // `tool_search`. Pin the source configuration's resolved mode so the
+    // intersection only narrows which tools exist, never how they load.
+    (restricted as RuntimeToolFilterConfig).__vfToolLoadingMode =
+      resolveRuntimeToolLoading(config).mode;
+  }
   restricted.providerTools = config.providerTools?.filter((toolName) => allowedTools.has(toolName));
   restricted.delegates = config.delegates?.filter((delegateId) =>
     allowedTools.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`)

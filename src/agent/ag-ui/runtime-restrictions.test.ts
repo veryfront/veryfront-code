@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
 import { createEphemeralAgent } from "../factory.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
+import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
 import {
   applyAgUiRuntimeRestrictions,
   hasAgUiRuntimeRestrictions,
@@ -60,6 +61,29 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     });
 
     assertEquals(restricted.tools, { web_search: true, read_file: true });
+  });
+
+  it("preserves deferred tool loading when replacing an unrestricted catalog", () => {
+    // Replacing `tools: true` with an explicit map must not flip the run from
+    // deferred to eager loading, or a restricted run would send every
+    // allowlisted schema on the first provider call instead of exposing
+    // `tool_search`.
+    const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
+      allowedTools: ["web_search", "read_file"],
+    });
+
+    assertEquals(resolveRuntimeToolLoading(restricted), {
+      mode: "deferred",
+      provenance: "host-runtime-binding",
+    });
+  });
+
+  it("keeps eager loading for an authored explicit tool map", () => {
+    const restricted = applyAgUiRuntimeRestrictions(createConfig(), {
+      allowedTools: ["web_search"],
+    });
+
+    assertEquals(resolveRuntimeToolLoading(restricted).mode, "eager");
   });
 
   it("keeps provider-native tool names out of the generated local selector", () => {
@@ -159,6 +183,26 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       applyAgUiRuntimeRestrictions(createConfig({ maxSteps: undefined }), { maxSteps: 3 }).maxSteps,
       3,
     );
+  });
+
+  it("narrows an enabled edge step limit to the ceiling", () => {
+    // `computeMaxSteps` prefers an enabled edge limit over the top-level
+    // bound, so the ceiling must narrow both.
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({ maxSteps: 20, edge: { enabled: true, maxSteps: 20 } } as Partial<AgentConfig>),
+      { maxSteps: 2 },
+    );
+
+    assertEquals(restricted.maxSteps, 2);
+    assertEquals(restricted.edge, { enabled: true, maxSteps: 2 });
+
+    const disabledEdge = applyAgUiRuntimeRestrictions(
+      createConfig({ edge: { enabled: false, maxSteps: 20 } } as Partial<AgentConfig>),
+      { maxSteps: 2 },
+    );
+
+    // A disabled edge limit never reaches `computeMaxSteps`, so it stays.
+    assertEquals(disabledEdge.edge, { enabled: false, maxSteps: 20 });
   });
 
   it("leaves the tool surface alone when only the step bound is restricted", () => {

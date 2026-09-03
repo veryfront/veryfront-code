@@ -656,38 +656,68 @@ describe("agent/ag-ui-handler", () => {
       result: unknown;
       isError: boolean;
     }>();
-    const testAgent = createTestAgent();
-    const agent: Agent = {
-      ...testAgent.agent,
-      config: { ...testAgent.agent.config, maxSteps: 20 } as Agent["config"],
-    };
     const originalStream = AgentRuntime.prototype.stream;
-    let capturedConfig: Record<string, unknown> | undefined;
-
-    AgentRuntime.prototype.stream = function (
-      this: AgentRuntime,
-    ): Promise<ReadableStream<Uint8Array>> {
-      capturedConfig = (this as unknown as { config: Record<string, unknown> }).config;
-      return Promise.resolve(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(
-              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
-            );
-            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
-            controller.enqueue(
-              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "stepped" }),
-            );
-            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
-            controller.close();
-          },
-        }),
-      );
+    let publicStreamCalls = 0;
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      publicStreamCalls += 1;
+      throw new Error("a restricted AG-UI run must not use mutable public stream dispatch");
     } as typeof AgentRuntime.prototype.stream;
 
+    // The model always answers with a tool call, so the agent loop never
+    // finishes on its own and exits through the max-steps path.
+    let modelCalls = 0;
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "test",
+      modelId: "test/step-restricted",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: () => {
+        modelCalls++;
+        const parts: unknown[] = [
+          { type: "text-delta", id: `text-${modelCalls}`, delta: "stepped" },
+          {
+            type: "tool-call",
+            toolCallId: `call-${modelCalls}`,
+            toolName: "step_noop_tool",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "tool-calls",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ];
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              for (const part of parts) controller.enqueue(part);
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
     try {
+      const stepAgent = createEphemeralAgent({
+        id: "ag-ui-step-restricted",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "You are helpful.",
+        tools: {
+          step_noop_tool: tool({
+            id: "step_noop_tool",
+            description: "Succeeds without side effects.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ ok: true }),
+          }),
+        },
+        maxSteps: 20,
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+
       const handler = createAgUiHandler({
-        agent,
+        agent: stepAgent,
         sessionManager,
         runtimeRestrictions: { maxSteps: 3 },
       });
@@ -713,9 +743,12 @@ describe("agent/ag-ui-handler", () => {
       assertEquals(response.status, 200);
       assertStringIncludes(body, "stepped");
       // No allowlist exists for the injected tools to bypass, so the run
-      // proceeds with the merged tool surface under the narrowed step bound.
-      assertEquals(capturedConfig?.maxSteps, 3);
-      assert(capturedConfig?.tools !== undefined);
+      // proceeds with the merged tool surface -- but under the narrowed step
+      // bound: 3 model calls instead of the configured 20.
+      assertEquals(modelCalls, 3);
+      // The narrowed run dispatches through the framework-owned private
+      // capability, so a replaced prototype method cannot escape the ceiling.
+      assertEquals(publicStreamCalls, 0);
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }
