@@ -4,8 +4,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   accumulateUsage,
   getMaxSteps,
-  hasSyntheticMessageId,
-  hasSyntheticMessageTimestamp,
   normalizeInput,
   resolveValidatedTurnInput,
 } from "./input-utils.ts";
@@ -93,34 +91,6 @@ describe("input-utils", () => {
         Error,
         "Message id cannot be empty",
       );
-    });
-
-    it("marks synthesized identity fields and keeps marks across re-normalization", () => {
-      const [fromString] = normalizeInput("hello");
-      assertExists(fromString);
-      assertEquals(hasSyntheticMessageId(fromString), true);
-      assertEquals(hasSyntheticMessageTimestamp(fromString), true);
-
-      const [partial] = normalizeInput(
-        [
-          {
-            id: "caller-id",
-            role: "user" as const,
-            parts: [{ type: "text" as const, text: "hi" }],
-          },
-        ] as Parameters<typeof normalizeInput>[0],
-      );
-      assertExists(partial);
-      assertEquals(hasSyntheticMessageId(partial), false, "a caller-supplied id is not synthetic");
-      assertEquals(hasSyntheticMessageTimestamp(partial), true);
-
-      // Normalizing an already-normalized array creates fresh objects; the
-      // synthetic origin must carry over so identity consumers (cache keys)
-      // still ignore runtime-stamped values.
-      const [renormalized] = normalizeInput([fromString]);
-      assertExists(renormalized);
-      assertEquals(hasSyntheticMessageId(renormalized), true);
-      assertEquals(hasSyntheticMessageTimestamp(renormalized), true);
     });
 
     it("assigns timestamp when missing", () => {

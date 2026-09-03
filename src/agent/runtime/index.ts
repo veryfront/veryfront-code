@@ -1377,33 +1377,23 @@ export class AgentRuntime {
     if (validateTurnInput) await validateTurnInput(inputMessages);
 
     const validateTurnMessages = context && getTurnMessageValidator(context);
-    let validated: Message[] = inputMessages;
     if (validateTurnMessages) {
       const history = await this.memory.getMessages();
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
-      if (history.length > 0) {
-        validated = [...history, ...inputMessages];
-        await validateTurnMessages(validated);
-      }
+      if (history.length > 0) await validateTurnMessages([...history, ...inputMessages]);
     }
+    // Validation deliberately stops at the pre-write assembly. A memory
+    // implementation that rewrites the transcript while persisting (summary
+    // compaction folds old turns into a synthesized leading system message)
+    // could assemble a merge this pass never saw, but a post-write rejection
+    // cannot be rolled back through the Memory interface: every later turn
+    // would re-read the same transcript and be rejected, leaving the
+    // conversation permanently unusable with no operator-visible cause.
+    // Closing that gap needs a Memory-level remedy (rollback, or validation
+    // inside compaction), not a check here that fails closed forever.
     for (const msg of inputMessages) await this.memory.add(msg);
     const persisted = await this.memory.getMessages();
-    // Persisting can rewrite the transcript (summary memory compacts old
-    // messages into a synthesized leading system summary), and that rewrite
-    // can place system messages next to each other in ways the pre-write pass
-    // never saw. Re-validate only a transcript that differs from the validated
-    // assembly; in-process memories return the same message objects, so the
-    // reference comparison skips the common unchanged case. A rejection here
-    // cannot be rolled back through the Memory interface, but failing closed
-    // beats dispatching a merged instruction the validator never approved.
-    if (
-      validateTurnMessages && persisted.length > 0 &&
-      !(persisted.length === validated.length &&
-        persisted.every((message, index) => message === validated[index]))
-    ) {
-      await validateTurnMessages(persisted);
-    }
     return persisted.length > 0 ? persisted : inputMessages;
   }
 
@@ -1852,22 +1842,10 @@ export class AgentRuntime {
             const response = await inFlight;
             // `persistTurn` is the first thing the continuation does, so an
             // untouched flag means a middleware answered without calling
-            // `next()` (a cache hit): no provider stream ever ran, so the
-            // response text must be replayed into the SSE stream or the client
-            // receives only `message-finish` with no answer.
-            const answeredWithoutContinuation = !turnPersisted;
+            // `next()` (a cache hit). That turn was still accepted, so it must
+            // be committed here.
             if (!turnPersisted) await persistTurn();
             throwIfAborted(streamAbortSignal);
-            if (answeredWithoutContinuation && response.text.length > 0) {
-              sendSSE(controller, encoder, { type: "text-start", id: textPartId });
-              sendSSE(controller, encoder, {
-                type: "text-delta",
-                id: textPartId,
-                delta: response.text,
-              });
-              callbacks?.onChunk?.(response.text);
-              sendSSE(controller, encoder, { type: "text-end", id: textPartId });
-            }
             callbacks?.onFinish?.(response);
             throwIfAborted(streamAbortSignal);
 

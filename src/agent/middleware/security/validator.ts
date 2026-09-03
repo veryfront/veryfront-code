@@ -1,8 +1,6 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "../../output-schema.ts";
-import { createProviderDroppedMessageTracker } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
-import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -404,16 +402,20 @@ function extractMessageInputText(message: Message): string[] {
  * parts (`getTextFromParts` concatenates with no separator; other adapters use
  * a blank line). A blocked phrase split across sibling system messages
  * therefore reassembles at the provider, so each merged run is validated in
- * both per-message assembled forms the converters can produce. Only a message
- * that actually survives provider conversion ends a run: dropped ones (blank
- * system layers, assistant messages with no sendable content, tool messages
- * with no surviving results, including results the provider itself executed)
- * leave their neighbours adjacent.
+ * both per-message assembled forms the converters can produce. A blank system
+ * message does not end a run: the converter drops it outright, leaving the
+ * messages on either side of it adjacent.
+ *
+ * Messages of other roles end the run even when provider conversion would drop
+ * them (an assistant message with no sendable content, a tool message with no
+ * surviving results). Mirroring the converter's drop rules here would pin
+ * validation to converter internals for no added coverage: the hoisted run in
+ * `extractMergedSystemRuns` already assembles every system message in the
+ * conversation, so any pair a dropped message sits between is covered there.
  */
 function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
   const runs: Message[][] = [];
   let run: Message[] = [];
-  const isProviderDropped = createProviderDroppedMessageTracker();
 
   const flushRun = () => {
     // Runs of a single message are already covered by the per-message
@@ -424,19 +426,9 @@ function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
 
   for (const message of messages) {
     if (message.role !== "system") {
-      // A message the converter drops entirely leaves the system messages on
-      // either side of it adjacent, so it must not end the run.
-      if (!isProviderDropped(message)) flushRun();
+      flushRun();
       continue;
     }
-    // Conversion clears its provider-executed id window on every system
-    // message before deciding what to drop, so the mirrored walk must route
-    // system messages through the tracker too. A stale id would otherwise
-    // mark a tool result conversion keeps as dropped and merge system runs
-    // the provider keeps apart.
-    isProviderDropped(message);
-    // The converter drops blank system layers outright, leaving the messages
-    // on either side of them adjacent, so a blank one must not end the run.
     if (isBlankSystemText(message)) continue;
     run.push(message);
   }
@@ -595,12 +587,7 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
 
     if (!messageChanged) return message;
     changed = true;
-    const rewritten = { ...message, parts };
-    // Rewriting replaces the object, and the synthetic id/timestamp marks are
-    // keyed by identity; without them cache keys would treat the synthesized
-    // values as caller-supplied and miss on every request.
-    propagateSyntheticMessageMarks(message, rewritten);
-    return rewritten;
+    return { ...message, parts };
   });
 
   return changed ? sanitizedMessages : messages;
@@ -621,6 +608,14 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
  * now-blank system layers, so the provider sees exactly the sanitized text.
  * The hoisted run is processed last, so when it needs a rewrite its collapse
  * supersedes any per-run rewrite of the same messages.
+ *
+ * Collapsing relocates text: when the hoisted run spans system messages that
+ * user or assistant turns sit between, the sanitized instruction ends up at the
+ * position of the first of them. On OpenAI-compatible providers, which merge
+ * only adjacent system messages, that moves later caller instructions ahead of
+ * the turns they followed. Sanitization already rewrites caller text by
+ * definition, and this only happens for input a rewrite was required for
+ * (`sanitize: true`), so correctness is preserved at the cost of position.
  */
 function sanitizeMergedSystemRuns(validator: InputValidator, messages: Message[]): Message[] {
   const rewrites = new Map<Message, Message["parts"]>();
@@ -656,12 +651,7 @@ function sanitizeMergedSystemRuns(validator: InputValidator, messages: Message[]
   if (rewrites.size === 0) return messages;
   return messages.map((message) => {
     const parts = rewrites.get(message);
-    if (parts === undefined) return message;
-    const rewritten = { ...message, parts };
-    // See sanitizeStructuredInput: the synthetic-origin marks must follow the
-    // rewritten object or cache identity breaks.
-    propagateSyntheticMessageMarks(message, rewritten);
-    return rewritten;
+    return parts === undefined ? message : { ...message, parts };
   });
 }
 

@@ -5,51 +5,18 @@ import {
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
 
-const syntheticMessageIds = new WeakSet<object>();
-const syntheticMessageTimestamps = new WeakSet<object>();
-
-/**
- * True when normalization synthesized this message's `id` because the caller
- * omitted it. A synthesized id is derived from the wall clock, so it carries
- * no caller intent and must not participate in identity comparisons such as
- * cache keys; a caller-supplied id must.
- */
-export function hasSyntheticMessageId(message: object): boolean {
-  return syntheticMessageIds.has(message);
-}
-
-/** True when normalization synthesized this message's `timestamp` (see `hasSyntheticMessageId`). */
-export function hasSyntheticMessageTimestamp(message: object): boolean {
-  return syntheticMessageTimestamps.has(message);
-}
-
-/**
- * Carry synthetic-origin marks over to a rewritten copy of a message.
- *
- * The marks live in WeakSets keyed by object identity, so middleware that
- * rewrites a message (sanitization clones it with new parts) silently strips
- * them. Downstream identity consumers, such as cache keys that exclude
- * runtime-synthesized `id`/`timestamp` values, would then treat the wall-clock
- * values as caller intent and miss on every request.
- */
-export function propagateSyntheticMessageMarks(source: object, target: object): void {
-  if (syntheticMessageIds.has(source)) syntheticMessageIds.add(target);
-  if (syntheticMessageTimestamps.has(source)) syntheticMessageTimestamps.add(target);
-}
-
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
 
   if (typeof input === "string") {
-    const message: Message = {
-      id: `msg_${now}`,
-      role: "user",
-      parts: [{ type: "text", text: input }],
-      timestamp: now,
-    };
-    syntheticMessageIds.add(message);
-    syntheticMessageTimestamps.add(message);
-    return [message];
+    return [
+      {
+        id: `msg_${now}`,
+        role: "user",
+        parts: [{ type: "text", text: input }],
+        timestamp: now,
+      },
+    ];
   }
 
   return input.map((msg, index) => {
@@ -62,15 +29,6 @@ export function normalizeInput(input: string | Message[]): Message[] {
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
-    // Propagate marks through re-normalization: a message that already went
-    // through this function keeps its fields, so a synthetic origin must carry
-    // over to the fresh object.
-    if (msg.id == null || syntheticMessageIds.has(msg)) {
-      syntheticMessageIds.add(normalized);
-    }
-    if (msg.timestamp == null || syntheticMessageTimestamps.has(msg)) {
-      syntheticMessageTimestamps.add(normalized);
-    }
     return isRuntimeGeneratedUserMessage(msg)
       ? markRuntimeGeneratedUserMessage(normalized)
       : normalized;
