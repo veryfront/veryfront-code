@@ -1727,6 +1727,9 @@ export function createDeployProject(options: {
             // collaborator.
             force: bootstrapPushKind === "bootstrap",
             prunePaths,
+            expectedCommitSha: bootstrapPushKind === "refresh"
+              ? localSource?.gitSource.commitSha
+              : undefined,
             dryRun: request.mode === "dry-run",
             quiet: true,
           });

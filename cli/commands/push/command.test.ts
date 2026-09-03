@@ -927,6 +927,24 @@ describe("push receipt source snapshot", () => {
     });
   });
 
+  it("rejects a push selected from an earlier commit", async () => {
+    await withGitProject(async ({ projectDir, runGit }) => {
+      const observedCommit = await runGit("rev-parse", "HEAD");
+      await runGit("commit", "--quiet", "--allow-empty", "-m", "advance HEAD");
+
+      await assertRejects(
+        () =>
+          capturePushSourceSnapshot(
+            projectDir,
+            createDefaultIgnoreChecker(),
+            observedCommit,
+          ),
+        Error,
+        "Local source changed during push",
+      );
+    });
+  });
+
   it("rejects a clean tracked symlink whose target bytes are outside the commit", async () => {
     if (Deno.build.os === "windows") return;
 

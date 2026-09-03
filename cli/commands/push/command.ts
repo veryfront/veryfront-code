@@ -140,6 +140,8 @@ export interface PushOptions {
   dryRun?: boolean;
   /** Quiet mode - suppress spinner/progress output */
   quiet?: boolean;
+  /** Reject when HEAD no longer matches the commit that selected this push. */
+  expectedCommitSha?: string | null;
 }
 
 /**
@@ -305,8 +307,12 @@ export async function capturePushSourceDigest(
 export async function capturePushSourceSnapshot(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
+  expectedCommitSha?: string | null,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
+  if (expectedCommitSha !== undefined && gitSourceBefore.commitSha !== expectedCommitSha) {
+    throw sourceChangedError();
+  }
   const { files, sourceDigest } = await capturePushSourceDigest(projectDir, ignoreChecker);
   const trackedSourceFiles = await sourceFilesForGitTracking(projectDir, files);
   const filesTracked = await areSourceFilesTracked(projectDir, trackedSourceFiles);
@@ -1028,7 +1034,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       spinner.update("Scanning local files...");
       let sourceSnapshot: PushSourceSnapshot;
       try {
-        sourceSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
+        sourceSnapshot = await capturePushSourceSnapshot(
+          projectDir,
+          ignoreChecker,
+          options.expectedCommitSha,
+        );
       } catch (error) {
         spinner.stop();
         throw error;

@@ -272,7 +272,17 @@ export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<
 
   try {
     const result = await runCommand("git", {
-      args: ["diff", "--name-only", "--diff-filter=D", "-z", "--relative", "HEAD", "--", "."],
+      args: [
+        "diff",
+        "--no-renames",
+        "--name-only",
+        "--diff-filter=D",
+        "-z",
+        "--relative",
+        "HEAD",
+        "--",
+        ".",
+      ],
       cwd: projectDir,
       clearEnv: true,
       env: gitEnv,

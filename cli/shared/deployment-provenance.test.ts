@@ -609,7 +609,8 @@ describe("resolveGitSource", () => {
       assertEquals((await resolveGitSource(repositoryDir)).clean, false);
       assertEquals(await resolveDeletedGitSourcePaths(projectDir), []);
 
-      await Deno.remove(`${projectDir}/app.ts`);
+      await Deno.rename(`${projectDir}/app.ts`, `${projectDir}/renamed.ts`);
+      await runGit("add", "--all");
       assertEquals((await resolveGitSource(projectDir)).clean, false);
       assertEquals(await resolveDeletedGitSourcePaths(projectDir), ["app.ts"]);
     } finally {
