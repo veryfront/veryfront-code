@@ -68,6 +68,42 @@ import {
 const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
 const MAX_STALLED_GRAPH_NODE_DETAILS = 10;
 
+function collectStaticSubWorkflowReservations(
+  nodes: WorkflowNode[],
+  parentPath = "",
+  reservations = new Map<string, Set<string>>(),
+): Map<string, Set<string>> {
+  for (const node of nodes) {
+    switch (node.config.type) {
+      case "parallel":
+        collectStaticSubWorkflowReservations(node.config.nodes, parentPath, reservations);
+        break;
+      case "branch":
+        collectStaticSubWorkflowReservations(node.config.then, parentPath, reservations);
+        if (node.config.else) {
+          collectStaticSubWorkflowReservations(node.config.else, parentPath, reservations);
+        }
+        break;
+      case "loop":
+        if (Array.isArray(node.config.steps)) {
+          collectStaticSubWorkflowReservations(node.config.steps, parentPath, reservations);
+        }
+        break;
+      case "subWorkflow": {
+        if (
+          typeof node.config.workflow === "string" ||
+          !Array.isArray(node.config.workflow.steps)
+        ) break;
+        const ownerPath = parentPath ? `${parentPath}/${node.id}` : node.id;
+        reservations.set(ownerPath, collectWorkflowNodeIds(node.config.workflow.steps));
+        collectStaticSubWorkflowReservations(node.config.workflow.steps, ownerPath, reservations);
+        break;
+      }
+    }
+  }
+  return reservations;
+}
+
 function getUnfinishedNodeDetails(
   nodes: WorkflowNode[],
   nodeStates: Record<string, NodeState>,
@@ -96,6 +132,14 @@ export class DAGExecutor {
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<DAGExecutionResult> {
+    const subWorkflowNodeIds = new Map<string, Set<string>>();
+    for (const [nodeId, state] of Object.entries(run.nodeStates)) {
+      const ownerPath = state._subWorkflowOwnerPath;
+      if (!ownerPath) continue;
+      const ownedNodeIds = subWorkflowNodeIds.get(ownerPath) ?? new Set<string>();
+      ownedNodeIds.add(nodeId);
+      subWorkflowNodeIds.set(ownerPath, ownedNodeIds);
+    }
     const scope: ExecutionScope = {
       rootRunId: run.id,
       executionRunId: run.id,
@@ -104,7 +148,9 @@ export class DAGExecutor {
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
       declaredNodeIds: new Set(),
-      subWorkflowNodeIds: new Map(),
+      subWorkflowNodeIds,
+      subWorkflowNodeReservations: collectStaticSubWorkflowReservations(nodes),
+      subWorkflowPath: "",
       rootKeyspace: true,
       ownership,
     };
@@ -1055,6 +1101,8 @@ export class DAGExecutor {
       : workflowDef.steps;
     abortSignal?.throwIfAborted();
 
+    const ownerPath = scope.subWorkflowPath ? `${scope.subWorkflowPath}/${node.id}` : node.id;
+
     // A sub-workflow is a separate definition with its own id space, so a child
     // may legally repeat an id declared by an ancestor graph -- duplicate-id
     // validation is per-graph. That makes the collision ambiguous here: the
@@ -1079,16 +1127,37 @@ export class DAGExecutor {
     // on a path the static check above cannot see (a nested loop whose steps are
     // generated at runtime). Everything else stays out of the child keyspace.
     const seededNodeStates: Record<string, NodeState> = {};
-    const ownedNodeIds = scope.subWorkflowNodeIds.get(node.id) ?? new Set<string>();
+    const ownedNodeIds = scope.subWorkflowNodeIds.get(ownerPath) ?? new Set<string>();
+    const reservations = scope.subWorkflowNodeReservations.get(ownerPath) ?? new Set<string>();
+    for (const childId of childNodeIds) reservations.add(childId);
+    scope.subWorkflowNodeReservations.set(ownerPath, reservations);
     const previouslyProducedNodeIds = new Set<string>();
+    const isDescendant = (candidate: string, parent: string): boolean =>
+      candidate === parent || candidate.startsWith(`${parent}/`);
     for (const [owner, ids] of scope.subWorkflowNodeIds) {
-      if (owner === node.id) continue;
+      if (isDescendant(owner, ownerPath)) continue;
+      for (const id of ids) previouslyProducedNodeIds.add(id);
+    }
+    for (const [owner, ids] of scope.subWorkflowNodeReservations) {
+      if (isDescendant(owner, ownerPath)) continue;
       for (const id of ids) previouslyProducedNodeIds.add(id);
     }
     for (const [nodeId, state] of Object.entries(nodeStates)) {
       if (scope.declaredNodeIds.has(nodeId)) continue;
-      if (previouslyProducedNodeIds.has(nodeId) && !ownedNodeIds.has(nodeId)) continue;
-      seededNodeStates[nodeId] = state;
+      if (
+        state._subWorkflowOwnerPath &&
+        isDescendant(state._subWorkflowOwnerPath, ownerPath)
+      ) {
+        seededNodeStates[nodeId] = state;
+      } else if (
+        !state._subWorkflowOwnerPath &&
+        reservations.has(nodeId) &&
+        !previouslyProducedNodeIds.has(nodeId)
+      ) {
+        // Keep legacy static child states resumable when ownership metadata is
+        // absent, but never admit one claimed by another sibling reservation.
+        seededNodeStates[nodeId] = state;
+      }
     }
 
     const subRunId = `${node.id}_sub_${generateId()}`;
@@ -1114,28 +1183,31 @@ export class DAGExecutor {
         createdAt: new Date(),
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
-      scope,
+      { ...scope, subWorkflowPath: ownerPath },
       undefined,
       abortSignal,
     );
     abortSignal?.throwIfAborted();
 
-    // Remember the ids this sub-workflow produced so a later sibling cannot
-    // accidentally inherit them. Preserve ids from earlier attempts because
-    // a waiting workflow may only expose a partial child-state snapshot.
+    // Tag every newly produced state with its owner path. This metadata survives
+    // executor restarts, when the in-memory ownership map is rebuilt from the
+    // persisted root node-state map. Nested states retain their more specific
+    // owner path so an enclosing sub-workflow can still rehydrate them.
+    const ownedResultNodeStates: Record<string, NodeState> = {};
     const producedNodeIds = new Set(ownedNodeIds);
-    for (const childId of childNodeIds) producedNodeIds.add(childId);
-    for (const childId of Object.keys(result.nodeStates)) {
-      if (!scope.declaredNodeIds.has(childId) && !previouslyProducedNodeIds.has(childId)) {
-        producedNodeIds.add(childId);
-      }
+    for (const [childId, childState] of Object.entries(result.nodeStates)) {
+      const state = childState._subWorkflowOwnerPath
+        ? childState
+        : { ...childState, _subWorkflowOwnerPath: ownerPath };
+      ownedResultNodeStates[childId] = state;
+      if (!scope.declaredNodeIds.has(childId)) producedNodeIds.add(childId);
     }
-    scope.subWorkflowNodeIds.set(node.id, producedNodeIds);
+    scope.subWorkflowNodeIds.set(ownerPath, producedNodeIds);
 
     // Diff the sub-run against the states it actually started from. Diffing the
     // parent's whole map would report every state withheld above as deleted and
     // strand the nodes that produced them.
-    applyRecordPatch(nodeStates, createRecordPatch(seededNodeStates, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch(seededNodeStates, ownedResultNodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined

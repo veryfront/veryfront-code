@@ -45,6 +45,10 @@ export interface ExecutionScope {
   declaredNodeIds: ReadonlySet<string>;
   /** Child node ids owned by each sub-workflow node, preventing sibling state leakage. */
   subWorkflowNodeIds: Map<string, Set<string>>;
+  /** Child node ids reserved before concurrent sub-workflow execution begins. */
+  subWorkflowNodeReservations: Map<string, Set<string>>;
+  /** Owner path of the graph currently being executed, empty for the root graph. */
+  subWorkflowPath: string;
   /**
    * True while every enclosing composite carries its child states back into
    * the root run's node-state map (parallel, branch, subWorkflow, map). Loop

@@ -3572,6 +3572,121 @@ describe("DAGExecutor", () => {
       assertEquals(executed, ["review"]);
     });
 
+    it("reconstructs sub-workflow ownership after an executor restart", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "release-1",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-1",
+              steps: [{ id: "review", dependsOn: [], config: { type: "step" } as any }],
+            },
+          } as any,
+        },
+        {
+          id: "release-2",
+          dependsOn: ["release-1"],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("review", { message: "Approve the release" })],
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            "release-1": {
+              nodeId: "release-1",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            review: {
+              nodeId: "review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+              _subWorkflowOwnerPath: "release-1",
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "review");
+      assertEquals(executed, []);
+    });
+
+    it("does not claim an unexecuted child as owned on a sub-workflow retry", async () => {
+      const executed: string[] = [];
+      let beforeAttempts = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          if (node.id === "before") {
+            beforeAttempts++;
+            return beforeAttempts === 1
+              ? { success: false, error: "transient child failure", executionTime: 1 }
+              : { success: true, output: node.id, executionTime: 1 };
+          }
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "release-1",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-1",
+              steps: [{ id: "review", dependsOn: [], config: { type: "step" } as any }],
+            },
+          } as any,
+        },
+        {
+          id: "release-2",
+          dependsOn: ["release-1"],
+          config: {
+            type: "subWorkflow",
+            retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 0, maxDelay: 0 },
+            workflow: {
+              id: "release-wf-2",
+              steps: [
+                { id: "before", dependsOn: [], config: { type: "step" } as any },
+                waitForApproval("review", { message: "Approve the release" }),
+                { id: "publish", dependsOn: ["review"], config: { type: "step" } as any },
+              ],
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "review");
+      assertEquals(executed, ["review", "before", "before"]);
+      assertEquals(executed.includes("publish"), false);
+    });
+
     it("should execute a sub-workflow definition", async () => {
       const nodes: WorkflowNode[] = [
         {

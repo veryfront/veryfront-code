@@ -104,6 +104,8 @@ export const getNodeStateSchema = defineSchema((v) =>
     completedAt: v.date().optional(),
     /** Internal identity for one execution of a reusable wait node. */
     _waitInstanceId: v.string().optional(),
+    /** Internal owner path for a node produced inside a sub-workflow. */
+    _subWorkflowOwnerPath: v.string().optional(),
   })
 );
 
