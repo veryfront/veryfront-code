@@ -369,6 +369,23 @@ describe("provider-tool-compat", () => {
     assertEquals(JSON.stringify(sanitized).includes("#/properties/level"), true);
   });
 
+  it("charges Moonshot expansion for JSON-escaped and multi-byte description bytes", () => {
+    // A NUL serializes to the six-byte escape "\\u0000", so character length undercounts
+    // the payload sixfold; counting characters would let this expand past the byte cap.
+    const escaped = sanitizeProviderToolSchema(
+      buildFanOutRefSchema(15, "\u0000".repeat(2_000)) as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+    assertEquals(JSON.stringify(escaped).length < 1_000_000, true);
+
+    // Non-ASCII text costs up to four UTF-8 bytes per code point for the same reason.
+    const multiByte = sanitizeProviderToolSchema(
+      buildFanOutRefSchema(15, "\u{1f600}".repeat(2_000)) as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+    assertEquals(JSON.stringify(multiByte).length < 1_000_000, true);
+  });
+
   it("bounds Moonshot ref inlining across a whole tool set", () => {
     // A per-schema budget bounds one tool; a source returning many admissible schemas
     // would otherwise multiply the worst case by the tool count.

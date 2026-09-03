@@ -383,13 +383,52 @@ function createMoonshotInlineBudget(
   };
 }
 
+/**
+ * Encoded size of a JSON string literal, including quotes.
+ *
+ * Character count undercounts badly for schemas the budget is meant to bound: control
+ * characters expand to six-byte `\uXXXX` escapes and non-ASCII text costs two to four
+ * UTF-8 bytes, so a hostile description can serialize to many times its length. This
+ * walks code points rather than allocating an intermediate `JSON.stringify` result.
+ */
+function estimateEncodedStringBytes(value: string): number {
+  let bytes = 2;
+
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x22 || code === 0x5c) {
+      bytes += 2;
+    } else if (
+      code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d
+    ) {
+      bytes += 2;
+    } else if (code < 0x20) {
+      bytes += 6;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      // Iterating code points only yields a surrogate when it is unpaired, and
+      // `JSON.stringify` escapes those to `\uXXXX`.
+      bytes += 6;
+    } else if (code < 0x10000) {
+      bytes += 3;
+    } else {
+      bytes += 4;
+    }
+  }
+
+  return bytes;
+}
+
 /** Approximate the serialized size one schema node contributes, excluding its children. */
 function estimateSerializedNodeBytes(value: unknown): number {
-  if (typeof value === "string") return value.length + 2;
+  if (typeof value === "string") return estimateEncodedStringBytes(value);
   if (Array.isArray(value)) return 2;
   if (isPlainRecord(value)) {
     let bytes = 2;
-    for (const key of Object.keys(value)) bytes += key.length + 4;
+    for (const key of Object.keys(value)) bytes += estimateEncodedStringBytes(key) + 2;
     return bytes;
   }
   return 8;
