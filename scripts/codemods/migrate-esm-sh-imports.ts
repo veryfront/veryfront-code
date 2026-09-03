@@ -3,6 +3,7 @@
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
+import { open as openNativeFile, stat as statNativeFile } from "node:fs/promises";
 import { isAbsolute, relative } from "node:path";
 
 interface BabelGeneratorResult {
@@ -147,7 +148,12 @@ export interface PackageJsonReadResult {
   /** Set when the file could not be read, parsed, or validated; it must not be overwritten. */
   parseError: string | null;
   /** Identity of the manifest handle whose bytes were parsed. */
-  fileIdentity?: Deno.FileInfo;
+  fileIdentity?: StableFileIdentity;
+}
+
+export interface StableFileIdentity {
+  device: string;
+  inode: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -538,15 +544,40 @@ export async function assertPathInsideProject(
   }
 }
 
-function sameFileIdentity(opened: Deno.FileInfo, current: Deno.FileInfo): boolean {
-  return opened.dev === current.dev && opened.ino !== null && opened.ino === current.ino;
+function stableFileIdentity(
+  info: Readonly<{ dev: number | bigint | null; ino: number | bigint | null }>,
+): StableFileIdentity {
+  if (
+    info.dev === null || info.ino === null ||
+    (typeof info.dev === "number" && (!Number.isSafeInteger(info.dev) || info.dev <= 0)) ||
+    (typeof info.ino === "number" && (!Number.isSafeInteger(info.ino) || info.ino <= 0)) ||
+    (typeof info.dev === "bigint" && info.dev <= 0n) ||
+    (typeof info.ino === "bigint" && info.ino <= 0n)
+  ) {
+    throw new Error("Stable file identity is unavailable.");
+  }
+  return { device: String(info.dev), inode: String(info.ino) };
+}
+
+function sameFileIdentity(opened: StableFileIdentity, current: StableFileIdentity): boolean {
+  return opened.device === current.device && opened.inode === current.inode;
+}
+
+async function pathFileIdentity(path: string): Promise<StableFileIdentity> {
+  return stableFileIdentity(await statNativeFile(path, { bigint: true }));
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Deno.errors.NotFound ||
+    (typeof error === "object" && error !== null && "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT");
 }
 
 async function replaceTextFileInsideProject(
   path: string,
   projectRoot: string,
   content: string,
-  expectedIdentity?: Deno.FileInfo,
+  expectedIdentity?: StableFileIdentity,
 ): Promise<void> {
   const parent = parentDirOf(path);
   const tempPath = `${parent}${PATH_SEPARATOR}.veryfront-codemod-${crypto.randomUUID()}.tmp`;
@@ -570,7 +601,7 @@ async function replaceTextFileInsideProject(
     // path no longer resolves and the rename fails without touching a target.
     await assertPathInsideProject(path, projectRoot);
     await assertPathInsideProject(tempPath, projectRoot);
-    if (expectedIdentity && !sameFileIdentity(expectedIdentity, await Deno.stat(path))) {
+    if (expectedIdentity && !sameFileIdentity(expectedIdentity, await pathFileIdentity(path))) {
       throw new Error("Refusing to write package.json because it changed after being read.");
     }
     await Deno.rename(tempPath, path);
@@ -593,7 +624,7 @@ export async function writeTextFileInsideProject(
   content: string,
   { allowMissing = false, expectedIdentity }: {
     allowMissing?: boolean;
-    expectedIdentity?: Deno.FileInfo;
+    expectedIdentity?: StableFileIdentity;
   } = {},
 ): Promise<void> {
   await assertPathInsideProject(path, projectRoot, { allowMissing });
@@ -629,8 +660,8 @@ export async function writeTextFileInsideProject(
 
   try {
     await assertPathInsideProject(path, projectRoot);
-    const opened = await file.stat();
-    const current = await Deno.stat(path);
+    const opened = stableFileIdentity(await file.stat());
+    const current = stableFileIdentity(await Deno.stat(path));
     if (!sameFileIdentity(opened, current)) {
       throw new Error("Refusing to write a path that changed after it was opened.");
     }
@@ -654,25 +685,22 @@ export async function writeTextFileInsideProject(
 async function readTextFileInsideProject(
   path: string,
   projectRoot: string,
-): Promise<{ text: string; identity: Deno.FileInfo }> {
-  await assertPathInsideProject(path, projectRoot);
-  const file = await Deno.open(path, { read: true });
+): Promise<{ text: string; identity: StableFileIdentity }> {
+  const file = await openNativeFile(path, "r");
   try {
-    const identity = await file.stat();
+    const identity = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(identity, await Deno.stat(path))) {
+    if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
       throw new Error("package.json changed while it was being opened.");
     }
-    const text = await new Response(file.readable).text();
+    const text = await file.readFile({ encoding: "utf8" });
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(identity, await Deno.stat(path))) {
+    if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
       throw new Error("package.json changed while it was being read.");
     }
     return { text, identity };
   } finally {
-    try {
-      file.close();
-    } catch { /* the readable may already have closed the handle */ }
+    await file.close();
   }
 }
 
@@ -705,7 +733,7 @@ export async function readProjectPackageJson(
     }
   }
   let text: string;
-  let fileIdentity: Deno.FileInfo | undefined;
+  let fileIdentity: StableFileIdentity | undefined;
   try {
     if (projectRoot === undefined) {
       text = await Deno.readTextFile(path);
@@ -715,7 +743,7 @@ export async function readProjectPackageJson(
       fileIdentity = opened.identity;
     }
   } catch (e) {
-    if (e instanceof Deno.errors.NotFound) {
+    if (isNotFoundError(e)) {
       // File does not exist, treat as absent and start with empty deps.
       return { data: {}, existingDeps: {}, otherFieldDeps: {}, parseError: null };
     }

@@ -531,7 +531,7 @@ Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
 Deno.test("readProjectPackageJson returns null parseError when file is absent", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const result = await readProjectPackageJson(`${dir}/package.json`);
+    const result = await readProjectPackageJson(`${dir}/package.json`, await Deno.realPath(dir));
     assertEquals(result.parseError, null);
     assertEquals(result.existingDeps, {});
   } finally {
