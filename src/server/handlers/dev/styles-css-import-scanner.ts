@@ -33,7 +33,7 @@ import type { HandlerContext } from "../types.ts";
 const logger = serverLogger.component("styles-css-import-scanner");
 
 interface SourceFileProvider {
-  getAllSourceFiles?: () =>
+  getAllSourceFiles?: (options?: { waitForWarmup?: boolean }) =>
     | Array<{ path: string; content?: string }>
     | Promise<Array<{ path: string; content?: string }>>;
   getContentContext?: () => ResolvedContentContext | null;
@@ -72,6 +72,7 @@ interface PendingScan {
 
 /** Coalesces concurrent scans for the same key into a single source walk. */
 const inFlightScans = new Map<string, PendingScan>();
+const pendingScanCounts = new Map<string, number>();
 
 /**
  * Invalidation generations. A scan that started before its scope's current
@@ -97,8 +98,22 @@ function generationFor(scope: string): string {
 /** Drop a scope's counter once nothing cached or in flight still refers to it. */
 function pruneScopeGeneration(scope: string): void {
   for (const entry of scanCache.values()) if (entry.scope === scope) return;
-  for (const pending of inFlightScans.values()) if (pending.scope === scope) return;
+  if ((pendingScanCounts.get(scope) ?? 0) > 0) return;
   scopeGenerations.delete(scope);
+}
+
+function beginPendingScan(scope: string): void {
+  pendingScanCounts.set(scope, (pendingScanCounts.get(scope) ?? 0) + 1);
+}
+
+function finishPendingScan(scope: string): void {
+  const remaining = (pendingScanCounts.get(scope) ?? 1) - 1;
+  if (remaining > 0) {
+    pendingScanCounts.set(scope, remaining);
+  } else {
+    pendingScanCounts.delete(scope);
+  }
+  pruneScopeGeneration(scope);
 }
 
 registerCache("styles-css-import-scans", () => ({
@@ -134,13 +149,10 @@ function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
   const styleProfile = createStyleScopeProfile(ctx.config);
 
   // The cache key names the source tree that is actually about to be walked, so
-  // it is derived only from resolved identity — the filesystem's own content
-  // context, else the admitted tenant — never from request selectors such as
-  // `x-release-id` or the Host-derived branch. A local or standalone filesystem
-  // serves `ctx.projectDir` whatever the client claims, so folding those
-  // selectors in would let an unauthenticated caller mint a fresh "immutable"
-  // key per request and force one full source walk each time, which is exactly
-  // what this cache exists to prevent on the public stylesheet route.
+  // it is derived only from resolved identity: the filesystem's own content
+  // context when available, otherwise the project and snapshot admitted by the
+  // shared proxy. A local or standalone filesystem serves `ctx.projectDir`
+  // whatever the client claims, so its untrusted selectors never enter the key.
   //
   // `ctx.projectSlug` is required here rather than only as the invalidation
   // scope: in shared proxy mode the underlying `MultiProjectFSAdapter` exposes
@@ -161,7 +173,16 @@ function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
   const contentScope = contentContext?.projectSlug ??
     (ctx.isProxyMode ? ctx.projectSlug : undefined) ??
     ctx.projectDir;
-  const projectVersion = resolveStyleContentVersion(contentContext);
+  const projectVersion = resolveStyleContentVersion(
+    contentContext,
+    ctx.isProxyMode
+      ? {
+        releaseId: ctx.releaseId,
+        branch: ctx.branchId ?? ctx.branchName,
+        environmentName: ctx.environmentId ?? ctx.environmentName,
+      }
+      : {},
+  );
 
   return {
     key: `${contentScope}\u0000${projectVersion}\u0000${styleProfile.hash}`,
@@ -229,6 +250,7 @@ export async function extractProjectCssImports(ctx: HandlerContext): Promise<str
   const inFlight = inFlightScans.get(identity.key);
   if (inFlight && inFlight.generation === generation) return [...await inFlight.promise];
 
+  beginPendingScan(identity.scope);
   const pending: PendingScan = {
     scope: identity.scope,
     generation,
@@ -239,6 +261,7 @@ export async function extractProjectCssImports(ctx: HandlerContext): Promise<str
     return [...await pending.promise];
   } finally {
     if (inFlightScans.get(identity.key) === pending) inFlightScans.delete(identity.key);
+    finishPendingScan(identity.scope);
   }
 }
 
@@ -247,7 +270,7 @@ async function scanProjectCssImports(
   identity: ScanCacheIdentity,
   generation: string,
 ): Promise<string[]> {
-  const files = await collectSourceFiles(ctx);
+  const files = await collectSourceFiles(ctx, !identity.mutable);
   const cssImports = collectCssImportPaths(files, ctx.projectDir);
 
   if (cssImports.length > 0) {
@@ -274,6 +297,7 @@ async function scanProjectCssImports(
 
 async function collectSourceFiles(
   ctx: HandlerContext,
+  waitForWarmup: boolean,
 ): Promise<Array<{ path: string; content: string }>> {
   const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
   const fsAdapter = typeof wrappedFs.getUnderlyingAdapter === "function"
@@ -281,7 +305,7 @@ async function collectSourceFiles(
     : undefined;
 
   if (typeof fsAdapter?.getAllSourceFiles === "function") {
-    const files = await fsAdapter.getAllSourceFiles();
+    const files = await fsAdapter.getAllSourceFiles({ waitForWarmup });
     const collected: Array<{ path: string; content: string }> = [];
 
     for (const file of files) {
