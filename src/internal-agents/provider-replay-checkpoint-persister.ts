@@ -1,4 +1,8 @@
 import {
+  MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
+  MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
+} from "#veryfront/agent/runtime/provider-replay-limits.ts";
+import {
   createProviderReplayCheckpointEvent,
   type ProviderReplayCheckpoint,
 } from "#veryfront/agent/runtime/provider-replay.ts";
@@ -34,6 +38,148 @@ if (typeof typedArrayByteLengthGetterCandidate !== "function") {
 }
 const typedArrayByteLengthGetter = typedArrayByteLengthGetterCandidate;
 
+// Capturing JSON.stringify is not enough on its own: it performs a dynamic
+// `toJSON` lookup on every object and array it visits and reads properties
+// through their getters. The append body must therefore be rebuilt out of
+// null-prototype containers before it is serialized, so project code loaded
+// during discovery cannot install Object.prototype.toJSON, observe the private
+// checkpoint, and substitute the bytes appended under the run event token.
+const objectCreate = Object.create;
+const setPrototypeOf = Object.setPrototypeOf;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const reflectOwnKeys = Reflect.ownKeys;
+const isArray = Array.isArray;
+
+/**
+ * Descriptor objects returned by `Object.getOwnPropertyDescriptor` are ordinary
+ * objects that inherit from `Object.prototype`, so a plain `descriptor.get`
+ * read on a data descriptor resolves through that shared prototype and would
+ * invoke a tenant-installed accessor with the descriptor as `this`. Every
+ * descriptor field is therefore probed as an own property first.
+ */
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
+
+/** Marks values JSON.stringify drops, so detaching reproduces its output. */
+const OMITTED = Symbol("omitted-json-value");
+
+function createDetachedObject(): Record<string, unknown> {
+  return apply(objectCreate, Object, [null]) as Record<string, unknown>;
+}
+
+function createDetachedArray(): unknown[] {
+  // Detach before writing: a poisoned Array.prototype index accessor would
+  // otherwise observe or rewrite entries as they are assigned.
+  return apply(setPrototypeOf, Object, [[], null]) as unknown[];
+}
+
+/** A JSON container the copier reads own data properties from. */
+type DetachableContainer = Record<string, unknown> | readonly unknown[];
+
+/** Read an own enumerable data property; accessors are never invoked. */
+function readDetachableProperty(target: DetachableContainer, key: string): unknown {
+  const descriptor = apply(getOwnPropertyDescriptor, Object, [target, key]) as
+    | PropertyDescriptor
+    | undefined;
+  if (descriptor === undefined) return OMITTED;
+  // A data descriptor owns `value`; an accessor descriptor owns `get`/`set`
+  // instead. Testing for the own `value` field keeps accessors out without ever
+  // reading a field the descriptor lacks through `Object.prototype`.
+  if (!hasOwn(descriptor, "value")) return OMITTED;
+  if (!hasOwn(descriptor, "enumerable") || descriptor.enumerable !== true) return OMITTED;
+  return descriptor.value;
+}
+
+/** Copy a validated JSON value into containers no tenant prototype can reach. */
+function detachJsonValue(value: unknown, depth: number, budget: { nodes: number }): unknown {
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (
+    typeof value === "undefined" || typeof value === "function" || typeof value === "symbol"
+  ) {
+    return OMITTED;
+  }
+  if (typeof value !== "object") {
+    // bigint, and any other primitive JSON.stringify refuses to represent.
+    throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
+  }
+  // Root sits at depth 0 and the maximum depth is inclusive, matching the
+  // `depth > maxDepth` rule the snapshot validator behind
+  // `parseProviderReplayCheckpointEvent` applies. Keeping the two in step means
+  // the persister never rejects a checkpoint that read-back would accept.
+  if (depth > MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
+  }
+  if (budget.nodes <= 0) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable node bound");
+  }
+  budget.nodes -= 1;
+
+  if (isArray(value)) {
+    const detached = createDetachedArray();
+    // `length` is a non-enumerable own data property on every array exotic
+    // object, so it is read directly rather than through the enumerable check.
+    const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
+      | PropertyDescriptor
+      | undefined;
+    const length = lengthDescriptor !== undefined && hasOwn(lengthDescriptor, "value") &&
+        typeof lengthDescriptor.value === "number"
+      ? lengthDescriptor.value
+      : 0;
+    for (let index = 0; index < length; index += 1) {
+      const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
+      // JSON.stringify writes null for array entries it cannot represent.
+      detached[index] = entry === OMITTED ? null : entry;
+    }
+    return detached;
+  }
+
+  const record = value as Record<string, unknown>;
+  const detached = createDetachedObject();
+  // `Reflect.ownKeys` hands back an ordinary array, so `for...of` would resolve
+  // `Symbol.iterator` through the shared `Array.prototype` and hand a tenant
+  // hook the private field names — along with the chance to drop, reorder, or
+  // never finish yielding them. Indexed reads of own data properties keep the
+  // key list out of reach of every shared prototype.
+  const keys = apply(reflectOwnKeys, Reflect, [record]) as (string | symbol)[];
+  const keysLengthDescriptor = apply(getOwnPropertyDescriptor, Object, [keys, "length"]) as
+    | PropertyDescriptor
+    | undefined;
+  const keyCount = keysLengthDescriptor !== undefined && hasOwn(keysLengthDescriptor, "value") &&
+      typeof keysLengthDescriptor.value === "number"
+    ? keysLengthDescriptor.value
+    : 0;
+  for (let keyIndex = 0; keyIndex < keyCount; keyIndex += 1) {
+    const key = readDetachableProperty(keys, `${keyIndex}`);
+    // JSON.stringify only serializes string keys.
+    if (typeof key !== "string") continue;
+    const property = readDetachableProperty(record, key);
+    if (property === OMITTED) continue;
+    const detachedProperty = detachJsonValue(property, depth + 1, budget);
+    if (detachedProperty === OMITTED) continue;
+    detached[key] = detachedProperty;
+  }
+  return detached;
+}
+
+/** Serialize the privileged append body without touching a shared prototype. */
+function serializeCheckpointAppendBody(checkpoint: ProviderReplayCheckpoint): string {
+  const budget = { nodes: MAX_PROVIDER_REPLAY_RAW_METADATA_NODES };
+  const event = detachJsonValue(createProviderReplayCheckpointEvent(checkpoint), 0, budget);
+  if (event === OMITTED || event === null) {
+    throw persistenceFailure("Provider replay checkpoint is not serializable");
+  }
+  const events = createDetachedArray();
+  events[0] = event;
+  const body = createDetachedObject();
+  body.events = events;
+  return apply(jsonStringify, JSON, [body]) as string;
+}
+
 function snapshotFetch(fetchImpl: Fetch): Fetch {
   return (input, init) => apply(fetchImpl, undefined, [input, init]) as Promise<Response>;
 }
@@ -56,6 +202,12 @@ function getAbortReason(signal: AbortSignal): unknown {
 
 function persistenceFailure(detail: string) {
   return DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({ detail });
+}
+
+/** True for the typed failures this module raises itself, which carry no payload. */
+function isPersistenceFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "slug" in error &&
+    error.slug === DURABLE_RUN_EVENT_PERSISTENCE_FAILED.slug;
 }
 
 /** Trusted host callback that durably appends checkpoints before continuation. */
@@ -88,6 +240,18 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   return async (checkpoint, abortSignal) => {
     if (abortSignal?.aborted) throw getAbortReason(abortSignal);
 
+    // Copying the checkpoint can still run exotic member code — a Proxy trap
+    // reached through `Reflect.ownKeys` or `getOwnPropertyDescriptor` — which
+    // may throw a tenant-controlled value. Only this module's own typed
+    // failures may cross the boundary; everything else becomes opaque, exactly
+    // as it did when the body was serialized inside the request's try block.
+    let body: string;
+    try {
+      body = serializeCheckpointAppendBody(checkpoint);
+    } catch (error) {
+      if (isPersistenceFailure(error)) throw error;
+      throw persistenceFailure("Provider replay checkpoint is not serializable");
+    }
     const controller = new AbortController();
     const timeoutError = persistenceFailure("Provider replay checkpoint persistence timed out");
     const timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);
@@ -103,9 +267,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
           "Cache-Control": "no-store",
           "Content-Type": "application/json; charset=utf-8",
         },
-        body: apply(jsonStringify, JSON, [{
-          events: [createProviderReplayCheckpointEvent(checkpoint)],
-        }]) as string,
+        body,
         cache: "no-store",
         signal: controller.signal,
       });
@@ -120,12 +282,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
     } catch (error) {
       if (abortSignal?.aborted) throw getAbortReason(abortSignal);
       if (controller.signal.aborted) throw controller.signal.reason ?? timeoutError;
-      if (
-        typeof error === "object" && error !== null && "slug" in error &&
-        error.slug === DURABLE_RUN_EVENT_PERSISTENCE_FAILED.slug
-      ) {
-        throw error;
-      }
+      if (isPersistenceFailure(error)) throw error;
       throw persistenceFailure("Provider replay checkpoint append failed");
     } finally {
       clearTimeout(timeout);

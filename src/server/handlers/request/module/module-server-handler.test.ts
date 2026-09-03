@@ -14,6 +14,7 @@ import {
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -130,6 +131,79 @@ describe(
       } finally {
         restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       }
+    });
+
+    // AuthHandler runs inside the runtime; shared caches sit in front of it. A
+    // `public` directive lets a CDN store the response to an authorized,
+    // Authorization-bearing request and then hand protected module source to
+    // unauthenticated clients for a year, never reaching the gate. The handler
+    // is the seam that must carry the project's gate into the module server.
+    async function serveReleaseModule(
+      securityConfig: HandlerContext["securityConfig"],
+      releaseId: string,
+    ): Promise<Response> {
+      const projectDir = `/gated-project-${releaseId}`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        `${projectDir}/components/App.ts`,
+        "export const secret = 1;\n",
+      );
+      const ctx = {
+        projectDir,
+        projectId: "project-gated",
+        adapter,
+        isLocalProject: false,
+        isProxyMode: false,
+        releaseId,
+        requestContext: {
+          token: "",
+          slug: "project-gated",
+          branch: null,
+          mode: "production",
+        },
+        securityConfig,
+        config: {},
+      } satisfies HandlerContext;
+
+      const result = await handleModuleServer(
+        new Request(
+          `http://localhost/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+        ),
+        ctx,
+        () => new ResponseBuilder(),
+        (response): HandlerResult => ({ response, continue: false }),
+        () => {},
+        (error) => error instanceof Error ? error.message : String(error),
+      );
+
+      return result.response!;
+    }
+
+    it("keeps a gated project's release modules out of shared caches", async () => {
+      const response = await serveReleaseModule(
+        {
+          auth: { basic: { username: "admin", password: "secret" } },
+        } as unknown as HandlerContext["securityConfig"],
+        "rel-gated",
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "private, max-age=31536000, immutable",
+        "a project behind security.auth must not announce module source as publicly cacheable",
+      );
+    });
+
+    it("still shares an ungated project's release modules with caches", async () => {
+      const response = await serveReleaseModule(null, "rel-open");
+
+      assertEquals(response.status, 200);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "public, max-age=31536000, immutable",
+        "a project with no gate keeps the CDN-cacheable release module path",
+      );
     });
   },
 );
