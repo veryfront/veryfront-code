@@ -90,6 +90,62 @@ function subWorkflowOwnerPath(parentPath: string, nodeId: string): string {
   return parentPath ? `${parentPath}/${segment}` : segment;
 }
 
+function mergeSubWorkflowReservation(
+  ownerPath: string,
+  childIds: Set<string>,
+  reservations: Map<string, Set<string>>,
+): void {
+  const existing = reservations.get(ownerPath);
+  if (!existing) {
+    reservations.set(ownerPath, childIds);
+    return;
+  }
+  for (const childId of childIds) existing.add(childId);
+}
+
+function collectStaticSubWorkflowReservation(
+  node: WorkflowNode,
+  parentPath: string,
+  reservations: Map<string, Set<string>>,
+  owners: Map<string, string>,
+): void {
+  switch (node.config.type) {
+    case "parallel":
+      collectStaticSubWorkflowReservations(node.config.nodes, parentPath, reservations, owners);
+      return;
+    case "branch":
+      collectStaticSubWorkflowReservations(node.config.then, parentPath, reservations, owners);
+      if (node.config.else) {
+        collectStaticSubWorkflowReservations(node.config.else, parentPath, reservations, owners);
+      }
+      return;
+    case "loop":
+      if (Array.isArray(node.config.steps)) {
+        collectStaticSubWorkflowReservations(node.config.steps, parentPath, reservations, owners);
+      }
+      return;
+    case "subWorkflow": {
+      if (
+        typeof node.config.workflow === "string" ||
+        !Array.isArray(node.config.workflow.steps)
+      ) return;
+      const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
+      mergeSubWorkflowReservation(
+        ownerPath,
+        collectWorkflowNodeIds(node.config.workflow.steps),
+        reservations,
+      );
+      owners.set(ownerPath, node.id);
+      collectStaticSubWorkflowReservations(
+        node.config.workflow.steps,
+        ownerPath,
+        reservations,
+        owners,
+      );
+    }
+  }
+}
+
 function collectStaticSubWorkflowReservations(
   nodes: WorkflowNode[],
   parentPath = "",
@@ -97,44 +153,7 @@ function collectStaticSubWorkflowReservations(
   owners = new Map<string, string>(),
 ): Map<string, Set<string>> {
   for (const node of nodes) {
-    switch (node.config.type) {
-      case "parallel":
-        collectStaticSubWorkflowReservations(node.config.nodes, parentPath, reservations, owners);
-        break;
-      case "branch":
-        collectStaticSubWorkflowReservations(node.config.then, parentPath, reservations, owners);
-        if (node.config.else) {
-          collectStaticSubWorkflowReservations(node.config.else, parentPath, reservations, owners);
-        }
-        break;
-      case "loop":
-        if (Array.isArray(node.config.steps)) {
-          collectStaticSubWorkflowReservations(node.config.steps, parentPath, reservations, owners);
-        }
-        break;
-      case "subWorkflow": {
-        if (
-          typeof node.config.workflow === "string" ||
-          !Array.isArray(node.config.workflow.steps)
-        ) break;
-        const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
-        const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
-        const existing = reservations.get(ownerPath);
-        if (existing) {
-          for (const childId of childIds) existing.add(childId);
-        } else {
-          reservations.set(ownerPath, childIds);
-        }
-        owners.set(ownerPath, node.id);
-        collectStaticSubWorkflowReservations(
-          node.config.workflow.steps,
-          ownerPath,
-          reservations,
-          owners,
-        );
-        break;
-      }
-    }
+    collectStaticSubWorkflowReservation(node, parentPath, reservations, owners);
   }
   return reservations;
 }
@@ -179,35 +198,19 @@ function nodeMayExecuteSubWorkflow(node: WorkflowNode): boolean {
   switch (node.config.type) {
     case "subWorkflow":
       return true;
-    case "parallel": {
-      for (const child of node.config.nodes) {
-        if (nodeMayExecuteSubWorkflow(child)) return true;
-      }
-      return false;
-    }
-    case "branch": {
-      for (const child of node.config.then) {
-        if (nodeMayExecuteSubWorkflow(child)) return true;
-      }
-      for (const child of node.config.else ?? []) {
-        if (nodeMayExecuteSubWorkflow(child)) return true;
-      }
-      return false;
-    }
+    case "parallel":
+      return node.config.nodes.some(nodeMayExecuteSubWorkflow);
+    case "branch":
+      return node.config.then.some(nodeMayExecuteSubWorkflow) ||
+        (node.config.else ?? []).some(nodeMayExecuteSubWorkflow);
     case "loop":
       if (!Array.isArray(node.config.steps)) return true;
-      for (const child of node.config.steps) {
-        if (nodeMayExecuteSubWorkflow(child)) return true;
-      }
-      return false;
+      return node.config.steps.some(nodeMayExecuteSubWorkflow);
     case "map": {
       const processor = node.config.processor;
       if ("steps" in processor) {
         if (!Array.isArray(processor.steps)) return true;
-        for (const child of processor.steps) {
-          if (nodeMayExecuteSubWorkflow(child)) return true;
-        }
-        return false;
+        return processor.steps.some(nodeMayExecuteSubWorkflow);
       }
       return nodeMayExecuteSubWorkflow(processor);
     }
@@ -223,25 +226,16 @@ function nodeHasUnknownSubWorkflowReservations(node: WorkflowNode): boolean {
         typeof node.config.workflow === "string" ||
         !Array.isArray(node.config.workflow.steps)
       ) return true;
-      for (const child of node.config.workflow.steps) {
-        if (nodeHasUnknownSubWorkflowReservations(child)) return true;
-      }
-      return false;
+      return node.config.workflow.steps.some(nodeHasUnknownSubWorkflowReservations);
     case "parallel":
-      for (const child of node.config.nodes) {
-        if (nodeHasUnknownSubWorkflowReservations(child)) return true;
-      }
-      return false;
+      return node.config.nodes.some(nodeHasUnknownSubWorkflowReservations);
     case "branch":
       // The selected arm is resolved only at execution, so the child ids this
       // node reserves are unknown until it runs.
       return nodeMayExecuteSubWorkflow(node);
     case "loop":
       if (!Array.isArray(node.config.steps)) return true;
-      for (const child of node.config.steps) {
-        if (nodeHasUnknownSubWorkflowReservations(child)) return true;
-      }
-      return false;
+      return node.config.steps.some(nodeHasUnknownSubWorkflowReservations);
     case "map":
       // Item count and generated namespaces are resolved only at execution.
       return nodeMayExecuteSubWorkflow(node);
@@ -271,6 +265,100 @@ function findConcurrentSubWorkflowChildCollision(
     }
   }
   return undefined;
+}
+
+function isSubWorkflowDescendant(candidate: string, parent: string): boolean {
+  return candidate === parent || candidate.startsWith(`${parent}/`);
+}
+
+function collectPreviouslyProducedSubWorkflowNodeIds(
+  ownerPath: string,
+  nodeStates: Record<string, NodeState>,
+  scope: ExecutionScope,
+): Set<string> {
+  const producedNodeIds = new Set<string>();
+  for (const [owner, ids] of scope.subWorkflowNodeIds) {
+    if (isSubWorkflowDescendant(owner, ownerPath)) continue;
+    for (const id of ids) producedNodeIds.add(id);
+  }
+  for (const [owner, ids] of scope.subWorkflowNodeReservations) {
+    // Ancestor reservations recursively include this owner's ids, so only
+    // true sibling reservations should block legacy state seeding.
+    if (
+      isSubWorkflowDescendant(owner, ownerPath) ||
+      isSubWorkflowDescendant(ownerPath, owner)
+    ) continue;
+    const ownerNodeId = scope.subWorkflowReservationOwners.get(owner);
+    const ownerStatus = ownerNodeId === undefined ? undefined : nodeStates[ownerNodeId]?.status;
+    if (ownerStatus === undefined || ownerStatus === "pending") continue;
+    for (const id of ids) producedNodeIds.add(id);
+  }
+  return producedNodeIds;
+}
+
+function shouldSeedSubWorkflowState(
+  nodeId: string,
+  state: NodeState,
+  ownerPath: string,
+  reservations: ReadonlySet<string>,
+  previouslyProducedNodeIds: ReadonlySet<string>,
+): boolean {
+  if (state._subWorkflowOwnerPath) {
+    return isSubWorkflowDescendant(state._subWorkflowOwnerPath, ownerPath);
+  }
+  // Keep legacy static child states resumable when ownership metadata is
+  // absent, but never admit one claimed by another sibling reservation.
+  return reservations.has(nodeId) && !previouslyProducedNodeIds.has(nodeId);
+}
+
+function createSeededSubWorkflowNodeStates(
+  ownerPath: string,
+  childNodeIds: Set<string>,
+  nodeStates: Record<string, NodeState>,
+  scope: ExecutionScope,
+): { seededNodeStates: Record<string, NodeState>; ownedNodeIds: Set<string> } {
+  const ownedNodeIds = scope.subWorkflowNodeIds.get(ownerPath) ?? new Set<string>();
+  const reservations = scope.subWorkflowNodeReservations.get(ownerPath) ?? new Set<string>();
+  for (const childId of childNodeIds) reservations.add(childId);
+  scope.subWorkflowNodeReservations.set(ownerPath, reservations);
+
+  const previouslyProducedNodeIds = collectPreviouslyProducedSubWorkflowNodeIds(
+    ownerPath,
+    nodeStates,
+    scope,
+  );
+  const seededNodeStates: Record<string, NodeState> = {};
+  for (const [nodeId, state] of Object.entries(nodeStates)) {
+    if (scope.declaredNodeIds.has(nodeId)) continue;
+    if (
+      shouldSeedSubWorkflowState(
+        nodeId,
+        state,
+        ownerPath,
+        reservations,
+        previouslyProducedNodeIds,
+      )
+    ) seededNodeStates[nodeId] = state;
+  }
+  return { seededNodeStates, ownedNodeIds };
+}
+
+function ownSubWorkflowResultNodeStates(
+  resultNodeStates: Record<string, NodeState>,
+  ownerPath: string,
+  declaredNodeIds: ReadonlySet<string>,
+  ownedNodeIds: ReadonlySet<string>,
+): { ownedResultNodeStates: Record<string, NodeState>; producedNodeIds: Set<string> } {
+  const ownedResultNodeStates: Record<string, NodeState> = {};
+  const producedNodeIds = new Set(ownedNodeIds);
+  for (const [childId, childState] of Object.entries(resultNodeStates)) {
+    const state = childState._subWorkflowOwnerPath
+      ? childState
+      : { ...childState, _subWorkflowOwnerPath: ownerPath };
+    ownedResultNodeStates[childId] = state;
+    if (!declaredNodeIds.has(childId)) producedNodeIds.add(childId);
+  }
+  return { ownedResultNodeStates, producedNodeIds };
 }
 
 function getUnfinishedNodeDetails(
@@ -1368,44 +1456,12 @@ export class DAGExecutor {
     // completed ancestor node can never stand in for a child that shares its id
     // on a path the static check above cannot see (a nested loop whose steps are
     // generated at runtime). Everything else stays out of the child keyspace.
-    const seededNodeStates: Record<string, NodeState> = {};
-    const ownedNodeIds = scope.subWorkflowNodeIds.get(ownerPath) ?? new Set<string>();
-    const reservations = scope.subWorkflowNodeReservations.get(ownerPath) ?? new Set<string>();
-    for (const childId of childNodeIds) reservations.add(childId);
-    scope.subWorkflowNodeReservations.set(ownerPath, reservations);
-    const previouslyProducedNodeIds = new Set<string>();
-    const isDescendant = (candidate: string, parent: string): boolean =>
-      candidate === parent || candidate.startsWith(`${parent}/`);
-    for (const [owner, ids] of scope.subWorkflowNodeIds) {
-      if (isDescendant(owner, ownerPath)) continue;
-      for (const id of ids) previouslyProducedNodeIds.add(id);
-    }
-    for (const [owner, ids] of scope.subWorkflowNodeReservations) {
-      // Ancestor reservations recursively include this owner's ids, so only
-      // true sibling reservations should block legacy state seeding.
-      if (isDescendant(owner, ownerPath) || isDescendant(ownerPath, owner)) continue;
-      const ownerNodeId = scope.subWorkflowReservationOwners.get(owner);
-      const ownerStatus = ownerNodeId === undefined ? undefined : nodeStates[ownerNodeId]?.status;
-      if (ownerStatus === undefined || ownerStatus === "pending") continue;
-      for (const id of ids) previouslyProducedNodeIds.add(id);
-    }
-    for (const [nodeId, state] of Object.entries(nodeStates)) {
-      if (scope.declaredNodeIds.has(nodeId)) continue;
-      if (
-        state._subWorkflowOwnerPath &&
-        isDescendant(state._subWorkflowOwnerPath, ownerPath)
-      ) {
-        seededNodeStates[nodeId] = state;
-      } else if (
-        !state._subWorkflowOwnerPath &&
-        reservations.has(nodeId) &&
-        !previouslyProducedNodeIds.has(nodeId)
-      ) {
-        // Keep legacy static child states resumable when ownership metadata is
-        // absent, but never admit one claimed by another sibling reservation.
-        seededNodeStates[nodeId] = state;
-      }
-    }
+    const { seededNodeStates, ownedNodeIds } = createSeededSubWorkflowNodeStates(
+      ownerPath,
+      childNodeIds,
+      nodeStates,
+      scope,
+    );
 
     const subRunId = `${node.id}_sub_${generateId()}`;
     // The sub-run record is synthetic and never persisted, so its id is a debugging
@@ -1440,15 +1496,12 @@ export class DAGExecutor {
     // executor restarts, when the in-memory ownership map is rebuilt from the
     // persisted root node-state map. Nested states retain their more specific
     // owner path so an enclosing sub-workflow can still rehydrate them.
-    const ownedResultNodeStates: Record<string, NodeState> = {};
-    const producedNodeIds = new Set(ownedNodeIds);
-    for (const [childId, childState] of Object.entries(result.nodeStates)) {
-      const state = childState._subWorkflowOwnerPath
-        ? childState
-        : { ...childState, _subWorkflowOwnerPath: ownerPath };
-      ownedResultNodeStates[childId] = state;
-      if (!scope.declaredNodeIds.has(childId)) producedNodeIds.add(childId);
-    }
+    const { ownedResultNodeStates, producedNodeIds } = ownSubWorkflowResultNodeStates(
+      result.nodeStates,
+      ownerPath,
+      scope.declaredNodeIds,
+      ownedNodeIds,
+    );
     scope.subWorkflowNodeIds.set(ownerPath, producedNodeIds);
 
     // Diff the sub-run against the states it actually started from. Diffing the
