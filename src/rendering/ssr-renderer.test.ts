@@ -94,7 +94,9 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: string | undefined;
+    // React's renderToReadableStream types nonce as a NonceOption union (string
+    // or { script, style }); capture whatever arrives and assert the exact value.
+    let observedNonce: unknown;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
