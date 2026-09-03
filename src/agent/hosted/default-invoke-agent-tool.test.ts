@@ -612,7 +612,10 @@ it("createDefaultHostedInvokeAgentTool adds child selection guidance and resolve
 
   assertStringIncludes(invokeTool.description, "agent_id is required");
   assertStringIncludes(invokeTool.description, "result_mode defaults");
-  assertStringIncludes(invokeTool.description, 'use "structured"');
+  assertStringIncludes(
+    invokeTool.description,
+    '"structured" extracts contract ids from a bounded 128,000-character head-and-tail window',
+  );
 
   const result = await invokeTool.execute(
     {
