@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { agent, resolveSecurityMiddleware } from "./factory.ts";
@@ -500,6 +500,58 @@ describe("resolveSecurityMiddleware", () => {
       (await assistant.getMemoryStats()).totalMessages,
       1,
       "a short-circuited turn must still record its user message",
+    );
+  });
+
+  it("persists a turn once when a middleware invokes the continuation twice", async () => {
+    // Persistence runs inside the middleware continuation, so a retry or
+    // fallback wrapper must not write the turn's input to memory once per
+    // attempt. `MiddlewareChain` already rejects a second `next()` call, and
+    // the commit is memoized behind it, so the turn's input is stored once.
+    let attempts = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/retry-persistence",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        attempts += 1;
+        throw new Error("transient provider failure");
+      },
+      // deno-lint-ignore require-await
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+
+    const retryOnce: AgentMiddleware = async (_context, next) => {
+      try {
+        return await next();
+      } catch {
+        return await next();
+      }
+    };
+
+    const assistant = agent({
+      id: "retry-persistence",
+      model: "hosted/retry-persistence",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [retryOnce],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const error = await assistant.generate({ input: "what is the weather?" }).catch((
+      failure: unknown,
+    ) => failure);
+
+    assertStringIncludes(String(error), "next() at most once");
+    assertEquals(attempts, 1, "the provider must be reached once");
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      1,
+      "the turn's user message must be recorded exactly once",
     );
   });
 

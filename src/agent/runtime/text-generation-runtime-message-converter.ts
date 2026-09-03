@@ -383,7 +383,16 @@ export function convertToTextGenerationRuntimeMessage(
   }
 }
 
-function hasProviderSendableAssistantContent(message: Message): boolean {
+/**
+ * Whether `convertToTextGenerationRuntimeMessages` forwards this message to the
+ * provider rather than dropping it.
+ *
+ * Only assistant messages are ever dropped, and only when they carry no text,
+ * no tool call, and no attached provider metadata. Exported so input validation
+ * can mirror the drop: a dropped message leaves the messages on either side of
+ * it adjacent, and the provider then merges those into one turn.
+ */
+export function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
 

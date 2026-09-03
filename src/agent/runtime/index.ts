@@ -62,10 +62,7 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import {
-  getTurnInputValidator,
-  getTurnMessageValidator,
-} from "#veryfront/agent/middleware/security/validator.ts";
+import { getTurnInputValidator, getTurnMessageValidator } from "../middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -1357,14 +1354,26 @@ export class AgentRuntime {
     // stored chain; callers still observe the rejection through the returned
     // promise.
     //
+    // Only a turn that actually runs a cross-turn validator is queued. Without
+    // one there is nothing to serialize: the write no longer depends on the
+    // history read, so a stateless agent (no `memory` config, where
+    // `createAgentMemory(undefined)` persists nothing) and every agent without
+    // the security middleware keep the pre-existing concurrency, and one slow
+    // memory backend cannot hold up unrelated concurrent turns.
+    //
     // The queue covers only the turn-input commit, which is the write a
     // caller controls. The assistant and tool `memory.add` calls inside the
     // agent loop run outside it, so a long-running turn's model output can
     // still land between another turn's validation and its write - those
     // messages are model-authored and exempt from input validation, so they
     // cannot forge a caller-controlled merge. Queueing is per runtime
-    // instance, so a hung memory backend delays other turns on the same agent;
-    // that is the same backend outage those turns would hit on their own write.
+    // instance, so a hung memory backend delays other validated turns on the
+    // same agent; that is the same backend outage those turns would hit on
+    // their own write.
+    if (!context || !getTurnMessageValidator(context)) {
+      return this.#commitTurnMessages(inputMessages, context);
+    }
+
     const task = this.#turnCommitQueue.then(() => this.#commitTurnMessages(inputMessages, context));
     this.#turnCommitQueue = task.then(() => undefined, () => undefined);
     return task;
@@ -1376,14 +1385,21 @@ export class AgentRuntime {
     inputMessages: Message[],
     context: AgentContext,
   ): { persisted: boolean; persist: () => Promise<Message[]> } {
+    // Memoized on the first call: persistence now runs inside the middleware
+    // continuation, so a middleware that invokes `next()` more than once (a
+    // retry or fallback wrapper) would otherwise write this turn's input to
+    // memory once per attempt. Every attempt shares the first commit, including
+    // its rejection, so a turn that failed validation stays rejected.
+    let commit: Promise<Message[]> | undefined;
     const persistence = {
       persisted: false,
-      persist: async (): Promise<Message[]> => {
+      persist: (): Promise<Message[]> => {
         persistence.persisted = true;
-        return await this.prepareTurnMessages(
+        commit ??= this.prepareTurnMessages(
           resolveValidatedTurnInput(context.input, inputMessages),
           context,
         );
+        return commit;
       },
     };
     return persistence;
@@ -1407,7 +1423,7 @@ export class AgentRuntime {
       const history = await this.memory.getMessages();
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
-      if (history.length > 0) await validateTurnMessages([...history, ...inputMessages]);
+      if (history.length > 0) await validateTurnMessages(history, inputMessages);
     }
     // Validation deliberately stops at the pre-write assembly. A memory
     // implementation that rewrites the transcript while persisting (summary
@@ -1417,7 +1433,9 @@ export class AgentRuntime {
     // would re-read the same transcript and be rejected, leaving the
     // conversation permanently unusable with no operator-visible cause.
     // Closing that gap needs a Memory-level remedy (rollback, or validation
-    // inside compaction), not a check here that fails closed forever.
+    // inside compaction), not a check here that fails closed forever. For the
+    // same reason the hook only judges merges this turn contributes to, so a
+    // transcript it cannot rewrite never bricks the conversation either.
     for (const msg of inputMessages) await this.memory.add(msg);
     const persisted = await this.memory.getMessages();
     return persisted.length > 0 ? persisted : inputMessages;

@@ -1,6 +1,8 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "../../output-schema.ts";
+import { hasProviderSendableAssistantContent } from "../../runtime/text-generation-runtime-message-converter.ts";
+import { registerTurnInputValidator, registerTurnMessageValidator } from "../turn-validation.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -142,6 +144,23 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
 }
 
 /**
+ * Options for {@link InputValidator.validate}.
+ */
+export interface InputValidationOptions {
+  /**
+   * Check `maxLength` against this text. Defaults to `true`.
+   *
+   * Pass `false` for a provider-assembled string: one message's joined text
+   * parts, or a run of messages the provider merges into a single turn. Those
+   * are synthetic concatenations built only to catch a blocked phrase split
+   * across a boundary, not caller-supplied message text, and a merged run
+   * grows with the conversation, so length-checking them would eventually
+   * reject every turn on an agent configured with `maxLength`.
+   */
+  checkMaxLength?: boolean;
+}
+
+/**
  * Input Validator
  */
 export class InputValidator {
@@ -154,14 +173,14 @@ export class InputValidator {
   /**
    * Validate input
    */
-  async validate(input: string): Promise<{
+  async validate(input: string, options?: InputValidationOptions): Promise<{
     valid: boolean;
     sanitized?: string;
     violations: SecurityViolation[];
   }> {
     const violations: SecurityViolation[] = [];
 
-    const maxLength = this.config.maxLength;
+    const maxLength = options?.checkMaxLength === false ? undefined : this.config.maxLength;
     if (maxLength != null && input.length > maxLength) {
       violations.push({
         type: "input",
@@ -381,16 +400,36 @@ function isTextPart(part: unknown): part is { type: "text"; text: string } {
  */
 const ASSEMBLED_TEXT_SEPARATORS = ["", "\n\n"] as const;
 
+/**
+ * Texts extracted from agent input, split by what they are.
+ *
+ * `texts` are caller-supplied values (a text part, a tool call's arguments) and
+ * get the full check, `maxLength` included. `assembled` are the synthetic
+ * concatenations the provider converters produce from several of those values;
+ * they exist to catch a blocked phrase split across a part or message boundary,
+ * so they are pattern-checked but never length-checked. See
+ * {@link InputValidationOptions.checkMaxLength}.
+ */
+interface InputValidationTexts {
+  texts: string[];
+  assembled: string[];
+}
+
 function extractMessageInputText(message: Message): string[] {
   if (!VALIDATED_INPUT_ROLES.has(message.role)) return [];
-  const values = message.parts.flatMap(extractPartInputText);
+  return message.parts.flatMap(extractPartInputText);
+}
+
+/** The assembled forms of one message's text parts, if it has more than one. */
+function extractMessageAssembledTexts(message: Message): string[] {
+  if (!VALIDATED_INPUT_ROLES.has(message.role)) return [];
 
   // A single text part already equals every assembled form, so only add the
   // joined variants when the parts could actually hide a split phrase.
-  const textParts = message.parts.filter(isTextPart).map((part) => part.text);
-  if (textParts.length < 2) return values;
+  const textParts = messageTextParts(message);
+  if (textParts.length < 2) return [];
 
-  return [...values, ...ASSEMBLED_TEXT_SEPARATORS.map((sep) => textParts.join(sep))];
+  return ASSEMBLED_TEXT_SEPARATORS.map((separator) => textParts.join(separator));
 }
 
 /**
@@ -420,13 +459,20 @@ function extractMessageInputText(message: Message): string[] {
  * with a matching id can only follow the assistant `tool_use` that opened it,
  * and that assistant message does end the run.
  *
- * Messages of other roles end the run even when provider conversion would drop
- * them (an assistant message with no sendable content, a tool message with no
- * surviving results). Mirroring the converter's drop rules here would pin
- * validation to converter internals for no added coverage: for system messages
- * the hoisted run in `extractMergedSystemRuns` already assembles every system
- * message in the conversation, so any pair a dropped message sits between is
- * covered there.
+ * An assistant message the runtime converter drops does not end a *user* run
+ * either. `convertToTextGenerationRuntimeMessages`
+ * (src/agent/runtime/text-generation-runtime-message-converter.ts) skips an
+ * assistant message with no provider-sendable content (empty `parts`, only an
+ * empty-string text part, or only reasoning/file parts), so the user messages
+ * on either side of it arrive adjacent at the request builder and
+ * `pushAnthropicUserContent` merges them. The exported
+ * `hasProviderSendableAssistantContent` predicate is reused rather than
+ * reimplemented so the two cannot drift apart.
+ *
+ * Messages of other roles end the run. For *system* runs that stays true even
+ * for a message the converter would drop, because the hoisted run in
+ * `extractMergedSystemRuns` already assembles every system message in the
+ * conversation, so any pair a dropped message sits between is covered there.
  */
 function extractAdjacentRuns(messages: Message[], role: Message["role"]): Message[][] {
   const runs: Message[][] = [];
@@ -442,6 +488,7 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
   for (const message of messages) {
     if (message.role !== role) {
       if (role === "user" && message.role === "tool") continue;
+      if (role === "user" && !hasProviderSendableAssistantContent(message)) continue;
       flushRun();
       continue;
     }
@@ -508,9 +555,25 @@ function extractMergedRuns(messages: Message[]): Message[][] {
   return [...extractMergedSystemRuns(messages), ...extractAdjacentRuns(messages, "user")];
 }
 
-function extractMergedRunTexts(messages: Message[]): string[] {
+/**
+ * Assemble every merged run into the forms the provider can produce.
+ *
+ * `mustInclude`, when given, keeps only runs with at least one member in it.
+ * The cross-turn hook passes this turn's input so a run lying entirely inside
+ * already-persisted history is skipped: the middleware cannot rewrite history,
+ * so rejecting a turn over a run this turn does not contribute to would reject
+ * every later turn on that conversation forever, with no remediation path
+ * through the `Memory` interface. Such a run is not left unchecked either, it
+ * was validated on the turn that wrote its last member, unless it predates the
+ * middleware or was written directly through `memory.add`.
+ */
+function extractMergedRunTexts(
+  messages: Message[],
+  mustInclude?: ReadonlySet<Message>,
+): string[] {
   const runTexts = new Set<string>();
   for (const run of extractMergedRuns(messages)) {
+    if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
       // The OpenAI-compatible converter and the Anthropic builder join system
       // run members with a blank line, but the Google builder sends each
@@ -530,9 +593,15 @@ function extractMergedRunTexts(messages: Message[]): string[] {
   return [...runTexts];
 }
 
-function extractInputValidationTexts(input: AgentContext["input"]): string[] {
-  if (typeof input === "string") return [input];
-  return [...input.flatMap(extractMessageInputText), ...extractMergedRunTexts(input)];
+function extractInputValidationTexts(input: AgentContext["input"]): InputValidationTexts {
+  if (typeof input === "string") return { texts: [input], assembled: [] };
+  return {
+    texts: input.flatMap(extractMessageInputText),
+    assembled: [
+      ...input.flatMap(extractMessageAssembledTexts),
+      ...extractMergedRunTexts(input),
+    ],
+  };
 }
 
 /**
@@ -687,9 +756,12 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
 
 async function validateInputTexts(
   validator: InputValidator,
-  values: string[],
+  values: InputValidationTexts,
 ): Promise<{ valid: boolean; violations: SecurityViolation[] }> {
-  const results = await Promise.all(values.map((value) => validator.validate(value)));
+  const results = await Promise.all([
+    ...values.texts.map((value) => validator.validate(value)),
+    ...values.assembled.map((value) => validator.validate(value, { checkMaxLength: false })),
+  ]);
   return {
     valid: results.every((result) => result.valid),
     violations: results.flatMap((result) => result.violations),
@@ -699,7 +771,7 @@ async function validateInputTexts(
 /** Validate every extracted text, throwing the first violation as an agent error. */
 async function assertInputTextsValid(
   validator: InputValidator,
-  values: string[],
+  values: InputValidationTexts,
   onViolation?: (violation: SecurityViolation) => void,
 ): Promise<void> {
   const validation = await validateInputTexts(validator, values);
@@ -726,6 +798,13 @@ async function assertInputTextsValid(
  * then, so only a payload split across the memory/input boundary can still
  * change here, and failing closed keeps it away from the provider without
  * poisoning memory.
+ *
+ * Failing closed is bounded to runs this turn contributes to: the cross-turn
+ * caller filters out runs lying entirely inside history (see
+ * `extractMergedRunTexts`), so history seeded before the middleware was
+ * enabled, written directly through `memory.add`, or rewritten by summary
+ * compaction cannot reject every later turn on the conversation with no way
+ * to recover.
  */
 function assertTextsNeedNoSanitization(
   validator: InputValidator,
@@ -764,59 +843,10 @@ function sanitizeAgentInput(
   return sanitizeMergedRuns(validator, sanitizeStructuredInput(validator, input));
 }
 
-function sameTexts(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-/** Validate the full provider-bound conversation assembled for one turn. */
-export type TurnMessageValidator = (messages: Message[]) => Promise<void>;
-
-/**
- * Cross-turn validation hooks, keyed by the turn's middleware context.
- *
- * The middleware sees only this turn's `context.input`, but conversation
- * memory can end with a caller-authored message from an earlier turn that
- * failed or was cancelled before an assistant reply was persisted. The
- * provider folds that tail together with this turn's leading messages of the
- * same role into one turn (`toOpenAICompatibleMessages` joins adjacent system
- * messages with a blank line; `pushAnthropicUserContent` concatenates adjacent
- * user messages), so a blocked phrase split across turns reassembles at the
- * provider without any single turn's input ever containing it. The runtime closes that
- * gap by invoking the registered hook with the full conversation it is about
- * to persist and dispatch (memory history plus this turn's input) before the
- * turn is committed, so a hostile merge is rejected without poisoning memory.
- */
-const turnMessageValidators = new WeakMap<AgentContext, TurnMessageValidator>();
-
-/** Resolve the cross-turn validator registered for a turn's context, if any. */
-export function getTurnMessageValidator(
-  context: AgentContext,
-): TurnMessageValidator | undefined {
-  return turnMessageValidators.get(context);
-}
-
-/** Validate the resolved post-middleware input for one turn. */
-export type TurnInputValidator = (messages: Message[]) => Promise<void>;
-
-/**
- * Post-middleware input validation hooks, keyed by the turn's middleware
- * context.
- *
- * The security middleware validates `context.input` as it stands when the
- * middleware runs, but a later middleware in the chain can still replace the
- * array or mutate a message in place before the runtime persists and
- * dispatches the turn. Only the runtime sees the resolved value, so it invokes
- * the registered hook with exactly the messages it is about to commit; input
- * whose extracted texts match what the middleware already approved is skipped,
- * anything else is validated from scratch.
- */
-const turnInputValidators = new WeakMap<AgentContext, TurnInputValidator>();
-
-/** Resolve the post-middleware input validator registered for a turn's context, if any. */
-export function getTurnInputValidator(
-  context: AgentContext,
-): TurnInputValidator | undefined {
-  return turnInputValidators.get(context);
+function sameTexts(left: InputValidationTexts, right: InputValidationTexts): boolean {
+  const sameList = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
+  return sameList(left.texts, right.texts) && sameList(left.assembled, right.assembled);
 }
 
 /**
@@ -834,13 +864,19 @@ export function securityMiddleware(
   ): Promise<AgentResponse> => {
     // Register the cross-turn check before this turn is committed: merged
     // system runs and adjacent user runs must also be validated across the
-    // memory/input boundary, which only the runtime can see. Compose with any
-    // validator an earlier security middleware registered on the same context.
-    const previousTurnValidator = turnMessageValidators.get(context);
-    turnMessageValidators.set(context, async (messages) => {
-      if (previousTurnValidator) await previousTurnValidator(messages);
-      const runTexts = extractMergedRunTexts(messages);
-      await assertInputTextsValid(inputValidator, runTexts, config.onViolation);
+    // memory/input boundary, which only the runtime can see. Only runs this
+    // turn contributes a message to are checked; a run lying entirely inside
+    // already-persisted history cannot be rewritten here, so rejecting over it
+    // would brick the conversation on every later turn (`extractMergedRunTexts`).
+    registerTurnMessageValidator(context, async (history, turnInput) => {
+      const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
+      // Merged runs are synthetic assemblies, so they are pattern-checked but
+      // never length-checked (`InputValidationOptions.checkMaxLength`).
+      await assertInputTextsValid(
+        inputValidator,
+        { texts: [], assembled: runTexts },
+        config.onViolation,
+      );
       assertTextsNeedNoSanitization(
         inputValidator,
         runTexts,
@@ -874,17 +910,14 @@ export function securityMiddleware(
     // runtime invokes with the resolved input before committing the turn:
     // texts identical to what was approved here are skipped, anything else is
     // validated from scratch and must need no sanitization, which can no
-    // longer rewrite it at that point. Compose with any validator an earlier
-    // security middleware registered on the same context.
-    const previousInputValidator = turnInputValidators.get(context);
-    turnInputValidators.set(context, async (messages) => {
-      if (previousInputValidator) await previousInputValidator(messages);
+    // longer rewrite it at that point.
+    registerTurnInputValidator(context, async (messages) => {
       const resolvedTexts = extractInputValidationTexts(messages);
       if (sameTexts(resolvedTexts, approvedInputTexts)) return;
       await assertInputTextsValid(inputValidator, resolvedTexts, config.onViolation);
       assertTextsNeedNoSanitization(
         inputValidator,
-        resolvedTexts,
+        [...resolvedTexts.texts, ...resolvedTexts.assembled],
         "Middleware-rewritten input contains content sanitization removes",
         config.onViolation,
       );
