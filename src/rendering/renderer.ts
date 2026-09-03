@@ -108,6 +108,8 @@ const logger = rendererLogger.component("renderer");
 const IntrinsicArray = Array;
 const IntrinsicDateNow = Date.now;
 const IntrinsicMathFloor = Math.floor;
+const IntrinsicMathMax = Math.max;
+const IntrinsicMathMin = Math.min;
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -132,6 +134,14 @@ const RENDER_PREWARM_PROBE_BUDGET_MS = 5_000;
  * resolve, so validation work must stay bounded alongside the render count.
  */
 const RENDER_PREWARM_PROBE_MULTIPLIER = 4;
+/**
+ * Share of the probe budget reserved for the highest-priority candidates.
+ * `selectPrewarmSlugs` ranks candidates against the slug being rendered, so the
+ * prefix holds the route-family siblings that prewarming exists to warm; the
+ * rest of the budget spreads across the remainder so an unresolvable prefix
+ * cannot hide every valid route.
+ */
+const RENDER_PREWARM_PROBE_PREFIX_RATIO = 0.5;
 
 type RenderAdmission = "foreground" | "background";
 
@@ -148,19 +158,55 @@ const RENDER_PREWARM_CONCURRENCY = getBoundedEnvNumber(
   8,
 );
 
+/**
+ * Choose which prewarm candidates may reach the resolver once the candidate
+ * list exceeds the probe budget.
+ *
+ * The budget is split in two so neither failure mode wins outright:
+ *
+ *  - a prioritized prefix keeps the route-family ordering `selectPrewarmSlugs`
+ *    established, so siblings of the slug being rendered are still probed
+ *    first instead of being thinned out by a uniform stride;
+ *  - the remaining budget samples the suffix at an even stride and always ends
+ *    on the final candidate, so a long unresolvable prefix cannot hide every
+ *    route the selected router would accept.
+ *
+ * Sampling is positional rather than router-aware because `getAllPages()`
+ * returns slugs without provenance. The prefix carries most of the weight
+ * anyway: ranking is anchored on the currently rendering slug, which the
+ * selected router already resolved, so its nearest neighbours come from that
+ * same router in practice.
+ */
 function selectPrewarmProbeCandidates(slugs: string[], maxProbes: number): string[] {
   if (slugs.length <= maxProbes) return slugs;
 
-  // Preserve the priority order while sampling the entire candidate range.
-  // Always include both ends so an invalid prefix cannot hide every route from
-  // the selected router.
+  const prefixCount = IntrinsicMathMax(
+    1,
+    IntrinsicMathMin(
+      maxProbes - 1,
+      IntrinsicMathFloor(maxProbes * RENDER_PREWARM_PROBE_PREFIX_RATIO),
+    ),
+  );
+  const sampleCount = maxProbes - prefixCount;
   const selected = new IntrinsicArray<string>(maxProbes);
+  for (let prefixIndex = 0; prefixIndex < prefixCount; prefixIndex += 1) {
+    selected[prefixIndex] = slugs[prefixIndex]!;
+  }
+
   const lastIndex = slugs.length - 1;
-  for (let probeIndex = 0; probeIndex < maxProbes; probeIndex += 1) {
-    const sourceIndex = IntrinsicMathFloor(
-      (probeIndex * lastIndex) / (maxProbes - 1),
+  if (sampleCount === 1) {
+    selected[prefixCount] = slugs[lastIndex]!;
+    return selected;
+  }
+
+  // slugs.length > maxProbes, so the suffix is at least `sampleCount` wide and
+  // the stride below never repeats an index.
+  const suffixSpan = lastIndex - prefixCount;
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+    const sourceIndex = prefixCount + IntrinsicMathFloor(
+      (sampleIndex * suffixSpan) / (sampleCount - 1),
     );
-    selected[probeIndex] = slugs[sourceIndex]!;
+    selected[prefixCount + sampleIndex] = slugs[sourceIndex]!;
   }
   return selected;
 }

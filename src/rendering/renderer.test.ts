@@ -1877,6 +1877,45 @@ describe("Renderer release asset cache isolation", () => {
     }
   });
 
+  it("keeps the prioritized candidate prefix when bounding probes", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => {
+      probeCount++;
+      return Promise.resolve(true);
+    };
+
+    // selectPrewarmSlugs ranks route-family siblings first; the probe cap must
+    // not thin them out by striding uniformly across the whole candidate list.
+    const siblings = Array.from(
+      { length: 12 },
+      (_, index) => `/blog/articles/sibling-${index}`,
+    );
+    const unrelated = Array.from({ length: 488 }, (_, index) => `/unrelated-${index}`);
+    const maxRoutes = 12;
+    const resolvable = await (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(
+      makeRenderContext(),
+      [...siblings, ...unrelated],
+      maxRoutes,
+    );
+
+    try {
+      assertEquals(resolvable, siblings);
+      assertEquals(probeCount <= maxRoutes * 4, true);
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("uses one deadline for the complete resolver probe batch", async () => {
     using time = new FakeTime();
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
