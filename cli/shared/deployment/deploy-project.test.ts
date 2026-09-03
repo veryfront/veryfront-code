@@ -1242,6 +1242,21 @@ describe("resolveBootstrapPush", () => {
     );
   });
 
+  it("does not refresh when Git provenance is indeterminate", () => {
+    assertEquals(
+      resolveBootstrapPush(
+        { ...receipt, commitSha: "1".repeat(40), clean: false },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, indeterminate: true },
+          sourceDigest: `sha256:${"2".repeat(64)}`,
+        },
+        target,
+      ),
+      "none",
+    );
+  });
+
   it("skips the push only for a clean checkout parked on the pushed commit", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(

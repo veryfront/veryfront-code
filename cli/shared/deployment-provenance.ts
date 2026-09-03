@@ -45,6 +45,8 @@ export interface PushReceipt {
 export interface GitSource {
   commitSha: string | null;
   clean: boolean;
+  /** Git or CI provided contradictory or unreadable provenance evidence. */
+  indeterminate?: boolean;
 }
 
 export interface ProjectTarget {
@@ -235,6 +237,7 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
     return {
       commitSha: envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null,
       clean: false,
+      indeterminate: true,
     };
   }
 
@@ -252,6 +255,7 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   return {
     commitSha,
     clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
+    ...(!sourcesAgree ? { indeterminate: true } : {}),
   };
 }
 

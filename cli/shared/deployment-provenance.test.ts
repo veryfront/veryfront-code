@@ -529,11 +529,13 @@ describe("resolveGitSource", () => {
       const mismatchedCiSource = await resolveGitSource(projectDir);
       assertEquals(mismatchedCiSource.commitSha, null);
       assertEquals(mismatchedCiSource.clean, false);
+      assertEquals(mismatchedCiSource.indeterminate, true);
 
       Deno.env.set("GITHUB_SHA", "not-a-commit");
       const invalidCiSource = await resolveGitSource(projectDir);
       assertEquals(invalidCiSource.commitSha, null);
       assertEquals(invalidCiSource.clean, false);
+      assertEquals(invalidCiSource.indeterminate, true);
       Deno.env.delete("GITHUB_SHA");
 
       // The CLI writes its own bookkeeping (the project link, the receipt)

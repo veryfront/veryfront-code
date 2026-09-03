@@ -244,7 +244,8 @@ export async function scanLocalFiles(
 }
 
 function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
-  return left.commitSha === right.commitSha && left.clean === right.clean;
+  return left.commitSha === right.commitSha && left.clean === right.clean &&
+    left.indeterminate === right.indeterminate;
 }
 
 function sourceSnapshotsMatch(
@@ -257,6 +258,12 @@ function sourceSnapshotsMatch(
 
 function sourceChangedError(): Error {
   return new Error("Local source changed during push. Run veryfront push again.");
+}
+
+function gitProvenanceError(): Error {
+  return new Error(
+    "Git provenance could not be verified. Ensure GITHUB_SHA matches the checked-out HEAD, then retry.",
+  );
 }
 
 function projectSlugConflictError(
@@ -315,6 +322,7 @@ export async function capturePushSourceSnapshot(
   discoverDeletedGitPaths = false,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
+  if (gitSourceBefore.indeterminate) throw gitProvenanceError();
   if (expectedCommitSha !== undefined && gitSourceBefore.commitSha !== expectedCommitSha) {
     throw sourceChangedError();
   }
@@ -326,6 +334,7 @@ export async function capturePushSourceSnapshot(
   const filesTracked = await areSourceFilesTracked(projectDir, trackedSourceFiles);
   const gitSource = await resolveGitSource(projectDir);
 
+  if (gitSource.indeterminate) throw gitProvenanceError();
   if (!gitSourcesMatch(gitSourceBefore, gitSource)) throw sourceChangedError();
   return {
     files,

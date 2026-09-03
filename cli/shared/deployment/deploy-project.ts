@@ -441,6 +441,7 @@ function resolveStaleSourceRefresh(
   receipt: PushReceipt,
   local: LocalSourceObservation,
 ): BootstrapPushKind {
+  if (local.gitSource.indeterminate) return "none";
   if (!receipt.commitSha) return resolveDigestOnlySourceRefresh(receipt, local);
   const { gitSource } = local;
   if (gitSource.commitSha !== receipt.commitSha) {
@@ -577,6 +578,12 @@ export async function resolvePushedSource(input: {
     (enforceClean
       ? await observeLocalSource(input.projectDir)
       : { gitSource: await resolveGitSource(input.projectDir), sourceDigest: null });
+  if (local.gitSource.indeterminate) {
+    throw DEPLOYMENT_ERROR.create({
+      detail:
+        "Git provenance could not be verified. Ensure GITHUB_SHA matches the checked-out HEAD, then retry the deploy.",
+    });
+  }
   const commitSha = validatePushReceipt(receipt, {
     controlPlane: input.controlPlane,
     projectId: input.projectId,
