@@ -24,15 +24,9 @@ import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
-/**
- * React's own nonce option type. React 19.2 widened it from `string` to
- * `string | { script?: string; style?: string }`, so observing it through this
- * alias keeps the assertion honest across React type versions instead of
- * pinning the test to whichever shape happened to ship first.
- */
-type ReadableStreamNonce = NonNullable<
+type RenderToReadableStreamOptions = NonNullable<
   Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
->["nonce"];
+>;
 
 function createPipeableSSRStream(
   pipeImpl: (writable: NodeJS.WritableStream) => void,
@@ -104,7 +98,7 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: ReadableStreamNonce;
+    let observedNonce: RenderToReadableStreamOptions["nonce"] | undefined;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",

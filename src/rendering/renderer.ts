@@ -532,7 +532,8 @@ export class Renderer {
 
   /**
    * Compute a cache key that is query-aware and avoids caching personalized responses
-   * (Authorization / Cookie / x-api-key) unless the caller explicitly provides one.
+   * (Authorization / Cookie / x-api-key / admitted application identity) unless the
+   * caller explicitly provides one.
    *
    * Query param handling is configurable via `config.cache.queryParams`:
    * - "ignore-all": Ignore all query params (pages share cache regardless of URL params)
@@ -559,6 +560,10 @@ export class Renderer {
       );
     }
 
+    // Trusted-proxy identities arrive via headers that are stripped from the
+    // application request before this check runs, so an identity-bearing
+    // render must never share the anonymous slug-based cache key.
+    if (options?.applicationIdentity != null) return null;
     const req = options?.request;
     if (req) {
       if (requestHasCacheSensitiveState(req)) return null;
