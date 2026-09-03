@@ -1847,6 +1847,70 @@ describe("Renderer release asset cache isolation", () => {
     }
   });
 
+  it("samples beyond an invalid candidate prefix", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = (slug) => {
+      probeCount++;
+      return Promise.resolve(slug === "/valid-app-route");
+    };
+
+    const slugs = Array.from({ length: 499 }, (_, index) => `/legacy-${index}`);
+    slugs.push("/valid-app-route");
+    const maxRoutes = 12;
+    const resolvable = await (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(makeRenderContext(), slugs, maxRoutes);
+
+    try {
+      assertEquals(resolvable, ["/valid-app-route"]);
+      assertEquals(probeCount <= maxRoutes * 4, true);
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
+  it("uses one deadline for the complete resolver probe batch", async () => {
+    using time = new FakeTime();
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => {
+      probeCount++;
+      return new Promise<boolean>(() => {});
+    };
+
+    const filtering = (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(
+      makeRenderContext(),
+      Array.from({ length: 500 }, (_, index) => `/stalled-${index}`),
+      12,
+    );
+
+    await time.tickAsync(5_000);
+
+    try {
+      assertEquals(await filtering, []);
+      assertEquals(probeCount, 1);
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("prioritizes route-family siblings when prewarming production routes", async () => {
     const store = createInMemoryStore();
     const renderedSlugs: string[] = [];

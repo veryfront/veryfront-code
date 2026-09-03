@@ -105,6 +105,9 @@ import {
 import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
+const IntrinsicArray = Array;
+const IntrinsicDateNow = Date.now;
+const IntrinsicMathFloor = Math.floor;
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -121,6 +124,8 @@ const DEFAULT_RENDER_PREWARM_MAX_ROUTES = 12;
 const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
 /** Bound remembered release contexts so multi-tenant processes cannot grow without limit. */
 const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
+/** Total time allowed for one background prewarm resolver probe batch. */
+const RENDER_PREWARM_PROBE_BUDGET_MS = 5_000;
 /**
  * Bound resolver probes per prewarm run to a small multiple of the route cap.
  * Tenant-controlled sources can surface many page-like candidates that never
@@ -142,6 +147,23 @@ const RENDER_PREWARM_CONCURRENCY = getBoundedEnvNumber(
   1,
   8,
 );
+
+function selectPrewarmProbeCandidates(slugs: string[], maxProbes: number): string[] {
+  if (slugs.length <= maxProbes) return slugs;
+
+  // Preserve the priority order while sampling the entire candidate range.
+  // Always include both ends so an invalid prefix cannot hide every route from
+  // the selected router.
+  const selected = new IntrinsicArray<string>(maxProbes);
+  const lastIndex = slugs.length - 1;
+  for (let probeIndex = 0; probeIndex < maxProbes; probeIndex += 1) {
+    const sourceIndex = IntrinsicMathFloor(
+      (probeIndex * lastIndex) / (maxProbes - 1),
+    );
+    selected[probeIndex] = slugs[sourceIndex]!;
+  }
+  return selected;
+}
 
 /**
  * Options for initializing the Renderer
@@ -1212,11 +1234,21 @@ export class Renderer {
     if (maxRoutes <= 0) return [];
 
     const maxProbes = maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER;
+    const deadline = IntrinsicDateNow() + RENDER_PREWARM_PROBE_BUDGET_MS;
     const resolvable: string[] = [];
 
-    for (const slug of slugs.slice(0, maxProbes)) {
+    for (const slug of selectPrewarmProbeCandidates(slugs, maxProbes)) {
+      const remainingMs = deadline - IntrinsicDateNow();
+      if (remainingMs <= 0) break;
+
       try {
-        if (await this.pageExists(slug, ctx)) {
+        if (
+          await withTimeoutThrow(
+            this.pageExists(slug, ctx),
+            remainingMs,
+            "Production render prewarm route validation",
+          )
+        ) {
           resolvable.push(slug);
           if (resolvable.length >= maxRoutes) break;
         }
@@ -1227,6 +1259,7 @@ export class Renderer {
           releaseId: ctx.releaseId,
           error: error instanceof Error ? error.message : String(error),
         });
+        if (error instanceof TimeoutError) break;
       }
     }
 
