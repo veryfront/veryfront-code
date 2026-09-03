@@ -182,7 +182,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      // Unscoped: this adapter resolves no content context and the context is
+      // not in proxy mode, so the scanner scopes its entry by `ctx.projectDir`
+      // rather than by the slug — a slug-scoped poke would leave it cached.
+      invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -196,7 +199,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
       unregister(CSSOptimizationEngineName);
       if (previousEngine !== undefined) {
         register(CSSOptimizationEngineName, previousEngine);
@@ -223,7 +226,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
       const etag = result.response!.headers.get("etag");
@@ -244,7 +247,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
     }
   });
 
@@ -267,7 +270,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
 
       const first = await handler.handle(req, ctx);
       const etag = first.response!.headers.get("etag");
@@ -294,7 +297,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
     }
   });
 
@@ -574,7 +577,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -590,7 +593,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      invalidateProjectCssImportScans(PROJECT_SLUG);
+      invalidateProjectCssImportScans();
     }
   });
 

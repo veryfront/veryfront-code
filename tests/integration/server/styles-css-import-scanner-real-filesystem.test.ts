@@ -16,6 +16,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
 import { mkdir, readTextFile, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -64,6 +65,14 @@ describe("server/handlers/dev/styles-css-import-scanner (real filesystem)", () =
           },
         },
       } as unknown as RuntimeAdapter;
+
+      // A content-less, non-proxy context resolves no `release:` version, so
+      // the entry is mutable and expires after MUTABLE_SCAN_TTL_MS (2s). The
+      // five extractions below assert a single walk, so pin the clock: on a
+      // loaded runner real wall time could cross the TTL mid-test and the
+      // scanner would legitimately re-walk. Installed after the temp tree is
+      // written so only the cache assertions run on frozen time.
+      using _time = new FakeTime();
 
       try {
         invalidateProjectCssImportScans();
