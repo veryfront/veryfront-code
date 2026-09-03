@@ -272,6 +272,14 @@ function collectNodeSharedChildIds(
         collectNodeSharedChildIds(child, parentPath, scope, childIds);
       }
       break;
+    case "loop":
+      if (Array.isArray(node.config.steps)) {
+        for (const child of node.config.steps) {
+          childIds.add(child.id);
+          collectNodeSharedChildIds(child, parentPath, scope, childIds);
+        }
+      }
+      break;
   }
 }
 
@@ -305,8 +313,10 @@ function nodeHasUnknownSharedChildReservations(node: WorkflowNode): boolean {
       // node reserves are unknown until it runs.
       return true;
     case "loop":
+      if (!Array.isArray(node.config.steps)) return true;
+      return node.config.steps.some(nodeHasUnknownSharedChildReservations);
     case "map":
-      // Selection, iteration count, and generated namespaces resolve only at execution.
+      // Item count and generated namespaces resolve only at execution.
       return true;
     default:
       return false;
