@@ -35,6 +35,7 @@ import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
   FRAMEWORK_ROOT,
+  isFrameworkSourceFile,
   LOG_PREFIX_MDX_LOADER,
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
@@ -300,11 +301,23 @@ async function readProjectJsxSourceWithinLimit(
  * Deleting every variant but the one this pass wrote is not safe: a render
  * that transformed an older generation of the same path is still holding the
  * `file://` specifier of its own artifact, and deleting it breaks that render's
- * module load. Retaining a small window keeps the artifacts of in-flight
- * renders alive while still bounding a path that keeps changing to a constant
- * number of files instead of one per content variant ever seen.
+ * module load. The window is sized above the default per-project request
+ * ceiling (`maxConcurrentPerProject`, 20) so ordinary concurrency never reaches
+ * it, and {@link JSX_CACHE_VARIANT_MIN_AGE_MS} is what actually guarantees an
+ * in-flight artifact survives when that ceiling is raised.
  */
-export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 8;
+export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 32;
+
+/**
+ * Age an artifact must reach before it can be retired.
+ *
+ * A retention count alone assumes concurrency stays below the window. This
+ * floor removes the assumption: an artifact a transform just returned is by
+ * definition younger than the grace period, so no prune pass can delete it
+ * before the render that owns it has imported it, no matter how many renders
+ * of the same path are in flight.
+ */
+export const JSX_CACHE_VARIANT_MIN_AGE_MS = 60_000;
 
 async function readArtifactModifiedAtMs(path: string): Promise<number> {
   try {
@@ -324,11 +337,14 @@ async function readArtifactModifiedAtMs(path: string): Promise<number> {
  * One pass covers every path written by a transform: the directory holds the
  * artifacts of a whole content source, so scanning it once per import (up to
  * the 500-import ceiling) would make the cleanup itself the amplifier it is
- * meant to prevent.
+ * meant to prevent. Each entry is matched by slicing its own name to a prefix
+ * length and looking that up, so the pass stays linear in directory entries
+ * rather than multiplying them by the number of paths written.
  */
 async function pruneSupersededJsxArtifacts(
   esmCacheDir: string,
   writtenArtifacts: ReadonlyMap<string, string>,
+  nowMs: number = Date.now(),
 ): Promise<void> {
   if (writtenArtifacts.size === 0) return;
 
@@ -340,12 +356,16 @@ async function pruneSupersededJsxArtifacts(
       superseded: [],
     });
   }
+  // Prefixes are fixed-width by construction; collecting the distinct lengths
+  // keeps the lookup correct without assuming the name format never changes.
+  const prefixLengths = [...new Set([...variantsByPrefix.keys()].map((p) => p.length))];
 
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
-      for (const [prefix, variants] of variantsByPrefix) {
-        if (!entry.name.startsWith(prefix)) continue;
+      for (const length of prefixLengths) {
+        const variants = variantsByPrefix.get(entry.name.slice(0, length));
+        if (!variants) continue;
         if (entry.name !== variants.current) variants.superseded.push(entry.name);
         break;
       }
@@ -369,7 +389,8 @@ async function pruneSupersededJsxArtifacts(
     );
     dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
 
-    for (const { name } of dated.slice(MAX_JSX_CACHE_VARIANTS_PER_PATH - 1)) {
+    for (const { name, modifiedAtMs } of dated.slice(MAX_JSX_CACHE_VARIANTS_PER_PATH - 1)) {
+      if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) continue;
       try {
         await localFs.remove(join(esmCacheDir, name));
       } catch (_) {
@@ -386,6 +407,7 @@ async function pruneSupersededJsxArtifacts(
  */
 export const __importTransformerInternals = {
   describeProjectSource,
+  isFrameworkSourceFile,
   pruneSupersededJsxArtifacts,
   readArtifactModifiedAtMs,
 };
@@ -430,12 +452,24 @@ export async function transformJsxImports(
 
   /** Source path to the artifact name this pass wrote, for one prune pass. */
   const writtenArtifacts = new Map<string, string>();
+  /**
+   * An oversized source rejects the whole transform, but `parallelMap` runs on
+   * `Promise.all`, which does not cancel siblings. Throwing out of the callback
+   * would return the error while those siblings kept writing artifacts that no
+   * prune pass ever followed, so the failure is carried out instead and rethrown
+   * once every callback has settled and the cleanup has run.
+   */
+  let admissionFailure: ModuleSourceLimitError | undefined;
 
   const transformResults = await parallelMap(
     importsToProcess,
     async ({ specifier, filePath, ext }) => {
       try {
-        const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
+        // Only the framework's own source roots read through the unbounded
+        // local filesystem: a project can live beneath FRAMEWORK_ROOT, and its
+        // source has to go through the adapter that enforces the size limit.
+        const isFrameworkFile = isFrameworkSourceFile(filePath) ||
+          (filePath.startsWith(FRAMEWORK_ROOT) && filePath.includes("/node_modules/"));
         let sourceCode: string;
         if (isFrameworkFile) {
           sourceCode = await getLocalFs().readTextFile(filePath);
@@ -509,7 +543,10 @@ export async function transformJsxImports(
         // An oversized source is an admission failure, not a transform that can
         // be skipped: surface it the way the other MDX module limits do instead
         // of leaving an untransformed file:// specifier behind.
-        if (error instanceof ModuleSourceLimitError) throw error;
+        if (error instanceof ModuleSourceLimitError) {
+          admissionFailure ??= error;
+          return null;
+        }
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
         return null;
       }
@@ -517,7 +554,10 @@ export async function transformJsxImports(
     { semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY) },
   );
 
+  // Runs before the rethrow so the artifacts written by the siblings that kept
+  // going after the admission failure are still covered by a cleanup pass.
   await pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts);
+  if (admissionFailure) throw admissionFailure;
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
     total: importsToProcess.length,

@@ -22,10 +22,11 @@ import { FRAMEWORK_ROOT } from "./constants.ts";
 import { buildMdxJsxCacheFileName, buildMdxJsxCacheFileNamePrefix } from "./cache-format.ts";
 import {
   __importTransformerInternals,
+  JSX_CACHE_VARIANT_MIN_AGE_MS,
   MAX_JSX_CACHE_VARIANTS_PER_PATH,
   transformJsxImports,
 } from "./import-transformer.ts";
-import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
+import { __jsxCacheInternals, ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
 
 function limitErrorMessage(error: unknown): string {
@@ -88,15 +89,44 @@ describe("ensureCachedJsxModulePatched", () => {
       );
       await writeTextFile(cachedPath, cachedCode);
 
-      assertEquals(await ensureCachedJsxModulePatched(cachedPath, "/tmp/source/Value.tsx"), true);
+      const sourceFilePath = join(FRAMEWORK_ROOT, "src", "react", "components", "Value.tsx");
+      assertEquals(await ensureCachedJsxModulePatched(cachedPath, sourceFilePath), true);
 
-      // Removing the artifact makes any second read observable: a re-reading
-      // implementation reports the module as needing regeneration.
+      // Content a re-reading implementation would rewrite makes the second read
+      // observable: if the memo is honoured the file is left exactly as written.
+      const wouldBeRewritten = `import "../../../_dnt.polyfills.js";\nexport const value = 1;\n`;
+      await writeTextFile(cachedPath, wouldBeRewritten);
+
+      assertEquals(await ensureCachedJsxModulePatched(cachedPath, sourceFilePath), true);
+      assertEquals(
+        await readTextFile(cachedPath),
+        wouldBeRewritten,
+        "an already normalized cached module must not be re-read on every cache hit",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports a memoized module that has since been pruned as needing regeneration", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-cache-memo-pruned-test-" });
+
+    try {
+      const cachedCode = `export const pruned = 1;\n`;
+      const cachedPath = join(
+        tempDir,
+        buildMdxJsxCacheFileName("/tmp/source/Pruned.tsx", cachedCode),
+      );
+      await writeTextFile(cachedPath, cachedCode);
+      assertEquals(await ensureCachedJsxModulePatched(cachedPath, "/tmp/source/Pruned.tsx"), true);
+
+      // A prune between the caller's stat and this call must not leave the
+      // rewritten parent importing a `file://` module that is no longer there.
       await remove(cachedPath);
       assertEquals(
-        await ensureCachedJsxModulePatched(cachedPath, "/tmp/source/Value.tsx"),
-        true,
-        "an already normalized cached module must not be re-read on every cache hit",
+        await ensureCachedJsxModulePatched(cachedPath, "/tmp/source/Pruned.tsx"),
+        false,
+        "a memo hit for a removed artifact must report regeneration, not reuse",
       );
     } finally {
       await remove(tempDir, { recursive: true });
@@ -226,6 +256,52 @@ describe("transformJsxImports", () => {
     }
   });
 
+  it("lets sibling imports settle before an oversized source rejects the transform", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-oversized-sibling-test-" });
+    const oversizedPath = "/tmp/source/TooBig.tsx";
+    const siblingPath = "/tmp/source/Sibling.tsx";
+    const siblingSource = "export const Sibling = () => <em />;";
+    const adapter = {
+      fs: {
+        readFile: (path: string) => {
+          if (path === siblingPath) return Promise.resolve(siblingSource);
+          if (path !== oversizedPath) throw new Error(`unexpected read: ${path}`);
+          return Promise.resolve(`export const pad = "${"a".repeat(MAX_MDX_MODULE_CODE_BYTES)}";`);
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      await assertRejects(
+        () =>
+          transformJsxImports(
+            [
+              `import TooBig from "file://${oversizedPath}";`,
+              `import Sibling from "file://${siblingPath}";`,
+            ].join("\n"),
+            adapter,
+            tempDir,
+          ),
+        ModuleSourceLimitError,
+        "TooBig.tsx",
+      );
+
+      // The admission failure must not return before the siblings that kept
+      // running have finished writing, or their artifacts outlive every
+      // cleanup pass.
+      const siblingArtifact = join(tempDir, buildMdxJsxCacheFileName(siblingPath, siblingSource));
+      assertEquals(
+        (await readTextFile(siblingArtifact)).length > 0,
+        true,
+        "a sibling that finished writing must be observable once the error surfaces",
+      );
+    } finally {
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("names only the file when the source sits outside the project directory", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-oversized-outside-test-" });
     const sourcePath = "/var/lib/veryfront/linked/Outside.tsx";
@@ -331,11 +407,10 @@ describe("transformJsxImports", () => {
     }
   });
 
-  it("bounds the cached artifacts one changing source path may accumulate", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-jsx-artifact-prune-test-" });
+  it("keeps every freshly written variant of a changing source path", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-artifact-fresh-test-" });
     const sourcePath = "/tmp/source/Changing.tsx";
     const otherPath = "/tmp/source/Stable.tsx";
-    const variantCount = MAX_JSX_CACHE_VARIANTS_PER_PATH + 3;
     let variant = 0;
     const adapter = {
       fs: {
@@ -358,43 +433,28 @@ describe("transformJsxImports", () => {
       );
 
       const writtenPaths: string[] = [];
-      for (; variant < variantCount; variant++) {
+      for (; variant < 4; variant++) {
         writtenPaths.push(
           extractCachedJsxPath(await transformJsxImports(mdxImportCode, adapter, tempDir)),
         );
       }
       assertEquals(
         new Set(writtenPaths).size,
-        variantCount,
+        writtenPaths.length,
         "each source content variant must occupy its own cache artifact",
       );
 
-      // Every content variant of one source path shares a name prefix, so the
-      // writer can retire the oldest instead of letting each variant leave a
-      // persistent artifact in the cache directory. The retention window is
-      // what keeps a concurrent render's freshly written artifact alive.
-      const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
-      const remaining: string[] = [];
-      for await (const entry of readDir(tempDir)) {
-        if (entry.name.startsWith(prefix)) remaining.push(join(tempDir, entry.name));
+      // Nothing a render has just returned may be retired, whatever the order
+      // the writes landed in: the grace period is what makes that true.
+      for (const writtenPath of writtenPaths) {
+        assertEquals(
+          (await readTextFile(writtenPath)).length > 0,
+          true,
+          "a freshly written artifact must survive the prune pass that followed it",
+        );
       }
       assertEquals(
-        remaining.length,
-        MAX_JSX_CACHE_VARIANTS_PER_PATH,
-        "a source path that keeps changing must not grow the cache without bound",
-      );
-      assertEquals(
-        remaining.includes(writtenPaths[writtenPaths.length - 1] ?? ""),
-        true,
-        "the artifact the last transform returned must survive its own prune",
-      );
-      assertEquals(
-        remaining.includes(writtenPaths[0] ?? ""),
-        false,
-        "the oldest content variant must be the one retired",
-      );
-      assertEquals(
-        await readTextFile(otherArtifact) !== "",
+        (await readTextFile(otherArtifact)).length > 0,
         true,
         "pruning one source path must not touch another path's artifact",
       );
@@ -554,6 +614,33 @@ describe("readProjectJsxSourceWithinLimit", () => {
 describe("pruneSupersededJsxArtifacts", () => {
   const { pruneSupersededJsxArtifacts, readArtifactModifiedAtMs } = __importTransformerInternals;
 
+  /** A clock far enough ahead that every artifact written now is prunable. */
+  function afterGracePeriod(): number {
+    return Date.now() + JSX_CACHE_VARIANT_MIN_AGE_MS + 60_000;
+  }
+
+  async function writeVariants(
+    dir: string,
+    sourcePath: string,
+    count: number,
+  ): Promise<string[]> {
+    const names: string[] = [];
+    for (let variant = 0; variant < count; variant++) {
+      const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
+      await writeTextFile(join(dir, name), `export const v = ${variant};`);
+      names.push(name);
+    }
+    return names;
+  }
+
+  async function namesWithPrefix(dir: string, prefix: string): Promise<string[]> {
+    const found: string[] = [];
+    for await (const entry of readDir(dir)) {
+      if (entry.isFile && entry.name.startsWith(prefix)) found.push(entry.name);
+    }
+    return found;
+  }
+
   it("treats an artifact that vanished before its stat as the oldest variant", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-vanished-test-" });
 
@@ -564,23 +651,93 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
-  it("ignores directory entries that share an artifact prefix", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-dir-entry-test-" });
-    const sourcePath = "/tmp/source/DirEntry.tsx";
+  it("retires the oldest variants once a path exceeds the retention window", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-unit-test-" });
+    const sourcePath = "/tmp/source/Many.tsx";
     const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
-    const names: string[] = [];
 
     try {
-      await mkdir(join(tempDir, `${prefix}directory`));
-      for (let variant = 0; variant < MAX_JSX_CACHE_VARIANTS_PER_PATH + 2; variant++) {
-        const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
-        await writeTextFile(join(tempDir, name), `export const v = ${variant};`);
-        names.push(name);
-      }
+      const names = await writeVariants(tempDir, sourcePath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 4);
+      const current = names[names.length - 1] ?? "";
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, current]]),
+        afterGracePeriod(),
+      );
+
+      const remaining = await namesWithPrefix(tempDir, prefix);
+      assertEquals(remaining.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
+      assertEquals(
+        remaining.includes(current),
+        true,
+        "the artifact the caller just wrote must never be retired",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("never retires an artifact younger than the grace period", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-grace-test-" });
+    const sourcePath = "/tmp/source/Busy.tsx";
+    const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
+    const overWindow = MAX_JSX_CACHE_VARIANTS_PER_PATH + 4;
+
+    try {
+      const names = await writeVariants(tempDir, sourcePath, overWindow);
+
+      // More variants than the window, but every one of them could still be the
+      // artifact an in-flight render is about to import, so none may be removed.
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+      );
+
+      assertEquals(
+        (await namesWithPrefix(tempDir, prefix)).length,
+        overWindow,
+        "concurrency above the retention window must not cost a live artifact",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("leaves a path alone while it stays inside the retention window", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-window-test-" });
+    const sourcePath = "/tmp/source/Few.tsx";
+
+    try {
+      const names = await writeVariants(tempDir, sourcePath, MAX_JSX_CACHE_VARIANTS_PER_PATH);
 
       await pruneSupersededJsxArtifacts(
         tempDir,
         new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+        afterGracePeriod(),
+      );
+
+      const remaining: string[] = [];
+      for await (const entry of readDir(tempDir)) remaining.push(entry.name);
+      assertEquals(remaining.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("ignores directory entries that share an artifact prefix", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-dir-entry-test-" });
+    const sourcePath = "/tmp/source/DirEntry.tsx";
+    const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
+
+    try {
+      await mkdir(join(tempDir, `${prefix}directory`));
+      const names = await writeVariants(tempDir, sourcePath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 2);
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+        afterGracePeriod(),
       );
 
       const remainingFiles: string[] = [];
@@ -596,57 +753,32 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
-  it("retires the oldest variants once a path exceeds the retention window", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-unit-test-" });
-    const sourcePath = "/tmp/source/Many.tsx";
-    const prefix = buildMdxJsxCacheFileNamePrefix(sourcePath);
-    const names: string[] = [];
+  it("retires variants for several written paths in one scan", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-multi-test-" });
+    const firstPath = "/tmp/source/First.tsx";
+    const secondPath = "/tmp/source/Second.tsx";
 
     try {
-      for (let variant = 0; variant < MAX_JSX_CACHE_VARIANTS_PER_PATH + 4; variant++) {
-        const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
-        await writeTextFile(join(tempDir, name), `export const v = ${variant};`);
-        names.push(name);
-      }
-      const current = names[names.length - 1] ?? "";
-
-      await pruneSupersededJsxArtifacts(tempDir, new Map([[sourcePath, current]]));
-
-      const remaining: string[] = [];
-      for await (const entry of readDir(tempDir)) {
-        if (entry.name.startsWith(prefix)) remaining.push(entry.name);
-      }
-      assertEquals(remaining.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
-      assertEquals(
-        remaining.includes(current),
-        true,
-        "the artifact the caller just wrote must never be retired",
-      );
-    } finally {
-      await remove(tempDir, { recursive: true });
-    }
-  });
-
-  it("leaves a path alone while it stays inside the retention window", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-window-test-" });
-    const sourcePath = "/tmp/source/Few.tsx";
-    const names: string[] = [];
-
-    try {
-      for (let variant = 0; variant < MAX_JSX_CACHE_VARIANTS_PER_PATH; variant++) {
-        const name = buildMdxJsxCacheFileName(sourcePath, `export const v = ${variant};`);
-        await writeTextFile(join(tempDir, name), `export const v = ${variant};`);
-        names.push(name);
-      }
+      const first = await writeVariants(tempDir, firstPath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 3);
+      const second = await writeVariants(tempDir, secondPath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 5);
 
       await pruneSupersededJsxArtifacts(
         tempDir,
-        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+        new Map([
+          [firstPath, first[first.length - 1] ?? ""],
+          [secondPath, second[second.length - 1] ?? ""],
+        ]),
+        afterGracePeriod(),
       );
 
-      const remaining: string[] = [];
-      for await (const entry of readDir(tempDir)) remaining.push(entry.name);
-      assertEquals(remaining.length, MAX_JSX_CACHE_VARIANTS_PER_PATH);
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(firstPath))).length,
+        MAX_JSX_CACHE_VARIANTS_PER_PATH,
+      );
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(secondPath))).length,
+        MAX_JSX_CACHE_VARIANTS_PER_PATH,
+      );
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -690,6 +822,30 @@ describe("pruneSupersededJsxArtifacts", () => {
   });
 });
 
+describe("isFrameworkSourceFile", () => {
+  const { isFrameworkSourceFile } = __importTransformerInternals;
+
+  it("matches the framework source roots shipped in the package", () => {
+    assertEquals(
+      isFrameworkSourceFile(join(FRAMEWORK_ROOT, "src", "react", "components", "Head.tsx")),
+      true,
+    );
+    assertEquals(
+      isFrameworkSourceFile(join(FRAMEWORK_ROOT, "dist", "framework-src", "runtime.ts")),
+      true,
+    );
+  });
+
+  it("does not match a project that lives beneath the framework root", () => {
+    // A project under FRAMEWORK_ROOT must keep reading through the adapter, so
+    // its JSX source stays subject to the module source-size limit.
+    assertEquals(
+      isFrameworkSourceFile(join(FRAMEWORK_ROOT, "projects", "mine", "components", "Card.tsx")),
+      false,
+    );
+  });
+});
+
 describe("describeProjectSource", () => {
   const { describeProjectSource } = __importTransformerInternals;
 
@@ -706,5 +862,38 @@ describe("describeProjectSource", () => {
 
   it("names a source that resolves to nothing outside a path", () => {
     assertEquals(describeProjectSource("/"), "project source");
+  });
+});
+
+describe("normalized module memo", () => {
+  const { MAX_NORMALIZED_MODULE_MEMO_ENTRIES, rememberNormalizedModule, normalizedModuleMemoSize } =
+    __jsxCacheInternals;
+
+  it("drops the whole memo instead of growing it without bound", () => {
+    // The memo keys are cache paths, which a project that keeps changing its
+    // source produces without limit, so the set has to have a ceiling.
+    const additions = MAX_NORMALIZED_MODULE_MEMO_ENTRIES * 2 + 1;
+    let previousSize = normalizedModuleMemoSize();
+    let observedReset = false;
+    let peakSize = previousSize;
+
+    for (let entry = 0; entry < additions; entry++) {
+      rememberNormalizedModule(`/tmp/cache/jsx-memo-${entry}.mjs`);
+      const size = normalizedModuleMemoSize();
+      if (size < previousSize) observedReset = true;
+      if (size > peakSize) peakSize = size;
+      previousSize = size;
+    }
+
+    assertEquals(
+      peakSize <= MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
+      true,
+      "the memo must never hold more paths than its ceiling",
+    );
+    assertEquals(
+      observedReset,
+      true,
+      "reaching the ceiling must reset the memo rather than keep every path",
+    );
   });
 });

@@ -31,6 +31,16 @@ function rememberNormalizedModule(transformedPath: string): void {
 }
 
 /**
+ * Reachable so the memo's bound can be asserted directly: filling it through
+ * `ensureCachedJsxModulePatched` would mean writing one cache file per entry.
+ */
+export const __jsxCacheInternals = {
+  MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
+  rememberNormalizedModule,
+  normalizedModuleMemoSize: (): number => normalizedModulePaths.size,
+};
+
+/**
  * Validate and patch a cached JSX module in-place.
  *
  * Returns true if the cached module is usable, false if it should be re-generated.
@@ -39,9 +49,17 @@ export async function ensureCachedJsxModulePatched(
   transformedPath: string,
   sourceFilePath: string,
 ): Promise<boolean> {
-  if (normalizedModulePaths.has(transformedPath)) return true;
-
   const fs = getLocalFs();
+
+  if (normalizedModulePaths.has(transformedPath)) {
+    // The memo skips the read and the dnt scan, not the existence check: a
+    // prune or an invalidation can remove the artifact between the caller's
+    // stat and this call, and reporting it usable would hand the rewritten
+    // parent a `file://` import for a module that is no longer there.
+    if (await fs.exists(transformedPath)) return true;
+    normalizedModulePaths.delete(transformedPath);
+    return false;
+  }
 
   try {
     const cachedCode = await fs.readTextFile(transformedPath);
