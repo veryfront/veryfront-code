@@ -22,11 +22,41 @@ import {
   findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 
 type CacheBuster = number | string;
 const JsonStringify = JSON.stringify;
 const MAX_CONFIGURED_EXTERNAL_IMPORTS = 500;
+
+function rewriteMatchedImportSpans(
+  code: string,
+  fromSpans: readonly StaticImportSpan[],
+  dynamicSpans: readonly StaticImportSpan[],
+  sideEffectSpans: readonly StaticImportSpan[],
+): string {
+  const replacements: SourceSpanReplacement[] = [
+    ...fromSpans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `from ${JsonStringify(span.path)}`,
+    })),
+    ...dynamicSpans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: JsonStringify(span.path),
+    })),
+    ...sideEffectSpans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `import ${JsonStringify(span.path)}`,
+    })),
+  ];
+  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
+}
 
 export interface SSRImportRewriteTarget {
   specifier: string;
@@ -341,32 +371,7 @@ function rewriteConfiguredExternalImports(
     });
   }
 
-  const replacements: SourceSpanReplacement[] = [];
-  for (const span of fromSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: `from ${JsonStringify(span.path)}`,
-    });
-  }
-  for (const span of dynamicSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: JsonStringify(span.path),
-    });
-  }
-  for (const span of sideEffectSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: `import ${JsonStringify(span.path)}`,
-    });
-  }
-  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
+  return rewriteMatchedImportSpans(code, fromSpans, dynamicSpans, sideEffectSpans);
 }
 
 function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewriteOptions): string {
@@ -502,11 +507,12 @@ function buildScopedParams(options: SSRRewriteOptions): string {
 function rewriteInternalModuleImportsSync(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
   const rewriteSpecifier = (specifier: string): string | null => {
-    const rewrite = specifier.startsWith("@/")
-      ? buildAliasRewrite(specifier.slice(2), options)
-      : /^(?:\.\.?\/|\/)[^?#]+\.js$/.test(specifier)
-      ? buildRelativeRewrite(specifier)
-      : null;
+    let rewrite: { target: SSRImportRewriteTarget; prefix: string } | null = null;
+    if (specifier.startsWith("@/")) {
+      rewrite = buildAliasRewrite(specifier.slice(2), options);
+    } else if (/^(?:\.\.?\/|\/)[^?#]+\.js$/.test(specifier)) {
+      rewrite = buildRelativeRewrite(specifier);
+    }
     if (!rewrite) return null;
     const cacheBuster = getCacheBusterSync(rewrite.target, options);
     return `${rewrite.prefix}${scopedParams}&v=${cacheBuster}`;
@@ -515,34 +521,7 @@ function rewriteInternalModuleImportsSync(code: string, options: SSRRewriteOptio
   const fromSpans = findStaticImportFromSpans(code, rewriteSpecifier, scanLimit);
   const dynamicSpans = findDynamicImportSpans(code, rewriteSpecifier, scanLimit);
   const sideEffectSpans = findStaticSideEffectImportSpans(code, rewriteSpecifier, scanLimit);
-  const replacements: SourceSpanReplacement[] = [];
-
-  for (const span of fromSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: `from ${JsonStringify(span.path)}`,
-    });
-  }
-  for (const span of dynamicSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: JsonStringify(span.path),
-    });
-  }
-  for (const span of sideEffectSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: `import ${JsonStringify(span.path)}`,
-    });
-  }
-
-  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
+  return rewriteMatchedImportSpans(code, fromSpans, dynamicSpans, sideEffectSpans);
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
