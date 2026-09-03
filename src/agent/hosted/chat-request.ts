@@ -165,6 +165,14 @@ type OpenHostedToolCall = {
 const getHostedChatRequestMessagesSchema = defineSchema((v) =>
   v.array(getHostedChatRequestMessageSchema()).max(MAX_HOSTED_CHAT_REQUEST_MESSAGES)
     .superRefine((messages, ctx) => {
+      // Zod records .max() as a nonfatal issue and still invokes refinements.
+      // Do not traverse or correlate an oversized replay after its bounds have
+      // already rejected it.
+      if (messages.length > MAX_HOSTED_CHAT_REQUEST_MESSAGES) return;
+      for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+        if (messages[messageIndex]!.parts.length > MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS) return;
+      }
+
       const knownToolNames = new Map<string, string>();
       const knownToolResultIds = new Set<string>();
       const openToolCalls = new Map<string, OpenHostedToolCall>();
@@ -175,6 +183,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       // (keeping validation linear instead of quadratic in parts per message).
       let currentMessageIndex = 0;
       let freshOpenToolCallCount = 0;
+      let currentBatchSawNonResultContent = false;
       const recordToolCall = (
         toolCallId: string,
         toolName: string,
@@ -200,6 +209,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           sawLaterNonResultContent: false,
         });
         freshOpenToolCallCount += 1;
+        currentBatchSawNonResultContent = false;
         return true;
       };
       const rejectUnresolvedTerminalToolCalls = (message: string): boolean => {
@@ -220,6 +230,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         if (rejected) {
           openToolCalls.clear();
           freshOpenToolCallCount = 0;
+          currentBatchSawNonResultContent = false;
         }
         return rejected;
       };
@@ -229,6 +240,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         );
         openToolCalls.clear();
         freshOpenToolCallCount = 0;
+        currentBatchSawNonResultContent = false;
       };
       const rejectOpenToolCallsBeforeNewCall = (messageIndex: number): void => {
         if (openToolCalls.size === freshOpenToolCallCount) {
@@ -257,6 +269,8 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         freshOpenToolCallCount = openToolCalls.size;
       };
       const handleNonResultContent = (messageIndex: number): void => {
+        if (currentBatchSawNonResultContent && freshOpenToolCallCount === 0) return;
+
         for (const [toolCallId, openToolCall] of openToolCalls) {
           if (openToolCall.originMessageIndex !== messageIndex) {
             if (openToolCall.requiresResult) {
@@ -277,6 +291,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           });
         }
         freshOpenToolCallCount = 0;
+        currentBatchSawNonResultContent = true;
       };
       const closeOpenBatchAfterSameMessageContinuation = (): void => {
         for (const [toolCallId, openToolCall] of openToolCalls) {
@@ -361,6 +376,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       for (const [messageIndex, message] of messages.entries()) {
         currentMessageIndex = messageIndex;
         freshOpenToolCallCount = 0;
+        currentBatchSawNonResultContent = false;
         const firstPart = getFirstProviderVisiblePart(message.role, message.parts);
         if (firstPart && openToolCalls.size > 0 && !isHostedChatToolResultPart(firstPart)) {
           closeOpenBatchBeforeContinuation();
@@ -493,14 +509,20 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
   })
 );
 
-/** Schema for hosted chat request.
+/**
+ * Schema for hosted chat request. A request accepts at most 1,000 replayed
+ * messages and at most 1,000 parts in each message.
+ *
  * @deprecated Use getHostedChatRequestSchema()
  */
 export const hostedChatRequestSchema = lazySchema(getHostedChatRequestSchema);
 
 /** Request payload for hosted chat. */
 export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatRequestSchema>>;
-/** Input payload for hosted chat request. */
+/**
+ * Input payload for hosted chat request. A request accepts at most 1,000
+ * replayed messages and at most 1,000 parts in each message.
+ */
 export type HostedChatRequestInput = {
   messages: RuntimeAgentRunInvocation["messages"];
   context: InferSchema<ReturnType<typeof getChatRequestContextSchema>>;

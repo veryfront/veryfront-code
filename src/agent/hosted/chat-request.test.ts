@@ -1151,6 +1151,9 @@ describe("agent/hosted-chat-request", () => {
     const parsed = hostedChatRequestSchema.safeParse(createHostedChatRequestBody(messages));
 
     assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      assertEquals((parsed.error as { issues?: unknown[] }).issues?.length, 1);
+    }
   });
 
   it("rejects replay messages with more parts than the hosted bound", () => {
@@ -1164,6 +1167,44 @@ describe("agent/hosted-chat-request", () => {
     );
 
     assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      assertEquals((parsed.error as { issues?: unknown[] }).issues?.length, 1);
+    }
+  });
+
+  it("marks each open tool call once when many text parts follow", () => {
+    const callCount = MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS / 2;
+    const calls = Array.from(
+      { length: callCount },
+      (_, index) => createRawReplayToolCallPart(`tool-call-${index}`, replayToolName),
+    );
+    const textParts = Array.from(
+      { length: callCount },
+      () => ({ type: "text", text: "continued" }),
+    );
+    const originalSet = Map.prototype.set;
+    let openCallWrites = 0;
+
+    try {
+      Map.prototype.set = function (key: unknown, value: unknown): Map<unknown, unknown> {
+        if (
+          value !== null && typeof value === "object" &&
+          "sawLaterNonResultContent" in value
+        ) {
+          openCallWrites += 1;
+        }
+        return Reflect.apply(originalSet, this, [key, value]) as Map<unknown, unknown>;
+      };
+
+      const parsed = hostedChatRequestSchema.safeParse(
+        createHostedChatRequestBody([assistantMessage([...calls, ...textParts])]),
+      );
+      assertEquals(parsed.success, false);
+    } finally {
+      Map.prototype.set = originalSet;
+    }
+
+    assertEquals(openCallWrites, callCount * 2);
   });
 
   it("rejects a part-capped replay message of unresolved completed tool calls", () => {
