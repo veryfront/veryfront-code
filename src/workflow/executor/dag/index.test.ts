@@ -3750,6 +3750,62 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates.orders_0?.status, "running");
     });
 
+    it("does not attribute an active legacy wait to an earlier completed map", async () => {
+      const nodes: WorkflowNode[] = [
+        map("orders", {
+          items: [{}],
+          processor: { id: "process-order", config: { type: "step" } as any },
+        }),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("orders_review", { message: "Approve the release" })],
+            },
+          }),
+          dependsOn: ["orders"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            orders: {
+              nodeId: "orders",
+              status: "completed",
+              output: [{ processed: true }],
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            orders_0: {
+              nodeId: "orders_0",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            release: {
+              nodeId: "release",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+            orders_review: {
+              nodeId: "orders_review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates.release?.status, "completed");
+    });
+
     it("does not seed a completed parallel child into a later sub-workflow", async () => {
       const nodes: WorkflowNode[] = [
         parallel("group", [waitForApproval("review", { message: "Group review" })]),

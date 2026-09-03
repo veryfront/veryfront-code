@@ -392,11 +392,14 @@ function collectCompletedCompositeChildIds(
       for (const childId of collectWorkflowNodeIds(selected)) target.add(childId);
       continue;
     }
-    const prefix = node.config.type === "map"
-      ? `${node.id}_`
-      : node.config.type === "loop"
-      ? `${node.id}/`
-      : undefined;
+    if (node.config.type === "map") {
+      const output = nodeStates[node.id]?.output;
+      if (Array.isArray(output)) {
+        for (let index = 0; index < output.length; index++) target.add(`${node.id}_${index}`);
+      }
+      continue;
+    }
+    const prefix = node.config.type === "loop" ? `${node.id}/` : undefined;
     if (!prefix) continue;
     for (const childId of Object.keys(nodeStates)) {
       if (childId.startsWith(prefix)) target.add(childId);
