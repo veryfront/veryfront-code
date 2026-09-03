@@ -11,6 +11,7 @@ import {
   extractProjectCssImports,
   invalidateProjectCssImportScans,
 } from "./styles-css-import-scanner.ts";
+import { createProjectScanCache, type ScanCacheIdentity } from "./styles-scan-cache.ts";
 
 const PROJECT_SLUG = "css-import-scan-project";
 const LAYOUT_FILE = {
@@ -734,5 +735,40 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     } finally {
       invalidateProjectCssImportScans();
     }
+  });
+
+  it("drops an invalidated scope generation when its final entry is evicted", async () => {
+    const cache = createProjectScanCache("styles-scan-generation-eviction-test");
+    const identity = (scope: string): ScanCacheIdentity => ({
+      key: scope,
+      scope,
+      version: `release:${scope}`,
+      mutable: false,
+      styleProfile: {} as ScanCacheIdentity["styleProfile"],
+    });
+    const evictedScope = "evicted-scope";
+    let settleOld!: (results: string[]) => void;
+    let settleReplacement!: (results: string[]) => void;
+
+    const oldScan = cache.run(
+      identity(evictedScope),
+      () => new Promise((resolve) => settleOld = resolve),
+    );
+    cache.invalidate(evictedScope);
+    const replacementScan = cache.run(
+      identity(evictedScope),
+      () => new Promise((resolve) => settleReplacement = resolve),
+    );
+    settleReplacement([]);
+    await replacementScan;
+    settleOld([]);
+    await oldScan;
+
+    for (let index = 0; index < 200; index++) {
+      const scope = `filler-${index}`;
+      await cache.run(identity(scope), async () => []);
+    }
+
+    assertEquals(cache.diagnostics(), { entries: 200, generationEntries: 0 });
   });
 });

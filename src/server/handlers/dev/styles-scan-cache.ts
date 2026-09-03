@@ -167,6 +167,8 @@ export interface ProjectScanCache {
   run(identity: ScanCacheIdentity, scan: () => Promise<string[]>): Promise<string[]>;
   /** Invalidate cached scans for one project scope (or all scopes). */
   invalidate(projectScope?: string): void;
+  /** Internal counts used to verify that cache metadata stays bounded. */
+  diagnostics(): { entries: number; generationEntries: number };
 }
 
 /**
@@ -252,14 +254,23 @@ export function createProjectScanCache(name: string): ProjectScanCache {
     if (generation !== generationFor(identity.scope)) return;
 
     scanCache.delete(identity.key);
+    let evictedScope: string | undefined;
     if (scanCache.size >= SCAN_CACHE_MAX_ENTRIES) {
       const leastRecentKey = scanCache.keys().next().value as string | undefined;
-      if (leastRecentKey) scanCache.delete(leastRecentKey);
+      if (leastRecentKey) {
+        evictedScope = scanCache.get(leastRecentKey)?.scope;
+        scanCache.delete(leastRecentKey);
+      }
     }
     scanCache.set(identity.key, { scope: identity.scope, results, builtAt: Date.now() });
+    if (evictedScope) pruneScopeGeneration(evictedScope);
   }
 
   return {
+    diagnostics() {
+      return { entries: scanCache.size, generationEntries: scopeGenerations.size };
+    },
+
     async run(identity, scan) {
       const cached = readFreshScan(identity);
       if (cached) return [...cached];
