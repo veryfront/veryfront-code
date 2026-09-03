@@ -5,14 +5,15 @@ import { HASH_SEED_FNV1A } from "./constants/hash.ts";
 const SHORT_HASH_LENGTH = 8;
 
 /**
- * Maximum encoded identifier length kept losslessly by cacheNamespaceSegment.
- * 200 hex characters cover identifiers up to 100 WTF-8 bytes while keeping the
- * resulting path segment far below the 255-byte filename limit.
+ * Maximum inline payload length kept losslessly by cacheNamespaceSegment.
+ * This keeps every segment at 75 characters including its prefix, leaving room
+ * for the cache root, runtime version, project segment, and module path under
+ * the 260-character path limit used by hosts without long-path support.
  */
-const MAX_INLINE_NAMESPACE_SEGMENT_LENGTH = 200;
+const MAX_INLINE_NAMESPACE_SEGMENT_LENGTH = 72;
 
 /** Longest identifier cacheNamespaceSegment keeps verbatim (ASCII, 1 byte each). */
-const MAX_VERBATIM_NAMESPACE_ID_LENGTH = MAX_INLINE_NAMESPACE_SEGMENT_LENGTH / 2;
+const MAX_VERBATIM_NAMESPACE_ID_LENGTH = MAX_INLINE_NAMESPACE_SEGMENT_LENGTH;
 
 /**
  * Upper bound on any cacheNamespaceSegment result: a three-character prefix
@@ -256,14 +257,14 @@ function isVerbatimNamespaceId(id: string): boolean {
  * a shared segment lets one content source serve another source's transformed
  * modules for the same file path.
  *
- * Identifiers up to 100 WTF-8 bytes are encoded losslessly under two disjoint
- * prefixes: verbatim under "id-" when they are already a lowercase path-safe
- * token, otherwise as lowercase hex of their WTF-8 bytes under "hx-". Both
- * encodings are injective, so distinct identifiers of that size provably never
- * share a segment, including on case-insensitive filesystems, where a
- * case-sensitive encoding would fold distinct segments back together. Hex of
- * the WTF-8 bytes is used rather than UTF-8 encoding because `TextEncoder`
- * folds an unpaired surrogate to U+FFFD, which would merge two namespaces.
+ * Path-safe ASCII identifiers up to 72 bytes are kept verbatim under "id-";
+ * other identifiers up to 36 WTF-8 bytes use lowercase hex under "hx-". Both
+ * encodings are injective, so distinct identifiers inside those bounds
+ * provably never share a segment, including on case-insensitive filesystems,
+ * where a case-sensitive encoding would fold distinct segments back together.
+ * Hex of the WTF-8 bytes is used rather than UTF-8 encoding because
+ * `TextEncoder` folds an unpaired surrogate to U+FFFD, which would merge two
+ * namespaces.
  *
  * Longer identifiers cannot stay inline without unbounded path segments, so
  * they collapse under a third disjoint prefix, "h-", to their WTF-8 byte length

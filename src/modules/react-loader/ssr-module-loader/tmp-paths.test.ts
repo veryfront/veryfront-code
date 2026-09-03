@@ -69,24 +69,26 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
     // Namespace segments are lossless rather than hashed, so their length is
     // part of every cached module path. Hosts without long-path support cap a
     // path at 260 characters, and a realistic deep route must stay under it.
-    const tmpDir = buildTmpDirPath(
-      "/cache/representative-user-cache/veryfront-mdx-esm",
-      "3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
-      "preview-58x4ga9b",
-      "0.1.7",
-    );
-    const modulePath = buildTempModulePath(
-      tmpDir,
-      "/project/_vf_modules/app/(marketing)/docs/[category]/[slug]/page.tsx",
-      "/project",
-      "0.1.7",
-      "deadbeefcafebabe",
-    );
+    for (const contentSourceId of ["preview-58x4ga9b", "X".repeat(100)]) {
+      const tmpDir = buildTmpDirPath(
+        "/cache/representative-user-cache/veryfront-mdx-esm",
+        "3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
+        contentSourceId,
+        "0.1.7",
+      );
+      const modulePath = buildTempModulePath(
+        tmpDir,
+        "/project/_vf_modules/app/(marketing)/docs/[category]/[slug]/page.tsx",
+        "/project",
+        "0.1.7",
+        "deadbeefcafebabe",
+      );
 
-    assert(
-      modulePath.length < 260,
-      `cached module path must stay within platform path limits: ${modulePath.length}`,
-    );
+      assert(
+        modulePath.length < 260,
+        `cached module path must stay within platform path limits: ${modulePath.length}`,
+      );
+    }
   });
 
   it("isolates tmp directories by runtime version", () => {
