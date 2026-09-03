@@ -396,9 +396,9 @@ describe("rendering/page-rendering", () => {
     const fast = recover();
     assertEquals(identityResolvers.length, 2);
 
-    identityResolvers[1]("branch:project-1:main");
+    identityResolvers[1]!("branch:project-1:main");
     assertEquals(await fast, true);
-    identityResolvers[0]("branch:project-1:main");
+    identityResolvers[0]!("branch:project-1:main");
     assertEquals(
       await delayed,
       true,
@@ -440,7 +440,7 @@ describe("rendering/page-rendering", () => {
 
     const first = recover();
     assertEquals(identityResolvers.length, 1);
-    identityResolvers[0]("branch:project-1:main");
+    identityResolvers[0]!("branch:project-1:main");
     for (let index = 0; index < 10 && !refreshStarted; index++) await Promise.resolve();
     assertEquals(refreshStarted, true);
 
@@ -448,7 +448,7 @@ describe("rendering/page-rendering", () => {
     assertEquals(identityResolvers.length, 2);
     resolveRefresh();
     assertEquals(await first, true);
-    identityResolvers[1]("branch:project-1:main");
+    identityResolvers[1]!("branch:project-1:main");
     assertEquals(
       await later,
       true,
