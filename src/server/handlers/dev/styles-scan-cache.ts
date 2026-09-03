@@ -262,7 +262,7 @@ export function createProjectScanCache(name: string): ProjectScanCache {
       // stale.
       const generation = generationFor(identity.scope);
       const inFlight = inFlightScans.get(identity.key);
-      if (inFlight && inFlight.generation === generation) return [...await inFlight.promise];
+      if (inFlight?.generation === generation) return [...await inFlight.promise];
 
       beginPendingScan(identity.scope);
       const pending: PendingScan = {
