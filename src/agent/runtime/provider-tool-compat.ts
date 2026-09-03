@@ -27,6 +27,16 @@ const OPENAI_MAX_TOOLS = 128;
 const MOONSHOT_MAX_REF_INLINE_DEPTH = 32;
 /** Node budget for one Moonshot schema sanitization pass, bounding `$ref` inlining growth. */
 const MOONSHOT_MAX_INLINED_SCHEMA_NODES = 20_000;
+/**
+ * Serialized-byte budget for one Moonshot schema sanitization pass. Nodes alone do not
+ * bound payload size: a single large `description` string counts as one node but is
+ * duplicated by every inlined copy of its `$ref` target.
+ */
+const MOONSHOT_MAX_INLINED_SCHEMA_BYTES = 512 * 1024;
+/** Node budget for `$ref` inlining across one tool-set conversion pass. */
+const MOONSHOT_MAX_INLINED_TOOL_SET_NODES = 200_000;
+/** Serialized-byte budget for `$ref` inlining across one tool-set conversion pass. */
+const MOONSHOT_MAX_INLINED_TOOL_SET_BYTES = 8 * 1024 * 1024;
 const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {},
@@ -333,25 +343,90 @@ function resolveLocalJsonPointer(root: unknown, ref: string): unknown {
   return current;
 }
 
-interface MoonshotInlineBudget {
+/**
+ * Expansion budget shared by every schema in one tool-set conversion pass.
+ *
+ * A per-schema budget alone bounds each tool in isolation but not the collection: a
+ * remote MCP source may return hundreds of individually-admissible schemas, so the
+ * worst case is multiplied by the tool count. This budget is charged only for material
+ * produced by `$ref` inlining, so ordinary (ref-free) schemas never consume it no
+ * matter how many tools the source advertises.
+ */
+export interface MoonshotSchemaExpansionBudget {
   remainingNodes: number;
+  remainingBytes: number;
 }
 
-function createMoonshotInlineBudget(): MoonshotInlineBudget {
-  return { remainingNodes: MOONSHOT_MAX_INLINED_SCHEMA_NODES };
+/** Create a tool-set-wide Moonshot `$ref` expansion budget. */
+export function createMoonshotSchemaExpansionBudget(): MoonshotSchemaExpansionBudget {
+  return {
+    remainingNodes: MOONSHOT_MAX_INLINED_TOOL_SET_NODES,
+    remainingBytes: MOONSHOT_MAX_INLINED_TOOL_SET_BYTES,
+  };
+}
+
+interface MoonshotInlineBudget {
+  /** Per-schema allowance, charged for every visited node. */
+  remainingNodes: number;
+  remainingBytes: number;
+  /** Tool-set allowance, charged only for nodes produced by inlining. */
+  shared: MoonshotSchemaExpansionBudget;
+}
+
+function createMoonshotInlineBudget(
+  shared: MoonshotSchemaExpansionBudget,
+): MoonshotInlineBudget {
+  return {
+    remainingNodes: MOONSHOT_MAX_INLINED_SCHEMA_NODES,
+    remainingBytes: MOONSHOT_MAX_INLINED_SCHEMA_BYTES,
+    shared,
+  };
+}
+
+/** Approximate the serialized size one schema node contributes, excluding its children. */
+function estimateSerializedNodeBytes(value: unknown): number {
+  if (typeof value === "string") return value.length + 2;
+  if (Array.isArray(value)) return 2;
+  if (isPlainRecord(value)) {
+    let bytes = 2;
+    for (const key of Object.keys(value)) bytes += key.length + 4;
+    return bytes;
+  }
+  return 8;
+}
+
+function hasMoonshotInlineBudget(budget: MoonshotInlineBudget): boolean {
+  return budget.remainingNodes > 0 && budget.remainingBytes > 0 &&
+    budget.shared.remainingNodes > 0 && budget.shared.remainingBytes > 0;
+}
+
+function chargeMoonshotInlineBudget(
+  budget: MoonshotInlineBudget,
+  value: unknown,
+  inlineDepth: number,
+): void {
+  const bytes = estimateSerializedNodeBytes(value);
+  budget.remainingNodes -= 1;
+  budget.remainingBytes -= bytes;
+  if (inlineDepth > 0) {
+    // Only material introduced by `$ref` inlining is amplification, so only that is
+    // charged to the tool-set budget.
+    budget.shared.remainingNodes -= 1;
+    budget.shared.remainingBytes -= bytes;
+  }
 }
 
 function sanitizeMoonshotSchemaValue(
   value: unknown,
-  root: unknown = value,
-  seenRefs: ReadonlySet<string> = new Set(),
-  inlineDepth = 0,
-  budget: MoonshotInlineBudget = createMoonshotInlineBudget(),
+  root: unknown,
+  seenRefs: ReadonlySet<string>,
+  inlineDepth: number,
+  budget: MoonshotInlineBudget,
 ): unknown {
   // `seenRefs` only blocks cycles along the current path, so sibling references to the
-  // same target still re-expand. A shared node budget and depth cap keep a hostile
+  // same target still re-expand. Shared node/byte budgets and a depth cap keep a hostile
   // (or merely dense) schema from expanding exponentially during inlining.
-  budget.remainingNodes -= 1;
+  chargeMoonshotInlineBudget(budget, value, inlineDepth);
 
   if (Array.isArray(value)) {
     return value.map((item) =>
@@ -369,7 +444,7 @@ function sanitizeMoonshotSchemaValue(
     !value.$ref.startsWith("#/definitions/") &&
     !seenRefs.has(value.$ref) &&
     inlineDepth < MOONSHOT_MAX_REF_INLINE_DEPTH &&
-    budget.remainingNodes > 0
+    hasMoonshotInlineBudget(budget)
   ) {
     const resolved = resolveLocalJsonPointer(root, value.$ref);
     if (resolved !== undefined && resolved !== value) {
@@ -575,10 +650,21 @@ export function normalizeProviderToolInputSchema(schema: JsonSchema): JsonSchema
   } as JsonSchema;
 }
 
+/** Options accepted by {@link sanitizeProviderToolSchema}. */
+export interface SanitizeProviderToolSchemaOptions
+  extends Pick<ProviderToolCompatOptions, "model"> {
+  /**
+   * Expansion budget shared across every tool in one conversion pass. Callers that
+   * sanitize a whole tool set should create one budget and reuse it so `$ref` inlining
+   * is bounded for the collection, not merely per schema.
+   */
+  moonshotExpansionBudget?: MoonshotSchemaExpansionBudget;
+}
+
 /** Zod schema for sanitize provider tool. */
 export function sanitizeProviderToolSchema(
   schema: JsonSchema,
-  options: Pick<ProviderToolCompatOptions, "model"> = {},
+  options: SanitizeProviderToolSchemaOptions = {},
 ): JsonSchema {
   const profile = getProviderToolProfile(options.model);
   if (!profile.sanitizeSchema) return schema;
@@ -590,7 +676,16 @@ export function sanitizeProviderToolSchema(
   }
 
   if (profile.provider === "moonshot") {
-    return sanitizeMoonshotSchemaValue(propertyKeySafeSchema) as JsonSchema;
+    const budget = createMoonshotInlineBudget(
+      options.moonshotExpansionBudget ?? createMoonshotSchemaExpansionBudget(),
+    );
+    return sanitizeMoonshotSchemaValue(
+      propertyKeySafeSchema,
+      propertyKeySafeSchema,
+      new Set(),
+      0,
+      budget,
+    ) as JsonSchema;
   }
 
   if (profile.provider === "anthropic") {

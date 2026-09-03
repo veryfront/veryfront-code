@@ -2,6 +2,7 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
+  createMoonshotSchemaExpansionBudget,
   getProviderToolProfile,
   normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
@@ -23,6 +24,30 @@ function countNodes(value: unknown): number {
   }
   if (!value || typeof value !== "object") return 1;
   return Object.values(value).reduce<number>((total, item) => total + countNodes(item), 1);
+}
+
+/**
+ * Build a schema whose every level fans out into two references to the next level, so
+ * naive `$ref` inlining grows as 2^levelCount.
+ */
+function buildFanOutRefSchema(levelCount: number, description?: string) {
+  const terminal: Record<string, unknown> = { type: "string" };
+  if (description !== undefined) terminal.description = description;
+  const properties: Record<string, unknown> = { [`level${levelCount}`]: terminal };
+
+  for (let level = levelCount - 1; level >= 0; level -= 1) {
+    const node: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        left: { $ref: `#/properties/level${level + 1}` },
+        right: { $ref: `#/properties/level${level + 1}` },
+      },
+    };
+    if (description !== undefined) node.description = description;
+    properties[`level${level}`] = node;
+  }
+
+  return { type: "object", properties };
 }
 
 function containsKey(value: unknown, key: string): boolean {
@@ -315,30 +340,75 @@ describe("provider-tool-compat", () => {
   });
 
   it("bounds Moonshot ref inlining for fan-out ref chains", () => {
-    const levelCount = 40;
-    const properties: Record<string, unknown> = {
-      [`level${levelCount}`]: { type: "string" },
-    };
-    for (let level = levelCount - 1; level >= 0; level -= 1) {
-      properties[`level${level}`] = {
-        type: "object",
-        properties: {
-          left: { $ref: `#/properties/level${level + 1}` },
-          right: { $ref: `#/properties/level${level + 1}` },
-        },
-      };
-    }
-
+    // 15 levels, not a deeper hostile case: without the budget this already expands to
+    // roughly 327,000 nodes, which trips the assertion below while still completing
+    // promptly. A 40-level case would instead hang or exhaust the worker on regression,
+    // reporting a timeout rather than a useful failure.
     const sanitized = sanitizeProviderToolSchema(
-      { type: "object", properties } as never,
+      buildFanOutRefSchema(15) as never,
       { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
     );
 
-    // Without a shared expansion budget every sibling ref re-expands, so this compact
-    // schema would grow to roughly 2^40 nodes before the model call is even made.
+    // Without an expansion budget every sibling ref re-expands, so this compact schema
+    // would grow to roughly 2^15 leaves before the model call is even made.
     assertEquals(countNodes(sanitized) < 200_000, true);
     // The budget stops inlining rather than expanding, so deep refs stay as references.
     assertEquals(JSON.stringify(sanitized).includes("#/properties/level"), true);
+  });
+
+  it("bounds Moonshot ref inlining by serialized bytes, not just node count", () => {
+    // Every ref target carries a large description. The node budget alone counts each
+    // description as a single node, so ~20,000 admitted nodes could still serialize to
+    // tens of megabytes; the byte budget is what actually bounds the request payload.
+    const sanitized = sanitizeProviderToolSchema(
+      buildFanOutRefSchema(15, "x".repeat(2_000)) as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+
+    assertEquals(JSON.stringify(sanitized).length < 1_000_000, true);
+    assertEquals(JSON.stringify(sanitized).includes("#/properties/level"), true);
+  });
+
+  it("bounds Moonshot ref inlining across a whole tool set", () => {
+    // A per-schema budget bounds one tool; a source returning many admissible schemas
+    // would otherwise multiply the worst case by the tool count.
+    const budget = createMoonshotSchemaExpansionBudget();
+    let totalNodes = 0;
+    for (let index = 0; index < 50; index += 1) {
+      totalNodes += countNodes(sanitizeProviderToolSchema(
+        buildFanOutRefSchema(15) as never,
+        {
+          model: "veryfront-cloud/moonshotai/kimi-k2.6",
+          moonshotExpansionBudget: budget,
+        },
+      ));
+    }
+
+    // Per-schema budgets alone would allow ~50x the single-schema ceiling here.
+    assertEquals(totalNodes < 400_000, true);
+  });
+
+  it("still inlines refs for every tool in an ordinary tool set", () => {
+    // The tool-set budget is charged only for inlined material, so a long list of
+    // modest schemas must not starve later tools of inlining.
+    const budget = createMoonshotSchemaExpansionBudget();
+    for (let index = 0; index < 500; index += 1) {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            target: { type: "string", description: "target" },
+            alias: { $ref: "#/properties/target" },
+          },
+        } as never,
+        {
+          model: "veryfront-cloud/moonshotai/kimi-k2.6",
+          moonshotExpansionBudget: budget,
+        },
+      );
+
+      assertEquals(JSON.stringify(sanitized).includes("$ref"), false);
+    }
   });
 
   it("preserves Moonshot tool properties named definitions", () => {
