@@ -201,6 +201,32 @@ describe("EvalReportExporterRegistry", () => {
     });
   });
 
+  it("withholds the dataset content hash from exporters unless the export context allows it", async () => {
+    // Integrations receive reports through `registry.export()`, so assert the stripping on that
+    // path with a context that sets no redaction at all, not only on `redactEvalReportForExport`.
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+    registry.register({
+      id: "braintrust",
+      export(report) {
+        exportedReports.push(report);
+      },
+    });
+
+    await registry.export(createReport(), { projectReference: "demo" });
+    assertEquals(exportedReports[0]?.dataset, { kind: "json", examples: 1 });
+
+    await registry.export(createReport(), {
+      projectReference: "demo",
+      redaction: { includeDatasetHash: true },
+    });
+    assertEquals(exportedReports[1]?.dataset, {
+      kind: "json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    });
+  });
+
   it("leaves reports without dataset metadata untouched", () => {
     // `EvalReport.dataset` is absent whenever the run had no resolvable dataset identity, so
     // redaction must not synthesize an empty dataset object for exporters to trip over.

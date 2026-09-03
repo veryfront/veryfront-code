@@ -244,7 +244,7 @@ function recordPassed(record: EvalRecord): boolean {
   return !isBlockingFailure(record);
 }
 
-function emitEvalRuntimeMetrics(report: ReturnType<typeof createEvalReport>): void {
+function emitEvalRuntimeMetrics(report: EvalReport): void {
   const baseAttributes = {
     eval_id: report.definitionId,
     target_kind: report.targetKind,
