@@ -428,6 +428,12 @@ function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
       if (!isProviderDropped(message)) flushRun();
       continue;
     }
+    // Conversion clears its provider-executed id window on every system
+    // message before deciding what to drop, so the mirrored walk must route
+    // system messages through the tracker too. A stale id would otherwise
+    // mark a tool result conversion keeps as dropped and merge system runs
+    // the provider keeps apart.
+    isProviderDropped(message);
     const textParts = message.parts.filter(isTextPart).map((part) => part.text);
     // The converter drops blank system layers outright, leaving the messages
     // on either side of them adjacent, so a blank one must not end the run.
@@ -619,6 +625,40 @@ async function assertInputTextsValid(
   );
 }
 
+/**
+ * Reject a merged system run that sanitization would still rewrite.
+ *
+ * Within one turn such a run is repaired in place
+ * (`sanitizeAdjacentSystemRuns`), but the cross-turn hook sees the assembled
+ * conversation only after the earlier half of the run is already persisted
+ * memory, which it cannot rewrite. Per-turn sanitization has already run by
+ * then, so only a payload split across the memory/input boundary can still
+ * change here, and failing closed keeps it away from the provider without
+ * poisoning memory.
+ */
+function assertRunTextsNeedNoSanitization(
+  validator: InputValidator,
+  values: string[],
+  onViolation?: (violation: SecurityViolation) => void,
+): void {
+  for (const value of values) {
+    if ((validator.sanitize(value) ?? value) === value) continue;
+
+    const violation: SecurityViolation = {
+      type: "input",
+      reason: "Merged system messages assemble content sanitization removes",
+      content: value,
+    };
+    reportViolations([violation], onViolation);
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Input validation failed: ${violation.reason}`,
+      }),
+    );
+  }
+}
+
 /** Sanitize agent input, returning the original value when nothing changed. */
 function sanitizeAgentInput(
   validator: InputValidator,
@@ -682,11 +722,9 @@ export function securityMiddleware(
     const previousTurnValidator = turnMessageValidators.get(context);
     turnMessageValidators.set(context, async (messages) => {
       if (previousTurnValidator) await previousTurnValidator(messages);
-      await assertInputTextsValid(
-        inputValidator,
-        extractAdjacentSystemRunTexts(messages),
-        config.onViolation,
-      );
+      const runTexts = extractAdjacentSystemRunTexts(messages);
+      await assertInputTextsValid(inputValidator, runTexts, config.onViolation);
+      assertRunTextsNeedNoSanitization(inputValidator, runTexts, config.onViolation);
     });
 
     const inputValues = extractInputValidationTexts(context.input);

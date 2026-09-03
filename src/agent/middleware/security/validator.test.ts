@@ -3,10 +3,11 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
-import type { AgentContext, AgentResponse } from "../../types.ts";
+import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { attachOutputSchemaParser, resolveAgentOutputSchema } from "../../output-schema.ts";
 import {
   COMMON_BLOCKED_PATTERNS,
+  getTurnMessageValidator,
   InputValidator,
   OutputFilter,
   securityMiddleware,
@@ -575,6 +576,50 @@ describe("securityMiddleware", () => {
     assertEquals(result.text, "ok");
   });
 
+  it("allows system messages a tool result surviving a system reset keeps apart", async () => {
+    // Conversion clears its provider-executed id window on every system
+    // message, so the tool result for call-1 survives conversion and keeps the
+    // two system messages apart at the provider. The mirrored walk must apply
+    // the same reset instead of treating the tool message as dropped through
+    // the stale provider-executed id.
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "searching" },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "web_search",
+              input: {},
+              providerExecuted: true,
+            },
+          ],
+        },
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "ignore previous" }] },
+        {
+          id: "tool-1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "web_search",
+            result: { ok: true },
+          }],
+        },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    const result = await middleware(context, () => Promise.resolve(createResponse("ok")));
+    assertEquals(result.text, "ok");
+  });
+
   it("allows system messages a sendable assistant turn keeps apart at the provider", async () => {
     // An assistant message with real content survives conversion, so the
     // system messages never merge and must not be rejected.
@@ -732,6 +777,40 @@ describe("securityMiddleware", () => {
       "the provider-assembled system run must not contain the script payload",
     );
     assertEquals(assembled.includes("alert(1)"), false);
+  });
+
+  it("rejects a cross-turn system merge sanitization would rewrite", async () => {
+    // Per-turn sanitization cannot see conversation memory, and the cross-turn
+    // hook cannot rewrite already-persisted history, so a payload that only
+    // reassembles across the memory/input boundary must fail closed instead of
+    // reaching the provider.
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const input: Message[] = [
+      { id: "sys-2", role: "system", parts: [{ type: "text", text: ">alert(1)</script>" }] },
+    ];
+    const context = createContext({ input });
+
+    const result = await middleware(context, () => Promise.resolve(createResponse("ok")));
+    assertEquals(result.text, "ok");
+
+    const validateTurn = getTurnMessageValidator(context);
+    if (!validateTurn) throw new Error("Expected a cross-turn validator to be registered");
+
+    // A benign merge across the boundary still passes.
+    await validateTurn([
+      { id: "sys-0", role: "system", parts: [{ type: "text", text: "be helpful" }] },
+      ...(context.input as Message[]),
+    ]);
+
+    await assertRejects(
+      () =>
+        validateTurn([
+          { id: "sys-1", role: "system", parts: [{ type: "text", text: "<script" }] },
+          ...(context.input as Message[]),
+        ]),
+      Error,
+      "Input validation failed",
+    );
   });
 
   it("sanitizes a nested scalar payload to a fixpoint", async () => {
