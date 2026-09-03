@@ -985,6 +985,24 @@ describe("pushed source provenance", () => {
         Error,
         "The latest push came from a clean checkout, but this project has uncommitted changes.",
       );
+
+      assertEquals(
+        await resolvePushedSource({
+          projectDir,
+          controlPlane: "https://control.example.test/api",
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectSlug: "my-project",
+          branch: "main",
+          enforceWorkingTreeClean: false,
+        }),
+        {
+          commitSha,
+          sourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+          ]),
+        },
+        "promote-only deploys validate the pushed target without treating local edits as source",
+      );
     });
   });
 

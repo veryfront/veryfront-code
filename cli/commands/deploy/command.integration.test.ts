@@ -118,11 +118,13 @@ function createDeployFetchHandler(options: {
   releaseSource?: string;
   sourceDigest: string;
   uploadedPaths?: string[];
+  uploadedFiles?: Map<string, string>;
+  releaseFiles?: Map<string, string>;
   branchCreates?: string[];
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
-  const uploadedFiles = new Map<string, string>();
+  const uploadedFiles = options.uploadedFiles ?? new Map<string, string>();
 
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -222,6 +224,15 @@ function createDeployFetchHandler(options: {
       });
     }
     if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)) {
+      if (options.releaseFiles) {
+        return Response.json({
+          data: [...options.releaseFiles].map(([path, body]) => ({
+            path,
+            data: JSON.stringify({ body, path }),
+          })),
+          page_info: {},
+        });
+      }
       return Response.json({
         data: [
           {
@@ -446,12 +457,25 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
 
     const requests: string[] = [];
     const uploadedPaths: string[] = [];
+    const uploadedFiles = new Map<string, string>([
+      ["studio-page.tsx", "export default function StudioPage() { return null; }\n"],
+    ]);
+    const refreshedSourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: STALE_SOURCE },
+      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+      {
+        path: "studio-page.tsx",
+        content: "export default function StudioPage() { return null; }\n",
+      },
+    ]);
 
     await withMockFetch(
       createDeployFetchHandler({
         requests,
-        sourceDigest,
+        sourceDigest: refreshedSourceDigest,
         uploadedPaths,
+        uploadedFiles,
+        releaseFiles: uploadedFiles,
         releaseSource: STALE_SOURCE,
       }),
       () =>
@@ -467,6 +491,12 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
     );
 
     assertEquals(uploadedPaths.includes("app.ts"), true);
+    assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
+    assertEquals(
+      uploadedFiles.get("studio-page.tsx"),
+      "export default function StudioPage() { return null; }\n",
+    );
+    assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
     assertEquals(
       requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
       true,

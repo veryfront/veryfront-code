@@ -134,6 +134,8 @@ export interface PushOptions {
   force?: boolean;
   /** Prune remote files that are missing locally. */
   prune?: boolean;
+  /** Prune only these remote paths when full pruning is disabled. */
+  prunePaths?: readonly string[];
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
   /** Quiet mode - suppress spinner/progress output */
@@ -892,6 +894,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         quiet = false,
       } = options;
       const pruneRemoteMissing = options.prune ?? false;
+      const selectedPrunePaths = new Set(options.prunePaths ?? []);
       assertPreviewBranchName(branch);
       const jsonOutput = isJsonMode();
       const startTime = Date.now();
@@ -1076,7 +1079,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         localPaths,
         ignoreChecker,
       );
-      const toDelete = pruneRemoteMissing ? remoteFilesMissingLocally : [];
+      const toDelete = pruneRemoteMissing
+        ? remoteFilesMissingLocally
+        : remoteFilesMissingLocally.filter((path) => selectedPrunePaths.has(path));
       // Preflight: fail before any remote mutation if a preserved remote file
       // is missing content, so the digest computations after upload/delete
       // cannot be the first to discover it.

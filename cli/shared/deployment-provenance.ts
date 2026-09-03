@@ -9,7 +9,6 @@ const RECEIPT_VERSION = 2 as const;
 const RECEIPT_DIRECTORY = ".veryfront";
 const RECEIPT_FILENAME = "push-receipt.json";
 export const PUSH_RECEIPT_RELATIVE_PATH = `${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME}`;
-const RECEIPT_DIRECTORY_PREFIX = `${RECEIPT_DIRECTORY}/`;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40,64}$/i;
 const SOURCE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
@@ -142,32 +141,6 @@ export function getProjectTarget(
   return client.get<ProjectTarget>(`/projects/${projectReference}`);
 }
 
-function isCliStatePath(path: string): boolean {
-  return path === RECEIPT_DIRECTORY || path === RECEIPT_DIRECTORY_PREFIX ||
-    path.startsWith(RECEIPT_DIRECTORY_PREFIX);
-}
-
-/**
- * Whether a `git status --porcelain=v1` entry only reports Veryfront's own state.
- *
- * `.veryfront/` holds the push receipt and the project link, both written by the
- * CLI itself, and the whole directory is on the sync ignore list — nothing under
- * it ever reaches the uploaded source. A project that does not Git-ignore it
- * would otherwise turn dirty the moment `veryfront up` records its bookkeeping,
- * and the receipt gate would then reject source the push had already sent
- * unchanged. Entries outside the directory still count, so real edits are never
- * waved through; a rename must have both of its ends inside the directory,
- * because a file moved out of the source tree is a source change.
- */
-function isCliStateStatusLine(line: string): boolean {
-  if (line.length < 4) return false;
-  const entry = line.slice(3);
-  const separator = entry.indexOf(" -> ");
-  if (separator === -1) return isCliStatePath(entry);
-  return isCliStatePath(entry.slice(0, separator)) &&
-    isCliStatePath(entry.slice(separator + " -> ".length));
-}
-
 export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   const envSha = getEnv("GITHUB_SHA")?.trim();
   const gitEnv = env();
@@ -186,7 +159,19 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
         timeoutMs: 5_000,
       }),
       runCommand("git", {
-        args: ["status", "--porcelain=v1", "--untracked-files=all"],
+        // Ask Git to exclude CLI state before it formats porcelain paths.
+        // Porcelain v1 otherwise reports paths relative to the repository root,
+        // so parsing for a leading `.veryfront/` fails when projectDir is a
+        // nested monorepo package.
+        args: [
+          "status",
+          "--porcelain=v1",
+          "--untracked-files=all",
+          "--",
+          ".",
+          ":(exclude).veryfront",
+          ":(exclude).veryfront/**",
+        ],
         cwd: projectDir,
         clearEnv: true,
         env: gitEnv,
@@ -214,9 +199,31 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
 
   return {
     commitSha,
-    clean: sourcesAgree && status.success &&
-      !(status.stdout ?? "").split("\n").some((line) => line !== "" && !isCliStateStatusLine(line)),
+    clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
   };
+}
+
+/** Return tracked source paths deleted from the current checkout. */
+export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<string[]> {
+  const gitEnv = env();
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith("GIT_")) delete gitEnv[key];
+  }
+
+  try {
+    const result = await runCommand("git", {
+      args: ["diff", "--name-only", "--diff-filter=D", "-z", "--relative", "HEAD", "--", "."],
+      cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
+      capture: true,
+      timeoutMs: 5_000,
+    });
+    if (!result.success) return [];
+    return (result.stdout ?? "").split("\0").filter((path) => path.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 export async function areSourceFilesTracked(

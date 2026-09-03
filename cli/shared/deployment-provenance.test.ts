@@ -8,6 +8,7 @@ import {
   normalizeControlPlane,
   type PushReceipt,
   readPushReceipt,
+  resolveDeletedGitSourcePaths,
   resolveGitSource,
   validatePushReceipt,
   writePushReceipt,
@@ -475,6 +476,44 @@ describe("resolveGitSource", () => {
       if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
       else Deno.env.set("GITHUB_SHA", originalGithubSha);
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("ignores nested project metadata and reports tracked deletions relative to the project", async () => {
+    const repositoryDir = await Deno.makeTempDir();
+    const projectDir = `${repositoryDir}/packages/site`;
+    const runGit = async (...args: string[]) => {
+      const result = await new Deno.Command("git", {
+        args,
+        cwd: repositoryDir,
+        clearEnv: true,
+        env: Object.fromEntries(
+          Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+        ),
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+      assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+    };
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+      await runGit("init", "--quiet");
+      await runGit("config", "user.email", "test@veryfront.com");
+      await runGit("config", "user.name", "Veryfront Test");
+      await runGit("add", ".");
+      await runGit("commit", "--quiet", "-m", "initial");
+
+      await Deno.mkdir(`${projectDir}/.veryfront`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/.veryfront/project.json`, "{}\n");
+      assertEquals((await resolveGitSource(projectDir)).clean, true);
+
+      await Deno.remove(`${projectDir}/app.ts`);
+      assertEquals((await resolveGitSource(projectDir)).clean, false);
+      assertEquals(await resolveDeletedGitSourcePaths(projectDir), ["app.ts"]);
+    } finally {
+      await Deno.remove(repositoryDir, { recursive: true });
     }
   });
 });

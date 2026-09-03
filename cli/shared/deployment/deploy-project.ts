@@ -40,6 +40,7 @@ import {
   PUSH_RECEIPT_RELATIVE_PATH,
   type PushReceipt,
   readPushReceipt,
+  resolveDeletedGitSourcePaths,
   resolveGitSource,
   validatePushReceipt,
 } from "../deployment-provenance.ts";
@@ -430,6 +431,8 @@ export async function resolvePushedSource(input: {
   projectId: string;
   projectSlug: string;
   branch: string;
+  /** Enforce local checkout cleanliness when this operation owns local source. */
+  enforceWorkingTreeClean?: boolean;
 }): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
@@ -445,7 +448,7 @@ export async function resolvePushedSource(input: {
     projectSlug: input.projectSlug,
     branch: input.branch,
     commitSha: gitSource.commitSha,
-    clean: gitSource.clean,
+    clean: input.enforceWorkingTreeClean === false ? true : gitSource.clean,
   });
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
@@ -1573,18 +1576,20 @@ export function createDeployProject(options: {
 
       if (bootstrapPush) {
         await step(observer, "push-source", async () => {
+          const prunePaths = bootstrapPushKind === "refresh"
+            ? await resolveDeletedGitSourcePaths(request.projectDir)
+            : undefined;
           await pushCommand({
             projectDir: request.projectDir,
             branch,
             // Only the very first push of a project has no receipt to
             // reconcile against, so only it may write the branch outright.
-            // Refreshing an established push keeps the normal remote-conflict
-            // checks, or a collaborator's edit to an untouched file would be
-            // overwritten by an unrelated local one; and it prunes source that
-            // disappeared locally, or the deleted file would stay in the
-            // upload and be deployed as live.
+            // Refreshing an established push keeps normal remote-conflict
+            // checks. It prunes only tracked paths deleted in this checkout,
+            // preserving intentional remote-only files from Studio or another
+            // collaborator.
             force: bootstrapPushKind === "bootstrap",
-            prune: bootstrapPushKind === "refresh",
+            prunePaths,
             dryRun: request.mode === "dry-run",
             quiet: true,
           });
@@ -1638,6 +1643,7 @@ export function createDeployProject(options: {
             projectId: project!.id,
             projectSlug: project!.slug,
             branch,
+            enforceWorkingTreeClean: request.source.kind === "ensure-pushed",
           });
         }
         return {
@@ -1661,6 +1667,7 @@ export function createDeployProject(options: {
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
+          enforceWorkingTreeClean: request.source.kind === "ensure-pushed",
         }));
 
       const release = await step(observer, "create-release", async () => {
