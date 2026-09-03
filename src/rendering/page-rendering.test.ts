@@ -304,6 +304,37 @@ describe("rendering/page-rendering", () => {
     }
   });
 
+  it("scopes recovery cooldowns and single-flight runs to the source snapshot identity", async () => {
+    let sourceRefreshes = 0;
+    const createAdapter = (identity: string): RuntimeAdapter => ({
+      fs: {
+        getSourceSnapshotIdentity: () => identity,
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter);
+
+    const recover = (adapter: RuntimeAdapter) =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    assertEquals(await recover(createAdapter("branch:project-1:principal-a")), true);
+    assertEquals(await recover(createAdapter("branch:project-1:principal-b")), true);
+    assertEquals(
+      sourceRefreshes,
+      2,
+      "distinct source snapshot identities must not share a recovery cooldown",
+    );
+  });
+
   it("keeps a refreshed namespace from being evicted as the oldest tracked entry", async () => {
     using time = new FakeTime();
     let sourceRefreshes = 0;

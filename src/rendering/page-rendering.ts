@@ -98,9 +98,12 @@ export function isMutableMdxEsmContentSource(
     contentSourceId.startsWith("local-");
 }
 
-function getStaleMdxEsmRecoveryKey(options: StaleMdxEsmRecoveryOptions): string {
+async function getStaleMdxEsmRecoveryKey(
+  options: StaleMdxEsmRecoveryOptions,
+): Promise<string> {
   const namespace = options.projectId ?? options.projectSlug ?? "";
-  return `${namespace}::${options.contentSourceId ?? ""}`;
+  const sourceSnapshotIdentity = await options.adapter.fs.getSourceSnapshotIdentity?.();
+  return `${namespace}::${options.contentSourceId ?? ""}::${sourceSnapshotIdentity ?? ""}`;
 }
 
 function pruneStaleMdxEsmRecoveryAttempts(now: number): void {
@@ -161,7 +164,7 @@ export async function recoverStaleMdxEsmPreviewCaches(
     return false;
   }
 
-  const key = getStaleMdxEsmRecoveryKey(options);
+  const key = await getStaleMdxEsmRecoveryKey(options);
   const inFlight = staleMdxEsmRecoveryInFlight.get(key);
   if (inFlight) return await inFlight.promise;
 
