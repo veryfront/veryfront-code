@@ -113,6 +113,26 @@ describe("validatePushReceipt", () => {
     );
   });
 
+  it("rejects a current receipt when its source digest cannot be recomputed", async () => {
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validatePushReceipt({ ...RECEIPT, localSourceDigest: `sha256:${"1".repeat(64)}` }, {
+            controlPlane: RECEIPT.controlPlane,
+            projectId: RECEIPT.projectId,
+            projectSlug: RECEIPT.projectSlug,
+            branch: RECEIPT.branch,
+            commitSha: RECEIPT.commitSha,
+            clean: true,
+            localSourceDigest: null,
+          })
+        ),
+      Error,
+      "Veryfront could not verify that this directory still holds the source the latest push uploaded. " +
+        "Run veryfront push again to deploy the current source.",
+    );
+  });
+
   it("accepts a matching source digest from a checkout Git reports as dirty", () => {
     // The digest covers exactly the files push uploads, so a tree dirty only
     // outside that set is provably still the pushed source.

@@ -1362,6 +1362,23 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
+  it("refreshes when the current pushed source digest cannot be recomputed", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      const local = await observeLocalSource(projectDir);
+      assertExists(local.sourceDigest);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true, localSourceDigest: local.sourceDigest },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          { gitSource: local.gitSource, sourceDigest: null },
+          target,
+        ),
+        "refresh",
+      );
+    });
+  });
+
   it("keeps the moved-HEAD refusal when the receipt was dirty", async () => {
     await withGitProject(async (projectDir) => {
       // A dirty receipt that still names a commit gets the same comparison as

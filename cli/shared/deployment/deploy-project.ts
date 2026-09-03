@@ -440,7 +440,8 @@ export function resolveBootstrapPush(
   // Digests compare the file set push uploads, so where both sides have one
   // they decide outright: an edit Git cannot see is caught, and a tree dirty
   // only in files no push would upload is left alone.
-  if (receipt.localSourceDigest && local.sourceDigest) {
+  if (receipt.localSourceDigest !== undefined) {
+    if (local.sourceDigest === null) return "refresh";
     return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
   }
   if (!receipt.clean) return "refresh";

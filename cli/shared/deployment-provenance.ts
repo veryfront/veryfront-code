@@ -378,7 +378,13 @@ function assertReceiptDescribesLocalSource(
   receipt: PushReceipt,
   expected: PushReceiptExpectation,
 ): void {
-  if (receipt.localSourceDigest && expected.localSourceDigest) {
+  if (receipt.localSourceDigest !== undefined) {
+    if (expected.localSourceDigest === null || expected.localSourceDigest === undefined) {
+      throw new Error(
+        "Veryfront could not verify that this directory still holds the source the latest push uploaded. " +
+          "Run veryfront push again to deploy the current source.",
+      );
+    }
     if (receipt.localSourceDigest === expected.localSourceDigest) return;
     throw new Error(
       "This directory no longer holds the source the latest push uploaded. " +
