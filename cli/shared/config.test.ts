@@ -18,6 +18,7 @@ import {
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
@@ -190,11 +191,10 @@ describe("resolveConfigWithAuthNoModule", () => {
     });
   }
 
-  it("never executes veryfront.config.ts and never adopts its projectSlug", async () => {
-    const tempDir = await Deno.makeTempDir();
-    const env = createMockEnv({ apiToken: "env-token", projectSlug: undefined });
+  const noModuleEnv = () => createMockEnv({ apiToken: "env-token", projectSlug: undefined });
 
-    try {
+  it("never executes veryfront.config.ts and never adopts its projectSlug", async () => {
+    await withTempDir(async (tempDir) => {
       await Deno.writeTextFile(
         join(tempDir, "veryfront.config.js"),
         'export default { projectSlug: "from-module" };\n',
@@ -205,20 +205,15 @@ describe("resolveConfigWithAuthNoModule", () => {
       );
 
       const config = await withoutTenantEnvironment(() =>
-        resolveConfigWithAuthNoModule(tempDir, env)
+        resolveConfigWithAuthNoModule(tempDir, noModuleEnv())
       );
 
       assertEquals(config.projectSlug, "from-json");
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    }, { prefix: "vf-no-module-json-" });
   });
 
   it("refuses to infer a project when a skipped module config is the only reference", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-inferable-project-" });
-    const env = createMockEnv({ apiToken: "env-token", projectSlug: undefined });
-
-    try {
+    await withTempDir(async (tempDir) => {
       // No veryfront.json, no project link, no environment reference: the only
       // declaration lives in code this resolver must not run. Inferring from
       // package.json would silently target a different reachable project.
@@ -233,34 +228,27 @@ describe("resolveConfigWithAuthNoModule", () => {
 
       await withoutTenantEnvironment(() =>
         assertRejects(
-          () => resolveConfigWithAuthNoModule(tempDir, env),
+          () => resolveConfigWithAuthNoModule(tempDir, noModuleEnv()),
           Error,
           "veryfront.config.ts is the only project reference in this directory",
         )
       );
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    }, { prefix: "vf-no-module-only-" });
   });
 
   it("still infers a project when no module config exists", async () => {
-    const tempDir = await Deno.makeTempDir();
-    const env = createMockEnv({ apiToken: "env-token", projectSlug: undefined });
-
-    try {
+    await withTempDir(async (tempDir) => {
       await Deno.writeTextFile(
         join(tempDir, "package.json"),
         JSON.stringify({ name: "inferred-project" }),
       );
 
       const config = await withoutTenantEnvironment(() =>
-        resolveConfigWithAuthNoModule(tempDir, env)
+        resolveConfigWithAuthNoModule(tempDir, noModuleEnv())
       );
 
       assertEquals(config.projectSlug, "inferred-project");
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
+    }, { prefix: "vf-no-module-infer-" });
   });
 });
 
