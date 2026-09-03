@@ -144,6 +144,39 @@ function resolveContentContext(ctx: HandlerContext): ResolvedContentContext | nu
   return typeof fsAdapter.getContentContext === "function" ? fsAdapter.getContentContext() : null;
 }
 
+/**
+ * Fallback content selectors for a proxy filesystem that resolves no content
+ * context of its own (`MultiProjectFSAdapter` exposes `getAllSourceFiles()`
+ * but no `getContentContext()`). The key must name the source tree the walk
+ * actually reads, so these mirror the selector precedence and environment
+ * gating that `withProxyContext` / `MultiProjectFSAdapter.runWithContext`
+ * apply when selecting the per-request filesystem:
+ *
+ * - A release pins content only for a production-resolved request.
+ *   `runWithContext` nulls `releaseId` outside production mode, so a preview
+ *   request that happens to carry one still serves mutable branch content —
+ *   keying it `release:<id>` would freeze that content under an immutable key.
+ * - A hostname-addressed branch preview (`slug--branch.preview.*`) carries its
+ *   branch in the parsed request context, not in the proxy identity headers,
+ *   and `runWithContext` selects the branch filesystem from exactly that
+ *   fallback chain (and ignores branches entirely in production mode). Keying
+ *   only on the identity headers would collapse every hostname-addressed
+ *   branch of a tenant onto one entry while the walks read different trees.
+ */
+function proxyContentVersionFallback(ctx: HandlerContext): {
+  releaseId: string | null;
+  branch: string | null;
+  environmentName: string | null;
+} {
+  const productionMode = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
+  return {
+    releaseId: productionMode ? ctx.releaseId ?? null : null,
+    branch: productionMode ? null : ctx.branchId ?? ctx.branchName ?? ctx.requestContext?.branch ??
+      ctx.parsedDomain?.branch ?? null,
+    environmentName: ctx.environmentId ?? ctx.environmentName ?? null,
+  };
+}
+
 function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
   const contentContext = resolveContentContext(ctx);
   const styleProfile = createStyleScopeProfile(ctx.config);
@@ -175,13 +208,7 @@ function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
     ctx.projectDir;
   const projectVersion = resolveStyleContentVersion(
     contentContext,
-    ctx.isProxyMode
-      ? {
-        releaseId: ctx.releaseId,
-        branch: ctx.branchId ?? ctx.branchName,
-        environmentName: ctx.environmentId ?? ctx.environmentName,
-      }
-      : {},
+    ctx.isProxyMode ? proxyContentVersionFallback(ctx) : {},
   );
 
   return {

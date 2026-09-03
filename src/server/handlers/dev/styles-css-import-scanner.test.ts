@@ -519,18 +519,101 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
       invalidateProjectCssImportScans(PROJECT_SLUG);
       assertEquals(
         await extractProjectCssImports(
-          makeCtx(scan.adapter, { isProxyMode: true, releaseId: "rel-a" }),
+          makeCtx(scan.adapter, {
+            isProxyMode: true,
+            resolvedEnvironment: "production",
+            releaseId: "rel-a",
+          }),
         ),
         [IMPORTED_CSS],
       );
       scan.setFiles([]);
       assertEquals(
         await extractProjectCssImports(
-          makeCtx(scan.adapter, { isProxyMode: true, releaseId: "rel-b" }),
+          makeCtx(scan.adapter, {
+            isProxyMode: true,
+            resolvedEnvironment: "production",
+            releaseId: "rel-b",
+          }),
         ),
         [],
       );
       assertEquals(scan.getScanCount(), 2);
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
+  it("partitions hostname-addressed branch previews sharing one proxy runtime", async () => {
+    // A branch preview addressed as slug--branch.preview.* carries its branch
+    // in the domain-parsed request context, not in x-branch-id/x-branch-name
+    // proxy identity headers, and runWithContext selects the per-branch
+    // filesystem from exactly that fallback. If the cache key only looked at
+    // the identity headers, every branch of the tenant would collapse onto one
+    // entry while the walks read different per-branch source trees, so branch
+    // B would be served branch A's imports.
+    const branchA = createScanAdapter([LAYOUT_FILE], null);
+    const branchB = createScanAdapter([], null);
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(branchA.adapter, {
+            isProxyMode: true,
+            requestContext: { token: "", slug: PROJECT_SLUG, branch: "branch-a", mode: "preview" },
+          }),
+        ),
+        [IMPORTED_CSS],
+      );
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(branchB.adapter, {
+            isProxyMode: true,
+            requestContext: { token: "", slug: PROJECT_SLUG, branch: "branch-b", mode: "preview" },
+          }),
+        ),
+        [],
+      );
+      assertEquals(
+        branchB.getScanCount(),
+        1,
+        "a second branch must walk its own source tree, not reuse the first branch's scan",
+      );
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
+  it("does not freeze a preview scan under a release key", async () => {
+    // runWithContext nulls releaseId outside production mode, so a preview
+    // request that carries one still walks mutable branch content. Keying it
+    // release:<id> would mark that mutable content immutable and serve it
+    // forever, so the key must apply the same environment gating.
+    using time = new FakeTime();
+    const scan = createScanAdapter([LAYOUT_FILE], null);
+    const ctx = makeCtx(scan.adapter, {
+      isProxyMode: true,
+      releaseId: "rel-preview",
+      requestContext: { token: "", slug: PROJECT_SLUG, branch: "feature", mode: "preview" },
+    });
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      assertEquals(await extractProjectCssImports(ctx), [IMPORTED_CSS]);
+      assertEquals(scan.getScanCount(), 1);
+
+      scan.setFiles([]);
+      time.tick(2_500);
+
+      assertEquals(await extractProjectCssImports(ctx), []);
+      assertEquals(
+        scan.getScanCount(),
+        2,
+        "a preview request's releaseId must not exempt its mutable content from the TTL",
+      );
     } finally {
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
