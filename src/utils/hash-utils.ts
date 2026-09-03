@@ -281,9 +281,9 @@ export function cacheNamespaceSegment(id: string): string {
   if (encoded.length <= MAX_INLINE_NAMESPACE_SEGMENT_LENGTH) return `hx-${encoded}`;
 
   const byteLength = ReflectApply(NumberPrototypeToString, encoded.length / 2, [36]) as string;
-  return `h-${byteLength}-${fnv1a64Base36(`cache-namespace:a:${id}`)}-${
-    fnv1a64Base36(`cache-namespace:b:${id}`)
-  }`;
+  const firstHash = fnv1a64Base36("cache-namespace:a:" + id);
+  const secondHash = fnv1a64Base36("cache-namespace:b:" + id);
+  return `h-${byteLength}-${firstHash}-${secondHash}`;
 }
 
 /** FNV-1a hash for strings - returns hex string */

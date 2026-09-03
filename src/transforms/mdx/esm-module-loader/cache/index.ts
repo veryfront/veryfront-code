@@ -279,9 +279,15 @@ function getLegacyHashedMdxEsmSsrCacheDir(projectId: string, contentSourceId: st
 }
 
 /** Whether cacheDir is strictly below parentDir, on either path separator. */
+function normalizeCachePath(value: string): string {
+  const normalized = value.replaceAll("\\", "/");
+  let end = normalized.length;
+  while (end > 0 && normalized.charCodeAt(end - 1) === 0x2f) end--;
+  return normalized.slice(0, end);
+}
+
 function isDescendantCachePath(cacheDir: string, parentDir: string): boolean {
-  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalize(cacheDir).startsWith(`${normalize(parentDir)}/`);
+  return normalizeCachePath(cacheDir).startsWith(`${normalizeCachePath(parentDir)}/`);
 }
 
 /**
