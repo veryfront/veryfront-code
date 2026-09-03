@@ -239,7 +239,11 @@ function isProtected(relativePath: string): boolean {
 }
 
 function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
-  if (!rule.negated || !rule.literalPrefix || rule.regex.test(normalizedPath)) return false;
+  if (!rule.negated || rule.regex.test(normalizedPath)) return false;
+  // A wildcard before the first literal segment can match a descendant below
+  // any directory, so a protected directory stops that negation from ever
+  // being evaluated on a concrete child.
+  if (!rule.literalPrefix) return true;
   const candidates = rule.anchored
     ? [normalizedPath]
     : normalizedPath.split("/").map((_, index, parts) => parts.slice(index).join("/"));

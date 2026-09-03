@@ -221,9 +221,13 @@ describe("cli/sync/ignore", () => {
           "a protected parent must warn before traversal drops a descendant negation",
         );
 
+        const wildcardChecker = createIgnoreChecker([".env*", "!**/.env/**"]);
+        assertEquals(wildcardChecker.isIgnored(".env"), true);
+        assertEquals(warnings.length, 3, "a recursive prefix must not hide the warning");
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 2, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 3, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();
