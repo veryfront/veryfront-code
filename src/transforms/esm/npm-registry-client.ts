@@ -9,6 +9,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import type { DependencyWritebackTarget } from "./package-registry.ts";
 
@@ -417,7 +418,11 @@ export async function postDependencyResolution(
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    const res = await fetch(url, {
+    // The credential may be the host-private stored login token, so the request
+    // goes through the host transport rather than `globalThis.fetch`. A project
+    // served in this process can replace the global, and a direct call would
+    // hand it the `Authorization` header to read.
+    const res = await guardedOutboundFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

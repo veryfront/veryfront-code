@@ -42,7 +42,7 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
-import { getHostEnv } from "#cli/process-env";
+import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
 import {
@@ -600,13 +600,20 @@ export async function hydrateEvalRuntimeAuth(
   });
 }
 
-function createEvalToolExecutionContext(
+export function createEvalToolExecutionContext(
   config: EvalRuntimeAuthConfig | null | undefined,
 ): ToolExecutionContext {
   const projectSlug = resolveEvalRuntimeProjectSlug(config);
-  // Host-scoped: `hydrateEvalRuntimeAuth` keeps a stored CLI login token out of
-  // the process environment, so `Deno.env` no longer carries it.
-  const authToken = getHostEnv("VERYFRONT_API_TOKEN");
+  // Only an explicitly exported token reaches this context. `createToolAdapter`
+  // hands it to a project-defined `tool.execute()`, and a stored `veryfront
+  // login` token is registered host-privately precisely so project code cannot
+  // read it — putting it here would hand it back. An exported value is already
+  // readable by the same code through `Deno.env`, so it stays.
+  //
+  // Framework-owned integration handling does not need it either: when the
+  // context carries no credential, `resolveRequestToken()` in
+  // `src/integrations/remote-tools.ts` resolves the host-private token itself.
+  const authToken = getEnv("VERYFRONT_API_TOKEN");
   return {
     ...(projectSlug ? { projectSlug } : {}),
     ...(authToken ? { authToken } : {}),

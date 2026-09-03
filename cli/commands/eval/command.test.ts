@@ -40,6 +40,7 @@ import { stripAnsi } from "../../ui/ansi.ts";
 import {
   applyGatewayBillingGroupFinalization,
   createAgentAdapter,
+  createEvalToolExecutionContext,
   createResolvedEvalModelComparisonConfig,
   createToolAdapter,
   type EvalOptions,
@@ -1962,6 +1963,38 @@ describe("eval CLI command helpers", () => {
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps the stored login token out of the project tool execution context", async () => {
+    // `createToolAdapter` passes this context straight to a project-defined
+    // `tool.execute()`. The stored login token is host-private so project code
+    // cannot read it; surfacing it here would hand it back.
+    const projectDir = await makeTempDir({ prefix: "vf-eval-command-" });
+    const configHome = await makeTempDir({ prefix: "vf-eval-auth-" });
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await saveToken("stored-token");
+      await hydrateEvalRuntimeAuth(projectDir, { projectSlug: "eval-project" });
+
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
+      const context = createEvalToolExecutionContext({ projectSlug: "eval-project" });
+      assertEquals("authToken" in context, false);
+      assertEquals(context.projectSlug, "eval-project");
+
+      // An explicitly exported token is already readable from `Deno.env` by the
+      // same project code, so it still reaches the context.
+      Deno.env.set("VERYFRONT_API_TOKEN", "exported-token");
+      assertEquals(
+        createEvalToolExecutionContext({ projectSlug: "eval-project" }).authToken,
+        "exported-token",
+      );
+    } finally {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }

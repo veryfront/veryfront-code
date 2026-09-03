@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
@@ -60,7 +60,6 @@ describe("npm-registry-client dependency contracts", () => {
   it("deduplicates and forwards a scoped package raw range", async () => {
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
-    const originalFetch = globalThis.fetch;
     setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
     setEnv("VERYFRONT_API_TOKEN", "test-token");
     refreshEnvironmentConfig();
@@ -68,27 +67,28 @@ describe("npm-registry-client dependency contracts", () => {
     let fetchCalls = 0;
     let requestUrl = "";
     let requestBody = "";
-    globalThis.fetch = (input, init) => {
-      fetchCalls++;
-      requestUrl = String(input);
-      requestBody = String(observeFetchRequestInit(init).body ?? "");
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
 
     try {
-      schedulePlatformDependencyResolution(
-        "project-ref",
-        "@scope/pkg",
-        "^1.2.3",
-        MAIN_SCHEDULE,
-      );
-      schedulePlatformDependencyResolution(
-        "project-ref",
-        "@scope/pkg",
-        "^1.2.3",
-        MAIN_SCHEDULE,
-      );
-      await _pendingResolutions();
+      await withMockFetch((input, init) => {
+        fetchCalls++;
+        requestUrl = String(input);
+        requestBody = String(observeFetchRequestInit(init).body ?? "");
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }, async () => {
+        schedulePlatformDependencyResolution(
+          "project-ref",
+          "@scope/pkg",
+          "^1.2.3",
+          MAIN_SCHEDULE,
+        );
+        schedulePlatformDependencyResolution(
+          "project-ref",
+          "@scope/pkg",
+          "^1.2.3",
+          MAIN_SCHEDULE,
+        );
+        await _pendingResolutions();
+      });
 
       assertEquals(fetchCalls, 1);
       assertEquals(
@@ -100,7 +100,6 @@ describe("npm-registry-client dependency contracts", () => {
         expected_declarations: { "@scope/pkg": "^1.2.3" },
       });
     } finally {
-      globalThis.fetch = originalFetch;
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
       refreshEnvironmentConfig();
@@ -110,32 +109,32 @@ describe("npm-registry-client dependency contracts", () => {
   it("uses request-scoped authorization when the runtime has no API token", async () => {
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
-    const originalFetch = globalThis.fetch;
     setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
     setEnv("VERYFRONT_API_TOKEN", "");
     refreshEnvironmentConfig();
 
     let authorization = "";
-    globalThis.fetch = (_input, init) => {
-      authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ?? "";
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
 
     try {
-      schedulePlatformDependencyResolution(
-        "project-ref",
-        "zod",
-        "^3",
-        {
-          target: { kind: "main" },
-          authToken: "request-scoped-token",
-        },
-      );
-      await _pendingResolutions();
+      await withMockFetch((_input, init) => {
+        authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ??
+          "";
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }, async () => {
+        schedulePlatformDependencyResolution(
+          "project-ref",
+          "zod",
+          "^3",
+          {
+            target: { kind: "main" },
+            authToken: "request-scoped-token",
+          },
+        );
+        await _pendingResolutions();
+      });
 
       assertEquals(authorization, "Bearer request-scoped-token");
     } finally {
-      globalThis.fetch = originalFetch;
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
       refreshEnvironmentConfig();
@@ -148,30 +147,30 @@ describe("npm-registry-client dependency contracts", () => {
     // write-back must still authenticate instead of silently skipping.
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
-    const originalFetch = globalThis.fetch;
     setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
     setEnv("VERYFRONT_API_TOKEN", "");
     refreshEnvironmentConfig();
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
 
     let authorization = "";
-    globalThis.fetch = (_input, init) => {
-      authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ?? "";
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
 
     try {
-      schedulePlatformDependencyResolution(
-        "host-token-project",
-        "zod",
-        "^3",
-        MAIN_SCHEDULE,
-      );
-      await _pendingResolutions();
+      await withMockFetch((_input, init) => {
+        authorization = new Headers(observeFetchRequestInit(init).headers).get("authorization") ??
+          "";
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }, async () => {
+        schedulePlatformDependencyResolution(
+          "host-token-project",
+          "zod",
+          "^3",
+          MAIN_SCHEDULE,
+        );
+        await _pendingResolutions();
+      });
 
       assertEquals(authorization, "Bearer stored-login-token");
     } finally {
-      globalThis.fetch = originalFetch;
       deleteHostSecret("VERYFRONT_API_TOKEN");
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
@@ -182,33 +181,33 @@ describe("npm-registry-client dependency contracts", () => {
   it("posts branch and caller-observed declarations, including absence", async () => {
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
-    const originalFetch = globalThis.fetch;
     setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
     setEnv("VERYFRONT_API_TOKEN", "test-token");
     refreshEnvironmentConfig();
 
     let requestBody = "";
-    globalThis.fetch = (_input, init) => {
-      requestBody = String(observeFetchRequestInit(init).body ?? "");
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
 
     const branchSchedule = {
       target: { kind: "branch" as const, branch: "feature-a" },
     };
     try {
-      schedulePlatformDependencyResolution(
-        "project-ref",
-        "zod",
-        "next",
-        branchSchedule,
-      );
-      scheduleUndeclaredDependencyResolution(
-        "project-ref",
-        "lodash",
-        branchSchedule,
-      );
-      await _pendingResolutions();
+      await withMockFetch((_input, init) => {
+        requestBody = String(observeFetchRequestInit(init).body ?? "");
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }, async () => {
+        schedulePlatformDependencyResolution(
+          "project-ref",
+          "zod",
+          "next",
+          branchSchedule,
+        );
+        scheduleUndeclaredDependencyResolution(
+          "project-ref",
+          "lodash",
+          branchSchedule,
+        );
+        await _pendingResolutions();
+      });
 
       assertEquals(JSON.parse(requestBody), {
         specifiers: ["zod@next", "lodash"],
@@ -219,7 +218,6 @@ describe("npm-registry-client dependency contracts", () => {
         },
       });
     } finally {
-      globalThis.fetch = originalFetch;
       setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
       setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
       refreshEnvironmentConfig();
