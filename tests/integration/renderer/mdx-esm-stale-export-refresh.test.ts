@@ -15,7 +15,10 @@ import { exists, mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo } from "#veryfront/types";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
-import { handleMDXPage } from "#veryfront/rendering/page-rendering.ts";
+import {
+  __resetStaleMdxEsmRecoveryStateForTests,
+  handleMDXPage,
+} from "#veryfront/rendering/page-rendering.ts";
 import {
   __setServerModuleLoaderForTests,
   resetReactCache,
@@ -47,6 +50,7 @@ describe("rendering/page-rendering preview ESM cache recovery", () => {
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);
+    __resetStaleMdxEsmRecoveryStateForTests();
   });
 
   it("refreshes preview caches and retries once when MDX ESM imports have stale exports", async () => {
