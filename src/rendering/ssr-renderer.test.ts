@@ -94,7 +94,11 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: string | undefined;
+    // Derive the option type from the signature: @types/react-dom widened
+    // `nonce` beyond `string`, so a literal annotation goes stale.
+    let observedNonce: NonNullable<
+      Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+    >["nonce"];
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
