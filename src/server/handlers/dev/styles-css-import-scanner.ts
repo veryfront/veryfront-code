@@ -40,15 +40,17 @@ interface SourceFileProvider {
 }
 
 /**
- * How long a scan of mutable content (a branch preview or a local project,
- * whose sources change without producing a new content version) may be reused.
- * Matches the candidate manifest's development-mode TTL so both pre-cache
- * scanners of this route refresh on the same cadence.
+ * How long a scan of mutable content (a local project, a branch preview or a
+ * named environment, whose sources change without producing a new content
+ * version) may be reused. Matches the candidate manifest's development-mode
+ * TTL, and bounds how long a missed invalidation poke can serve stale imports.
  */
 const MUTABLE_SCAN_TTL_MS = 2_000;
 const SCAN_CACHE_MAX_ENTRIES = 200;
 
 interface CssImportScanEntry {
+  /** Project scope this entry belongs to, for targeted invalidation. */
+  scope: string;
   imports: string[];
   builtAt: number;
 }
@@ -62,8 +64,21 @@ interface CssImportScanEntry {
  */
 const scanCache = new Map<string, CssImportScanEntry>();
 
+interface PendingScan {
+  generation: number;
+  promise: Promise<string[]>;
+}
+
 /** Coalesces concurrent scans for the same key into a single source walk. */
-const inFlightScans = new Map<string, Promise<string[]>>();
+const inFlightScans = new Map<string, PendingScan>();
+
+/**
+ * Bumped by every invalidation. A scan that started before the current
+ * generation read a source snapshot that has since been declared stale, so it
+ * may neither publish its result into the cache nor be joined by later
+ * requests — otherwise a content push landing mid-walk is silently undone.
+ */
+let scanGeneration = 0;
 
 registerCache("styles-css-import-scans", () => ({
   name: "styles-css-import-scans",
@@ -73,10 +88,14 @@ registerCache("styles-css-import-scans", () => ({
 
 interface ScanCacheIdentity {
   key: string;
+  /** Project scope used to target invalidation at one project's entries. */
+  scope: string;
   /**
    * Whether the content behind this key can change without changing the key.
-   * `live` (local project) and `branch:` versions do; release and environment
-   * versions name an immutable content snapshot.
+   * Only `release:` versions name a frozen content snapshot; `live` (a local
+   * project), `branch:` and `environment:` versions are moving pointers whose
+   * contents change under a stable name, so they get the mutable TTL and
+   * self-heal even if an invalidation poke is missed.
    */
   mutable: boolean;
 }
@@ -91,17 +110,23 @@ function resolveContentContext(ctx: HandlerContext): ResolvedContentContext | nu
 
 function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
   const contentContext = resolveContentContext(ctx);
-  const projectScope = ctx.projectSlug ?? contentContext?.projectSlug ?? ctx.projectDir;
-  const projectVersion = resolveStyleContentVersion(contentContext, {
-    releaseId: ctx.releaseId,
-    branch: ctx.parsedDomain?.branch,
-    environmentName: ctx.environmentName,
-  });
   const styleProfile = createStyleScopeProfile(ctx.config);
 
+  // The cache key names the source tree that is actually about to be walked, so
+  // it is derived only from the filesystem's own resolved content identity —
+  // never from request selectors such as `x-release-id` or the Host-derived
+  // branch. A local or standalone filesystem serves `ctx.projectDir` whatever
+  // the client claims, so folding those selectors in would let an
+  // unauthenticated caller mint a fresh "immutable" key per request and force
+  // one full source walk each time, which is exactly what this cache exists to
+  // prevent on the public stylesheet route.
+  const contentScope = contentContext?.projectSlug ?? ctx.projectDir;
+  const projectVersion = resolveStyleContentVersion(contentContext);
+
   return {
-    key: `${projectScope}:${projectVersion}:${styleProfile.hash}`,
-    mutable: projectVersion === "live" || projectVersion.startsWith("branch:"),
+    key: `${contentScope}\u0000${projectVersion}\u0000${styleProfile.hash}`,
+    scope: ctx.projectSlug ?? contentContext?.projectSlug ?? ctx.projectDir,
+    mutable: !projectVersion.startsWith("release:"),
   };
 }
 
@@ -114,13 +139,18 @@ function readFreshScan(identity: ScanCacheIdentity): string[] | undefined {
 
 /** Invalidate cached CSS import scans for one project scope (or all scopes). */
 export function invalidateProjectCssImportScans(projectScope?: string): void {
+  // Bumping the generation retires every scan already reading sources, so a
+  // walk that started before this call can neither repopulate the entry it just
+  // dropped nor be joined by a request that arrives after it.
+  scanGeneration++;
+
   if (!projectScope) {
     scanCache.clear();
     return;
   }
 
-  for (const key of scanCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) scanCache.delete(key);
+  for (const [key, entry] of scanCache) {
+    if (entry.scope === projectScope) scanCache.delete(key);
   }
 }
 
@@ -130,7 +160,7 @@ export function invalidateProjectCssImportScans(projectScope?: string): void {
  * scanner: the FS adapter's `getAllSourceFiles()` in proxy/remote mode, and a
  * recursive local walk otherwise.
  *
- * Results are memoized per (project scope, content version, style profile) and
+ * Results are memoized per (content scope, content version, style profile) and
  * concurrent scans for the same key are coalesced into one walk. Both matter
  * for availability rather than speed: `/_vf_styles/styles.css` is public and
  * exempt from the runtime's concurrency limiter, so an unmemoized scan lets an
@@ -143,19 +173,28 @@ export async function extractProjectCssImports(ctx: HandlerContext): Promise<str
   const cached = readFreshScan(identity);
   if (cached) return [...cached];
 
+  // Only join a walk that started at the current generation: one that predates
+  // an invalidation is reading a snapshot already known to be stale.
   const inFlight = inFlightScans.get(identity.key);
-  if (inFlight) return [...await inFlight];
+  if (inFlight && inFlight.generation === scanGeneration) return [...await inFlight.promise];
 
-  const scan = scanProjectCssImports(ctx, identity.key);
-  inFlightScans.set(identity.key, scan);
+  const pending: PendingScan = {
+    generation: scanGeneration,
+    promise: scanProjectCssImports(ctx, identity, scanGeneration),
+  };
+  inFlightScans.set(identity.key, pending);
   try {
-    return [...await scan];
+    return [...await pending.promise];
   } finally {
-    inFlightScans.delete(identity.key);
+    if (inFlightScans.get(identity.key) === pending) inFlightScans.delete(identity.key);
   }
 }
 
-async function scanProjectCssImports(ctx: HandlerContext, cacheKey: string): Promise<string[]> {
+async function scanProjectCssImports(
+  ctx: HandlerContext,
+  identity: ScanCacheIdentity,
+  generation: number,
+): Promise<string[]> {
   const files = await collectSourceFiles(ctx);
   const cssImports = collectCssImportPaths(files, ctx.projectDir);
 
@@ -166,11 +205,17 @@ async function scanProjectCssImports(ctx: HandlerContext, cacheKey: string): Pro
     });
   }
 
+  // An invalidation that landed while this walk was reading the previous source
+  // snapshot has already dropped this key; publishing the snapshot now would
+  // undo it, and for a release version nothing would ever refresh it again.
+  if (generation !== scanGeneration) return cssImports;
+
+  const cacheKey = identity.key;
   if (scanCache.size >= SCAN_CACHE_MAX_ENTRIES && !scanCache.has(cacheKey)) {
     const oldestKey = scanCache.keys().next().value as string | undefined;
     if (oldestKey) scanCache.delete(oldestKey);
   }
-  scanCache.set(cacheKey, { imports: cssImports, builtAt: Date.now() });
+  scanCache.set(cacheKey, { scope: identity.scope, imports: cssImports, builtAt: Date.now() });
 
   return cssImports;
 }
