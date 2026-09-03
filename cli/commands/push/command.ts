@@ -245,6 +245,7 @@ export async function scanLocalFiles(
 
 function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
   return left.commitSha === right.commitSha && left.clean === right.clean &&
+    left.repositoryAvailable === right.repositoryAvailable &&
     left.indeterminate === right.indeterminate;
 }
 

@@ -45,6 +45,8 @@ export interface PushReceipt {
 export interface GitSource {
   commitSha: string | null;
   clean: boolean;
+  /** Whether the directory is inside a Git working tree, including an unborn one. */
+  repositoryAvailable?: boolean;
   /** Git or CI provided contradictory or unreadable provenance evidence. */
   indeterminate?: boolean;
 }
@@ -255,9 +257,11 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
       }),
     ]);
   } catch {
+    const repositoryAvailable = await hasGitMetadata(projectDir);
     return {
       commitSha: envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null,
       clean: false,
+      repositoryAvailable,
       indeterminate: true,
     };
   }
@@ -271,15 +275,20 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
     : null;
   const sourcesAgree = (!envSha || normalizedEnvSha !== null) &&
     (!normalizedEnvSha || !normalizedHeadSha || normalizedEnvSha === normalizedHeadSha);
+  const gitMetadataPresent = !head.success && !status.success
+    ? await hasGitMetadata(projectDir)
+    : false;
+  const repositoryAvailable = head.success || status.success || gitMetadataPresent;
   const probesIndeterminate = (head.success && normalizedHeadSha === null) ||
     (head.success && !status.success) ||
-    (!head.success && !status.success && await hasGitMetadata(projectDir));
+    (!head.success && !status.success && gitMetadataPresent);
   const indeterminate = !sourcesAgree || probesIndeterminate;
   const commitSha = indeterminate ? null : normalizedEnvSha ?? normalizedHeadSha;
 
   return {
     commitSha,
     clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
+    repositoryAvailable,
     ...(indeterminate ? { indeterminate: true } : {}),
   };
 }

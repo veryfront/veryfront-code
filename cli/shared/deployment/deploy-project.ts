@@ -1731,7 +1731,9 @@ export function createDeployProject(options: {
       if (bootstrapPush) {
         await step(observer, "push-source", async () => {
           const refreshWithoutGit = bootstrapPushKind === "refresh" &&
-            localSource?.gitSource.commitSha === null;
+            localSource?.gitSource.repositoryAvailable === false;
+          const refreshWithCommit = bootstrapPushKind === "refresh" &&
+            localSource?.gitSource.commitSha !== null;
           await pushCommand({
             projectDir: request.projectDir,
             branch,
@@ -1744,7 +1746,7 @@ export function createDeployProject(options: {
             // its local source is authoritative and the refresh fully prunes.
             force: bootstrapPushKind === "bootstrap",
             prune: refreshWithoutGit,
-            discoverDeletedGitPaths: bootstrapPushKind === "refresh" && !refreshWithoutGit,
+            discoverDeletedGitPaths: refreshWithCommit,
             expectedCommitSha: bootstrapPushKind === "refresh"
               ? localSource?.gitSource.commitSha
               : undefined,

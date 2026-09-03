@@ -1227,7 +1227,7 @@ describe("resolveBootstrapPush", () => {
         },
         { kind: "ensure-pushed", refreshStaleSource: true },
         {
-          gitSource: { commitSha: null, clean: false },
+          gitSource: { commitSha: null, clean: false, repositoryAvailable: false },
           sourceDigest: localSourceDigest,
         },
         target,

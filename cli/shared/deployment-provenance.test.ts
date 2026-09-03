@@ -498,9 +498,36 @@ describe("resolveGitSource", () => {
 
       assertEquals(source.commitSha, null);
       assertEquals(source.clean, false);
+      assertEquals(source.repositoryAvailable, true);
       assertEquals(source.indeterminate, true);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("distinguishes non-Git directories from unborn repositories", async () => {
+    const nonGitDir = await makeTempDir();
+    const unbornDir = await makeTempDir();
+    const originalGithubSha = Deno.env.get("GITHUB_SHA");
+    try {
+      Deno.env.delete("GITHUB_SHA");
+      assertEquals((await resolveGitSource(nonGitDir)).repositoryAvailable, false);
+      const initialized = await new Deno.Command("git", {
+        args: ["init", "--quiet"],
+        cwd: unbornDir,
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+      assertEquals(initialized.success, true, new TextDecoder().decode(initialized.stderr));
+      const unborn = await resolveGitSource(unbornDir);
+      assertEquals(unborn.commitSha, null);
+      assertEquals(unborn.repositoryAvailable, true);
+      assertEquals(unborn.indeterminate, undefined);
+    } finally {
+      if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
+      else Deno.env.set("GITHUB_SHA", originalGithubSha);
+      await Deno.remove(nonGitDir, { recursive: true });
+      await Deno.remove(unbornDir, { recursive: true });
     }
   });
 
