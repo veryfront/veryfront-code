@@ -311,6 +311,20 @@ export function buildMdxJsxCacheFileNamePrefix(filePath: string): string {
   return formatMdxJsxCacheFileNamePrefix(MDX_ESM_CACHE_NAMESPACE, filePath);
 }
 
+/**
+ * Name prefix every cached JSX artifact shares, whatever its source path.
+ *
+ * Lets a cleanup pass recognise its own artifacts among unrelated cache files
+ * and recover each one's per-path prefix from the name alone: the path digest
+ * is fixed width, so {@link MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH} characters
+ * of any artifact name are exactly the prefix its content variants share.
+ */
+export const MDX_JSX_CACHE_NAMESPACE_PREFIX = `jsx-${MDX_ESM_CACHE_NAMESPACE}-`;
+
+/** Length of the per-path prefix that opens every cached JSX artifact name. */
+export const MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH =
+  formatMdxJsxCacheFileNamePrefix(MDX_ESM_CACHE_NAMESPACE, "").length;
+
 export function buildFrameworkVfModuleCacheFileName(
   pathHash: string,
   envKey: string,

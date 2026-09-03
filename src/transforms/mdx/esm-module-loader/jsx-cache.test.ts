@@ -19,7 +19,12 @@ import {
 import { join } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
-import { buildMdxJsxCacheFileName, buildMdxJsxCacheFileNamePrefix } from "./cache-format.ts";
+import {
+  buildMdxJsxCacheFileName,
+  buildMdxJsxCacheFileNamePrefix,
+  MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
+  MDX_JSX_CACHE_NAMESPACE_PREFIX,
+} from "./cache-format.ts";
 import {
   __importTransformerInternals,
   JSX_CACHE_VARIANT_MIN_AGE_MS,
@@ -612,7 +617,8 @@ describe("readProjectJsxSourceWithinLimit", () => {
 });
 
 describe("pruneSupersededJsxArtifacts", () => {
-  const { pruneSupersededJsxArtifacts, readArtifactModifiedAtMs } = __importTransformerInternals;
+  const { markJsxArtifactServed, pruneSupersededJsxArtifacts, readArtifactModifiedAtMs } =
+    __importTransformerInternals;
 
   /** A clock far enough ahead that every artifact written now is prunable. */
   function afterGracePeriod(): number {
@@ -784,6 +790,93 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("retires a path the caller did not write, so a change burst cannot linger", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-untouched-test-" });
+    const burstPath = "/tmp/source/Burst.tsx";
+    const writtenPath = "/tmp/source/Written.tsx";
+
+    try {
+      await writeVariants(tempDir, burstPath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 6);
+      const written = await writeVariants(tempDir, writtenPath, 1);
+
+      // A burst can leave a path over its window with every variant still
+      // inside the grace period; if that writer stops, only a pass that looks
+      // beyond the paths it just wrote will ever collect the excess.
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[writtenPath, written[0] ?? ""]]),
+        afterGracePeriod(),
+      );
+
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(burstPath))).length,
+        MAX_JSX_CACHE_VARIANTS_PER_PATH,
+        "a path over its window must be collected by the next write to any path",
+      );
+      assertEquals(
+        (await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(writtenPath))).length,
+        1,
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps an old artifact that a render is still holding", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-served-test-" });
+    const sourcePath = "/tmp/source/Served.tsx";
+
+    try {
+      const names = await writeVariants(tempDir, sourcePath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 4);
+      // The oldest variant is the first one a cache hit would be serving.
+      const servedName = names[0] ?? "";
+      const servedPath = join(tempDir, servedName);
+      const nowMs = afterGracePeriod();
+      // The render that cache-hit it did so just now, long after the artifact
+      // itself was written: creation age alone would make it prunable.
+      markJsxArtifactServed(servedPath, nowMs);
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+        nowMs,
+      );
+
+      const remaining = await namesWithPrefix(tempDir, buildMdxJsxCacheFileNamePrefix(sourcePath));
+      assertEquals(
+        remaining.includes(servedName),
+        true,
+        "an artifact a render just cache-hit must not be retired by its age alone",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("ignores cache files that are not JSX artifacts", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-foreign-test-" });
+    const sourcePath = "/tmp/source/Neighbour.tsx";
+
+    try {
+      await writeTextFile(join(tempDir, "vfmod-other-deadbeef.mjs"), "export const a = 1;");
+      const names = await writeVariants(tempDir, sourcePath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 2);
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+        afterGracePeriod(),
+      );
+
+      assertEquals(
+        (await readTextFile(join(tempDir, "vfmod-other-deadbeef.mjs"))).length > 0,
+        true,
+        "another cache format's artifacts are not this pass's to retire",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reports an unreadable cache directory instead of failing the transform", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-missing-test-" });
     const notADirectory = join(tempDir, "occupied");
@@ -800,6 +893,34 @@ describe("pruneSupersededJsxArtifacts", () => {
       await pruneSupersededJsxArtifacts(
         join(tempDir, "absent"),
         new Map([["/tmp/source/Gone.tsx", "jsx-gone.mjs"]]),
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("ignores a name too short to carry a path prefix", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-short-name-test-" });
+    const sourcePath = "/tmp/source/ShortName.tsx";
+    const truncated = MDX_JSX_CACHE_NAMESPACE_PREFIX.padEnd(
+      MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
+      "0",
+    );
+
+    try {
+      await writeTextFile(join(tempDir, truncated), "export const a = 1;");
+      const names = await writeVariants(tempDir, sourcePath, MAX_JSX_CACHE_VARIANTS_PER_PATH + 2);
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, names[names.length - 1] ?? ""]]),
+        afterGracePeriod(),
+      );
+
+      assertEquals(
+        (await readTextFile(join(tempDir, truncated))).length > 0,
+        true,
+        "a name with no room for a content digest is not a variant of any path",
       );
     } finally {
       await remove(tempDir, { recursive: true });
@@ -846,6 +967,25 @@ describe("isFrameworkSourceFile", () => {
   });
 });
 
+describe("isProjectSourceFile", () => {
+  const { isProjectSourceFile } = __importTransformerInternals;
+
+  it("claims a project's own source and its dependencies", () => {
+    const projectDir = join(FRAMEWORK_ROOT, "projects", "mine");
+    assertEquals(isProjectSourceFile(join(projectDir, "components", "Card.tsx"), projectDir), true);
+    assertEquals(
+      isProjectSourceFile(join(projectDir, "node_modules", "pkg", "index.jsx"), projectDir),
+      true,
+      "a dependency inside the project is tenant-controlled and must stay bounded",
+    );
+  });
+
+  it("claims nothing when the project root is unknown or unrelated", () => {
+    assertEquals(isProjectSourceFile("/srv/project/components/Card.tsx"), false);
+    assertEquals(isProjectSourceFile("/srv/other/Card.tsx", "/srv/project"), false);
+  });
+});
+
 describe("describeProjectSource", () => {
   const { describeProjectSource } = __importTransformerInternals;
 
@@ -889,6 +1029,39 @@ describe("normalized module memo", () => {
       peakSize <= MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
       true,
       "the memo must never hold more paths than its ceiling",
+    );
+    assertEquals(
+      observedReset,
+      true,
+      "reaching the ceiling must reset the memo rather than keep every path",
+    );
+  });
+});
+
+describe("served artifact memo", () => {
+  const { markJsxArtifactServed, MAX_SERVED_ARTIFACT_MEMO_ENTRIES, servedArtifactMemoSize } =
+    __importTransformerInternals;
+
+  it("drops the whole memo instead of growing it without bound", () => {
+    // Every render of a changing source path adds another artifact path, so the
+    // record of what is still in flight needs a ceiling of its own.
+    const additions = MAX_SERVED_ARTIFACT_MEMO_ENTRIES * 2 + 1;
+    let previousSize = servedArtifactMemoSize();
+    let observedReset = false;
+    let peakSize = previousSize;
+
+    for (let entry = 0; entry < additions; entry++) {
+      markJsxArtifactServed(`/tmp/cache/jsx-served-${entry}.mjs`);
+      const size = servedArtifactMemoSize();
+      if (size < previousSize) observedReset = true;
+      if (size > peakSize) peakSize = size;
+      previousSize = size;
+    }
+
+    assertEquals(
+      peakSize <= MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
+      true,
+      "the memo must never hold more artifact paths than its ceiling",
     );
     assertEquals(
       observedReset,

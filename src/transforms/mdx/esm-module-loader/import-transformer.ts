@@ -39,7 +39,12 @@ import {
   LOG_PREFIX_MDX_LOADER,
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
-import { buildMdxJsxCacheFileName, buildMdxJsxCacheFileNamePrefix } from "./cache-format.ts";
+import {
+  buildMdxJsxCacheFileName,
+  buildMdxJsxCacheFileNamePrefix,
+  MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
+  MDX_JSX_CACHE_NAMESPACE_PREFIX,
+} from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import {
   assertMdxModuleImportCount,
@@ -247,6 +252,17 @@ function describeProjectSource(filePath: string, projectDir?: string): string {
 }
 
 /**
+ * Whether `filePath` belongs to the project being rendered.
+ *
+ * Everything beneath the project root is tenant-controlled, the dependencies
+ * under its `node_modules` included, so nothing inside it may be admitted
+ * through a framework exception that skips the source-size limit.
+ */
+function isProjectSourceFile(filePath: string, projectDir?: string): boolean {
+  return projectDir !== undefined && filePath.startsWith(`${projectDir}/`);
+}
+
+/**
  * Read one project JSX/TSX source without materializing more than the
  * MDX module source limit.
  *
@@ -319,6 +335,32 @@ export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 32;
  */
 export const JSX_CACHE_VARIANT_MIN_AGE_MS = 60_000;
 
+/** Bound on the artifacts this process remembers as recently served. */
+const MAX_SERVED_ARTIFACT_MEMO_ENTRIES = 4096;
+
+/**
+ * When this process last handed each artifact path to a render.
+ *
+ * An artifact's mtime records when it was written, not when it was last used,
+ * so a cache hit on an artifact older than the grace period would otherwise be
+ * eligible for deletion between the moment a render selects its `file://` URL
+ * and the moment `doLoadModuleESM` imports the rewritten parent. Recording the
+ * hit keeps the artifact out of pruning for one further grace period.
+ */
+const servedArtifactTimestamps = new Map<string, number>();
+
+function markJsxArtifactServed(transformedPath: string, servedAtMs: number = Date.now()): void {
+  if (servedArtifactTimestamps.size >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
+    servedArtifactTimestamps.clear();
+  }
+  servedArtifactTimestamps.set(transformedPath, servedAtMs);
+}
+
+function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): boolean {
+  const servedAtMs = servedArtifactTimestamps.get(transformedPath);
+  return servedAtMs !== undefined && nowMs - servedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS;
+}
+
 async function readArtifactModifiedAtMs(path: string): Promise<number> {
   try {
     return (await getLocalFs().stat(path)).mtime?.getTime() ?? 0;
@@ -329,17 +371,21 @@ async function readArtifactModifiedAtMs(path: string): Promise<number> {
 }
 
 /**
- * Retire the oldest cached content variants of the source paths just written.
+ * Retire the oldest cached content variants of every source path in the cache.
  *
  * Artifact names are content-keyed, so a project that keeps changing the same
  * path would otherwise accumulate one persistent `jsx-*.mjs` file per variant.
  *
- * One pass covers every path written by a transform: the directory holds the
- * artifacts of a whole content source, so scanning it once per import (up to
- * the 500-import ceiling) would make the cleanup itself the amplifier it is
- * meant to prevent. Each entry is matched by slicing its own name to a prefix
- * length and looking that up, so the pass stays linear in directory entries
- * rather than multiplying them by the number of paths written.
+ * The pass covers every path the directory holds, not only the paths this
+ * transform wrote: a burst of changes can leave a path over its window with
+ * every variant still inside the grace period, and if the writer stopped there
+ * would be nothing left to trigger its cleanup. Recovering each entry's
+ * per-path prefix from its own fixed-width name keeps that generality at one
+ * `readDir` and one map lookup per entry, rather than multiplying entries by
+ * the number of paths written.
+ *
+ * It runs only after a transform wrote something, so a render served entirely
+ * from cache never pays for it.
  */
 async function pruneSupersededJsxArtifacts(
   esmCacheDir: string,
@@ -349,26 +395,24 @@ async function pruneSupersededJsxArtifacts(
   if (writtenArtifacts.size === 0) return;
 
   const localFs = getLocalFs();
-  const variantsByPrefix = new Map<string, { current: string; superseded: string[] }>();
+  const currentByPrefix = new Map<string, string>();
   for (const [filePath, currentFileName] of writtenArtifacts) {
-    variantsByPrefix.set(buildMdxJsxCacheFileNamePrefix(filePath), {
-      current: currentFileName,
-      superseded: [],
-    });
+    currentByPrefix.set(buildMdxJsxCacheFileNamePrefix(filePath), currentFileName);
   }
-  // Prefixes are fixed-width by construction; collecting the distinct lengths
-  // keeps the lookup correct without assuming the name format never changes.
-  const prefixLengths = [...new Set([...variantsByPrefix.keys()].map((p) => p.length))];
 
+  const variantsByPrefix = new Map<string, string[]>();
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
-      for (const length of prefixLengths) {
-        const variants = variantsByPrefix.get(entry.name.slice(0, length));
-        if (!variants) continue;
-        if (entry.name !== variants.current) variants.superseded.push(entry.name);
-        break;
-      }
+      if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) continue;
+      if (entry.name.length <= MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH) continue;
+
+      const prefix = entry.name.slice(0, MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH);
+      if (entry.name === currentByPrefix.get(prefix)) continue;
+
+      const variants = variantsByPrefix.get(prefix);
+      if (variants) variants.push(entry.name);
+      else variantsByPrefix.set(prefix, [entry.name]);
     }
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
@@ -377,22 +421,25 @@ async function pruneSupersededJsxArtifacts(
     return;
   }
 
-  for (const variants of variantsByPrefix.values()) {
-    // The artifact just written always counts against the retention window.
-    if (variants.superseded.length < MAX_JSX_CACHE_VARIANTS_PER_PATH) continue;
+  for (const [prefix, variants] of variantsByPrefix) {
+    // The artifact just written, when there is one, counts against the window.
+    const retained = MAX_JSX_CACHE_VARIANTS_PER_PATH - (currentByPrefix.has(prefix) ? 1 : 0);
+    if (variants.length <= retained) continue;
 
     const dated = await Promise.all(
-      variants.superseded.map(async (name) => ({
+      variants.map(async (name) => ({
         name,
         modifiedAtMs: await readArtifactModifiedAtMs(join(esmCacheDir, name)),
       })),
     );
     dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
 
-    for (const { name, modifiedAtMs } of dated.slice(MAX_JSX_CACHE_VARIANTS_PER_PATH - 1)) {
+    for (const { name, modifiedAtMs } of dated.slice(retained)) {
       if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) continue;
+      const artifactPath = join(esmCacheDir, name);
+      if (wasJsxArtifactRecentlyServed(artifactPath, nowMs)) continue;
       try {
-        await localFs.remove(join(esmCacheDir, name));
+        await localFs.remove(artifactPath);
       } catch (_) {
         /* expected: a concurrent transform may have removed the variant already */
       }
@@ -408,6 +455,10 @@ async function pruneSupersededJsxArtifacts(
 export const __importTransformerInternals = {
   describeProjectSource,
   isFrameworkSourceFile,
+  isProjectSourceFile,
+  markJsxArtifactServed,
+  MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
+  servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
   pruneSupersededJsxArtifacts,
   readArtifactModifiedAtMs,
 };
@@ -465,11 +516,13 @@ export async function transformJsxImports(
     importsToProcess,
     async ({ specifier, filePath, ext }) => {
       try {
-        // Only the framework's own source roots read through the unbounded
-        // local filesystem: a project can live beneath FRAMEWORK_ROOT, and its
-        // source has to go through the adapter that enforces the size limit.
-        const isFrameworkFile = isFrameworkSourceFile(filePath) ||
-          (filePath.startsWith(FRAMEWORK_ROOT) && filePath.includes("/node_modules/"));
+        // Project identity is decided before the framework exception: a project
+        // can live beneath FRAMEWORK_ROOT, and everything inside it - its own
+        // source and the dependencies under its node_modules alike - is tenant
+        // controlled, so it has to go through the adapter that bounds the read.
+        const isFrameworkFile = !isProjectSourceFile(filePath, projectDir) &&
+          (isFrameworkSourceFile(filePath) ||
+            (filePath.startsWith(FRAMEWORK_ROOT) && filePath.includes("/node_modules/")));
         let sourceCode: string;
         if (isFrameworkFile) {
           sourceCode = await getLocalFs().readTextFile(filePath);
@@ -494,6 +547,9 @@ export async function transformJsxImports(
           if (stat?.isFile) {
             const useCached = await ensureCachedJsxModulePatched(transformedPath, filePath);
             if (useCached) {
+              // A cache hit is an active reference: record it so a concurrent
+              // prune cannot retire the artifact this render is about to import.
+              markJsxArtifactServed(transformedPath);
               return {
                 specifier,
                 replacement: `file://${transformedPath}`,
@@ -532,6 +588,7 @@ export async function transformJsxImports(
         transformed = await rewriteDntImports(transformed, filePath);
 
         await getLocalFs().writeTextFile(transformedPath, transformed);
+        markJsxArtifactServed(transformedPath);
         writtenArtifacts.set(filePath, transformedFileName);
 
         return {
