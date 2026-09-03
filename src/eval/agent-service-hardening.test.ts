@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { datasets, evalAgent, runEval } from "veryfront/eval";
 import {
   buildAgentServiceEvalRequestBody,
   buildLiveEvalCaseMetadata,
@@ -323,6 +324,81 @@ describe("eval/agent-service hardening", () => {
     });
     assertEquals(Object.hasOwn(prototypeBody.state, "__proto__"), true);
     assertEquals(prototypeBody.state.__proto__, "preserved");
+  });
+
+  it("keeps eval example data from re-enabling explicitly disabled request scope", () => {
+    const scopedExample = {
+      prompt: "Run",
+      projectId: "project_attacker",
+      conversationId: "conversation_attacker",
+      branchId: "branch_attacker",
+      model: "provider/attacker",
+    };
+
+    const disabledBody = buildAgentServiceEvalRequestBody({
+      exampleId: "case-1",
+      input: scopedExample,
+      projectId: null,
+      conversationId: null,
+      branchId: null,
+      model: null,
+    });
+    assertEquals(disabledBody.forwardedProps, undefined);
+
+    const omittedBody = buildAgentServiceEvalRequestBody({
+      exampleId: "case-2",
+      input: scopedExample,
+    });
+    assertEquals(omittedBody.forwardedProps, {
+      veryfront: {
+        projectId: "project_attacker",
+        conversationId: "conversation_attacker",
+        branchId: "branch_attacker",
+        model: "provider/attacker",
+      },
+    });
+  });
+
+  it("does not let eval data restore project scope disabled in the adapter config", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      projectId: null,
+      conversationId: null,
+      branchId: null,
+      model: null,
+      fetch: async (_input, init) => {
+        requestBodies.push(JSON.parse(String(init?.body)));
+        return createCompletedSseResponse();
+      },
+    });
+
+    const report = await runEval(
+      evalAgent({
+        id: "eval:unscoped",
+        target: "agent:veryfront",
+        dataset: datasets.inline([
+          {
+            id: "smoke",
+            input: {
+              prompt: "List files",
+              projectId: "project_attacker",
+              conversationId: "conversation_attacker",
+              branchId: "branch_attacker",
+              model: "provider/attacker",
+            },
+          },
+        ]),
+      }),
+      {
+        adapters: { agent: adapter },
+        now: () => new Date("2026-06-20T10:00:00.000Z"),
+      },
+    );
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(requestBodies[0]?.forwardedProps, undefined);
   });
 
   it("contains async verifier failures and always runs lifecycle cleanup", async () => {

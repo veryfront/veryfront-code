@@ -13,6 +13,14 @@ function containsKey(value: unknown, key: string): boolean {
   return Object.values(value).some((item) => containsKey(item, key));
 }
 
+function countNodes(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce<number>((total, item) => total + countNodes(item), 1);
+  }
+  if (!value || typeof value !== "object") return 1;
+  return Object.values(value).reduce<number>((total, item) => total + countNodes(item), 1);
+}
+
 function getRuntimeToolSchema(tool: unknown): unknown {
   if (!tool || typeof tool !== "object" || !("inputSchema" in tool)) return undefined;
   const inputSchema = (tool as { inputSchema?: unknown }).inputSchema;
@@ -455,6 +463,42 @@ describe("model-tool-converter", () => {
     assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
     assertEquals(schema.definitions, undefined);
     assertEquals(defs.acceptanceCriteria?.type, "array");
+  });
+
+  it("bounds Moonshot ref expansion across the whole tool set", () => {
+    // A per-schema budget bounds one tool in isolation. A remote MCP source may return
+    // hundreds of individually-admissible schemas, so the conversion pass has to share
+    // one expansion budget or the worst case is multiplied by the tool count.
+    const levelCount = 15;
+    const properties: Record<string, unknown> = {
+      [`level${levelCount}`]: { type: "string" },
+    };
+    for (let level = levelCount - 1; level >= 0; level -= 1) {
+      properties[`level${level}`] = {
+        type: "object",
+        properties: {
+          left: { $ref: `#/properties/level${level + 1}` },
+          right: { $ref: `#/properties/level${level + 1}` },
+        },
+      };
+    }
+
+    const tools = Array.from({ length: 50 }, (_unused, index) => ({
+      name: `fan_out_${index}`,
+      description: "Fan-out ref schema",
+      parameters: { type: "object", properties },
+    }));
+
+    const result = convertToolsToRuntimeTools(tools as never, {
+      model: "veryfront-cloud/moonshotai/kimi-k2.6",
+    });
+
+    let totalNodes = 0;
+    for (let index = 0; index < tools.length; index += 1) {
+      totalNodes += countNodes(getRuntimeToolSchema(result?.[`fan_out_${index}`]));
+    }
+
+    assertEquals(totalNodes < 400_000, true);
   });
 
   it("normalizes short Kimi alias runtime tool schemas", () => {

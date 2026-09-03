@@ -125,6 +125,16 @@ export type ActiveSkillState = {
   activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 };
 
+/**
+ * Rebuild the active skill from replayed load_skill results.
+ *
+ * Replayed history is caller-supplied: public wrappers accept a message array
+ * whose tool-result parts are shaped, not proven, so a forged load_skill result
+ * is indistinguishable from a persisted one here. Skill *file* capabilities are
+ * revalidated against the authoritative skill before access, but delegation
+ * overrides are applied directly to invoke_agent inputs, so they are never
+ * hydrated: only a load_skill call this runtime actually executed may set them.
+ */
 export function hydrateActiveSkillStateFromMessages(
   messages: readonly Message[],
 ): ActiveSkillState {
@@ -203,10 +213,21 @@ export function extractSkillToolAvailability(
   });
 }
 
+/** Provenance of the activation result being folded into the active skill state. */
+export type SkillActivationOptions = {
+  /**
+   * Whether the result came from a load_skill call this runtime executed, which
+   * is the only provenance that authorizes delegation overrides (model,
+   * thinking, maxSteps). Defaults to false so unproven results fail closed.
+   */
+  trustDelegationOverrides?: boolean;
+};
+
 /** Apply only a validated body-load response; reference/error results preserve state. */
 export function applySkillActivationResult(
   current: ActiveSkillState,
   result: unknown,
+  options: SkillActivationOptions = {},
 ): ActiveSkillState {
   if (!isSkillActivationResult(result)) return current;
 
@@ -215,7 +236,9 @@ export function applySkillActivationResult(
       activeSkillId: extractSkillId(result),
       activeSkillToolAvailability: extractSkillToolAvailability(result) ??
         INACTIVE_SKILL_TOOL_AVAILABILITY,
-      activeSkillDelegationOverrides: extractSkillDelegationOverrides(result),
+      activeSkillDelegationOverrides: options.trustDelegationOverrides === true
+        ? extractSkillDelegationOverrides(result)
+        : undefined,
     };
   } catch (error) {
     logger.warn("load_skill returned an unreadable activation result; preserving prior state", {

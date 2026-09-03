@@ -24,6 +24,10 @@ import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
+type RenderToReadableStreamOptions = NonNullable<
+  Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+>;
+
 function createPipeableSSRStream(
   pipeImpl: (writable: NodeJS.WritableStream) => void,
   abortImpl: () => void = () => {},
@@ -94,9 +98,7 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    // React's renderToReadableStream types nonce as a NonceOption union (string
-    // or { script, style }); capture whatever arrives and assert the exact value.
-    let observedNonce: unknown;
+    let observedNonce: RenderToReadableStreamOptions["nonce"] | undefined;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
