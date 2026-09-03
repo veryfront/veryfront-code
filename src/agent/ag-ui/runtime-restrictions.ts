@@ -2,6 +2,7 @@ import type { AgentConfig } from "../types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { DEFAULT_MAX_STEPS } from "../runtime/constants.ts";
 import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
+import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
@@ -158,7 +159,13 @@ export function applyAgUiRuntimeRestrictions(
 
   const allowedToolNames = restrictions.allowedTools;
   const allowedTools = toToolNameLookup(allowedToolNames);
-  const providerToolNames = toToolNameLookup(config.providerTools ?? []);
+  const supportedProviderTools = toToolNameLookup(getProviderNativeToolNames({
+    model: config.model,
+  }));
+  const configuredProviderToolNames = config.providerTools === undefined
+    ? []
+    : filterAllowedNames(config.providerTools, supportedProviderTools);
+  const providerToolNames = toToolNameLookup(configuredProviderToolNames);
   restricted.tools = restrictConfiguredTools(
     config.tools,
     allowedToolNames,

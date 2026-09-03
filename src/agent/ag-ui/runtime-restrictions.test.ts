@@ -99,6 +99,20 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.providerTools, ["web_fetch"]);
   });
 
+  it("preserves a colliding local selector when the model lacks the provider tool", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        model: "google/gemini-3.5-flash",
+        tools: true,
+        providerTools: ["web_search"],
+      }),
+      { allowedTools: ["web_search"] },
+    );
+
+    assertEquals(restricted.tools, { web_search: true });
+    assertEquals(restricted.providerTools, ["web_search"]);
+  });
+
   it("leaves no remote tool source reachable for an allowlisted unresolved tool", () => {
     // An absent `mcpServers` makes `getRuntimeRemoteToolSources` synthesize an
     // implicit Veryfront API server for boolean tool references no local
