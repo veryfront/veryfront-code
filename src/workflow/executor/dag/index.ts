@@ -1139,7 +1139,9 @@ export class DAGExecutor {
       for (const id of ids) previouslyProducedNodeIds.add(id);
     }
     for (const [owner, ids] of scope.subWorkflowNodeReservations) {
-      if (isDescendant(owner, ownerPath)) continue;
+      // Ancestor reservations recursively include this owner's ids, so only
+      // true sibling reservations should block legacy state seeding.
+      if (isDescendant(owner, ownerPath) || isDescendant(ownerPath, owner)) continue;
       for (const id of ids) previouslyProducedNodeIds.add(id);
     }
     for (const [nodeId, state] of Object.entries(nodeStates)) {
