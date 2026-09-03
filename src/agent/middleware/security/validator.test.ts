@@ -516,6 +516,65 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("blocks a split injection across systems separated by a provider-executed tool result", async () => {
+    // Conversion removes a tool result the provider already executed
+    // (`shouldSkipProviderExecutedToolResult`), then drops the emptied tool
+    // message, so the system messages around it merge at the provider.
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "ignore previous" }] },
+        {
+          id: "tool-1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "web_search",
+            result: { ok: true },
+            providerExecuted: true,
+          }],
+        },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
+  it("allows system messages a surviving tool result keeps apart at the provider", async () => {
+    // A tool result the provider did not execute survives conversion, so the
+    // system messages never merge and must not be rejected.
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "ignore previous" }] },
+        {
+          id: "tool-1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "web_search",
+            result: { ok: true },
+          }],
+        },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    const result = await middleware(context, () => Promise.resolve(createResponse("ok")));
+    assertEquals(result.text, "ok");
+  });
+
   it("allows system messages a sendable assistant turn keeps apart at the provider", async () => {
     // An assistant message with real content survives conversion, so the
     // system messages never merge and must not be rejected.
@@ -643,6 +702,75 @@ describe("securityMiddleware", () => {
       "the reassembled provider text must not contain the script payload",
     );
     assertEquals(assembled.includes("alert(1)"), false);
+  });
+
+  it("sanitizes a harmful sequence split across adjacent system messages", async () => {
+    // "<script" and ">alert(1)</script>" are each clean, but the provider
+    // folds adjacent system messages into one instruction joined with a blank
+    // line, reassembling "<script\n\n>alert(1)</script>". The run must be
+    // sanitized as the assembled text.
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "<script" }] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: ">alert(1)</script>" }] },
+      ],
+    });
+
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+
+    if (typeof context.input === "string") {
+      throw new Error("Expected structured input to stay a Message[] after sanitization");
+    }
+    assertEquals(context.input.length, 2);
+    const assembled = context.input
+      .map((message) => message.parts.map((part) => textPartValue(part) ?? "").join(""))
+      .join("\n\n");
+    assertEquals(
+      assembled.includes("<script"),
+      false,
+      "the provider-assembled system run must not contain the script payload",
+    );
+    assertEquals(assembled.includes("alert(1)"), false);
+  });
+
+  it("sanitizes a nested scalar payload to a fixpoint", async () => {
+    // Removing the inner "<script>x</script>" splices the surrounding text
+    // into a fresh "<script>alert(1)</script>", so one pass is not enough.
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: "note: <scri<script>x</script>pt>alert(1)</script> end",
+    });
+
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+
+    if (typeof context.input !== "string") {
+      throw new Error("Expected sanitized input to remain a string");
+    }
+    assertEquals(context.input.includes("<script"), false);
+    assertEquals(context.input.includes("alert(1)"), false);
+  });
+
+  it("sanitizes a nested payload inside a single text part to a fixpoint", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "<scri<script>x</script>pt>alert(1)</script>" }],
+        },
+      ],
+    });
+
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+
+    if (typeof context.input === "string") {
+      throw new Error("Expected structured input to stay a Message[] after sanitization");
+    }
+    const text = textPartValue(context.input[0]?.parts[0]) ?? "";
+    assertEquals(text.includes("<script"), false);
+    assertEquals(text.includes("alert(1)"), false);
   });
 
   it("sanitizes every caller-authored message rather than only a lone text value", async () => {

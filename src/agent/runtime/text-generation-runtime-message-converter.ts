@@ -384,20 +384,65 @@ export function convertToTextGenerationRuntimeMessage(
 }
 
 /**
- * Whether conversion drops `message` from the provider prompt entirely.
+ * Track, message by message, whether conversion drops each message from the
+ * provider prompt entirely.
  *
  * `convertToTextGenerationRuntimeMessages` skips assistant messages with no
  * sendable content, and tool messages whose parts yield no tool-result content
- * are discarded after conversion. The messages on either side of a dropped one
- * become adjacent at the provider, so input validation uses this predicate to
- * mirror that adjacency when it assembles runs of system messages.
+ * are discarded after conversion, including results the provider already
+ * executed (`shouldSkipProviderExecutedToolResult`), whose ids accumulate
+ * across earlier messages exactly as they do during conversion. The messages
+ * on either side of a dropped one become adjacent at the provider, so input
+ * validation walks a conversation through one tracker, in order, to mirror
+ * that adjacency when it assembles runs of system messages.
  */
-export function isProviderDroppedMessage(message: Message): boolean {
-  if (!hasProviderSendableAssistantContent(message)) return true;
-  if (message.role !== "tool") return false;
+export function createProviderDroppedMessageTracker(): (message: Message) => boolean {
+  const providerExecutedToolCallIds = new Set<string>();
 
-  const toolNamesById = new Map<string, string>();
-  return !message.parts.some((part) => getTextGenerationToolResultPart(part, toolNamesById));
+  return (message: Message): boolean => {
+    // Mirror convertToTextGenerationRuntimeMessages: user/system input resets
+    // the provider-executed window, then this message's metadata and parts
+    // register the tool calls the provider ran itself.
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) {
+        providerExecutedToolCallIds.add(providerExecutedToolCallId);
+      }
+    }
+
+    if (!hasProviderSendableAssistantContent(message)) return true;
+
+    if (message.role === "assistant") {
+      // Mirror the assistant conversion's id bookkeeping: a caller-authored
+      // tool call supersedes a provider-executed id (`pushAssistantPart`
+      // deletes it), and a replayed provider-executed result consumes its id.
+      for (const part of message.parts) {
+        const toolCallPart = getTextGenerationToolCallPart(part, providerExecutedToolCallIds);
+        if (toolCallPart) {
+          providerExecutedToolCallIds.delete(toolCallPart.toolCallId);
+          continue;
+        }
+        shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+      }
+      return false;
+    }
+
+    if (message.role !== "tool") return false;
+
+    const toolNamesById = new Map<string, string>();
+    let dropped = true;
+    for (const part of message.parts) {
+      // The skip check runs first for its id-consuming side effect, exactly as
+      // in conversion.
+      if (shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)) continue;
+      if (getTextGenerationToolResultPart(part, toolNamesById)) dropped = false;
+    }
+    return dropped;
+  };
 }
 
 function hasProviderSendableAssistantContent(message: Message): boolean {

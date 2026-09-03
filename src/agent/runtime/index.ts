@@ -62,6 +62,7 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
+import { getTurnMessageValidator } from "../middleware/security/validator.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -1330,8 +1331,29 @@ export class AgentRuntime {
    * this turn's input. That fallback is what keeps concurrent stream()/
    * generate() calls on a shared instance isolated instead of interleaving into
    * one conversation.
+   *
+   * Before anything is committed, a cross-turn validator registered on the
+   * middleware context checks the assembled conversation (history + this
+   * turn's input). Per-turn validation cannot see memory, so a blocked phrase
+   * split between an earlier turn's trailing system message (left behind when
+   * that turn failed or was cancelled before its assistant reply persisted)
+   * and this turn's leading system message would otherwise reassemble at the
+   * provider unvalidated. Validating before the write keeps a rejected turn
+   * out of memory.
    */
-  private async prepareTurnMessages(inputMessages: Message[]): Promise<Message[]> {
+  private async prepareTurnMessages(
+    inputMessages: Message[],
+    context?: AgentContext,
+  ): Promise<Message[]> {
+    const validateTurnMessages = context && getTurnMessageValidator(context);
+    if (validateTurnMessages) {
+      const history = await this.memory.getMessages();
+      // With no history the assembled conversation is exactly this turn's
+      // input, which the middleware already validated.
+      if (history.length > 0) {
+        await validateTurnMessages([...history, ...inputMessages]);
+      }
+    }
     for (const msg of inputMessages) await this.memory.add(msg);
     const persisted = await this.memory.getMessages();
     return persisted.length > 0 ? persisted : inputMessages;
@@ -1538,6 +1560,7 @@ export class AgentRuntime {
           turnPersisted = true;
           return await this.prepareTurnMessages(
             resolveValidatedTurnInput(agentContext.input, inputMessages),
+            agentContext,
           );
         };
 
@@ -1703,6 +1726,7 @@ export class AgentRuntime {
         turnPersisted = true;
         return await this.prepareTurnMessages(
           resolveValidatedTurnInput(agentContext.input, inputMessages),
+          agentContext,
         );
       };
 

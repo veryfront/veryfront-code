@@ -1,4 +1,4 @@
-import type { AgentMiddleware, AgentResponse } from "../../types.ts";
+import type { AgentMiddleware, AgentResponse, Message } from "../../types.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -285,6 +285,22 @@ function defaultKeyGenerator(input: string, context?: Record<string, unknown>): 
   return `cache_${inputHash}`;
 }
 
+/**
+ * Serialize agent input for cache identity.
+ *
+ * The runtime hands middleware normalized messages, and normalization
+ * synthesizes `id` and `timestamp` for messages that omit them, stamping the
+ * current time. Including those fields would give the same caller message a
+ * different key on every call, so the key keeps only the fields that shape the
+ * provider request: neither `id` nor `timestamp` is sent to the model.
+ */
+function toCacheableInputString(input: string | Message[]): string {
+  if (typeof input === "string") return input;
+  return JSON.stringify(
+    input.map(({ id: _id, timestamp: _timestamp, ...message }) => message),
+  );
+}
+
 export function cacheMiddleware(
   config: CacheConfig,
 ): AgentMiddleware & { destroy(): void } {
@@ -294,9 +310,7 @@ export function cacheMiddleware(
     withSpan(
       "agent.middleware.cache",
       async () => {
-        const inputString = typeof context.input === "string"
-          ? context.input
-          : JSON.stringify(context.input);
+        const inputString = toCacheableInputString(context.input);
 
         const cached = cache.get(inputString, context);
         if (cached) {

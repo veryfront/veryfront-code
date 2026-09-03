@@ -1,7 +1,7 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "../../output-schema.ts";
-import { isProviderDroppedMessage } from "../../runtime/text-generation-runtime-message-converter.ts";
+import { createProviderDroppedMessageTracker } from "../../runtime/text-generation-runtime-message-converter.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -406,20 +406,18 @@ function extractMessageInputText(message: Message): string[] {
  * both per-message assembled forms the converters can produce. Only a message
  * that actually survives provider conversion ends a run: dropped ones (blank
  * system layers, assistant messages with no sendable content, tool messages
- * with no results) leave their neighbours adjacent.
+ * with no surviving results, including results the provider itself executed)
+ * leave their neighbours adjacent.
  */
-function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
-  const runTexts = new Set<string>();
-  let run: string[][] = [];
+function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
+  const runs: Message[][] = [];
+  let run: Message[] = [];
+  const isProviderDropped = createProviderDroppedMessageTracker();
 
   const flushRun = () => {
     // Runs of a single message are already covered by the per-message
     // extraction, including its own assembled forms.
-    if (run.length > 1) {
-      for (const separator of ASSEMBLED_TEXT_SEPARATORS) {
-        runTexts.add(run.map((textParts) => textParts.join(separator)).join("\n\n"));
-      }
-    }
+    if (run.length > 1) runs.push(run);
     run = [];
   };
 
@@ -427,17 +425,33 @@ function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
     if (message.role !== "system") {
       // A message the converter drops entirely leaves the system messages on
       // either side of it adjacent, so it must not end the run.
-      if (!isProviderDroppedMessage(message)) flushRun();
+      if (!isProviderDropped(message)) flushRun();
       continue;
     }
     const textParts = message.parts.filter(isTextPart).map((part) => part.text);
     // The converter drops blank system layers outright, leaving the messages
     // on either side of them adjacent, so a blank one must not end the run.
     if (textParts.join("").trim().length === 0) continue;
-    run.push(textParts);
+    run.push(message);
   }
   flushRun();
 
+  return runs;
+}
+
+function messageTextParts(message: Message): string[] {
+  return message.parts.filter(isTextPart).map((part) => part.text);
+}
+
+function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
+  const runTexts = new Set<string>();
+  for (const run of extractAdjacentSystemRuns(messages)) {
+    for (const separator of ASSEMBLED_TEXT_SEPARATORS) {
+      runTexts.add(
+        run.map((message) => messageTextParts(message).join(separator)).join("\n\n"),
+      );
+    }
+  }
   return [...runTexts];
 }
 
@@ -467,6 +481,24 @@ function sanitizeTextToFixpoint(validator: InputValidator, text: string): string
 }
 
 /**
+ * Replace a part list's text parts with one part carrying `text`, or remove
+ * them entirely when `text` is `undefined`. Non-text parts are kept in place.
+ */
+function collapseTextParts(parts: Message["parts"], text: string | undefined): Message["parts"] {
+  const collapsed: Message["parts"] = [];
+  let replaced = false;
+  for (const part of parts) {
+    if (!isTextPart(part)) {
+      collapsed.push(part);
+    } else if (!replaced && text !== undefined) {
+      replaced = true;
+      collapsed.push({ ...part, text });
+    }
+  }
+  return collapsed;
+}
+
+/**
  * Sanitize the text parts of caller-authored messages in place.
  *
  * Structured input must stay structured: replacing a `Message[]` with the
@@ -482,8 +514,8 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
     let messageChanged = false;
     let parts = message.parts.map((part) => {
       if (!isTextPart(part)) return part;
-      const sanitized = validator.sanitize(part.text);
-      if (sanitized === undefined || sanitized === part.text) return part;
+      const sanitized = sanitizeTextToFixpoint(validator, part.text);
+      if (sanitized === part.text) return part;
       messageChanged = true;
       return { ...part, text: sanitized };
     });
@@ -501,18 +533,7 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
         return (validator.sanitize(assembled) ?? assembled) !== assembled;
       });
     if (assembledNeedsRewrite) {
-      const collapsedText = sanitizeTextToFixpoint(validator, textValues.join(""));
-      const collapsedParts: typeof parts = [];
-      let collapsed = false;
-      for (const part of parts) {
-        if (!isTextPart(part)) {
-          collapsedParts.push(part);
-        } else if (!collapsed) {
-          collapsed = true;
-          collapsedParts.push({ ...part, text: collapsedText });
-        }
-      }
-      parts = collapsedParts;
+      parts = collapseTextParts(parts, sanitizeTextToFixpoint(validator, textValues.join("")));
       messageChanged = true;
     }
 
@@ -522,6 +543,49 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
   });
 
   return changed ? sanitizedMessages : messages;
+}
+
+/**
+ * Sanitize across adjacent system messages.
+ *
+ * The provider folds an adjacent system run into one instruction joined with a
+ * blank line, so a harmful sequence split across the message boundary
+ * ("<script" + ">alert(1)</script>") escapes per-message sanitization yet
+ * reassembles at the provider. When any assembled run form still changes under
+ * sanitization, the run's text is collapsed into the first message's first
+ * text part, sanitized to a fixpoint over the provider-assembled form, and the
+ * later messages lose their text parts; the converter then drops those
+ * now-blank system layers, so the provider sees exactly the sanitized text.
+ */
+function sanitizeAdjacentSystemRuns(validator: InputValidator, messages: Message[]): Message[] {
+  const rewrites = new Map<Message, Message["parts"]>();
+
+  for (const run of extractAdjacentSystemRuns(messages)) {
+    const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((separator) => {
+      const assembled = run
+        .map((message) => messageTextParts(message).join(separator))
+        .join("\n\n");
+      return (validator.sanitize(assembled) ?? assembled) !== assembled;
+    });
+    if (!runNeedsRewrite) continue;
+
+    const collapsedText = sanitizeTextToFixpoint(
+      validator,
+      run.map((message) => messageTextParts(message).join("")).join("\n\n"),
+    );
+    run.forEach((message, index) => {
+      rewrites.set(
+        message,
+        collapseTextParts(message.parts, index === 0 ? collapsedText : undefined),
+      );
+    });
+  }
+
+  if (rewrites.size === 0) return messages;
+  return messages.map((message) => {
+    const parts = rewrites.get(message);
+    return parts === undefined ? message : { ...message, parts };
+  });
 }
 
 async function validateInputTexts(
@@ -560,12 +624,42 @@ function sanitizeAgentInput(
   validator: InputValidator,
   input: AgentContext["input"],
 ): AgentContext["input"] {
-  if (typeof input === "string") return validator.sanitize(input) ?? input;
-  return sanitizeStructuredInput(validator, input);
+  // Fixpoint everywhere: a single pass can splice a nested payload back
+  // together ("<scri<script>x</script>pt>…" becomes "<script>…" after one
+  // deletion), and the post-sanitize revalidation only re-checks blocked
+  // patterns, not sanitize completeness.
+  if (typeof input === "string") return sanitizeTextToFixpoint(validator, input);
+  return sanitizeAdjacentSystemRuns(validator, sanitizeStructuredInput(validator, input));
 }
 
 function sameTexts(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+/** Validate the full provider-bound conversation assembled for one turn. */
+export type TurnMessageValidator = (messages: Message[]) => Promise<void>;
+
+/**
+ * Cross-turn validation hooks, keyed by the turn's middleware context.
+ *
+ * The middleware sees only this turn's `context.input`, but conversation
+ * memory can end with a system message from an earlier turn that failed or was
+ * cancelled before an assistant reply was persisted. The provider folds that
+ * tail together with this turn's leading system messages into one instruction
+ * (`toOpenAICompatibleMessages` joins adjacent system messages with a blank
+ * line), so a blocked phrase split across turns reassembles at the provider
+ * without any single turn's input ever containing it. The runtime closes that
+ * gap by invoking the registered hook with the full conversation it is about
+ * to persist and dispatch (memory history plus this turn's input) before the
+ * turn is committed, so a hostile merge is rejected without poisoning memory.
+ */
+const turnMessageValidators = new WeakMap<AgentContext, TurnMessageValidator>();
+
+/** Resolve the cross-turn validator registered for a turn's context, if any. */
+export function getTurnMessageValidator(
+  context: AgentContext,
+): TurnMessageValidator | undefined {
+  return turnMessageValidators.get(context);
 }
 
 /**
@@ -581,6 +675,20 @@ export function securityMiddleware(
     context: AgentContext,
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
+    // Register the cross-turn check before this turn is committed: adjacent
+    // system runs must also be validated across the memory/input boundary,
+    // which only the runtime can see. Compose with any validator an earlier
+    // security middleware registered on the same context.
+    const previousTurnValidator = turnMessageValidators.get(context);
+    turnMessageValidators.set(context, async (messages) => {
+      if (previousTurnValidator) await previousTurnValidator(messages);
+      await assertInputTextsValid(
+        inputValidator,
+        extractAdjacentSystemRunTexts(messages),
+        config.onViolation,
+      );
+    });
+
     const inputValues = extractInputValidationTexts(context.input);
     await assertInputTextsValid(inputValidator, inputValues, config.onViolation);
 

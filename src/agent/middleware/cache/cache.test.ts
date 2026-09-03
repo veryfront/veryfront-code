@@ -37,6 +37,54 @@ describe("cacheMiddleware", () => {
 
     middleware.destroy();
   });
+
+  it("hits the cache for identical messages despite synthesized ids and timestamps", async () => {
+    // The runtime normalizes structured input before middleware runs, stamping
+    // the current time onto messages that omit `id`/`timestamp`. The same
+    // caller message on a later millisecond must still produce the same key.
+    const middleware = cacheMiddleware({ strategy: "memory" });
+    let executions = 0;
+    const next = async (): Promise<AgentResponse> => createResponse(`response-${++executions}`);
+
+    const contextAt = (stamp: number): AgentContext => ({
+      agentId: "agent",
+      input: [
+        {
+          id: `msg_${stamp}_0`,
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+          timestamp: stamp,
+        },
+      ],
+      platform: {},
+    });
+
+    const first = await middleware(contextAt(1_000), next);
+    const second = await middleware(contextAt(2_000), next);
+
+    assertEquals(first.text, "response-1");
+    assertEquals(second.text, "response-1", "synthesized fields must not change the cache key");
+    assertEquals(executions, 1);
+
+    const third = await middleware(
+      {
+        agentId: "agent",
+        input: [
+          {
+            id: "msg_3000_0",
+            role: "user",
+            parts: [{ type: "text", text: "different" }],
+            timestamp: 3_000,
+          },
+        ],
+        platform: {},
+      },
+      next,
+    );
+    assertEquals(third.text, "response-2", "different content must miss the cache");
+
+    middleware.destroy();
+  });
 });
 
 describe("createCache key isolation", () => {
