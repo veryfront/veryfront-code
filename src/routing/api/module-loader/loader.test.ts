@@ -107,14 +107,30 @@ describe("bundledModuleScopeDiscriminator", () => {
 
   it("does not use a project-controlled registry-scope encoder", async () => {
     const originalEncodeURIComponent = globalThis.encodeURIComponent;
+    const originalSlice = String.prototype.slice;
+    const originalNumberToString = Number.prototype.toString;
+    const originalToUpperCase = String.prototype.toUpperCase;
+    const originalPadStart = String.prototype.padStart;
     try {
       globalThis.encodeURIComponent = () => "shared";
+      String.prototype.slice = () => "";
+      Number.prototype.toString = () => "0";
+      String.prototype.toUpperCase = function () {
+        return String(this);
+      };
+      String.prototype.padStart = function () {
+        return String(this);
+      };
       assertNotEquals(
-        await hostedScope("production", "safe", "project-one-id"),
-        await hostedScope("production", "safe", "project-two-id"),
+        await hostedScope("production", "safe", "project-\uD800"),
+        await hostedScope("production", "safe", "project-\uD801"),
       );
     } finally {
       globalThis.encodeURIComponent = originalEncodeURIComponent;
+      String.prototype.slice = originalSlice;
+      Number.prototype.toString = originalNumberToString;
+      String.prototype.toUpperCase = originalToUpperCase;
+      String.prototype.padStart = originalPadStart;
     }
   });
 });
