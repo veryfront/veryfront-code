@@ -3028,6 +3028,11 @@ describe("push divergence guard", () => {
                       content: "export const old = 2;\n",
                       version_id: "00000000-0000-4000-8000-000000000031",
                     },
+                    {
+                      path: ".env.production",
+                      content: "SECRET=<REDACTED>\n",
+                      version_id: "00000000-0000-4000-8000-000000000040",
+                    },
                   ]),
               ],
               page_info: {},
@@ -3049,6 +3054,7 @@ describe("push divergence guard", () => {
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertStringIncludes(error.message, '"old.ts"');
+        assertStringIncludes(error.message, '".env.production"');
         assertEquals(fileListCalls, 3);
         assertEquals(deletePaths.sort(), ["gone.ts", "old.ts"]);
         assertEquals(await readPushReceipt(projectDir), null);
@@ -5125,6 +5131,7 @@ describe("push deletion ownership", () => {
 
   it("reconciles late remote-only files during no-op forced prune", async () => {
     const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -5139,6 +5146,9 @@ describe("push deletion ownership", () => {
 
         let fileListCalls = 0;
         const deleted: string[] = [];
+        const output: string[] = [];
+        setJsonMode(true);
+        console.log = captureConsoleLog(output);
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -5167,10 +5177,11 @@ describe("push deletion ownership", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true });
 
         assertEquals(fileListCalls, 3);
         assertEquals([...deleted].sort(), [".env.production", "late-remote.ts"]);
+        assertEquals(JSON.parse(output[0]!).data.protectedDeleted, [".env.production"]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
         assertEquals(
@@ -5189,6 +5200,8 @@ describe("push deletion ownership", () => {
         );
       });
     } finally {
+      setJsonMode(false);
+      console.log = originalLog;
       globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();

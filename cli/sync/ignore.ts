@@ -100,6 +100,8 @@ export interface IgnoreChecker {
 interface IgnoreRule {
   negated: boolean;
   regex: RegExp;
+  anchored: boolean;
+  literalPrefix: string;
 }
 
 /**
@@ -203,10 +205,15 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
   const body = globToRegex(pattern);
   const prefix = anchored ? "^" : "(^|/)";
   const suffix = directoryOnly || (!hasSlash && !hasGlob) ? "(/|$)" : "$";
+  const wildcardIndex = pattern.search(/[*?]/);
+  const literalPrefix = (wildcardIndex === -1 ? pattern : pattern.slice(0, wildcardIndex))
+    .replace(/\/+$/, "");
 
   return {
     negated,
     regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
+    anchored,
+    literalPrefix,
   };
 }
 
@@ -231,6 +238,16 @@ function isProtected(relativePath: string): boolean {
   return isProtectedPath(normalizeIgnorePath(relativePath));
 }
 
+function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
+  if (!rule.negated || !rule.literalPrefix || rule.regex.test(normalizedPath)) return false;
+  const candidates = rule.anchored
+    ? [normalizedPath]
+    : normalizedPath.split("/").map((_, index, parts) => parts.slice(index).join("/"));
+  return candidates.some((candidate) =>
+    rule.literalPrefix === candidate || rule.literalPrefix.startsWith(`${candidate}/`)
+  );
+}
+
 /**
  * Create an ignore checker with loaded patterns
  */
@@ -252,8 +269,10 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
       ignored = !rule.negated;
     }
 
-    if (!ignored && isProtectedPath(normalizedPath)) {
-      if (lastMatchedRule?.negated && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
+    if (isProtectedPath(normalizedPath)) {
+      const droppedNegation = lastMatchedRule?.negated ||
+        rules.some((rule) => negatedRuleTargetsDescendant(rule, normalizedPath));
+      if (droppedNegation && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
         warnedOverrides.add(normalizedPath);
         logWarning(
           `Ignoring protected path "${sanitizeLogText(normalizedPath)}". ` +

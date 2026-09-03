@@ -213,9 +213,17 @@ describe("cli/sync/ignore", () => {
           "warning text must not carry terminal controls",
         );
 
+        const descendantChecker = createIgnoreChecker([".env*", "!.env/**"]);
+        assertEquals(descendantChecker.isIgnored(".env"), true);
+        assertEquals(
+          warnings.length,
+          2,
+          "a protected parent must warn before traversal drops a descendant negation",
+        );
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 1, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 2, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

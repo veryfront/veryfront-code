@@ -419,6 +419,17 @@ function outputPushResult(
   console.log();
 }
 
+function warnProtectedRemotePaths(paths: readonly string[], dryRun: boolean): void {
+  if (paths.length === 0 || isJsonMode()) return;
+  const protectedPathList = paths.map(sanitizeLogText).join(", ");
+  logWarning(
+    `Prune ${dryRun ? "would remove" : "removes"} ${paths.length} protected remote ${
+      paths.length === 1 ? "path" : "paths"
+    } that .vfignore cannot re-include: ${protectedPathList}.`,
+  );
+  if (!dryRun) logInfo("Rotate any credential these paths contained.");
+}
+
 function outputPushDryRunResult(
   projectSlug: string,
   branchName: string,
@@ -1109,6 +1120,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         (ignoreChecker.isSupportedExtension(file.path) && !ignoreChecker.isIgnored(file.path))
       );
       const protectedDeletePaths = toDelete.filter((path) => ignoreChecker.isProtected(path));
+      const appliedProtectedDeletePaths = new Set<string>();
+      const recordAppliedProtectedDeletes = (paths: readonly string[]) => {
+        const newlyApplied = paths.filter((path) =>
+          ignoreChecker.isProtected(path) && !appliedProtectedDeletePaths.has(path)
+        );
+        for (const path of newlyApplied) appliedProtectedDeletePaths.add(path);
+        warnProtectedRemotePaths(newlyApplied, false);
+      };
       // Protected paths are planner input only. The sync baseline must never
       // record them, because `plan.nextFiles` excludes them and no later pull or
       // push would ever reconcile such an entry away.
@@ -1168,7 +1187,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               );
               const conflicts = findRemoteSnapshotChanges(
                 await buildManagedRemoteSnapshot(managedRemoteFiles, ignoreChecker),
-                await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker),
+                await buildManagedRemoteSnapshot(
+                  latestRemoteFiles,
+                  ignoreChecker,
+                  true,
+                  pruneRemoteMissing,
+                ),
               );
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts);
@@ -1190,6 +1214,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 plan.nextFiles,
               );
               forcedPruneDeleteCount = lateDeleteResult.deleted;
+              recordAppliedProtectedDeletes(lateDeleteResult.applied);
               if (lateDeleteResult.conflicts.length > 0) {
                 throw pushConflictError(lateDeleteResult.conflicts);
               }
@@ -1273,7 +1298,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               branchName,
               0,
               forcedPruneDeleteCount,
-              protectedDeletePaths,
+              [...appliedProtectedDeletePaths],
               Date.now() - startTime,
             );
           }
@@ -1283,22 +1308,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.stop();
 
-      // JSON runs get the same list as a structured field on the result
-      // envelope, so this human-readable form is the non-JSON counterpart. It
-      // stays outside the `quiet` gate because the delete is destructive and
-      // `--quiet` emits no result envelope at all.
-      if (protectedDeletePaths.length > 0 && !jsonOutput) {
-        const protectedPathList = protectedDeletePaths.map(sanitizeLogText).join(", ");
-        logWarning(
-          `Prune ${dryRun ? "would remove" : "removes"} ${protectedDeletePaths.length} protected ` +
-            `remote ${
-              protectedDeletePaths.length === 1 ? "path" : "paths"
-            } that .vfignore cannot re-include: ${protectedPathList}.`,
-        );
-        if (!dryRun) {
-          logInfo("Rotate any credential these paths contained.");
-        }
-      }
+      // Actual deletes are reported when each remote mutation completes so a
+      // late protected path and a partially failed push still get rotation
+      // guidance. A dry run has no applied operations, so report its plan here.
+      if (dryRun) warnProtectedRemotePaths(protectedDeletePaths, true);
 
       if (!quiet && !jsonOutput && (dryRun || isVerbose())) {
         const parts = buildSummaryParts(uploadOps, deleteOps.map((op) => op.path));
@@ -1460,6 +1473,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           deleteOps,
           false,
         );
+        recordAppliedProtectedDeletes(deleteResult.applied);
       }
 
       if (deleteResult.conflicts.length > 0) {
@@ -1496,6 +1510,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             latestRemoteFiles,
             ignoreChecker,
             false,
+            pruneRemoteMissing,
           );
           const conflicts = findRemoteSnapshotChanges(
             buildSyncFileDigestSnapshot(plan.nextFiles),
@@ -1565,6 +1580,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             ignoreChecker,
             plan.nextFiles,
           );
+          recordAppliedProtectedDeletes(lateDeleteResult.applied);
           if (
             lateDeleteResult.deleted > 0 ||
             lateDeleteResult.failed > 0 ||
@@ -1703,7 +1719,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         branchName,
         uploadResult.uploaded,
         deleteResult.deleted,
-        protectedDeletePaths,
+        [...appliedProtectedDeletePaths],
         Date.now() - startTime,
       );
     },
