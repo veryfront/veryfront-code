@@ -962,7 +962,7 @@ describe("ReadOperations", () => {
   });
 
   describe("readOptionalTextFile", () => {
-    it("should hit the request-scoped cache instead of refetching per read", async () => {
+    it("should share request cache entries only between exact optional reads", async () => {
       let fetchCount = 0;
       const client = createMockClient({
         getFileContent: () => {
@@ -987,7 +987,11 @@ describe("ReadOperations", () => {
       assertEquals(first, "body { color: red; }");
       assertEquals(second, "body { color: red; }");
       assertEquals(viaReadText, "body { color: red; }");
-      assertEquals(fetchCount, 1, "repeated optional reads must share one fetch per request");
+      assertEquals(
+        fetchCount,
+        2,
+        "optional reads share one fetch while a module read keeps a separate cache identity",
+      );
     });
 
     it("should serve optional reads from the file list cache without an API call", async () => {
@@ -1082,6 +1086,82 @@ describe("ReadOperations", () => {
 
       assertEquals(await readOps.readOptionalTextFile("globals.css"), "body { color: red; }");
       assertEquals(resolveCalls, 0, "an optional read must not run extension resolution");
+    });
+
+    it("should not reuse a module fallback as an exact optional read", async () => {
+      const requestedPaths: string[] = [];
+      const client = createMockClient({
+        resolveFileWithExtension: () =>
+          Promise.resolve({ path: "theme.tsx", content: "resolved sibling" }),
+        getPublishedFileContent: (path: string) => {
+          requestedPaths.push(path);
+          return path === "theme.tsx"
+            ? Promise.resolve("resolved sibling")
+            : Promise.reject(new Error("404 Not Found"));
+        },
+      });
+      const readOps = createReadOps(client, true, createReleaseContext("rel-semantics"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      assertEquals(await readOps.readTextFile("theme.ts"), "resolved sibling");
+      await assertRejects(
+        () => readOps.readOptionalTextFile("theme.ts"),
+        Error,
+        "404 Not Found",
+      );
+      assertEquals(
+        requestedPaths.filter((path) => path === "theme.ts").length,
+        2,
+        "the exact optional read must perform its own requested-path lookup",
+      );
+    });
+
+    it("should key optional reads and file-list indexes by the request branch", async () => {
+      let requestBranch = "main";
+      const client = createMockClient({
+        getRequestBranch: () => requestBranch,
+      });
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createBranchContext(),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "globals.css", content: `${requestBranch} content` }]),
+      );
+
+      const [mainContent, featureContent] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const mainContent = await readOps.readOptionalTextFile("globals.css");
+          requestBranch = "feature";
+          const featureContent = await readOps.readOptionalTextFile("globals.css");
+          return [mainContent, featureContent];
+        },
+      );
+
+      assertEquals(mainContent, "main content");
+      assertEquals(featureContent, "feature content");
+    });
+
+    it("should cache an empty optional file as valid content", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getPublishedFileContent: () => {
+          fetchCount++;
+          return Promise.resolve("");
+        },
+      });
+      const readOps = createReadOps(client, true, createReleaseContext("rel-empty"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+      const read = () =>
+        runWithRequestContext(
+          { projectSlug: "test", token: "token-1", productionMode: true },
+          () => readOps.readOptionalTextFile("globals.css"),
+        );
+
+      assertEquals(await read(), "");
+      assertEquals(await read(), "");
+      assertEquals(fetchCount, 1, "an empty file must be a persistent cache hit");
     });
 
     it("should not apply the framework-module guard to configured project files", async () => {

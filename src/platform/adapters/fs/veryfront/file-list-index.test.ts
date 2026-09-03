@@ -34,6 +34,20 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       assertEquals(await index.lookup("pages/no-content.tsx"), undefined);
     });
 
+    it("should return empty inline content as a cache hit", async () => {
+      const index = new FileListIndex(async () => [
+        { path: "globals.css", content: "" },
+      ]);
+
+      assertEquals(await index.lookup("globals.css"), "");
+      assertEquals(await index.match("globals.css"), {
+        status: "hit",
+        fresh: true,
+        path: "globals.css",
+        content: "",
+      });
+    });
+
     it("should return undefined when cache returns undefined", async () => {
       const index = new FileListIndex(async () => undefined);
       assertEquals(await index.lookup("anything"), undefined);

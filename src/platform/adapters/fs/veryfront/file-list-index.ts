@@ -79,7 +79,7 @@ export class FileListIndex {
     }
 
     const content = snapshot.content.get(normalizedPath);
-    if (!content) {
+    if (content === undefined) {
       logger.debug("File list index contains path without inline content", {
         path: normalizedPath,
         fresh: snapshot.fresh,
@@ -108,7 +108,7 @@ export class FileListIndex {
     normalizedPaths: string[],
   ): Promise<{ path: string; content: string } | undefined> {
     const match = await this.findFirstMatch(normalizedPaths);
-    if (match.status !== "hit" || !match.path || !match.content) return undefined;
+    if (match.status !== "hit" || !match.path || match.content === undefined) return undefined;
     return { path: match.path, content: match.content };
   }
 
@@ -124,7 +124,7 @@ export class FileListIndex {
       if (!snapshot.paths.has(path)) continue;
 
       const content = snapshot.content.get(path);
-      if (content) {
+      if (content !== undefined) {
         return {
           status: "hit",
           fresh: snapshot.fresh,
@@ -194,7 +194,7 @@ export class FileListIndex {
     const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
-      filesWithContent: fileList.filter((f) => f.content).length,
+      filesWithContent: fileList.filter((f) => f.content !== undefined).length,
       sampleFilePath: cacheCheckSample?.path,
       sampleContentLength: cacheCheckSample?.content?.length,
     });
@@ -216,7 +216,7 @@ export class FileListIndex {
     const pathSet = new Set<string>();
     for (const file of fileList) {
       pathSet.add(file.path);
-      if (file.content) index.set(file.path, file.content);
+      if (file.content !== undefined) index.set(file.path, file.content);
     }
 
     this.index = index;

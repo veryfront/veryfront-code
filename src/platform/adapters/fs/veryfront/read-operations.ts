@@ -44,6 +44,7 @@ export class ReadOperations {
   private readonly fileListIndex: FileListIndex;
   /** Caches extensionless base paths → resolved full paths to avoid repeated API resolution calls */
   private readonly extensionResolutionCache = new Map<string, string>();
+  private requestBranchScope: string | null | undefined;
 
   constructor(
     private readonly client: VeryfrontApiClient,
@@ -65,6 +66,16 @@ export class ReadOperations {
   clearFileListIndex(): void {
     this.fileListIndex.clear();
     this.extensionResolutionCache.clear();
+  }
+
+  private syncRequestBranchScope(): string | null | undefined {
+    const requestBranch = this.client.getRequestBranch();
+    if (requestBranch !== this.requestBranchScope) {
+      this.fileListIndex.clear();
+      this.extensionResolutionCache.clear();
+      this.requestBranchScope = requestBranch;
+    }
+    return requestBranch;
   }
 
   readFile(path: string): Promise<Uint8Array> {
@@ -211,7 +222,7 @@ export class ReadOperations {
     ctx: ResolvedContentContext | null,
   ): string | null {
     const requestCached = getRequestScopedFile(cacheKey);
-    if (!requestCached) return null;
+    if (requestCached === undefined) return null;
 
     logContentMetric("REQUEST_SCOPED_HIT", {
       path: normalizedPath,
@@ -251,7 +262,7 @@ export class ReadOperations {
     if (!isProduction || skipPersistentCaches) return null;
 
     const cached = await this.cache.getAsync<string>(cacheKey);
-    if (!cached) return null;
+    if (cached === undefined) return null;
 
     logContentMetric("PERSISTENT_CACHE_HIT", {
       path: normalizedPath,
@@ -291,7 +302,7 @@ export class ReadOperations {
     }
 
     const match = await this.fileListIndex.match(normalizedPath);
-    if (match.status === "hit" && match.content) {
+    if (match.status === "hit" && match.content !== undefined) {
       logContentMetric("FILE_LIST_HIT", {
         path: normalizedPath,
         mode: ctx?.sourceType ?? "unknown",
@@ -586,6 +597,7 @@ export class ReadOperations {
     if (!optional) assertProjectSourcePath(normalizedPath);
 
     const ctx = this.contextProvider?.getContentContext() ?? null;
+    const requestBranch = this.syncRequestBranchScope();
     const {
       apiPath,
       cacheKeyPrefix,
@@ -602,6 +614,8 @@ export class ReadOperations {
       contentContext: ctx,
       contextProvider: this.contextProvider,
       getOriginalApiPath: this.getOriginalApiPath,
+      requestBranch,
+      cacheVariant: optional ? "optional-exact" : undefined,
     });
 
     logger.debug("fetchContent context", {
@@ -617,7 +631,7 @@ export class ReadOperations {
     });
 
     const requestCached = this.getRequestScopedHit(normalizedPath, cacheKey, ctx);
-    if (requestCached) return requestCached;
+    if (requestCached !== null) return requestCached;
 
     const persistentCached = await this.getProductionPersistentCacheHit(
       normalizedPath,
@@ -629,7 +643,7 @@ export class ReadOperations {
       isPrefixInvalidated,
       ctx,
     );
-    if (persistentCached) return persistentCached;
+    if (persistentCached !== null) return persistentCached;
 
     const fileListMatch = await this.getFileListCacheHit(
       normalizedPath,
@@ -640,7 +654,9 @@ export class ReadOperations {
       isPreviewMode,
       ctx,
     );
-    if (fileListMatch.status === "hit" && fileListMatch.content) return fileListMatch.content;
+    if (fileListMatch.status === "hit" && fileListMatch.content !== undefined) {
+      return fileListMatch.content;
+    }
     if (fileListMatch.status === "present_without_content") {
       return this.setupInFlightFetch(
         normalizedPath,

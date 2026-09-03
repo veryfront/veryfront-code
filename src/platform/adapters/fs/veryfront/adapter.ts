@@ -1813,9 +1813,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setRequestBranch(branch: string | null): void {
     if (branch !== this.requestBranch) {
-      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+      this.requestBranch = branch;
+      this.invalidateRequestAuthoritySnapshot();
+    } else {
+      this.requestBranch = branch;
     }
-    this.requestBranch = branch;
     this.syncClientContext();
   }
 
@@ -1825,9 +1827,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   clearRequestBranch(): void {
     if (this.requestBranch !== null) {
-      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+      this.requestBranch = null;
+      this.invalidateRequestAuthoritySnapshot();
+    } else {
+      this.requestBranch = null;
     }
-    this.requestBranch = null;
     this.syncClientContext();
   }
 
