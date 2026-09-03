@@ -134,8 +134,8 @@ async function readConfigFileResolution(
 
     try {
       configExists = await fs.exists(configPath);
-    } catch (error) {
-      cliLogger.debug(`Failed to inspect veryfront.config${ext}:`, error);
+    } catch {
+      cliLogger.debug(`Failed to inspect veryfront.config${ext}.`);
       if (!allowModuleConfigExecution) {
         skippedModuleConfigFile ??= `veryfront.config${ext}`;
       }
