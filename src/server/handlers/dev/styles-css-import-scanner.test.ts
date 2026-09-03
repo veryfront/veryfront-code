@@ -22,6 +22,7 @@ const IMPORTED_CSS = "/project/app/styles.css";
 interface ScanAdapter {
   adapter: RuntimeAdapter;
   getScanCount: () => number;
+  getWaitForWarmupValues: () => Array<boolean | undefined>;
   setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
 }
 
@@ -36,10 +37,12 @@ function createScanAdapter(
   const adapter = createMockAdapter();
   let currentFiles = files;
   let scanCount = 0;
+  const waitForWarmupValues: Array<boolean | undefined> = [];
 
   const underlyingAdapter = {
-    getAllSourceFiles: async () => {
+    getAllSourceFiles: async (options?: { waitForWarmup?: boolean }) => {
       scanCount++;
+      waitForWarmupValues.push(options?.waitForWarmup);
       await Promise.resolve();
       return currentFiles;
     },
@@ -55,6 +58,7 @@ function createScanAdapter(
       },
     } as unknown as RuntimeAdapter,
     getScanCount: () => scanCount,
+    getWaitForWarmupValues: () => waitForWarmupValues,
     setFiles: (nextFiles) => {
       currentFiles = nextFiles;
     },
@@ -88,6 +92,7 @@ interface DeferredScanAdapter {
   getScanCount: () => number;
   /** Complete the oldest source walk that is still waiting. */
   settleNext: (nextFiles: Array<{ path: string; content?: string }>) => void;
+  settleAt: (index: number, nextFiles: Array<{ path: string; content?: string }>) => void;
 }
 
 /**
@@ -116,6 +121,7 @@ function createDeferredScanAdapter(contentContext: ResolvedContentContext): Defe
     } as unknown as RuntimeAdapter,
     getScanCount: () => scanCount,
     settleNext: (nextFiles) => waiting.shift()?.(nextFiles),
+    settleAt: (index, nextFiles) => waiting[index]?.(nextFiles),
   };
 }
 
@@ -143,6 +149,7 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
         1,
         "repeated stylesheet requests must not re-walk the project sources",
       );
+      assertEquals(scan.getWaitForWarmupValues(), [true]);
     } finally {
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
@@ -420,6 +427,30 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
+  it("keys shared-proxy scans on the admitted content snapshot", async () => {
+    const scan = createScanAdapter([LAYOUT_FILE], null);
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(scan.adapter, { isProxyMode: true, releaseId: "rel-a" }),
+        ),
+        [IMPORTED_CSS],
+      );
+      scan.setFiles([]);
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(scan.adapter, { isProxyMode: true, releaseId: "rel-b" }),
+        ),
+        [],
+      );
+      assertEquals(scan.getScanCount(), 2);
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
   it("ignores request-supplied selectors when the filesystem resolves no content", async () => {
     // `x-release-id` reaches the handler without an identity-trust gate, so on a
     // standalone server a client could otherwise mint a distinct "immutable"
@@ -465,6 +496,33 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
       assertEquals(scan.getScanCount(), 2);
     } finally {
       invalidateProjectCssImportScans();
+    }
+  });
+
+  it("does not reuse a generation while an overwritten scan is still pending", async () => {
+    const scan = createDeferredScanAdapter(releaseContent("rel-aba"));
+    const ctx = makeCtx(scan.adapter);
+
+    try {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+      const oldScan = extractProjectCssImports(ctx);
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+      const replacementScan = extractProjectCssImports(ctx);
+      assertEquals(scan.getScanCount(), 2);
+
+      scan.settleAt(1, []);
+      assertEquals(await replacementScan, []);
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+
+      scan.settleAt(0, [LAYOUT_FILE]);
+      assertEquals(await oldScan, [IMPORTED_CSS]);
+
+      const afterOldScan = extractProjectCssImports(ctx);
+      assertEquals(scan.getScanCount(), 3);
+      scan.settleAt(2, []);
+      assertEquals(await afterOldScan, []);
+    } finally {
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
