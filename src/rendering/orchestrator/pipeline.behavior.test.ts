@@ -18,6 +18,7 @@ import {
   toError,
   VeryfrontError,
 } from "#veryfront/errors";
+import { __resetStaleMdxEsmRecoveryStateForTests } from "#veryfront/rendering/page-rendering.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -202,6 +203,7 @@ describe("RenderPipeline behavior", () => {
     else setEnv("LOG_LEVEL", originalLogLevel);
     __resetLoggerConfigForTests();
     __resetLogRecordEmitterForTests();
+    __resetStaleMdxEsmRecoveryStateForTests();
   });
 
   it("threads render cancellation through layout preload and application", async () => {
@@ -1381,6 +1383,107 @@ describe("RenderPipeline behavior", () => {
     assertEquals(result.html, "<!doctype html><html><body>ok</body></html>");
     assertEquals(renderAttempts, 2);
     assertEquals(sourceRefreshes, 1);
+  });
+
+  it("renderPage recovers preview caches from the pipeline's configured content source", async () => {
+    const slug = "/behavior-configured-preview-stale-mdx";
+    let renderAttempts = 0;
+    let sourceRefreshes = 0;
+    // The pipeline carries the preview content source in its own config and the
+    // request supplies no override, which is how resolveModuleLoaderConfig
+    // resolves the namespace. Recovery must use the same fallback.
+    const pipeline = createPipeline("/project/pages/behavior-configured-preview-stale-mdx.mdx", {
+      mode: "production",
+      contentSourceId: "preview-main",
+      adapter: {
+        env: { get: () => undefined },
+        fs: {
+          exists: async () => false,
+          refreshSourceSnapshot: () => {
+            sourceRefreshes++;
+            return Promise.resolve();
+          },
+        },
+      } as any,
+      pageRenderer: {
+        preparePageBundles: async () => {
+          renderAttempts++;
+          if (renderAttempts === 1) {
+            throw new Error(
+              "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+            );
+          }
+
+          return {
+            pageElement: {},
+            pageBundle: {},
+          };
+        },
+      } as any,
+    } as Partial<RenderPipelineConfig>);
+
+    const result = await pipeline.renderPage(slug, {
+      delivery: "string",
+      projectId: "project-1",
+      projectSlug: "project-slug",
+    });
+
+    assertEquals(result.html, "<!doctype html><html><body>ok</body></html>");
+    assertEquals(
+      renderAttempts,
+      2,
+      "a preview source configured on the pipeline must still get its recovery retry",
+    );
+    assertEquals(
+      sourceRefreshes,
+      1,
+      "recovery must classify the configured content source, not the missing request override",
+    );
+  });
+
+  it("renderPage does not recover caches for a released production content source", async () => {
+    const slug = "/behavior-release-stale-mdx";
+    let renderAttempts = 0;
+    let sourceRefreshes = 0;
+    const pipeline = createPipeline("/project/pages/behavior-release-stale-mdx.mdx", {
+      mode: "production",
+      adapter: {
+        env: { get: () => undefined },
+        fs: {
+          exists: async () => false,
+          refreshSourceSnapshot: () => {
+            sourceRefreshes++;
+            return Promise.resolve();
+          },
+        },
+      } as any,
+      pageRenderer: {
+        preparePageBundles: () => {
+          renderAttempts++;
+          // A shipped broken import keeps producing this message, so an
+          // unauthenticated request must not be able to buy a cache purge
+          // with it.
+          throw new Error(
+            "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+          );
+        },
+      } as any,
+    } as Partial<RenderPipelineConfig>);
+
+    await assertRejects(
+      () =>
+        pipeline.renderPage(slug, {
+          delivery: "string",
+          projectId: "project-1",
+          projectSlug: "project-slug",
+          contentSourceId: "release-abc123",
+        }),
+      Error,
+      "does not provide an export named",
+    );
+
+    assertEquals(renderAttempts, 1, "a released source must not pay a recovery retry");
+    assertEquals(sourceRefreshes, 0, "a released source must not flush its source snapshot");
   });
 
   it("renderPage emits request-profiler timings for pipeline stages", async () => {
