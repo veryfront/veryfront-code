@@ -196,13 +196,24 @@ export class InputValidator {
       }
     }
 
-    const sanitized = this.config.sanitize ? this.sanitizeInput(input) : undefined;
+    const sanitized = this.sanitize(input);
 
     return {
       valid: violations.length === 0,
       sanitized,
       violations,
     };
+  }
+
+  /**
+   * Sanitize a single text value, or return `undefined` when sanitization is
+   * disabled.
+   *
+   * Exposed so callers holding structured input can sanitize each text part in
+   * place instead of collapsing a `Message[]` into one scalar string.
+   */
+  sanitize(input: string): string | undefined {
+    return this.config.sanitize ? this.sanitizeInput(input) : undefined;
   }
 
   /** Sanitization patterns to remove harmful content */
@@ -355,9 +366,31 @@ function extractPartInputText(part: unknown): string[] {
  */
 const VALIDATED_INPUT_ROLES: ReadonlySet<Message["role"]> = new Set(["user", "system"]);
 
+function isTextPart(part: unknown): part is { type: "text"; text: string } {
+  return isRecord(part) && part.type === "text" && typeof part.text === "string";
+}
+
+/**
+ * Text-part separators the provider converters use when they assemble one
+ * message into a single prompt string.
+ *
+ * `getTextFromParts` (src/agent/types.ts) concatenates with no separator while
+ * `joinTextParts` (src/agent/runtime/message-adapter.ts) joins with a blank
+ * line. Both assembled forms are validated so a blocked phrase cannot be
+ * smuggled past validation by splitting it across sibling text parts.
+ */
+const ASSEMBLED_TEXT_SEPARATORS = ["", "\n\n"] as const;
+
 function extractMessageInputText(message: Message): string[] {
   if (!VALIDATED_INPUT_ROLES.has(message.role)) return [];
-  return message.parts.flatMap(extractPartInputText);
+  const values = message.parts.flatMap(extractPartInputText);
+
+  // A single text part already equals every assembled form, so only add the
+  // joined variants when the parts could actually hide a split phrase.
+  const textParts = message.parts.filter(isTextPart).map((part) => part.text);
+  if (textParts.length < 2) return values;
+
+  return [...values, ...ASSEMBLED_TEXT_SEPARATORS.map((sep) => textParts.join(sep))];
 }
 
 function extractInputValidationTexts(input: AgentContext["input"]): string[] {
@@ -365,15 +398,43 @@ function extractInputValidationTexts(input: AgentContext["input"]): string[] {
   return input.flatMap(extractMessageInputText);
 }
 
+/**
+ * Sanitize the text parts of caller-authored messages in place.
+ *
+ * Structured input must stay structured: replacing a `Message[]` with the
+ * sanitized scalar would drop the role, message id, and every other field, so
+ * downstream middleware would no longer see the system/user split.
+ */
+function sanitizeStructuredInput(validator: InputValidator, messages: Message[]): Message[] {
+  let changed = false;
+
+  const sanitizedMessages = messages.map((message) => {
+    if (!VALIDATED_INPUT_ROLES.has(message.role)) return message;
+
+    let messageChanged = false;
+    const parts = message.parts.map((part) => {
+      if (!isTextPart(part)) return part;
+      const sanitized = validator.sanitize(part.text);
+      if (sanitized === undefined || sanitized === part.text) return part;
+      messageChanged = true;
+      return { ...part, text: sanitized };
+    });
+
+    if (!messageChanged) return message;
+    changed = true;
+    return { ...message, parts };
+  });
+
+  return changed ? sanitizedMessages : messages;
+}
+
 async function validateInputTexts(
   validator: InputValidator,
   values: string[],
-): Promise<Awaited<ReturnType<InputValidator["validate"]>>> {
+): Promise<{ valid: boolean; violations: SecurityViolation[] }> {
   const results = await Promise.all(values.map((value) => validator.validate(value)));
-  const firstResult = results[0];
   return {
     valid: results.every((result) => result.valid),
-    sanitized: values.length === 1 ? firstResult?.sanitized : undefined,
     violations: results.flatMap((result) => result.violations),
   };
 }
@@ -406,8 +467,11 @@ export function securityMiddleware(
       );
     }
 
-    if (inputValidation.sanitized != null) {
-      context.input = inputValidation.sanitized;
+    if (typeof context.input === "string") {
+      const sanitized = inputValidator.sanitize(context.input);
+      if (sanitized != null) context.input = sanitized;
+    } else {
+      context.input = sanitizeStructuredInput(inputValidator, context.input);
     }
 
     const result = await next();

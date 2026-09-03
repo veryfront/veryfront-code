@@ -260,7 +260,12 @@ import {
   resolveConfiguredTool,
   type ToolConfigEntry,
 } from "./tool-helpers.ts";
-import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  accumulateUsage,
+  getMaxSteps,
+  normalizeInput,
+  resolveValidatedTurnInput,
+} from "./input-utils.ts";
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
@@ -1511,7 +1516,6 @@ export class AgentRuntime {
         });
 
         const inputMessages = normalizeInput(input);
-        const messages = await this.prepareTurnMessages(inputMessages);
 
         const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
@@ -1528,6 +1532,13 @@ export class AgentRuntime {
           agentContext,
           async () => {
             try {
+              // Persist only after the middleware chain accepted this turn.
+              // Committing to memory first would store a rejected (hostile)
+              // message, and the next benign turn would replay it to the
+              // provider without ever being validated again.
+              const messages = await this.prepareTurnMessages(
+                resolveValidatedTurnInput(agentContext.input, inputMessages, inputMessages),
+              );
               return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                 this.#executeAgentLoop(
                   systemPrompt,
@@ -1621,7 +1632,6 @@ export class AgentRuntime {
       debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
       const inputMessages = normalizeInput(messages);
-      const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
       const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
@@ -1702,6 +1712,12 @@ export class AgentRuntime {
               agentContext,
               async () => {
                 try {
+                  // Persist only after the middleware chain accepted this turn,
+                  // so a rejected message never lands in memory and gets
+                  // replayed to the provider on a later, benign turn.
+                  const memoryMessages = await this.prepareTurnMessages(
+                    resolveValidatedTurnInput(agentContext.input, messages, inputMessages),
+                  );
                   return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                     this.#executeAgentLoopStreaming(
                       systemPrompt,

@@ -35,6 +35,24 @@ export function normalizeInput(input: string | Message[]): Message[] {
   });
 }
 
+/**
+ * Resolve the message set to persist for a turn once middleware has run.
+ *
+ * Memory is written after the middleware chain accepts the turn, so a rejected
+ * message is never stored and replayed unvalidated on a later turn. Middleware
+ * may also rewrite `context.input` (sanitization), so when the value is no
+ * longer the caller's original it is re-normalized before being persisted;
+ * otherwise the already-normalized messages are reused to keep identity and
+ * generated ids stable.
+ */
+export function resolveValidatedTurnInput(
+  contextInput: string | Message[],
+  originalInput: string | Message[],
+  normalizedInput: Message[],
+): Message[] {
+  return contextInput === originalInput ? normalizedInput : normalizeInput(contextInput);
+}
+
 export function accumulateUsage(
   total: {
     promptTokens: number;
