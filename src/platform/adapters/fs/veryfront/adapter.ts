@@ -734,6 +734,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       getContentSource: () => this.contentSource,
       getProjectDir: () => this.normalizer.getProjectDir(),
       clearMemoryCaches: () => this.clearMemoryCaches(),
+      getFileListCacheKey: () => this.getCurrentFileListCacheKey(),
       getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
       replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion) =>
         this.replaceSourceSnapshot(cacheKey, files, expectedSnapshotVersion),

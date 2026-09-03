@@ -115,6 +115,7 @@ function createWebSocketManager(options: {
     files: Array<{ path: string; content?: string }>,
   ) => Promise<{ hash: string; assetPath: string } | undefined>;
   clearMemoryCaches?: () => void;
+  getFileListCacheKey?: () => string | undefined;
   getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot?: (
     cacheKey: string,
@@ -151,6 +152,7 @@ function createWebSocketManager(options: {
     getContentSource: () => ({ type: "branch", branch }),
     getProjectDir: () => undefined,
     clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
+    getFileListCacheKey: options.getFileListCacheKey,
     getSourceSnapshotVersion: options.getSourceSnapshotVersion,
     replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => 0),
     pregenerateStyles: options.pregenerateStyles,
@@ -1091,6 +1093,7 @@ describe("WebSocketManager", () => {
     const releaseFetch = Promise.withResolvers<ProjectFile[]>();
     let sourceSnapshotVersion = 1;
     let replacementVersion: number | undefined;
+    let replacementCacheKey: string | undefined;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => {
@@ -1101,8 +1104,10 @@ describe("WebSocketManager", () => {
       clearMemoryCaches: () => {
         sourceSnapshotVersion++;
       },
+      getFileListCacheKey: () => "files:branch:test-project:feature",
       getSourceSnapshotVersion: () => sourceSnapshotVersion,
-      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+      replaceSourceSnapshot: (cacheKey, _files, expectedSnapshotVersion) => {
+        replacementCacheKey = cacheKey;
         replacementVersion = expectedSnapshotVersion;
         return Promise.resolve(
           expectedSnapshotVersion === sourceSnapshotVersion ? sourceSnapshotVersion : undefined,
@@ -1134,6 +1139,7 @@ describe("WebSocketManager", () => {
       2,
       "replacement must receive the generation captured before the file-list fetch",
     );
+    assertEquals(replacementCacheKey, "files:branch:test-project:feature");
     manager.dispose();
   });
 
@@ -1287,6 +1293,7 @@ describe("WebSocketManager", () => {
     }>();
     let sourceSnapshotVersion = 1;
     let replacementVersion: number | undefined;
+    let replacementCacheKey: string | undefined;
     let pregenerateCalls = 0;
     let publishedStyleHash: string | undefined;
     let reloadCalls = 0;
@@ -1301,8 +1308,10 @@ describe("WebSocketManager", () => {
       clearMemoryCaches: () => {
         sourceSnapshotVersion++;
       },
+      getFileListCacheKey: () => "files:branch:test-project:feature",
       getSourceSnapshotVersion: () => sourceSnapshotVersion,
-      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+      replaceSourceSnapshot: (cacheKey, _files, expectedSnapshotVersion) => {
+        replacementCacheKey = cacheKey;
         replacementVersion = expectedSnapshotVersion;
         if (expectedSnapshotVersion !== sourceSnapshotVersion) {
           return Promise.resolve(undefined);
@@ -1363,6 +1372,7 @@ describe("WebSocketManager", () => {
       3,
       "replacement must receive the generation captured after the full invalidation clear",
     );
+    assertEquals(replacementCacheKey, "files:branch:test-project:feature");
     assertEquals(pregenerateCalls, 1);
     assertEquals(publishedStyleHash, undefined);
     assertEquals(reloadCalls, 0, "a superseded full invalidation must not publish a reload");

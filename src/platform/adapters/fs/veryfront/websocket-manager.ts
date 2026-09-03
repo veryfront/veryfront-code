@@ -102,6 +102,7 @@ interface WebSocketDeps {
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
+  getFileListCacheKey?: () => string | undefined;
   getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot: (
     cacheKey: string,
@@ -782,7 +783,8 @@ export class WebSocketManager {
         await this.deps.cache.deleteByPrefixAsync("files:branch:");
         try {
           const files = await this.deps.client.listAllFiles();
-          const cacheKey = buildFileListCacheKey(contentContext);
+          const cacheKey = this.deps.getFileListCacheKey?.() ??
+            buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,
@@ -976,7 +978,8 @@ export class WebSocketManager {
       if (contentContext?.sourceType === "branch") {
         try {
           const files = await this.deps.client.listAllFiles();
-          const cacheKey = buildFileListCacheKey(contentContext);
+          const cacheKey = this.deps.getFileListCacheKey?.() ??
+            buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,
