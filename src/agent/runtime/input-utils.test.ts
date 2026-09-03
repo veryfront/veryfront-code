@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  accumulateUsage,
+  getMaxSteps,
+  normalizeInput,
+  resolveValidatedTurnInput,
+} from "./input-utils.ts";
 
 type UsageTotal = Parameters<typeof accumulateUsage>[0];
 import {
@@ -205,6 +210,47 @@ describe("input-utils", () => {
         "complete",
         "matching capture status must be preserved",
       );
+    });
+  });
+
+  describe("resolveValidatedTurnInput", () => {
+    const normalized = [
+      {
+        id: "msg_1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "hi" }],
+        timestamp: 1000,
+      },
+    ];
+
+    it("reuses the normalized messages when middleware left the input untouched", () => {
+      const original = "hi";
+      assertEquals(resolveValidatedTurnInput(original, original, normalized), normalized);
+    });
+
+    it("re-normalizes when middleware rewrote the input", () => {
+      const rewritten = [
+        {
+          id: "msg_2",
+          role: "system" as const,
+          parts: [{ type: "text" as const, text: "sanitized" }],
+          timestamp: 2000,
+        },
+      ];
+
+      const result = resolveValidatedTurnInput(rewritten, "hi", normalized);
+
+      assertEquals(result.length, 1);
+      assertEquals(result[0]?.id, "msg_2");
+      assertEquals(result[0]?.role, "system");
+    });
+
+    it("normalizes a middleware-supplied string back into messages", () => {
+      const result = resolveValidatedTurnInput("sanitized", "raw", normalized);
+
+      assertEquals(result.length, 1);
+      assertEquals(result[0]?.role, "user");
+      assertEquals((result[0]?.parts[0] as { text: string }).text, "sanitized");
     });
   });
 
