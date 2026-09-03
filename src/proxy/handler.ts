@@ -10,7 +10,11 @@ import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
-import { isMissingProxyProjectError, resolveProxyRequestToken } from "./proxy-token-resolution.ts";
+import {
+  isMissingProxyProjectError,
+  resolveProxyRequestToken,
+  stripUserTokenCookie,
+} from "./proxy-token-resolution.ts";
 import {
   createProjectNotFoundProxyContext,
   createProxyErrorContext,
@@ -1366,6 +1370,20 @@ export function createProxyContextHeaders(
   }
   const headers = createProxyEndToEndHeaders(sourceHeaders);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
+
+  // For hosted projects, the `authToken` cookie carries the caller's Veryfront
+  // credential. The proxy has already consumed it (resolveProxyRequestToken)
+  // and forwards the resolved identity via `x-token`, so the raw credential
+  // must not reach tenant-controlled project code. Local projects skip that
+  // token flow, where the same cookie name belongs to the application.
+  if (!ctx.isLocalProject) {
+    const cookieHeader = headers.get("cookie");
+    if (cookieHeader !== null) {
+      const remainingCookies = stripUserTokenCookie(cookieHeader);
+      if (remainingCookies === undefined) headers.delete("cookie");
+      else headers.set("cookie", remainingCookies);
+    }
+  }
 
   // The `x-veryfront-*-jws` signature headers are deliberately NOT stripped:
   // the downstream renderer re-verifies them against the raw request body and
