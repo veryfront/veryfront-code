@@ -68,6 +68,10 @@ import {
 const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
 const MAX_STALLED_GRAPH_NODE_DETAILS = 10;
 
+function encodeSubWorkflowOwnerSegment(nodeId: string): string {
+  return encodeURIComponent(nodeId);
+}
+
 function collectStaticSubWorkflowReservations(
   nodes: WorkflowNode[],
   parentPath = "",
@@ -94,7 +98,9 @@ function collectStaticSubWorkflowReservations(
           typeof node.config.workflow === "string" ||
           !Array.isArray(node.config.workflow.steps)
         ) break;
-        const ownerPath = parentPath ? `${parentPath}/${node.id}` : node.id;
+        const ownerPath = parentPath
+          ? `${parentPath}/${encodeSubWorkflowOwnerSegment(node.id)}`
+          : encodeSubWorkflowOwnerSegment(node.id);
         reservations.set(ownerPath, collectWorkflowNodeIds(node.config.workflow.steps));
         collectStaticSubWorkflowReservations(node.config.workflow.steps, ownerPath, reservations);
         break;
@@ -1101,7 +1107,9 @@ export class DAGExecutor {
       : workflowDef.steps;
     abortSignal?.throwIfAborted();
 
-    const ownerPath = scope.subWorkflowPath ? `${scope.subWorkflowPath}/${node.id}` : node.id;
+    const ownerPath = scope.subWorkflowPath
+      ? `${scope.subWorkflowPath}/${encodeSubWorkflowOwnerSegment(node.id)}`
+      : encodeSubWorkflowOwnerSegment(node.id);
 
     // A sub-workflow is a separate definition with its own id space, so a child
     // may legally repeat an id declared by an ancestor graph -- duplicate-id

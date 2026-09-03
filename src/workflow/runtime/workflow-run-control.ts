@@ -580,12 +580,14 @@ async function reconcileApprovalDecision(
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while applying approval "${operation.approvalId}"`,
     buildPatch: (run) => {
+      const currentNodeState = run.nodeStates[operation.nodeId];
       const runPatch: WorkflowRunUpdate = buildNodeOutcomePatch(
         backend,
         run,
         operation.nodeId,
         decisionContext,
         {
+          ...currentNodeState,
           nodeId: operation.nodeId,
           status: "completed",
           output: {
@@ -596,7 +598,7 @@ async function reconcileApprovalDecision(
               : { comment: operation.decision.comment }),
             ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
-          attempt: 1,
+          attempt: currentNodeState?.attempt ?? 1,
           completedAt: decidedAt,
         },
       );

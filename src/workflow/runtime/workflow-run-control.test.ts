@@ -1631,6 +1631,14 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     const run = {
       ...createRun("reconcile-optional-decision-fields"),
       status: "waiting" as const,
+      nodeStates: {
+        review: {
+          nodeId: "review",
+          status: "running" as const,
+          attempt: 1,
+          _subWorkflowOwnerPath: "release-2",
+        },
+      },
     };
     await backend.createRun(run);
 
@@ -1663,6 +1671,7 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
       approver: "reviewer",
       data: { confirmed: true },
     });
+    assertEquals(persisted?.nodeStates.review?._subWorkflowOwnerPath, "release-2");
   });
 
   it("reports a deleted run as terminal when env hydration loses its update", async () => {

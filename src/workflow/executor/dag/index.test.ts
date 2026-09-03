@@ -3633,6 +3633,57 @@ describe("DAGExecutor", () => {
       assertEquals(executed, []);
     });
 
+    it("keeps slash-containing sub-workflow owner paths distinct", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "a",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "nested-owner-workflow",
+              steps: [{
+                id: "b",
+                dependsOn: [],
+                config: {
+                  type: "subWorkflow",
+                  workflow: {
+                    id: "nested-review-workflow",
+                    steps: [{ id: "review", dependsOn: [], config: { type: "step" } as any }],
+                  },
+                } as any,
+              }],
+            },
+          } as any,
+        },
+        {
+          id: "a/b",
+          dependsOn: ["a"],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "slash-owner-workflow",
+              steps: [waitForApproval("review", { message: "Approve the release" })],
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "review");
+      assertEquals(executed, ["review"]);
+    });
+
     it("should execute a sub-workflow definition", async () => {
       const nodes: WorkflowNode[] = [
         {
