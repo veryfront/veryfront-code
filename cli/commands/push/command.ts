@@ -625,8 +625,9 @@ async function deleteForcedPruneRemoteOnlyFiles(
   const plannedPaths = new Set(Object.keys(plannedFiles));
   const remoteOnlyDeletes = remoteFiles
     .filter((file) =>
-      ignoreChecker.isSupportedExtension(file.path) &&
-      !ignoreChecker.isIgnored(file.path) &&
+      (ignoreChecker.isProtected(file.path) ||
+        (ignoreChecker.isSupportedExtension(file.path) &&
+          !ignoreChecker.isIgnored(file.path))) &&
       !plannedPaths.has(file.path)
     )
     .map((file) => ({ path: file.path }));
@@ -738,10 +739,13 @@ async function buildManagedRemoteSnapshot(
   files: readonly RemoteFile[],
   ignoreChecker: IgnoreChecker,
   includeVersion = true,
+  includeProtected = false,
 ): Promise<Map<string, { digest: string; versionId?: string }>> {
   const snapshot = new Map<string, { digest: string; versionId?: string }>();
   for (const file of files) {
-    if (!ignoreChecker.isSupportedExtension(file.path) || ignoreChecker.isIgnored(file.path)) {
+    const managed = ignoreChecker.isSupportedExtension(file.path) &&
+      !ignoreChecker.isIgnored(file.path);
+    if (!managed && !(includeProtected && ignoreChecker.isProtected(file.path))) {
       continue;
     }
     snapshot.set(file.path, {
@@ -1205,7 +1209,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               const conflicts = findRemoteSnapshotChanges(
                 buildSyncFileDigestSnapshot(plan.nextFiles),
-                await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false),
+                await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false, true),
               );
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts);
@@ -1590,7 +1594,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             const repairedRemoteFiles = await listAllFilesForVerification();
             const repairedConflicts = findRemoteSnapshotChanges(
               buildSyncFileDigestSnapshot(plan.nextFiles),
-              await buildManagedRemoteSnapshot(repairedRemoteFiles, ignoreChecker, false),
+              await buildManagedRemoteSnapshot(repairedRemoteFiles, ignoreChecker, false, true),
             );
             if (repairedConflicts.length > 0) {
               await writeVerifiedAppliedSyncTarget(repairedRemoteFiles);

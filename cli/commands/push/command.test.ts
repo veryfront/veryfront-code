@@ -4816,6 +4816,9 @@ describe("push deletion ownership", () => {
                 ...(fileListCalls > 1 && !deleted.includes("late-remote.ts")
                   ? [{ path: "late-remote.ts", content: "late remote source" }]
                   : []),
+                ...(fileListCalls > 1 && !deleted.includes(".env.production")
+                  ? [{ path: ".env.production", content: "SECRET=<REDACTED>\n" }]
+                  : []),
               ],
               page_info: {},
             });
@@ -4837,7 +4840,12 @@ describe("push deletion ownership", () => {
         await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(fileListCalls, 3);
-        assertEquals(deleted.sort(), ["late-remote.ts", "stale.ts", "stale.ts"]);
+        assertEquals(deleted.sort(), [
+          ".env.production",
+          "late-remote.ts",
+          "stale.ts",
+          "stale.ts",
+        ]);
         assertEquals(
           await readSyncTarget(projectDir, {
             controlPlane: "https://control.example.test",
@@ -5142,6 +5150,9 @@ describe("push deletion ownership", () => {
                 ...(fileListCalls > 1 && !deleted.includes("late-remote.ts")
                   ? [{ path: "late-remote.ts", content: "late remote source" }]
                   : []),
+                ...(fileListCalls > 1 && !deleted.includes(".env.production")
+                  ? [{ path: ".env.production", content: "SECRET=<REDACTED>\n" }]
+                  : []),
               ],
               page_info: {},
             });
@@ -5159,7 +5170,7 @@ describe("push deletion ownership", () => {
         await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(fileListCalls, 3);
-        assertEquals(deleted, ["late-remote.ts"]);
+        assertEquals([...deleted].sort(), [".env.production", "late-remote.ts"]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
         assertEquals(
@@ -5209,7 +5220,7 @@ describe("push deletion ownership", () => {
             return Response.json({
               data: [
                 ...(fileListCalls > 1
-                  ? [{ path: "late-remote.ts", content: "recreated remote source" }]
+                  ? [{ path: ".env.production", content: "SECRET=<REDACTED>\n" }]
                   : []),
               ],
               page_info: {},
@@ -5233,9 +5244,9 @@ describe("push deletion ownership", () => {
 
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
-        assertStringIncludes(error.message, '"late-remote.ts"');
+        assertStringIncludes(error.message, '".env.production"');
         assertEquals(fileListCalls, 3);
-        assertEquals(deleted, ["late-remote.ts"]);
+        assertEquals(deleted, [".env.production"]);
         assertEquals(await readPushReceipt(projectDir), null);
         assertEquals(
           await readSyncTarget(projectDir, {
