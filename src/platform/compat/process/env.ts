@@ -116,6 +116,13 @@ export function env(): Record<string, string> {
  * `process.env`, a child process environment, or {@link getEnv}, so project
  * code running in the same process cannot read it. {@link getHostEnv} resolves
  * it after the real environment, so an explicitly exported variable still wins.
+ *
+ * Part of the contract for every registered key: a host variable that is
+ * exported but blank (empty or whitespace-only) does not shadow the
+ * credential — {@link getHostEnv} treats such a value as unset for that key
+ * and returns the registered credential instead. Register a credential only
+ * when a blank export must not suppress it; a caller that needs a blank
+ * export to win must not use this store.
  */
 export function setHostSecret(key: string, value: string): void {
   apply(mapSet, hostSecrets, [key, value]);

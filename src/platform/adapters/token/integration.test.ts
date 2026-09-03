@@ -7,6 +7,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import {
   getTokenStorageAdapter,
   getTokenStorageType,
@@ -57,6 +58,34 @@ describe("platform/adapters/token/integration", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
       Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
       assertEquals(isTokenStorageConfigured(), true);
+    });
+
+    it("resolves a host-private login token like an exported one", () => {
+      // A stored `veryfront login` token is registered host-privately instead
+      // of being exported, so a CLI-authenticated linked session must still
+      // select veryfront-api storage.
+      try {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } catch { /* ok */ }
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
+      try {
+        assertEquals(isTokenStorageConfigured(), true);
+        assertEquals(getTokenStorageType(), "veryfront-api");
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+    });
+
+    it("does not let a blank exported token shadow the host-private one", () => {
+      Deno.env.set("VERYFRONT_API_TOKEN", "   ");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
+      try {
+        assertEquals(isTokenStorageConfigured(), true);
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
     });
   });
 

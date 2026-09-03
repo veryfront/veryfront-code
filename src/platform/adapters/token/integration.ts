@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getEnv } from "#veryfront/platform/compat/process/env.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
@@ -39,7 +39,7 @@ export function getTokenStorageAdapter(): Promise<TokenStorageAdapter> {
 }
 
 export function isTokenStorageConfigured(): boolean {
-  return Boolean(getEnvVar("VERYFRONT_API_TOKEN") && getEnvVar("VERYFRONT_PROJECT_SLUG"));
+  return Boolean(getApiToken() && getEnvVar("VERYFRONT_PROJECT_SLUG"));
 }
 
 export function getTokenStorageType(): string {
@@ -54,7 +54,7 @@ export function resetTokenStorageAdapter(): void {
 }
 
 function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
-  const apiToken = getEnvVar("VERYFRONT_API_TOKEN");
+  const apiToken = getApiToken();
   const projectSlug = getEnvVar("VERYFRONT_PROJECT_SLUG");
   const apiBaseUrl = getEnvVar("VERYFRONT_API_URL");
 
@@ -73,4 +73,21 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
 
 function getEnvVar(name: string): string | undefined {
   return getEnv(name);
+}
+
+/**
+ * Resolve the Veryfront API token for the storage adapter.
+ *
+ * A stored `veryfront login` token is registered host-privately by the CLI
+ * rather than exported into the process environment, so it never reaches
+ * `getEnv()`. Falling back to `getHostEnv()` keeps a CLI-authenticated linked
+ * session on `veryfront-api` storage, exactly as when the token was exported.
+ * The credential stays inside the adapter config, which project code cannot
+ * reach: `getHostEnv` is absent from the public platform exports.
+ * An exported token wins when it is a usable (non-blank) value.
+ */
+function getApiToken(): string | undefined {
+  const exported = getEnvVar("VERYFRONT_API_TOKEN");
+  if (exported !== undefined && exported.trim() !== "") return exported;
+  return getHostEnv("VERYFRONT_API_TOKEN");
 }
