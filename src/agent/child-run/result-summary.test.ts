@@ -340,6 +340,14 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("rejects an incomplete tool object with an invalid escape in metadata", () => {
+      const text = 'tools: [{"id":"bogus_tool","description":"bad\\q","x":"' + "y ".repeat(70_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {
       const text = 'tools: [{"id":"first_tool"},{"id":"critical_tool","description":"' +
         "y ".repeat(70_000);

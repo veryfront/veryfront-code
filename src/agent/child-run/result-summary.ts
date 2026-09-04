@@ -414,6 +414,7 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
     const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
     if (keyEnd === undefined) break;
     const key = parseQuotedScalar(fieldBody, index, keyEnd, keyQuote);
+    if (key === undefined) return undefined;
     index = keyEnd;
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
     if (index >= fieldBody.length) break;
@@ -427,10 +428,13 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
     if (opening === '"' || opening === "'") {
       const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
       if (valueEnd === undefined) break;
-      const value = key === "id" || key === "name"
-        ? parseQuotedScalar(fieldBody, index, valueEnd, opening)
-        : undefined;
-      if (value !== undefined && ids.length < CHILD_RUN_CONTRACT_FACT_LIMIT) ids.push(value);
+      // Every completed quoted member is parsed, not just ids, so an invalid
+      // escape anywhere in the object withdraws the ids it contributed.
+      const value = parseQuotedScalar(fieldBody, index, valueEnd, opening);
+      if (value === undefined) return undefined;
+      if ((key === "id" || key === "name") && ids.length < CHILD_RUN_CONTRACT_FACT_LIMIT) {
+        ids.push(value);
+      }
       index = valueEnd;
     } else if (opening === "{" || opening === "[") {
       const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
