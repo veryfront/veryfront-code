@@ -8,6 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import {
   getTokenStorageAdapter,
   getTokenStorageType,
@@ -19,10 +20,10 @@ describe("platform/adapters/token/integration", () => {
   afterEach(() => {
     // Clean up any env vars we set
     try {
-      Deno.env.delete("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_API_TOKEN");
     } catch { /* ok */ }
     try {
-      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      deleteEnv("VERYFRONT_PROJECT_SLUG");
     } catch { /* ok */ }
     resetTokenStorageAdapter();
   });
@@ -30,33 +31,33 @@ describe("platform/adapters/token/integration", () => {
   describe("isTokenStorageConfigured", () => {
     it("should return false when env vars are not set", () => {
       try {
-        Deno.env.delete("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_API_TOKEN");
       } catch { /* ok */ }
       try {
-        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        deleteEnv("VERYFRONT_PROJECT_SLUG");
       } catch { /* ok */ }
       assertEquals(isTokenStorageConfigured(), false);
     });
 
     it("should return false when only API token is set", () => {
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
       try {
-        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        deleteEnv("VERYFRONT_PROJECT_SLUG");
       } catch { /* ok */ }
       assertEquals(isTokenStorageConfigured(), false);
     });
 
     it("should return false when only project slug is set", () => {
       try {
-        Deno.env.delete("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_API_TOKEN");
       } catch { /* ok */ }
-      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
       assertEquals(isTokenStorageConfigured(), false);
     });
 
     it("should return true when both env vars are set", () => {
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
+      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
       assertEquals(isTokenStorageConfigured(), true);
     });
 
@@ -65,9 +66,9 @@ describe("platform/adapters/token/integration", () => {
       // of being exported, so a CLI-authenticated linked session must still
       // select veryfront-api storage.
       try {
-        Deno.env.delete("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_API_TOKEN");
       } catch { /* ok */ }
-      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
       setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
       try {
         assertEquals(isTokenStorageConfigured(), true);
@@ -78,8 +79,8 @@ describe("platform/adapters/token/integration", () => {
     });
 
     it("does not let a blank exported token shadow the host-private one", () => {
-      Deno.env.set("VERYFRONT_API_TOKEN", "   ");
-      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setEnv("VERYFRONT_API_TOKEN", "   ");
+      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
       setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
       try {
         assertEquals(isTokenStorageConfigured(), true);
@@ -92,17 +93,17 @@ describe("platform/adapters/token/integration", () => {
   describe("getTokenStorageType", () => {
     it("should return 'memory' when not configured", () => {
       try {
-        Deno.env.delete("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_API_TOKEN");
       } catch { /* ok */ }
       try {
-        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        deleteEnv("VERYFRONT_PROJECT_SLUG");
       } catch { /* ok */ }
       assertEquals(getTokenStorageType(), "memory");
     });
 
     it("should return 'veryfront-api' when configured", () => {
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-      Deno.env.set("VERYFRONT_PROJECT_SLUG", "test-project");
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
+      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
       assertEquals(getTokenStorageType(), "veryfront-api");
     });
   });
@@ -121,10 +122,10 @@ describe("platform/adapters/token/integration", () => {
   describe("getTokenStorageAdapter", () => {
     afterEach(() => {
       try {
-        Deno.env.delete("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_API_TOKEN");
       } catch { /* ok */ }
       try {
-        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        deleteEnv("VERYFRONT_PROJECT_SLUG");
       } catch { /* ok */ }
       resetTokenStorageAdapter();
     });

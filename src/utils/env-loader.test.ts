@@ -419,6 +419,26 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("keeps env-file attribution when Map.prototype.get is replaced", async () => {
+      const key = createKey("SOURCE_TAMPERED_MAP");
+      await writeEnvFile(".env", `${key}=from-file`);
+      await loadEnv({ cwd: tempDir, override: true });
+
+      const originalGet = Map.prototype.get;
+      Map.prototype.get = function () {
+        return undefined;
+      };
+      try {
+        assertEquals(getEnvSource(key), {
+          source: "env-file",
+          file: `${tempDir}/.env`,
+        });
+      } finally {
+        Map.prototype.get = originalGet;
+        cleanupKeys(key);
+      }
+    });
+
     it("should report a key present only in the process env as process", async () => {
       const key = createKey("SOURCE_PROCESS");
       setEnv(key, "only-process");

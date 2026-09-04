@@ -29,6 +29,8 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import { guardedOutboundFetch } from "#cli/outbound-fetch";
 
 export interface DevOptions {
   port: number;
@@ -80,7 +82,10 @@ export async function preloadDevAuth(
 ): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
   if (!apiToken) return { identity: null, projects: [] };
 
-  const result = await fetchRemoteProjects(apiToken);
+  const result = await fetchRemoteProjects(apiToken, {
+    apiBaseUrl: resolveHostOwnedApiBaseUrl(),
+    transport: guardedOutboundFetch,
+  });
   const identity = result.credentialType === "apiKey"
     ? result.error ? null : { authenticated: true, type: "apiKey" } as const
     : result.user;
@@ -428,7 +433,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             if (!result) return;
 
             identity = result;
-            const projectResult = await fetchRemoteProjects();
+            const projectResult = await fetchRemoteProjects(undefined, {
+              apiBaseUrl: resolveHostOwnedApiBaseUrl(),
+              transport: guardedOutboundFetch,
+            });
             projects = projectResult.projects;
             console.log(
               `  ✓ ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,

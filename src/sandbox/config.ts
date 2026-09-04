@@ -1,7 +1,25 @@
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { SandboxOptions } from "./types.ts";
+
+const NativeURL = URL;
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+
+function trimString(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
+}
+
+function isHostApiOrigin(value: string): boolean {
+  try {
+    return new NativeURL(value).origin === new NativeURL(resolveHostOwnedApiBaseUrl()).origin;
+  } catch {
+    return false;
+  }
+}
 
 export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
   const url = options.apiUrl || getHostEnv("VERYFRONT_API_URL");
@@ -16,7 +34,21 @@ export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
 }
 
 export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
-  const authToken = options.authToken?.trim() || getVeryfrontCloudAuthToken();
+  const explicitToken = trimString(options.authToken);
+  if (explicitToken) return explicitToken;
+
+  // Caller-selected origins form a separate credential domain. Ambient
+  // host login credentials can be reused only for the host API. A credential
+  // already bound to the current request remains caller-owned.
+  if (options.apiUrl && !isHostApiOrigin(options.apiUrl)) {
+    const requestToken = trimString(getCurrentRequestContext()?.token);
+    if (requestToken) return requestToken;
+    throw CONFIG_INVALID.create({
+      detail: "Sandbox auth must be provided explicitly for a custom API URL.",
+    });
+  }
+
+  const authToken = getVeryfrontCloudAuthToken();
   if (authToken) return authToken;
 
   throw CONFIG_INVALID.create({

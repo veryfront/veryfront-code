@@ -8,6 +8,7 @@ import {
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { deleteHostSecret, setHostSecret } from "#cli/process-env";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
 import {
   remoteFileTools,
   vfRemoteCloneProject,
@@ -473,6 +474,10 @@ describe("cli/mcp/remote-file-tools", () => {
         apiToken: "   ",
       });
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      const originalBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = getEnv("VERYFRONT_API_URL");
+      deleteEnv("VERYFRONT_API_BASE_URL");
+      deleteEnv("VERYFRONT_API_URL");
 
       let requestAuth = "";
       let requestUrl = "";
@@ -500,6 +505,10 @@ describe("cli/mcp/remote-file-tools", () => {
         });
       } finally {
         deleteHostSecret("VERYFRONT_API_TOKEN");
+        if (originalBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl);
+        if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+        else setEnv("VERYFRONT_API_URL", originalApiUrl);
       }
 
       assertEquals(requestAuth, "Bearer stored-login-token");

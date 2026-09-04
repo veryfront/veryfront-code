@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import {
   type FetchCall,
   headerValue,
@@ -178,6 +179,20 @@ describe("Sandbox", () => {
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_explicit_token");
     });
 
+    it("does not send a stored login token to a caller-selected API origin", async () => {
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      try {
+        await assertRejects(
+          () => Sandbox.create({ apiUrl: "https://caller-selected.example" }),
+          VeryfrontError,
+          "Sandbox auth must be provided explicitly for a custom API URL",
+        );
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+      assertEquals(fetchCalls, []);
+    });
+
     it("should poll until ready when not running", async () => {
       mockTimers();
       mockFetch([
@@ -224,7 +239,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => Sandbox.create({ apiUrl: "https://api.test.com" }),
         Error,
-        "Sandbox auth not configured",
+        "Sandbox auth must be provided explicitly for a custom API URL",
       );
 
       assertEquals(fetchCalls.length, 0);
@@ -354,6 +369,7 @@ describe("Sandbox", () => {
 
     it("should reconnect using VERYFRONT_API_TOKEN when authToken is omitted", async () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
 
       mockFetch([
         jsonResponse({ endpoint: "https://sandbox.example.com" }),

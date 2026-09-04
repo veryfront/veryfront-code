@@ -4,6 +4,13 @@ import { getEnvSource } from "#veryfront/utils/env-loader.ts";
 const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
 const applyIntrinsic = Reflect.apply;
 const stringReplace = String.prototype.replace;
+const stringTrim = String.prototype.trim;
+
+function normalizeHostApiEnv(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = applyIntrinsic(stringTrim, value, []) as string;
+  return trimmed || undefined;
+}
 
 function getHostApiEnv(key: "VERYFRONT_API_BASE_URL" | "VERYFRONT_API_URL"): string | undefined {
   // loadEnv copies repository values into the process environment. Preserve
@@ -14,9 +21,9 @@ function getHostApiEnv(key: "VERYFRONT_API_BASE_URL" | "VERYFRONT_API_URL"): str
 
 /** Resolve the API origin paired with a host-private stored login token. */
 export function resolveHostOwnedApiBaseUrl(): string {
-  const hostBase = getHostApiEnv("VERYFRONT_API_BASE_URL");
+  const hostBase = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL"));
   if (hostBase) return hostBase;
-  const hostApiUrl = getHostApiEnv("VERYFRONT_API_URL");
+  const hostApiUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_URL"));
   return hostApiUrl
     ? applyIntrinsic(stringReplace, hostApiUrl, ["/graphql", "/api"]) as string
     : DEFAULT_HOST_API_BASE_URL;

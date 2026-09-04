@@ -60,6 +60,7 @@ import {
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
+import { createOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -322,19 +323,23 @@ export async function finalizeGatewayBillingGroup(
 
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS;
   const sleepFn = options.sleep ?? sleep;
+  const hostTransport = createOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
 
   for (let attempt = 0;; attempt += 1) {
     let response: Response;
     try {
-      response = await fetch(joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${bootstrap.apiToken}`,
-          "Content-Type": "application/json",
-          ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
+      response = await hostTransport(
+        joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bootstrap.apiToken}`,
+            "Content-Type": "application/json",
+            ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
+          },
+          body: JSON.stringify({ billing_group_id: billingGroupId }),
         },
-        body: JSON.stringify({ billing_group_id: billingGroupId }),
-      });
+      );
     } catch (error) {
       cliLogger.warn(
         `Gateway billing finalization skipped for ${billingGroupId}: ${

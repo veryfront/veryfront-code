@@ -7,6 +7,10 @@ import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts"
 const logger = serverLogger.component("env");
 
 const envSources = new Map<string, string>();
+const applyIntrinsic = Reflect.apply;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
 let envLoaded = false;
 
 /** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
@@ -36,7 +40,7 @@ export async function loadEnv(
         if (existing && !override) continue;
 
         setEnv(key, value);
-        envSources.set(key, file);
+        applyIntrinsic(mapSet, envSources, [key, file]);
         totalVars++;
 
         // Log only the key name and value length — never any part of the value.
@@ -164,7 +168,7 @@ export function hasEnvLoaded(): boolean {
 export function getEnvSource(
   key: string,
 ): { source: "env-file"; file: string } | { source: "process" } | { source: "unset" } {
-  const file = envSources.get(key);
+  const file = applyIntrinsic(mapGet, envSources, [key]) as string | undefined;
   if (file) return { source: "env-file", file };
 
   const value = getEnv(key);
@@ -175,5 +179,5 @@ export function getEnvSource(
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
-  envSources.clear();
+  applyIntrinsic(mapClear, envSources, []);
 }

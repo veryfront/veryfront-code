@@ -32,6 +32,7 @@ const DISCOVERY_FAILURE_MESSAGE = "Failed to fetch remote integration tool defin
 const ENV_KEYS = [
   "PROXY_MODE",
   "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_URL",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
 ] as const;

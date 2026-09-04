@@ -2,6 +2,15 @@ import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
 
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+const stringReplace = String.prototype.replace;
+
+interface ProjectDiscoveryOptions {
+  apiBaseUrl?: string;
+  transport?: typeof fetch;
+}
+
 export interface RemoteProject {
   id: string;
   slug: string;
@@ -17,8 +26,14 @@ export interface ProjectDiscoveryResult {
   error?: string;
 }
 
-export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDiscoveryResult> {
-  const token = apiToken?.trim() || await readToken();
+export async function fetchRemoteProjects(
+  apiToken?: string,
+  options: ProjectDiscoveryOptions = {},
+): Promise<ProjectDiscoveryResult> {
+  const normalizedToken = apiToken === undefined
+    ? undefined
+    : applyIntrinsic(stringTrim, apiToken, []) as string;
+  const token = normalizedToken || await readToken();
 
   if (!token) {
     return {
@@ -29,7 +44,10 @@ export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDis
   }
 
   const apiKeyCredential = isApiKeyToken(token);
-  const user = apiKeyCredential ? null : await validateToken(token);
+  const user = apiKeyCredential ? null : await validateToken(token, undefined, {
+    apiBaseUrl: options.apiBaseUrl,
+    transport: options.transport,
+  });
 
   if (!apiKeyCredential && !user) {
     return {
@@ -40,7 +58,10 @@ export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDis
   }
 
   try {
-    const response = await fetch(`${getApiUrl()}/projects`, {
+    const apiBaseUrl = options.apiBaseUrl ?? getApiUrl();
+    const baseUrl = applyIntrinsic(stringReplace, apiBaseUrl, [/\/$/, ""]) as string;
+    const transport = options.transport ?? fetch;
+    const response = await transport(`${baseUrl}/projects`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

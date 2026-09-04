@@ -229,6 +229,42 @@ Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from 
   }]);
 });
 
+Deno.test("Veryfront API MCP bootstrap does not expose host auth to replaced trim", () => {
+  const originalTrim = String.prototype.trim;
+  const observed: string[] = [];
+  String.prototype.trim = function () {
+    observed.push(String(this));
+    return Reflect.apply(originalTrim, this, []);
+  };
+  try {
+    const sources = getRuntimeRemoteToolSources(
+      {
+        system: "Use project files.",
+        tools: { get_file: true },
+        mcpServers: [{ kind: "veryfront-api" }],
+      },
+      {
+        getVeryfrontBootstrap: () => ({
+          apiBaseUrl: "https://api.example/",
+          apiToken: "server-token",
+          projectSlug: "server-project",
+          hasRequestContext: false,
+          usesVeryfrontFs: false,
+        }),
+        createRemoteToolSource: () => ({
+          id: "veryfront-api",
+          listTools: () => Promise.resolve([]),
+          executeTool: () => Promise.resolve(undefined),
+        }),
+      },
+    );
+    assertEquals(sources?.length, 1);
+  } finally {
+    String.prototype.trim = originalTrim;
+  }
+  assertEquals(observed.includes("server-token"), false);
+});
+
 Deno.test("getRuntimeRemoteToolSources does not synthesize tools missing from remote discovery", async () => {
   const executeCalls: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> =
     [];
