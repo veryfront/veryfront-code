@@ -621,7 +621,12 @@ export async function transformJsxImports(
         admissionFailure ??= error;
         return null;
       }
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
+      logger.warn(
+        `${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${
+          describeProjectSource(filePath, projectDir)
+        }`,
+        error,
+      );
       return null;
     }
   };
@@ -637,7 +642,12 @@ export async function transformJsxImports(
 
     // Runs before the rethrow so the artifacts written by the siblings that kept
     // going after the admission failure are still covered by a cleanup pass.
-    await pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts);
+    try {
+      await pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts);
+    } catch {
+      ensureJsxCacheSweepArmed(esmCacheDir);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Deferred JSX cache maintenance prune`);
+    }
     await refreshSelectedArtifacts();
     if (admissionFailure) throw admissionFailure;
   } finally {

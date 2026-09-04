@@ -46,6 +46,7 @@ import {
 } from "./jsx-cache.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
 import { getLocalFs } from "./cache/index.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
 function limitErrorMessage(error: unknown): string {
   if (!(error instanceof ModuleSourceLimitError)) {
@@ -680,6 +681,80 @@ describe("readProjectJsxSourceWithinLimit", () => {
       );
       assertEquals(transformed.includes(`file://${sourcePath}`), true);
     } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("redacts the project root when strict UTF-8 decoding fails", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-invalid-utf8-test-" });
+    const projectDir = "/srv/deployments/tenant-42/project";
+    const sourcePath = `${projectDir}/components/Broken.tsx`;
+    const warnings: string[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.level === "warn") warnings.push(entry.message);
+    });
+    const adapter = {
+      fs: {
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([0xff])),
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      await transformJsxImports(
+        `import Broken from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+        projectDir,
+      );
+
+      assertEquals(warnings.some((warning) => warning.includes("components/Broken.tsx")), true);
+      assertEquals(warnings.some((warning) => warning.includes(projectDir)), false);
+    } finally {
+      unsubscribe();
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps a successful transform when its maintenance prune cannot acquire a lease", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-lease-test-" });
+    const sourcePath = "/tmp/source/Card.tsx";
+    const source = "export const Card = () => <section />;";
+    const adapter = {
+      fs: { readFile: () => Promise.resolve(source) },
+    } as unknown as RuntimeAdapter;
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    let artifactWritten = false;
+    let pruneFailed = false;
+    localFs.writeTextFile = async (path: string, content: string) => {
+      await originalWriteTextFile(path, content);
+      if (path.includes("jsx-")) artifactWritten = true;
+    };
+    localFs.readDir = (path: string) => {
+      if (path === tempDir && artifactWritten && !pruneFailed) {
+        pruneFailed = true;
+        throw new Error("lease acquisition timed out");
+      }
+      return originalReadDir(path);
+    };
+
+    try {
+      const transformed = await transformJsxImports(
+        `import Card from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+      );
+
+      assertEquals(transformed.includes("jsx-"), true);
+      assertEquals(__jsxCacheInternals.hasScheduledJsxCachePrune(tempDir), true);
+    } finally {
+      localFs.readDir = originalReadDir;
+      localFs.writeTextFile = originalWriteTextFile;
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
       await remove(tempDir, { recursive: true });
     }
   });
