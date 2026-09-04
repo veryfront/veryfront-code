@@ -31,6 +31,7 @@ const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+const PSEUDO_OBJECT_TOOL_FIELD_PATTERN = /["'](id|name)["']\s*:\s*["']([^"']+)["']/g;
 
 /** Result return modes supported by delegated child runs. */
 export type ChildRunResultMode = "summary" | "full" | "structured";
@@ -197,6 +198,19 @@ function parseCompleteArrayValue(
     const value = text.slice(start + 1, end - 1);
     return value.includes("\\") ? { ok: false } : { ok: true, value };
   }
+  if (text[start] === "{") {
+    const value = Object.create(null) as Record<string, string>;
+    const candidate = text.slice(start, end);
+    PSEUDO_OBJECT_TOOL_FIELD_PATTERN.lastIndex = 0;
+    for (const match of candidate.matchAll(PSEUDO_OBJECT_TOOL_FIELD_PATTERN)) {
+      const key = match[1];
+      const fieldValue = match[2];
+      if ((key === "id" || key === "name") && fieldValue !== undefined) {
+        value[key] = fieldValue;
+      }
+    }
+    if (Object.keys(value).length > 0) return { ok: true, value };
+  }
   try {
     return { ok: true, value: JSON.parse(text.slice(start, end)) };
   } catch {
@@ -214,7 +228,7 @@ function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
 
     const valueStart = index;
     const opening = fieldBody[index];
-    let valueEnd = index;
+    let valueEnd: number;
     if (opening === '"' || opening === "'") {
       const end = scanQuotedValueEnd(fieldBody, index, opening);
       if (end === undefined) break;

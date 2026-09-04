@@ -137,12 +137,13 @@ describe("child-run-result-summary", () => {
     });
 
     it("extracts tool IDs from single-quoted pseudo-JSON arrays", () => {
-      const text = "tools: ['create_agent']\nprovider_tool_ids: ['web_fetch']";
+      const text = "tools: ['create_agent', {'id': 'other_tool'}]\n" +
+        "provider_tool_ids: ['web_fetch']";
 
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, {
-        toolIds: ["create_agent"],
+        toolIds: ["create_agent", "other_tool"],
         providerToolIds: ["web_fetch"],
       });
     });
