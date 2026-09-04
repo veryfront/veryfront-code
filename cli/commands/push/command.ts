@@ -756,6 +756,13 @@ function findRemoteFilesMissingLocally(
     );
 }
 
+function isSelectedForPrune(path: string, selectedPrunePaths: ReadonlySet<string>): boolean {
+  for (const selectedPath of selectedPrunePaths) {
+    if (path === selectedPath || path.startsWith(`${selectedPath}/`)) return true;
+  }
+  return false;
+}
+
 function requirePreservedRemoteContent(
   remoteFiles: readonly RemoteFile[],
   localPaths: ReadonlySet<string>,
@@ -1131,7 +1138,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       );
       const toDelete = pruneRemoteMissing
         ? remoteFilesMissingLocally
-        : remoteFilesMissingLocally.filter((path) => selectedPrunePaths.has(path));
+        : remoteFilesMissingLocally.filter((path) => isSelectedForPrune(path, selectedPrunePaths));
       // Preflight: fail before any remote mutation if a preserved remote file
       // is missing content, so the digest computations after upload/delete
       // cannot be the first to discover it.

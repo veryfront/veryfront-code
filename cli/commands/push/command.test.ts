@@ -4389,6 +4389,75 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("deletes descendant paths when a selected path is a deleted gitlink parent", async () => {
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const deleted: string[] = [];
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "export const value = 1;\n" },
+                { path: "vendor/pkg/index.ts", content: "export const old = 1;\n" },
+                { path: "vendor/pkg/subdir/child.ts", content: "export const child = 2;\n" },
+                { path: "vendorx/index.ts", content: "export const sibling = 3;\n" },
+                { path: "remote-only.ts", content: "remote\n" },
+              ].filter((file) => !deleted.includes(file.path)),
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(fetchHandler, () =>
+          pushCommand({
+            projectDir,
+            branch: "main",
+            prunePaths: ["vendor/pkg"],
+            quiet: true,
+          }));
+
+        assertEquals(deleted, ["vendor/pkg/index.ts", "vendor/pkg/subdir/child.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "vendorx/index.ts", content: "export const sibling = 3;\n" },
+            { path: "remote-only.ts", content: "remote\n" },
+          ]),
+        );
+        assertEquals(
+          receipt.localSourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+          ]),
+        );
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("re-deletes a selected path recreated during a forced targeted refresh", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
