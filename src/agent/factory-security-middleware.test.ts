@@ -573,6 +573,44 @@ describe("resolveSecurityMiddleware", () => {
     );
   });
 
+  it("accepts opaque caller metadata while detaching provider-relevant input", async () => {
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/opaque-message-metadata",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const opaque = () => "caller-owned";
+    const assistant = agent({
+      id: "opaque-message-metadata",
+      model: "hosted/opaque-message-metadata",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({
+      input: [{
+        id: "opaque-input",
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+        metadata: { opaque },
+      }],
+    });
+
+    assertEquals(result.text, "ok");
+  });
+
   it("reuses and streams cached string-input responses across synthetic ids", async () => {
     let streams = 0;
     const model: ModelRuntime = {

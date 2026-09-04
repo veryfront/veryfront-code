@@ -121,7 +121,12 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
         commit: close,
         rollback: async (rejectedMessages) => {
           close();
-          if (this.clearVersion !== clearVersion) return;
+          if (this.clearVersion !== clearVersion) {
+            if (rejectedMessages !== undefined) {
+              this.messages = this.messages.filter((message) => !rejectedMessages.has(message));
+            }
+            return;
+          }
           const laterAdditions = rejectedMessages === undefined
             ? []
             : additions.filter((message) =>
@@ -273,7 +278,12 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         commit: close,
         rollback: async (rejectedMessages) => {
           close();
-          if (this.clearVersion !== clearVersion) return;
+          if (this.clearVersion !== clearVersion) {
+            if (rejectedMessages !== undefined) {
+              this.messages = this.messages.filter((message) => !rejectedMessages.has(message));
+            }
+            return;
+          }
           const laterAdditions = rejectedMessages === undefined
             ? []
             : additions.filter((message) =>

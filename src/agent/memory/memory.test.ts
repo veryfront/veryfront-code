@@ -118,6 +118,19 @@ describe("ConversationMemory", () => {
     assertEquals(await memory.getMessages(), []);
   });
 
+  it("removes a rejected write added after a concurrent clear", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    await memory.clear();
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
   it("does not replay an in-flight addition already present in the snapshot", async () => {
     const memory = new ConversationMemory({ type: "conversation", maxTokens: 100 });
     const concurrent = userMessage("assistant", "concurrent output");
@@ -297,6 +310,19 @@ describe("SummaryMemory", () => {
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);
     await memory.clear();
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("removes a rejected summary-memory write added after a concurrent clear", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    await memory.clear();
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
 
     await rollback.rollback(new Set([rejected]));
 

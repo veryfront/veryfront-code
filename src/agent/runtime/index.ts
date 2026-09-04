@@ -1443,7 +1443,11 @@ export class AgentRuntime {
       ? captureMemoryRollback(this.memory, history)
       : undefined;
     const committedInputMessages = inputMessages.map((message) => {
-      const cloned = IntrinsicStructuredClone(message) as Message;
+      const metadata = message.metadata;
+      const cloneable = { ...message };
+      delete cloneable.metadata;
+      const cloned = IntrinsicStructuredClone(cloneable) as Message;
+      if (metadata !== undefined) cloned.metadata = metadata;
       propagateSyntheticMessageMarks(message, cloned);
       return isRuntimeGeneratedUserMessage(message)
         ? markRuntimeGeneratedUserMessage(cloned)
