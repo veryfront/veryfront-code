@@ -69,9 +69,11 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   level: "warn",
   message: "Knowledge ingest logs were truncated",
 });
-const IntrinsicReflectApply = Reflect.apply;
+const ReflectApply = Reflect.apply;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
+const NumberPrototypeToString = Number.prototype.toString;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -150,7 +152,8 @@ export interface ProjectRunExecuteHandlerDeps {
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
-    config?: WorkflowClientConfig,
+    config: WorkflowClientConfig | undefined,
+    options: { projectId: string } & ProjectWorkflowRedisTargetScope,
   ): WorkflowClientView | Promise<WorkflowClientView>;
   runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
   createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
@@ -224,6 +227,42 @@ function parseOptionalNullableString(value: unknown, fieldName: string): string 
   return value;
 }
 
+/**
+ * Reject runtime target selections that carry no identifier for their kind.
+ *
+ * `validateRuntimeAgentTargetSelection` already treats these combinations as
+ * invalid for the same selection, but that check runs on the agent invocation
+ * contract, not on this wire format. Without it here, an `environment` target
+ * missing its environment id — or a `preview_branch` target missing its branch
+ * id — canonicalizes to the empty identifier, so every such request shares one
+ * durable workflow namespace and can see another target's runs and approval
+ * decision claims. An identifier belonging to a different kind is rejected for
+ * the same reason: it is a malformed selection, not a namespace.
+ *
+ * A `main_branch` selection, or an omitted kind, is left alone. Omitted kinds
+ * still reach this handler alongside a `runtimeTargetEnvironmentId` that
+ * `executeTaskRun` reads as the legacy environment override, and
+ * `canonicalWorkflowRedisTarget` already drops identifiers the default branch
+ * does not own, so those cannot fork the namespace.
+ */
+function validateRuntimeTargetSelection(
+  kind: ProjectRunExecuteRequest["runtimeTargetKind"],
+  environmentId: string | null | undefined,
+  branchId: string | null | undefined,
+): void {
+  if (kind === "environment" && (!environmentId || branchId)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "environment target requires runtimeTargetEnvironmentId and no runtimeTargetBranchId",
+    });
+  }
+  if (kind === "preview_branch" && (!branchId || environmentId)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail:
+        "preview_branch target requires runtimeTargetBranchId and no runtimeTargetEnvironmentId",
+    });
+  }
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
@@ -257,21 +296,30 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
+  const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
+  const runtimeTargetEnvironmentId = parseOptionalNullableString(
+    value.runtimeTargetEnvironmentId,
+    "runtimeTargetEnvironmentId",
+  );
+  const runtimeTargetBranchId = parseOptionalNullableString(
+    value.runtimeTargetBranchId,
+    "runtimeTargetBranchId",
+  );
+  validateRuntimeTargetSelection(
+    runtimeTargetKind,
+    runtimeTargetEnvironmentId,
+    runtimeTargetBranchId,
+  );
+
   return {
     runId,
     kind,
     target,
     projectId,
     runtimeAgUiEndpoint: parseOptionalUrl(value.runtimeAgUiEndpoint, "runtimeAgUiEndpoint"),
-    runtimeTargetKind: parseRuntimeTargetKind(value.runtimeTargetKind),
-    runtimeTargetEnvironmentId: parseOptionalNullableString(
-      value.runtimeTargetEnvironmentId,
-      "runtimeTargetEnvironmentId",
-    ),
-    runtimeTargetBranchId: parseOptionalNullableString(
-      value.runtimeTargetBranchId,
-      "runtimeTargetBranchId",
-    ),
+    runtimeTargetKind,
+    runtimeTargetEnvironmentId,
+    runtimeTargetBranchId,
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
@@ -317,8 +365,97 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
   };
 }
 
+/**
+ * Build the Redis key prefix for one project's durable workflow state on one
+ * runtime target.
+ *
+ * Hosted project runtimes share a single Redis instance, so every durable
+ * workflow key must be namespaced per project and runtime target. Without this
+ * isolation the approval decision claim recovery scan in one runtime can
+ * enumerate and resume runs that belong to a different project, environment,
+ * or preview branch. Characters outside a conservative allowlist are escaped
+ * so distinct identifiers cannot produce colliding prefixes or Redis SCAN
+ * glob metacharacters.
+ */
+function encodeWorkflowRedisScope(value: string): string {
+  let encoded = "";
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    const allowed = codeUnit >= 48 && codeUnit <= 57 ||
+      codeUnit >= 65 && codeUnit <= 90 ||
+      codeUnit >= 97 && codeUnit <= 122 ||
+      codeUnit === 45 || codeUnit === 95;
+    encoded += allowed
+      ? value[index]
+      : `.${ReflectApply(NumberPrototypeToString, codeUnit, [16]) as string}.`;
+  }
+  return encoded;
+}
+
+export interface ProjectWorkflowRedisTargetScope {
+  runtimeTargetKind?: ProjectRunExecuteRequest["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
+  runtimeTargetBranchId?: string | null;
+}
+
+/**
+ * Reduce a runtime target selection to its one canonical form.
+ *
+ * `runtimeTargetKind` is optional on the wire and an omitted kind means the
+ * default branch, exactly as `resolveControlPlaneBranchBinding` treats it. The
+ * identifier fields are also only meaningful for the kind that owns them. If
+ * either were encoded verbatim, two wire representations of the same target
+ * would derive different Redis namespaces and approval recovery started under
+ * one representation could not see runs waiting under the other.
+ */
+function canonicalWorkflowRedisTarget(
+  target: ProjectWorkflowRedisTargetScope,
+): { kind: string; environmentId: string; branchId: string } {
+  const kind = target.runtimeTargetKind ?? "main_branch";
+  return {
+    kind,
+    environmentId: kind === "environment" ? target.runtimeTargetEnvironmentId ?? "" : "",
+    branchId: kind === "preview_branch" ? target.runtimeTargetBranchId ?? "" : "",
+  };
+}
+
+export function projectWorkflowRedisPrefix(
+  projectId: string,
+  target: ProjectWorkflowRedisTargetScope = {},
+): string {
+  const canonical = canonicalWorkflowRedisTarget(target);
+  const projectScope = encodeWorkflowRedisScope(projectId);
+  const targetKind = encodeWorkflowRedisScope(canonical.kind);
+  const environmentScope = encodeWorkflowRedisScope(canonical.environmentId);
+  const branchScope = encodeWorkflowRedisScope(canonical.branchId);
+  return `vf:workflow:project:${projectScope}:target:${targetKind}:environment:${environmentScope}:branch:${branchScope}:`;
+}
+
+export function projectWorkflowRedisConfig(
+  projectId: string,
+  target: ProjectWorkflowRedisTargetScope = {},
+): {
+  prefix: string;
+  streamKey: string;
+  groupName: string;
+} {
+  if (!projectId) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Durable workflow persistence requires a project scope",
+    });
+  }
+
+  const prefix = projectWorkflowRedisPrefix(projectId, target);
+  return {
+    prefix,
+    streamKey: `${prefix}stream`,
+    groupName: `${prefix}workers`,
+  };
+}
+
 async function createRuntimeWorkflowClient(
-  config?: WorkflowClientConfig,
+  config: WorkflowClientConfig | undefined,
+  options: { projectId: string } & ProjectWorkflowRedisTargetScope,
 ): Promise<WorkflowClientView> {
   const clientConfig = withRuntimeStepRegistries(config);
   const redisUrl = getHostEnv("REDIS_URL")?.trim();
@@ -328,7 +465,11 @@ async function createRuntimeWorkflowClient(
     });
   }
 
-  const backend = new RedisBackend({ url: redisUrl, debug: config?.debug });
+  const backend = new RedisBackend({
+    url: redisUrl,
+    ...projectWorkflowRedisConfig(options.projectId, options),
+    debug: config?.debug,
+  });
   if (backend.initialize) {
     await backend.initialize();
   }
@@ -448,7 +589,15 @@ async function executeWorkflowRun(
     };
   }
 
-  const client = await deps.createWorkflowClient(withRuntimeStepRegistries({ debug: ctx.debug }));
+  const client = await deps.createWorkflowClient(
+    withRuntimeStepRegistries({ debug: ctx.debug }),
+    {
+      projectId: request.projectId,
+      runtimeTargetKind: request.runtimeTargetKind,
+      runtimeTargetEnvironmentId: request.runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: request.runtimeTargetBranchId,
+    },
+  );
   try {
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
@@ -630,8 +779,8 @@ async function readLocalEvalRuntimeRestrictions(
 ): Promise<AgUiRuntimeRestrictions | undefined> {
   let body: unknown;
   try {
-    const cloned = IntrinsicReflectApply(RequestPrototypeClone, request, []) as Request;
-    body = await (IntrinsicReflectApply(RequestPrototypeJson, cloned, []) as Promise<unknown>);
+    const cloned = ReflectApply(RequestPrototypeClone, request, []) as Request;
+    body = await (ReflectApply(RequestPrototypeJson, cloned, []) as Promise<unknown>);
   } catch {
     // The AG-UI handler rejects a body it cannot parse, so there is nothing to
     // restrict here.

@@ -179,11 +179,68 @@ describe("EvalReportExporterRegistry", () => {
     // `evidence` carries, so it must not survive redaction either.
     assertEquals(exportedRecord.metrics?.[0]?.label, undefined);
     assertEquals(exportedReport.summary.metrics[0]?.label, undefined);
+    // The dataset hash is a deterministic digest of every example's id, input, reference, and
+    // metadata, so it identifies dataset content across runs and must not survive redaction.
     assertEquals(exportedReport.dataset, {
+      kind: "json",
+      examples: 1,
+    });
+  });
+
+  it("strips the dataset content hash unless export redaction explicitly allows it", () => {
+    const defaultRedacted = redactEvalReportForExport(createReport());
+    assertEquals(defaultRedacted.dataset, { kind: "json", examples: 1 });
+
+    const hashAllowed = redactEvalReportForExport(createReport(), {
+      includeDatasetHash: true,
+    });
+    assertEquals(hashAllowed.dataset, {
       kind: "json",
       examples: 1,
       hash: "sha256:fixture-dataset",
     });
+  });
+
+  it("withholds the dataset content hash from exporters unless the export context allows it", async () => {
+    // Integrations receive reports through `registry.export()`, so assert the stripping on that
+    // path with a context that sets no redaction at all, not only on `redactEvalReportForExport`.
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+    registry.register({
+      id: "braintrust",
+      export(report) {
+        exportedReports.push(report);
+      },
+    });
+
+    await registry.export(createReport(), { projectReference: "demo" });
+    assertEquals(exportedReports[0]?.dataset, { kind: "json", examples: 1 });
+
+    await registry.export(createReport(), {
+      projectReference: "demo",
+      redaction: { includeDatasetHash: true },
+    });
+    assertEquals(exportedReports[1]?.dataset, {
+      kind: "json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    });
+  });
+
+  it("leaves reports without dataset metadata untouched", () => {
+    // `EvalReport.dataset` is absent whenever the run had no resolvable dataset identity, so
+    // redaction must not synthesize an empty dataset object for exporters to trip over.
+    const report = createReport();
+    delete report.dataset;
+
+    assertEquals(redactEvalReportForExport(report).dataset, undefined);
+    assertEquals(
+      redactEvalReportForExport(report, {
+        includeDatasetPath: true,
+        includeDatasetHash: true,
+      }).dataset,
+      undefined,
+    );
   });
 
   it("uses call-time exporter membership throughout an in-flight export", async () => {
@@ -486,6 +543,7 @@ describe("EvalReportExporterRegistry", () => {
       includeMetricEvidence: true,
       includeMetricExplanations: true,
       includeDatasetPath: true,
+      includeDatasetHash: true,
       metadataAllowlist: ["topic", "tenantId"],
     });
     const record = redacted.records[0];

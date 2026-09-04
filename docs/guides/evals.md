@@ -730,10 +730,12 @@ const report = await runEval(definition, {
 ```
 
 The registry redacts inputs, outputs, references, traces, tool-call input and
-output, metric evidence, metric explanations, dataset paths, record metadata,
-and export context metadata unless the export context explicitly allows each
-field. Dataset kind, example count, and content hash stay available so
-exporters can group runs without seeing source paths. Use `metadataAllowlist`
+output, metric evidence, metric explanations, dataset paths, dataset content
+hashes, record metadata, and export context metadata unless the export context
+explicitly allows each field. Dataset kind and example count stay available so
+exporters can group runs without seeing source paths, and
+`includeDatasetHash: true` opts back into the deterministic content hash for
+destinations trusted to correlate dataset content. Use `metadataAllowlist`
 only for metadata keys the destination is allowed to receive. Runtime monitoring
 remains separate: use `veryfront/extensions/observability` and the OpenTelemetry
 extension for spans,

@@ -24,18 +24,45 @@ export type EvalMetricThreshold = {
 /** Value that can be returned synchronously or as a promise. */
 export type EvalMaybePromise<T> = T | Promise<T>;
 
-/** Redaction policy applied before reports leave the process. */
+/**
+ * Redaction policy applied before reports leave the process.
+ *
+ * This is the single definition of the policy; `veryfront/extensions/eval` re-exports it so the
+ * exporter contract and the eval core cannot drift apart.
+ */
 export interface EvalReportExportRedaction {
+  /** Include dataset input payloads. Defaults to false. */
   includeInputs?: boolean;
+  /** Include target output payloads. Defaults to false. */
   includeOutputs?: boolean;
+  /** Include reference answer payloads. Defaults to false. */
   includeReferences?: boolean;
+  /** Include trace events and tool-call metadata. Defaults to false. */
   includeTraces?: boolean;
+  /** Include retrieved RAG context passages. Defaults to false. */
+  includeRetrievedContext?: boolean;
+  /** Include answer citation payloads. Defaults to false. */
+  includeCitations?: boolean;
+  /**
+   * Include metric/check explanations. Defaults to false. Applies to record results and to the
+   * summary gate failures that copy them.
+   */
   includeMetricExplanations?: boolean;
   /**
-   * Include metric evidence payloads. Metric labels restate the same configured parameters, so
+   * Include metric/check evidence payloads. Defaults to false. Applies to record results and to the
+   * summary gate failures that copy them. Metric labels restate the same configured parameters, so
    * they follow this setting on both record and summary metrics.
    */
   includeMetricEvidence?: boolean;
+  /** Include dataset source paths. Defaults to false. */
+  includeDatasetPath?: boolean;
+  /**
+   * Include the deterministic dataset content hash. Defaults to false. The hash is computed
+   * over every example's id, input, reference, and metadata without a salt, so it identifies
+   * dataset content across projects and runs and can be brute-forced for low-entropy datasets.
+   */
+  includeDatasetHash?: boolean;
+  /** Record and export context metadata keys that can be exported. Defaults to none. */
   metadataAllowlist?: string[];
 }
 
@@ -698,8 +725,17 @@ export interface EvalReportDatasetMetadata {
   kind: EvalDataset["kind"];
   path?: string;
   examples: number;
-  hash: string;
+  /**
+   * Deterministic dataset content hash. Sanitized exporter copies can omit it
+   * unless redaction explicitly includes it.
+   */
+  hash?: string;
 }
+
+/** Eval report returned by local execution, with its dataset hash intact. */
+export type LocalEvalReport = Omit<EvalReport, "dataset"> & {
+  dataset?: EvalReportDatasetMetadata & { hash: string };
+};
 
 /** Per-model row in an eval model comparison report. */
 export interface EvalModelReportSummary {

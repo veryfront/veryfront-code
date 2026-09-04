@@ -6,6 +6,37 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: eval exports omit the dataset content hash
+
+`EvalReportExporterRegistry.export()` now strips `dataset.hash` from the report
+copy every exporter receives, alongside `dataset.path`. The hash is an unsalted
+digest over each example's id, input, reference, and metadata, so an exporter
+denied inputs and references could still fingerprint a private dataset and
+correlate it across projects and runs. Dataset kind and example count still
+reach exporters, so grouping runs by dataset continues to work.
+
+If a destination is trusted to correlate dataset content, set
+`redaction: { includeDatasetHash: true }` on the export context to opt back in.
+
+`EvalReportDatasetMetadata.hash` is now optional, because a redacted report can
+lack it. Reports you create locally still always carry the hash: `runEval` and
+`createEvalReport` return `LocalEvalReport`, whose `dataset.hash` stays
+required. Code that types a report read back from an artifact or from storage as
+`EvalReport` and reads `report.dataset.hash` no longer compiles. Either narrow
+the read with `report.dataset?.hash` and handle the missing case, or type a
+locally produced report as `LocalEvalReport`.
+
+### Breaking: project API URLs no longer steer ambient credentials
+
+Veryfront no longer sends a shell, `.env`, or stored CLI credential to the
+`apiUrl` in a project's `veryfront.json` during login, `whoami`, or an
+authentication preflight. Those credentials use the API URL selected by your
+environment, or the default Veryfront API URL when you do not set one. A token
+defined in the same `veryfront.json` still uses that file's `apiUrl`.
+
+If you use a self-hosted control plane with an ambient credential, set
+`VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL` in your trusted environment.
+
 ### Breaking: Redis workflow `runTtl` no longer expires runs
 
 `RedisBackendConfig.runTtl` is now a deprecated no-op. It previously started a
