@@ -149,6 +149,8 @@ export interface PackageJsonReadResult {
   parseError: string | null;
   /** Identity of the manifest handle whose bytes were parsed. */
   fileIdentity?: StableFileIdentity;
+  /** Exact manifest text parsed during analysis. */
+  sourceText?: string;
 }
 
 export interface StableFileIdentity {
@@ -578,6 +580,7 @@ async function writeTextFileInsideProjectOnWindows(
   projectRoot: string,
   content: string,
   expectedIdentity?: StableFileIdentity,
+  expectedContent?: string,
 ): Promise<void> {
   // Open the destination before trusting its path, but do not mutate it until
   // the opened identity and current in-project path agree. A parent swapped to
@@ -592,8 +595,25 @@ async function writeTextFileInsideProjectOnWindows(
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
       throw new Error("Refusing to write a file because it changed after being read.");
     }
+    if (
+      expectedContent !== undefined &&
+      await file.readFile({ encoding: "utf8" }) !== expectedContent
+    ) {
+      throw new Error("Refusing to write a file because its contents changed after being read.");
+    }
     await file.truncate(0);
-    await file.writeFile(content, { encoding: "utf8" });
+    const bytes = new TextEncoder().encode(content);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesWritten } = await file.write(
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (bytesWritten === 0) throw new Error(`Could not finish writing ${path}`);
+      offset += bytesWritten;
+    }
   } finally {
     await file.close();
   }
@@ -607,9 +627,10 @@ export async function writeTextFileInsideProject(
   path: string,
   projectRoot: string,
   content: string,
-  { allowMissing = false, expectedIdentity }: {
+  { allowMissing = false, expectedIdentity, expectedContent }: {
     allowMissing?: boolean;
     expectedIdentity?: StableFileIdentity;
+    expectedContent?: string;
   } = {},
 ): Promise<void> {
   await assertPathInsideProject(path, projectRoot, { allowMissing });
@@ -624,7 +645,13 @@ export async function writeTextFileInsideProject(
       }
       throw error;
     }
-    await writeTextFileInsideProjectOnWindows(path, projectRoot, content, expectedIdentity);
+    await writeTextFileInsideProjectOnWindows(
+      path,
+      projectRoot,
+      content,
+      expectedIdentity,
+      expectedContent,
+    );
     return;
   }
 
@@ -653,8 +680,25 @@ export async function writeTextFileInsideProject(
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
       throw new Error("Refusing to write a file because it changed after being read.");
     }
+    if (expectedContent !== undefined) {
+      const expectedBytes = new TextEncoder().encode(expectedContent);
+      const currentBytes = new Uint8Array(expectedBytes.length + 1);
+      await file.seek(0, Deno.SeekMode.Start);
+      let currentLength = 0;
+      while (currentLength < currentBytes.length) {
+        const read = await file.read(currentBytes.subarray(currentLength));
+        if (read === null) break;
+        currentLength += read;
+      }
+      const contentMatches = currentLength === expectedBytes.length &&
+        expectedBytes.every((byte, index) => currentBytes[index] === byte);
+      if (!contentMatches) {
+        throw new Error("Refusing to write a file because its contents changed after being read.");
+      }
+    }
 
     const bytes = new TextEncoder().encode(content);
+    await file.seek(0, Deno.SeekMode.Start);
     await file.truncate(0);
     let offset = 0;
     while (offset < bytes.length) {
@@ -805,6 +849,7 @@ export async function readProjectPackageJson(
       otherFieldDeps,
       parseError: null,
       ...(fileIdentity ? { fileIdentity } : {}),
+      sourceText: text,
     };
   } catch (e) {
     return {
@@ -1051,6 +1096,7 @@ async function main(args: string[]): Promise<void> {
     otherFieldDeps,
     parseError: pkgJsonParseError,
     fileIdentity: pkgJsonFileIdentity,
+    sourceText: pkgJsonSource,
   } = await readProjectPackageJson(pkgJsonPath, projectRoot);
 
   const candidatePins = Object.fromEntries(
@@ -1114,14 +1160,19 @@ async function main(args: string[]): Promise<void> {
   const allNeedsResolution = new Set<string>();
   // Defer every write until analysis, manifest validation, conflict filtering,
   // and strict-mode gating have completed.
-  const fileResults: Array<{ file: string; code: string; identity: StableFileIdentity }> = [];
+  const fileResults: Array<{
+    file: string;
+    source: string;
+    code: string;
+    identity: StableFileIdentity;
+  }> = [];
   for (const { file, source, identity, result: analyzedResult } of analyzedFiles) {
     const result = conflictedPackages.size === 0
       ? analyzedResult
       : transformEsmShImports(source, conflictedPackages);
     if (!result.changed) continue;
 
-    fileResults.push({ file, code: result.code, identity });
+    fileResults.push({ file, source, code: result.code, identity });
     report.filesChanged++;
     for (const rw of result.rewrites) {
       report.rewrites.push({ file: toReportPath(file), from: rw.from, to: rw.to });
@@ -1154,17 +1205,22 @@ async function main(args: string[]): Promise<void> {
           pkgJsonPath,
           projectRoot,
           JSON.stringify(pkgJson, null, 2) + "\n",
-          { allowMissing: true, expectedIdentity: pkgJsonFileIdentity },
+          {
+            allowMissing: true,
+            expectedIdentity: pkgJsonFileIdentity,
+            expectedContent: pkgJsonSource,
+          },
         );
       } catch {
         throw new Error(`Failed to write ${toReportPath(pkgJsonPath)} safely.`);
       }
     }
 
-    for (const { file, code, identity } of fileResults) {
+    for (const { file, source, code, identity } of fileResults) {
       try {
         await writeTextFileInsideProject(file, projectRoot, code, {
           expectedIdentity: identity,
+          expectedContent: source,
         });
       } catch {
         throw new Error(`Failed to write ${toReportPath(file)} safely.`);

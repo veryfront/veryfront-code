@@ -1136,6 +1136,35 @@ Deno.test("project writes reject a file replaced after its source was read", asy
   }
 });
 
+Deno.test("project writes reject an in-place edit after analysis", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  try {
+    const original = 'import "https://esm.sh/pkg@1.0.0";\n';
+    const newer = 'import "https://esm.sh/pkg@2.0.0";\n';
+    await Deno.writeTextFile(target, original);
+    const projectRoot = await Deno.realPath(project);
+    const identity = await statNativeFile(target, { bigint: true });
+    await Deno.writeTextFile(target, newer);
+
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, 'import "pkg";\n', {
+          expectedIdentity: {
+            device: String(identity.dev),
+            inode: String(identity.ino),
+          },
+          expectedContent: original,
+        }),
+      Error,
+      "contents changed after being read",
+    );
+    assertEquals(await Deno.readTextFile(target), newer);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // main() integration: version conflicts are preflighted
 // ---------------------------------------------------------------------------
