@@ -131,6 +131,24 @@ describe("ConversationMemory", () => {
     assertEquals(await memory.getMessages(), []);
   });
 
+  it("stops replay when another clear occurs between post-clear additions", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    const rollback = captureMemoryRollback(memory, []);
+    await memory.clear();
+    await memory.add(userMessage("assistant-1", "first concurrent output"));
+    await memory.add(userMessage("assistant-2", "second concurrent output"));
+    const originalAdd = memory.add.bind(memory);
+    let replayed = 0;
+    memory.add = async (message) => {
+      await originalAdd(message);
+      if (++replayed === 1) await memory.clear();
+    };
+
+    await rollback.rollback(new Set());
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
   it("does not replay an in-flight addition already present in the snapshot", async () => {
     const memory = new ConversationMemory({ type: "conversation", maxTokens: 100 });
     const concurrent = userMessage("assistant", "concurrent output");
@@ -325,6 +343,24 @@ describe("SummaryMemory", () => {
     await memory.add(rejected);
 
     await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("stops summary replay when another clear occurs between post-clear additions", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
+    const rollback = captureMemoryRollback(memory, []);
+    await memory.clear();
+    await memory.add(userMessage("assistant-1", "first concurrent output"));
+    await memory.add(userMessage("assistant-2", "second concurrent output"));
+    const originalAdd = memory.add.bind(memory);
+    let replayed = 0;
+    memory.add = async (message) => {
+      await originalAdd(message);
+      if (++replayed === 1) await memory.clear();
+    };
+
+    await rollback.rollback(new Set());
 
     assertEquals(await memory.getMessages(), []);
   });

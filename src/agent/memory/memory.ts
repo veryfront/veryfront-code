@@ -131,11 +131,16 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
         rollback: async (rejectedMessages) => {
           close();
           if (this.clearVersion !== clearVersion) {
+            const replayVersion = this.clearVersion;
             const retained = rejectedMessages === undefined
               ? additions
               : additions.filter((message) => !rejectedMessages.has(message));
             this.messages = [];
-            for (const message of retained) await this.add(message);
+            for (const message of retained) {
+              if (this.clearVersion !== replayVersion) return;
+              await this.add(message);
+              if (this.clearVersion !== replayVersion) return;
+            }
             return;
           }
           const laterAdditions = rejectedMessages === undefined
@@ -144,7 +149,11 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
               !snapshotMessages.has(message) && !rejectedMessages.has(message)
             );
           this.messages = [...messages];
-          for (const message of laterAdditions) await this.add(message);
+          for (const message of laterAdditions) {
+            if (this.clearVersion !== clearVersion) return;
+            await this.add(message);
+            if (this.clearVersion !== clearVersion) return;
+          }
         },
       };
     });
@@ -296,12 +305,17 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         rollback: async (rejectedMessages) => {
           close();
           if (this.clearVersion !== clearVersion) {
+            const replayVersion = this.clearVersion;
             const retained = rejectedMessages === undefined
               ? additions
               : additions.filter((message) => !rejectedMessages.has(message));
             this.messages = [];
             this.summary = "";
-            for (const message of retained) await this.add(message);
+            for (const message of retained) {
+              if (this.clearVersion !== replayVersion) return;
+              await this.add(message);
+              if (this.clearVersion !== replayVersion) return;
+            }
             return;
           }
           const laterAdditions = rejectedMessages === undefined
@@ -311,7 +325,11 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
             );
           this.messages = [...messages];
           this.summary = summary;
-          for (const message of laterAdditions) await this.add(message);
+          for (const message of laterAdditions) {
+            if (this.clearVersion !== clearVersion) return;
+            await this.add(message);
+            if (this.clearVersion !== clearVersion) return;
+          }
         },
       };
     });
