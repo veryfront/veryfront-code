@@ -92,6 +92,7 @@ describe("Sandbox", () => {
       (Sandbox as unknown as Record<string, unknown>).resolveAuthToken,
       undefined,
     );
+    assertEquals((Sandbox as unknown as Record<string, unknown>).waitForReady, undefined);
   });
 
   it("does not expose lazy credential-bearing dispatch", () => {

@@ -105,7 +105,7 @@ export class Sandbox {
 
     // If not yet running, poll until ready
     if (status !== "running") {
-      await Sandbox.waitForReady(apiUrl, id, authToken);
+      await Sandbox.#waitForReady(apiUrl, id, authToken);
     }
 
     return new Sandbox(endpoint, id, authToken, apiUrl);
@@ -178,7 +178,7 @@ export class Sandbox {
     };
   }
 
-  private static async waitForReady(
+  static async #waitForReady(
     apiUrl: string,
     id: string,
     authToken: string,
