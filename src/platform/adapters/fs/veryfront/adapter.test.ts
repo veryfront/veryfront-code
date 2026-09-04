@@ -1534,7 +1534,10 @@ describe("VeryfrontFSAdapter", () => {
           getProjectId: () => string;
           getCachedProject: () => { provider: string; layout: string };
           getContext: () => { type: string; name?: string; version?: string };
-          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          listAllFiles: (
+            options?: unknown,
+            context?: { type: string; name?: string; version?: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
         };
       }).client;
 
@@ -1544,8 +1547,8 @@ describe("VeryfrontFSAdapter", () => {
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
 
       let observedContext: ReturnType<typeof client.getContext> | null = null;
-      client.listAllFiles = () => {
-        observedContext = client.getContext();
+      client.listAllFiles = (_options, context) => {
+        observedContext = context ?? client.getContext();
         assertEquals(observedContext, { type: "branch", name: "draft" });
         return Promise.resolve([{
           path: "pages/index.tsx",

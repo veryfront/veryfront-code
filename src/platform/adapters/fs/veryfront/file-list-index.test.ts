@@ -143,7 +143,7 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
   });
 
   describe("index reuse", () => {
-    it("should reuse index when cache key is unchanged", async () => {
+    it("rebuilds when a refreshed listing changes inline content", async () => {
       let callCount = 0;
       const entry = { path: "a.ts", content: "v1" };
       const fileList: Array<{ path: string; content: string }> = [entry];
@@ -154,16 +154,16 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
 
       assertEquals(await index.lookup("a.ts"), "v1", "the first lookup builds the index");
 
-      // Mutating content in place leaves the cache key (length, first and last
-      // path) untouched, so a reused index must still answer with the old value.
+      // Path-only identity is unchanged, but the refreshed inline bytes are
+      // authoritative and must replace the old content map.
       entry.content = "v2";
       assertEquals(
         await index.lookup("a.ts"),
-        "v1",
-        "an unchanged cache key must reuse the built index rather than re-walking the file list",
+        "v2",
+        "a refreshed listing must rebuild the content map",
       );
 
-      // Both lookups call getFileListCache but the second reuses the built index.
+      // Both lookups call getFileListCache and rebuild from its current bytes.
       assertEquals(callCount, 2, "getFileListCache is consulted on every lookup");
 
       fileList.push({ path: "b.ts", content: "v3" });

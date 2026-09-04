@@ -20,7 +20,6 @@ const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 export class FileListIndex {
   private index: Map<string, string> | null = null;
   private pathSet: Set<string> | null = null;
-  private indexKey: string | null = null;
   private indexScopeKey: string | null = null;
   private indexBuiltAt = 0;
   private indexFresh = false;
@@ -43,7 +42,6 @@ export class FileListIndex {
     const indexedWithContent = this.index.size;
     this.index = null;
     this.pathSet = null;
-    this.indexKey = null;
     this.indexScopeKey = null;
     this.indexBuiltAt = 0;
     this.indexFresh = false;
@@ -203,7 +201,6 @@ export class FileListIndex {
         });
         this.index = null;
         this.pathSet = null;
-        this.indexKey = null;
         this.indexScopeKey = null;
         this.indexFresh = false;
       }
@@ -221,19 +218,6 @@ export class FileListIndex {
       sampleContentLength: cacheCheckSample?.content?.length,
     });
 
-    const indexKey = `${cacheKey ?? ""}:${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.index && this.pathSet && this.indexKey === indexKey) {
-      this.indexBuiltAt = Date.now();
-      this.indexFresh = true;
-      return {
-        content: this.index,
-        paths: this.pathSet,
-        fresh: true,
-      };
-    }
-
     const index = new Map<string, string>();
     const pathSet = new Set<string>();
     for (const file of fileList) {
@@ -243,7 +227,6 @@ export class FileListIndex {
 
     this.index = index;
     this.pathSet = pathSet;
-    this.indexKey = indexKey;
     this.indexScopeKey = cacheKey ?? null;
     this.indexBuiltAt = Date.now();
     this.indexFresh = true;

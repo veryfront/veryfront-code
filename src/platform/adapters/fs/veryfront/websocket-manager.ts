@@ -124,6 +124,7 @@ export class WebSocketManager {
   private invalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths = new Set<string>();
+  private pendingSelectiveInvalidationContext: ResolvedContentContext | null = null;
 
   private wsConnectionId: string | null = null;
   private wsConsecutiveFailures = 0;
@@ -541,7 +542,7 @@ export class WebSocketManager {
       }
 
       if (changedPaths?.length) {
-        this.scheduleSelectiveInvalidation(changedPaths);
+        this.scheduleSelectiveInvalidation(changedPaths, contentContext);
         return;
       }
 
@@ -665,8 +666,12 @@ export class WebSocketManager {
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  private scheduleSelectiveInvalidation(changedPaths: string[]): void {
+  private scheduleSelectiveInvalidation(
+    changedPaths: string[],
+    contentContext: ResolvedContentContext | null,
+  ): void {
     for (const path of changedPaths) this.pendingChangedPaths.add(path);
+    this.pendingSelectiveInvalidationContext = contentContext;
 
     if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
 
@@ -678,16 +683,19 @@ export class WebSocketManager {
 
     this.selectiveInvalidationTimer = setTimeout(() => {
       this.selectiveInvalidationTimer = null;
-      this.performSelectiveInvalidation();
+      const scheduledContext = this.pendingSelectiveInvalidationContext;
+      this.pendingSelectiveInvalidationContext = null;
+      this.performSelectiveInvalidation(scheduledContext);
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  private async performSelectiveInvalidation(): Promise<void> {
+  private async performSelectiveInvalidation(
+    contentContext: ResolvedContentContext | null,
+  ): Promise<void> {
     const startTime = currentTime();
     const changedPaths = Array.from(this.pendingChangedPaths);
     this.pendingChangedPaths.clear();
 
-    const contentContext = this.getActiveContentContext();
     const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
@@ -787,9 +795,11 @@ export class WebSocketManager {
       if (contentContext?.sourceType === "branch") {
         await this.deps.cache.deleteByPrefixAsync("files:branch:");
         try {
-          const files = await this.deps.client.listAllFiles();
-          const cacheKey = this.deps.getFileListCacheKey?.() ??
-            buildFileListCacheKey(contentContext);
+          const files = await this.deps.client.listAllFiles({}, {
+            type: "branch",
+            name: contentContext.branch ?? "main",
+          });
+          const cacheKey = buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,

@@ -860,13 +860,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       releaseId: contentContext.releaseId,
     });
 
-    const cacheKey = this.getCurrentFileListCacheKey()!;
+    const initializationContext = this.getEffectiveContentContext() ?? contentContext;
+    const cacheKey = buildFileListCacheKey(initializationContext);
     const initializationIdentity = this.#getCurrentSourceSnapshotIdentity();
     const initializationSnapshotVersion = this.sourceSnapshotVersion;
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const files = await fetchFileListForContext(this.client, contentContext);
+      const files = await fetchFileListForContext(this.client, initializationContext);
       const fileSummary = summarizeFileList(files);
 
       const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {

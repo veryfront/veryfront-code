@@ -1958,7 +1958,7 @@ describe("ReadOperations", () => {
   });
 
   describe("file list index caching", () => {
-    it("should reuse index when file list has not changed", async () => {
+    it("rebuilds inline content when file-list paths have not changed", async () => {
       let indexBuildCount = 0;
       const fileList = [
         { path: "pages/index.tsx", content: "index content" },
@@ -1982,14 +1982,13 @@ describe("ReadOperations", () => {
         "the first read is served from the freshly built index",
       );
 
-      // The list length and its first/last path stay the same, so the index key
-      // is unchanged and the memoized index must answer the second read.
+      // The list length and paths stay the same, but inline content changed.
       fileList[0]!.content = "mutated content";
 
       assertEquals(
         await readOps.readTextFile("pages/index.tsx"),
-        "index content",
-        "an unchanged index key must reuse the memoized index instead of rebuilding it",
+        "mutated content",
+        "a refreshed listing must replace stale inline content",
       );
       assertEquals(indexBuildCount, 2, "getFileListCache is consulted once per read");
     });

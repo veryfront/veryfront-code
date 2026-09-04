@@ -111,6 +111,11 @@ function createWebSocketManager(options: {
   branch?: string | null;
   /** Request-scoped branch override on a reused contextual adapter. */
   effectiveBranch?: string | null;
+  getEffectiveContentContext?: () => {
+    sourceType: "branch";
+    projectSlug: string;
+    branch?: string;
+  };
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
@@ -151,11 +156,12 @@ function createWebSocketManager(options: {
       projectSlug: "test-project",
       branch,
     }),
-    getEffectiveContentContext: options.effectiveBranch === undefined ? undefined : () => ({
-      sourceType: "branch",
-      projectSlug: "test-project",
-      branch: options.effectiveBranch ?? undefined,
-    }),
+    getEffectiveContentContext: options.getEffectiveContentContext ??
+      (options.effectiveBranch === undefined ? undefined : () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: options.effectiveBranch ?? undefined,
+      })),
     getContentSource: () => ({ type: "branch", branch }),
     getProjectDir: () => undefined,
     clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
@@ -957,13 +963,24 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("matches pokes against the effective request branch", () => {
+  it("retains the accepted request branch through debounced invalidation", async () => {
     let clearCalls = 0;
+    let effectiveBranch = "feature-x";
+    let reloadBranch: string | null | undefined;
     const manager = createWebSocketManager({
       branch: "main",
-      effectiveBranch: "feature-x",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
       clearMemoryCaches: () => {
         clearCalls++;
+      },
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          reloadBranch = context.branch;
+        },
       },
     });
 
@@ -973,6 +990,10 @@ describe("WebSocketManager", () => {
     deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "feature-x" });
 
     assertEquals(clearCalls, 1);
+    effectiveBranch = "feature-y";
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+    assertEquals(reloadBranch, "feature-x");
     manager.dispose();
   });
 
@@ -1165,7 +1186,7 @@ describe("WebSocketManager", () => {
       2,
       "replacement must receive the generation captured before the file-list fetch",
     );
-    assertEquals(replacementCacheKey, "files:branch:test-project:feature");
+    assertEquals(replacementCacheKey, "files:branch:test-project:main");
     manager.dispose();
   });
 
