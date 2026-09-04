@@ -1782,7 +1782,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
           throw attachProtectedDeleteContext(error, protectedDeleteContext());
         }
-        await writePlannedSyncTarget();
+        try {
+          await writePlannedSyncTarget();
+        } catch (error) {
+          throw attachProtectedDeleteContext(error, protectedDeleteContext());
+        }
       } finally {
         spinner.stop();
       }
