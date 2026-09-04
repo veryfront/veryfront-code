@@ -1179,6 +1179,22 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       };
       const protectedDeleteContext = () =>
         [...appliedProtectedDeletePaths].map(sanitizeTerminalDiagnosticText);
+      const buildVerificationSnapshot = async (
+        files: readonly RemoteFile[],
+        includeVersion = true,
+        includeProtected = false,
+      ) => {
+        try {
+          return await buildManagedRemoteSnapshot(
+            files,
+            ignoreChecker,
+            includeVersion,
+            includeProtected,
+          );
+        } catch (error) {
+          throw attachProtectedDeleteContext(error, protectedDeleteContext());
+        }
+      };
       // Protected paths are planner input only. The sync baseline must never
       // record them, because `plan.nextFiles` excludes them and no later pull or
       // push would ever reconcile such an entry away.
@@ -1214,8 +1230,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             target.source,
           );
           const conflicts = findRemoteSnapshotChanges(
-            await buildManagedRemoteSnapshot(managedRemoteFiles, ignoreChecker),
-            await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker),
+            await buildVerificationSnapshot(managedRemoteFiles),
+            await buildVerificationSnapshot(latestRemoteFiles),
           );
           if (conflicts.length > 0) {
             throw pushConflictError(conflicts, protectedDeleteContext());
@@ -1237,10 +1253,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 target.source,
               );
               const conflicts = findRemoteSnapshotChanges(
-                await buildManagedRemoteSnapshot(managedRemoteFiles, ignoreChecker),
-                await buildManagedRemoteSnapshot(
+                await buildVerificationSnapshot(managedRemoteFiles),
+                await buildVerificationSnapshot(
                   latestRemoteFiles,
-                  ignoreChecker,
                   true,
                   pruneRemoteMissing,
                 ),
@@ -1298,7 +1313,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               const conflicts = findRemoteSnapshotChanges(
                 buildSyncFileDigestSnapshot(plan.nextFiles),
-                await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false, true),
+                await buildVerificationSnapshot(latestRemoteFiles, false, true),
               );
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts, protectedDeleteContext());
@@ -1479,9 +1494,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         knownRemoteFiles?: readonly RemoteFile[],
       ) => {
         const latestRemoteFiles = knownRemoteFiles ?? await listAllFilesForVerification();
-        const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+        const latestRemoteSnapshot = await buildVerificationSnapshot(
           latestRemoteFiles,
-          ignoreChecker,
           false,
         );
         const appliedUploads = new Set(uploadResult.applied);
@@ -1585,9 +1599,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       try {
         if (!force) {
           const latestRemoteFiles = await listAllFilesForVerification();
-          const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+          const latestRemoteSnapshot = await buildVerificationSnapshot(
             latestRemoteFiles,
-            ignoreChecker,
             false,
             pruneRemoteMissing,
           );
@@ -1695,7 +1708,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             const repairedRemoteFiles = await listAllFilesForVerification();
             const repairedConflicts = findRemoteSnapshotChanges(
               buildSyncFileDigestSnapshot(plan.nextFiles),
-              await buildManagedRemoteSnapshot(repairedRemoteFiles, ignoreChecker, false, true),
+              await buildVerificationSnapshot(repairedRemoteFiles, false, true),
             );
             if (repairedConflicts.length > 0) {
               await writeVerifiedAppliedSyncTarget(repairedRemoteFiles);
@@ -1737,9 +1750,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           if (repairUploadResult.uploaded > 0) {
             latestRemoteFiles = await listAllFilesForVerification();
           }
-          const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+          const latestRemoteSnapshot = await buildVerificationSnapshot(
             latestRemoteFiles,
-            ignoreChecker,
             false,
           );
           const uploadPaths = new Set(uploadOps.map((upload) => upload.path));

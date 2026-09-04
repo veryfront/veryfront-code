@@ -141,23 +141,23 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
     );
   }
 
+  let content: string;
   try {
-    const content = await fs.readTextFile(ignorePath);
-    if (content.length > MAX_IGNORE_FILE_LENGTH) {
-      throw new Error(`.vfignore must not exceed ${MAX_IGNORE_FILE_LENGTH} characters.`);
-    }
-    const customPatterns = content
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
-
-    patterns.push(...customPatterns);
+    content = await fs.readTextFile(ignorePath);
   } catch (error) {
     cliLogger.debug("Failed to read .vfignore:", error);
     throw new Error("Failed to read .vfignore. Fix the file permissions or path and try again.", {
       cause: error,
     });
   }
+  if (content.length > MAX_IGNORE_FILE_LENGTH) {
+    throw new Error(`.vfignore must not exceed ${MAX_IGNORE_FILE_LENGTH} characters.`);
+  }
+  const customPatterns = content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  patterns.push(...customPatterns);
 
   return patterns;
 }

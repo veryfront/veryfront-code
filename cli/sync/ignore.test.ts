@@ -30,6 +30,17 @@ describe("cli/sync/ignore", () => {
       }
     });
 
+    it("reports the size limit for an oversized .vfignore", async () => {
+      await withTempDir(async (projectDir) => {
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "x".repeat(256 * 1_024 + 1));
+        await assertRejects(
+          () => loadIgnorePatterns(projectDir),
+          Error,
+          ".vfignore must not exceed 262144 characters",
+        );
+      });
+    });
+
     it("keeps secrets ignored when .vfignore negates the defaults", async () => {
       const projectDir = await Deno.makeTempDir();
       try {
