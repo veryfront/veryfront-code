@@ -483,7 +483,11 @@ function extractMessageAssembledTexts(message: Message): string[] {
  * `extractMergedSystemRuns` already assembles every system message in the
  * conversation, so any pair a dropped message sits between is covered there.
  */
-function extractAdjacentRuns(messages: Message[], role: Message["role"]): Message[][] {
+function extractAdjacentRuns(
+  messages: Message[],
+  role: Message["role"],
+  dropWhitespaceOnly = false,
+): Message[][] {
   const runs: Message[][] = [];
   let run: Message[] = [];
   const sendableAssistantMessages = role === "user"
@@ -513,6 +517,7 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
       continue;
     }
     if (isEmptyText(message)) continue;
+    if (dropWhitespaceOnly && messageTextParts(message).join("").trim().length === 0) continue;
     run.push(message);
   }
   flushRun();
@@ -548,6 +553,18 @@ function isEmptyText(message: Message): boolean {
  */
 function extractMergedSystemRuns(messages: Message[]): Message[][] {
   const runs = extractAdjacentRuns(messages, "system");
+  // OpenAI-compatible conversion drops whitespace-only system messages before
+  // merging the remaining adjacent system layers. Anthropic retains those
+  // layers, so keep the original runs above and validate this alternate view
+  // in addition.
+  for (const run of extractAdjacentRuns(messages, "system", true)) {
+    const alreadyCovered = runs.some(
+      (candidate) =>
+        candidate.length === run.length &&
+        candidate.every((message, index) => message === run[index]),
+    );
+    if (!alreadyCovered) runs.push(run);
+  }
 
   // Anthropic retains whitespace-only system layers and joins each layer with
   // a blank line. It drops only system layers whose assembled text is empty.

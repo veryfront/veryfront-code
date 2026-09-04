@@ -481,6 +481,25 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("validates the OpenAI system merge after whitespace-only layers are dropped", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/foo\n\nbar/] },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "foo" }] },
+        { id: "system-space", role: "system", parts: [{ type: "text", text: " " }] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "bar" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
   it("blocks a split injection assembled across sibling parts and adjacent messages", async () => {
     // `convertToTextGenerationRuntimeMessage` concatenates a system message's
     // parts with no separator before `toOpenAICompatibleMessages` joins the
