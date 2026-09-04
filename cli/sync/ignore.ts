@@ -328,17 +328,28 @@ function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string):
 function hasEffectiveDescendantNegation(
   rules: readonly IgnoreRule[],
   normalizedPath: string,
+  canceledNegations: ReadonlySet<IgnoreRule>,
 ): boolean {
-  for (let index = 0; index < rules.length; index++) {
-    const rule = rules[index]!;
+  for (const rule of rules) {
     if (!negatedRuleTargetsDescendant(rule, normalizedPath)) continue;
-    const canceled = rules.slice(index + 1).some((later) =>
-      !later.negated && later.regex.source === rule.regex.source &&
-      later.regex.flags === rule.regex.flags
-    );
-    if (!canceled) return true;
+    if (!canceledNegations.has(rule)) return true;
   }
   return false;
+}
+
+function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<IgnoreRule> {
+  const canceled = new Set<IgnoreRule>();
+  const laterPositivePatterns = new Set<string>();
+  for (let index = rules.length - 1; index >= 0; index--) {
+    const rule = rules[index]!;
+    const signature = `${rule.regex.source}\u0000${rule.regex.flags}`;
+    if (rule.negated) {
+      if (laterPositivePatterns.has(signature)) canceled.add(rule);
+    } else {
+      laterPositivePatterns.add(signature);
+    }
+  }
+  return canceled;
 }
 
 /**
@@ -346,6 +357,7 @@ function hasEffectiveDescendantNegation(
  */
 export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
   const rules = toRules(patterns);
+  const canceledNegations = collectCanceledNegations(rules);
   // A dropped negation silently changes what push and pull reconcile, so warn
   // at the default log level. Deduplicated per checker because every path is
   // tested many times during a single scan.
@@ -364,7 +376,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
 
     if (isProtectedPath(normalizedPath)) {
       const droppedNegation = lastMatchedRule?.negated ||
-        hasEffectiveDescendantNegation(rules, normalizedPath);
+        hasEffectiveDescendantNegation(rules, normalizedPath, canceledNegations);
       if (droppedNegation && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
         warnedOverrides.add(normalizedPath);
         logWarning(
