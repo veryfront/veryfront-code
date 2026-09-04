@@ -366,6 +366,16 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("keeps a tool field that begins exactly at a real tail boundary", () => {
+      const field = 'tools: ["critical_tool"]';
+      const text = "p".repeat(40_000) + "\n" + field +
+        "z".repeat(96_000 - field.length);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {
       const text = 'tools: [{"id":"first_tool"},{"id":"critical_tool","description":"' +
         "y ".repeat(70_000);

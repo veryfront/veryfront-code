@@ -36,6 +36,7 @@ const CONTRACT_FACT_SCALAR_PATTERN =
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+const FIELD_SEPARATOR_PATTERN = /[,{(\s]/;
 
 /** Result return modes supported by delegated child runs. */
 export type ChildRunResultMode = "summary" | "full" | "structured";
@@ -618,6 +619,11 @@ function boundedContractFactWindows(text: string): string[] {
   return [text.slice(0, headEnd), text.slice(tailStart)];
 }
 
+function windowStartsAtFieldBoundary(text: string, window: string): boolean {
+  const start = text.length - window.length;
+  return start <= 0 || FIELD_SEPARATOR_PATTERN.test(text[start - 1] ?? "");
+}
+
 function contractFactsOrUndefined(input: {
   modelIds: string[];
   toolIds: string[];
@@ -664,10 +670,13 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
   // matches with patterns that drop the start-of-text alternative. A field at
   // the start of a tail line still matches through its preceding newline.
   for (let index = 0; index < windows.length; index++) {
+    const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, windows[index]!)
+      ? MODEL_FIELD_PATTERN
+      : MODEL_FIELD_TAIL_PATTERN;
     addPatternMatches(
       modelIds,
       windows[index]!,
-      index === 0 ? MODEL_FIELD_PATTERN : MODEL_FIELD_TAIL_PATTERN,
+      fieldPattern,
       1,
     );
   }
@@ -675,18 +684,24 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
     addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
   }
   for (let index = 0; index < toolWindows.length; index++) {
+    const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, toolWindows[index]!)
+      ? TOOL_IDS_FIELD_PATTERN
+      : TOOL_IDS_FIELD_TAIL_PATTERN;
     addToolArrayFieldValues(
       toolIds,
       toolWindows[index]!,
-      index === 0 ? TOOL_IDS_FIELD_PATTERN : TOOL_IDS_FIELD_TAIL_PATTERN,
+      fieldPattern,
       text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT && index === 0,
     );
   }
   for (let index = 0; index < windows.length; index++) {
+    const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, windows[index]!)
+      ? PROVIDER_TOOL_IDS_FIELD_PATTERN
+      : PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN;
     addProviderToolArrayFieldValues(
       providerToolIds,
       windows[index]!,
-      index === 0 ? PROVIDER_TOOL_IDS_FIELD_PATTERN : PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN,
+      fieldPattern,
     );
   }
   for (const boundedText of windows) {
