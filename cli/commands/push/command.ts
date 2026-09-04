@@ -741,7 +741,7 @@ function attachProtectedDeleteContext(
     return error instanceof Error ? error : new Error(String(error));
   }
   const normalized = [...protectedDeleted];
-  if (error instanceof Error) {
+  if (error instanceof VeryfrontError) {
     try {
       defineOwnProperty(error, "context", {
         value: { protectedDeleted: normalized },
