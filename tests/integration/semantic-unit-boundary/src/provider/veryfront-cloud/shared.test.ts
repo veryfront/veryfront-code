@@ -8,6 +8,7 @@ import { withEnv } from "#veryfront/testing";
 import {
   __runWithOutboundFetchTransportForTests,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
   isHostAllowedInternalProviderOrigin,
   OutboundRequestBlockedError,
 } from "#veryfront/security/http/outbound-fetch.ts";
@@ -273,9 +274,32 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
         if (originalDescriptor) {
           Object.defineProperty(Array.prototype, "0", originalDescriptor);
         } else {
-          delete (Array.prototype as Record<PropertyKey, unknown>)["0"];
+          Reflect.deleteProperty(Array.prototype, "0");
         }
       }
+    },
+  );
+
+  it(
+    "trusts an internal cluster hostname at the bootstrap-validation layer under the host-wide egress override alone",
+    async () => {
+      // Matches staging's actual configuration: VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS
+      // is set, but the narrower per-origin allowlist is not. Bootstrap validation
+      // must honor the same override the outbound fetch layer already does, or it
+      // rejects a request the real fetch would have allowed.
+      await withEnv(
+        {
+          [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "",
+          [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "true",
+        },
+        async () => {
+          const bootstrap = runWithVeryfrontCloudContext(
+            { apiBaseUrl: INTERNAL_API_BASE_URL, apiToken: "vf_scoped_token" },
+            () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+          );
+          assertEquals(bootstrap.apiBaseUrl, INTERNAL_API_BASE_URL);
+        },
+      );
     },
   );
 });

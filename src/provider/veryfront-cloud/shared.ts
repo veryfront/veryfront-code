@@ -1,10 +1,13 @@
 import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   createOriginBoundOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
   isHostAllowedInternalProviderOrigin,
 } from "#veryfront/security/http/outbound-fetch.ts";
+import { isInternalEgressOverrideEnabled } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
@@ -126,11 +129,13 @@ function requireSecureInferenceApiBaseUrl(value: string): void {
   ) as string;
   // 0.0.0.0 binds all interfaces and is intentionally not an HTTP exception.
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  // Same allowlist the outbound fetch layer consults, so bootstrap validation and the
-  // actual request can never disagree about which internal origin is trusted.
+  // Same allowlist -- and the same host-wide override -- the outbound fetch
+  // layer consults, so bootstrap validation and the actual request can never
+  // disagree about which internal origin is trusted.
   if (
     readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback &&
-    !isHostAllowedInternalProviderOrigin(url)
+    !isHostAllowedInternalProviderOrigin(url) &&
+    !isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV))
   ) {
     throw CONFIG_INVALID.create({
       detail:
