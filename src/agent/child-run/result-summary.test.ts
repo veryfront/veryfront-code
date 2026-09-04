@@ -359,6 +359,26 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("rejects an invalid Unicode escape continuing past the head cutoff", () => {
+      const prefix = 'tools: [{"id":"bogus_tool","description":"';
+      const text = prefix + "x".repeat(32_000 - prefix.length - 2) + "\\u0q" +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("rejects an invalid scalar continuation past the head cutoff", () => {
+      const prefix = 'tools: [{"id":"bogus_tool","cost":';
+      const text = prefix + " ".repeat(32_000 - prefix.length - 1) + "1x" +
+        "y".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("rejects an arbitrary bare scalar prefix cut by the head window", () => {
       const text = 'tools: [{"id":"bogus_tool","cost": garbage' +
         "x".repeat(40_000) + "\n" + "z".repeat(100_000);

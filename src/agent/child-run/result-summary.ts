@@ -188,7 +188,7 @@ function hasValidQuotedValuePrefix(
   text: string,
   start: number,
   quote: string,
-  trailingSourceCharacter?: string,
+  trailingSource?: string,
 ): boolean {
   for (let index = start + 1; index < text.length; index++) {
     const character = text[index]!;
@@ -196,16 +196,18 @@ function hasValidQuotedValuePrefix(
     if (character !== "\\") continue;
     const escaped = text[++index];
     if (escaped === undefined) {
-      if (trailingSourceCharacter === undefined) return true;
-      return trailingSourceCharacter === "u" ||
-        `\\"/bfnrt${quote === "'" ? "'" : ""}`.includes(trailingSourceCharacter);
+      if (trailingSource === undefined || trailingSource.length === 0) return true;
+      const boundaryEscape = trailingSource[0]!;
+      if (boundaryEscape === "u") return /^[0-9a-f]*$/i.test(trailingSource.slice(1, 5));
+      return `\\"/bfnrt${quote === "'" ? "'" : ""}`.includes(boundaryEscape);
     }
     if (escaped === "u") {
       const availableHex = text.slice(index + 1, Math.min(index + 5, text.length));
       if (!/^[0-9a-f]*$/i.test(availableHex)) return false;
       if (availableHex.length < 4) {
-        return trailingSourceCharacter === undefined ||
-          /^[0-9a-f]$/i.test(trailingSourceCharacter);
+        const needed = 4 - availableHex.length;
+        return trailingSource === undefined ||
+          /^[0-9a-f]*$/i.test(trailingSource.slice(0, needed));
       }
       index += 4;
       continue;
@@ -437,7 +439,19 @@ function scanNestedArrayOrObjectEnd(
   return parseCompleteArrayValue(fieldBody, start, index, fieldBody[start]).ok ? index : null;
 }
 
-function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
+function scalarPrefixCanContinue(token: string, trailingSource?: string): boolean {
+  if (!CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(token)) return false;
+  if (trailingSource === undefined || trailingSource.length === 0) return true;
+  const combined = token + trailingSource;
+  if (CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(combined)) return true;
+  for (let index = 0; index < trailingSource.length; index++) {
+    if (!/[\s,}\]]/.test(trailingSource[index]!)) continue;
+    return CONTRACT_FACT_SCALAR_PATTERN.test(token + trailingSource.slice(0, index));
+  }
+  return false;
+}
+
+function isValidIncompleteArrayPrefix(fieldBody: string, trailingSource?: string): boolean {
   let index = 0;
   while (/\s/.test(fieldBody[index] ?? "")) index += 1;
   if (fieldBody[index] !== "[") return false;
@@ -449,7 +463,9 @@ function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
     const opening = fieldBody[index];
     if (opening === '"' || opening === "'") {
       const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
-      if (valueEnd === undefined) return hasValidQuotedValuePrefix(fieldBody, index, opening);
+      if (valueEnd === undefined) {
+        return hasValidQuotedValuePrefix(fieldBody, index, opening, trailingSource);
+      }
       if (parseQuotedScalar(fieldBody, index, valueEnd, opening) === undefined) return false;
       index = valueEnd;
     } else if (opening === "{" || opening === "[") {
@@ -458,8 +474,8 @@ function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
       if (valueEnd === undefined) {
         const nested = fieldBody.slice(index);
         return opening === "{"
-          ? scanIncompleteLeadingObjectToolIds(nested) !== undefined
-          : isValidIncompleteArrayPrefix(nested);
+          ? scanIncompleteLeadingObjectToolIds(nested, trailingSource) !== undefined
+          : isValidIncompleteArrayPrefix(nested, trailingSource);
       }
       index = valueEnd;
     } else {
@@ -467,7 +483,7 @@ function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
         index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "]"
       ) index += 1;
       const token = fieldBody.slice(valueStart, index).trim();
-      if (index >= fieldBody.length) return CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(token);
+      if (index >= fieldBody.length) return scalarPrefixCanContinue(token, trailingSource);
       if (!CONTRACT_FACT_SCALAR_PATTERN.test(token)) return false;
     }
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
@@ -489,7 +505,7 @@ function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
  */
 function scanIncompleteLeadingObjectToolIds(
   fieldBody: string,
-  trailingSourceCharacter?: string,
+  trailingSource?: string,
 ): string[] | undefined {
   const ids: string[] = [];
   let index = 0;
@@ -504,7 +520,7 @@ function scanIncompleteLeadingObjectToolIds(
     if (keyQuote !== '"' && keyQuote !== "'") return undefined;
     const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
     if (keyEnd === undefined) {
-      if (!hasValidQuotedValuePrefix(fieldBody, index, keyQuote, trailingSourceCharacter)) {
+      if (!hasValidQuotedValuePrefix(fieldBody, index, keyQuote, trailingSource)) {
         return undefined;
       }
       break;
@@ -524,7 +540,7 @@ function scanIncompleteLeadingObjectToolIds(
     if (opening === '"' || opening === "'") {
       const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
       if (valueEnd === undefined) {
-        if (!hasValidQuotedValuePrefix(fieldBody, index, opening, trailingSourceCharacter)) {
+        if (!hasValidQuotedValuePrefix(fieldBody, index, opening, trailingSource)) {
           return undefined;
         }
         break;
@@ -542,8 +558,8 @@ function scanIncompleteLeadingObjectToolIds(
       if (valueEnd === undefined) {
         const nested = fieldBody.slice(index);
         const validPrefix = opening === "{"
-          ? scanIncompleteLeadingObjectToolIds(nested, trailingSourceCharacter) !== undefined
-          : isValidIncompleteArrayPrefix(nested);
+          ? scanIncompleteLeadingObjectToolIds(nested, trailingSource) !== undefined
+          : isValidIncompleteArrayPrefix(nested, trailingSource);
         if (!validPrefix) return undefined;
         break;
       }
@@ -556,7 +572,7 @@ function scanIncompleteLeadingObjectToolIds(
       // A bare token that reaches the window edge is itself incomplete, while a
       // token that is not a JSON scalar is invalid member syntax.
       if (index >= fieldBody.length) {
-        if (!CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(fieldBody.slice(valueStart).trim())) {
+        if (!scalarPrefixCanContinue(fieldBody.slice(valueStart).trim(), trailingSource)) {
           return undefined;
         }
         break;
@@ -569,8 +585,8 @@ function scanIncompleteLeadingObjectToolIds(
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
     if (index >= fieldBody.length) {
       if (
-        trailingSourceCharacter !== undefined &&
-        !/[\s,}]/.test(trailingSourceCharacter)
+        trailingSource !== undefined && trailingSource.length > 0 &&
+        !/[\s,}]/.test(trailingSource[0]!)
       ) return undefined;
       break;
     }
@@ -584,10 +600,10 @@ function scanIncompleteLeadingObjectToolIds(
 function addToolIdsFromIncompleteLeadingObject(
   target: string[],
   fieldBody: string,
-  trailingSourceCharacter?: string,
+  trailingSource?: string,
 ): void {
   for (
-    const id of scanIncompleteLeadingObjectToolIds(fieldBody, trailingSourceCharacter) ?? []
+    const id of scanIncompleteLeadingObjectToolIds(fieldBody, trailingSource) ?? []
   ) {
     addToolIdFact(target, id);
   }
@@ -640,7 +656,7 @@ function addToolArrayFieldValues(
   text: string,
   pattern: RegExp,
   allowIncompleteLeadingObject = false,
-  trailingSourceCharacter?: string,
+  trailingSource?: string,
 ): void {
   pattern.lastIndex = 0;
   let coveredUntil = 0;
@@ -672,7 +688,7 @@ function addToolArrayFieldValues(
         addToolIdsFromIncompleteLeadingObject(
           target,
           windowBody.slice(scanned.nextIndex),
-          trailingSourceCharacter,
+          trailingSource,
         );
       }
       coveredUntil = windowClosingBracket === -1
@@ -823,7 +839,7 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
       fieldPattern,
       text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT && index === 0,
       index === 0 && text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
-        ? text[toolHeadLength]
+        ? text.slice(toolHeadLength, toolHeadLength + 5)
         : undefined,
     );
   }
