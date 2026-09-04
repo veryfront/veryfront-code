@@ -9,6 +9,7 @@ import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
+import type { ResolvedContentContext } from "./types.ts";
 
 function createMockClient(
   overrides: Record<string, unknown> = {},
@@ -57,7 +58,10 @@ function createReadOps(
   cacheEnabled: boolean,
   contextProvider?: ContentContextProvider,
   pathResolver?: (path: string) => string,
-  getFileListCache?: () => Promise<Array<{ path: string; content?: string }>>,
+  getFileListCache?: (
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   pathNormalizer = new PathNormalizer(),
 ): ReadOperations {
   return new ReadOperations(
@@ -75,7 +79,10 @@ function createReadyReadOps(
   cacheEnabled: boolean,
   contextProvider?: ContentContextProvider,
   pathResolver?: (path: string) => string,
-  getFileListCache?: () => Promise<Array<{ path: string; content?: string }>>,
+  getFileListCache?: (
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   pathNormalizer = new PathNormalizer(),
 ): ReadOperations {
   const readOps = createReadOps(
@@ -1191,6 +1198,59 @@ describe("ReadOperations", () => {
 
       assertEquals(mainContent, "main content");
       assertEquals(featureContent, "feature content");
+    });
+
+    it("binds overlapping file-list misses and fallback reads to their captured branches", async () => {
+      let requestBranch = "main";
+      const pending = new Map<string, () => void>();
+      const observedListScopes: string[] = [];
+      const observedReadBranches: string[] = [];
+      const client = createMockClient({
+        getRequestBranch: () => requestBranch,
+        getFileContent: (
+          _path: string,
+          _options: unknown,
+          context: { type: string; name?: string },
+        ) => {
+          const branch = context.name ?? "main";
+          observedReadBranches.push(branch);
+          return Promise.resolve(`${branch} fallback`);
+        },
+      });
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createBranchContext(),
+        (path: string) => path,
+        (cacheKey, contentContext) =>
+          new Promise((resolve) => {
+            const branch = contentContext?.branch ?? "main";
+            observedListScopes.push(`${cacheKey}:${branch}`);
+            pending.set(branch, () => resolve(undefined));
+          }),
+      );
+
+      const mainRead = readOps.readOptionalTextFile("globals.css");
+      while (!pending.has("main")) await Promise.resolve();
+      requestBranch = "feature";
+      const featureRead = readOps.readOptionalTextFile("globals.css");
+      while (!pending.has("feature")) await Promise.resolve();
+      pending.get("feature")?.();
+      pending.get("main")?.();
+
+      assertEquals(await Promise.all([mainRead, featureRead]), [
+        "main fallback",
+        "feature fallback",
+      ]);
+      assertEquals(observedReadBranches.sort(), ["feature", "main"]);
+      assertEquals(
+        observedListScopes.some((scope) => scope.endsWith(":main:main")),
+        true,
+      );
+      assertEquals(
+        observedListScopes.some((scope) => scope.endsWith(":feature:feature")),
+        true,
+      );
     });
 
     it("should cache an empty optional file as valid content", async () => {

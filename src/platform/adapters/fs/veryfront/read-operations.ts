@@ -21,6 +21,8 @@ import {
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
+import { buildFileListCacheKey } from "./cache-keys.ts";
+import { toClientContext } from "./adapter-content-context.ts";
 
 export {
   endRequestMetrics,
@@ -52,9 +54,10 @@ export class ReadOperations {
     private readonly normalizer: PathNormalizer,
     private readonly contextProvider?: ContentContextProvider,
     private readonly getOriginalApiPath?: (path: string) => string,
-    private readonly getFileListCache?: () => Promise<
-      Array<{ path: string; content?: string }> | undefined
-    >,
+    private readonly getFileListCache?: (
+      cacheKey?: string,
+      contentContext?: ResolvedContentContext | null,
+    ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   ) {
     this.fileListIndex = new FileListIndex(this.getFileListCache);
   }
@@ -176,7 +179,12 @@ export class ReadOperations {
         context?.environmentName ?? undefined,
         options,
       )
-      : this.client.getFileContentBytesWithinLimit(apiPath, admittedLimit, options);
+      : this.client.getFileContentBytesWithinLimit(
+        apiPath,
+        admittedLimit,
+        options,
+        context ? toClientContext(context) : undefined,
+      );
   }
 
   readTextFile(path: string): Promise<string> {
@@ -286,6 +294,7 @@ export class ReadOperations {
     skipPersistentCaches: boolean,
     isPreviewMode: boolean,
     ctx: ResolvedContentContext | null,
+    fileListCacheKey?: string,
   ): Promise<FileListMatchResult> {
     // File list cache is enabled for BOTH preview and production modes.
     // The file list is an in-memory index built from API response at init, updated by WebSocket pokes.
@@ -301,7 +310,7 @@ export class ReadOperations {
       return { status: "unavailable", fresh: false };
     }
 
-    const match = await this.fileListIndex.match(normalizedPath);
+    const match = await this.fileListIndex.match(normalizedPath, fileListCacheKey, ctx);
     if (match.status === "hit" && match.content !== undefined) {
       logContentMetric("FILE_LIST_HIT", {
         path: normalizedPath,
@@ -389,6 +398,7 @@ export class ReadOperations {
             cacheKey,
             isProduction,
             expectedMissing,
+            ctx?.branch,
           );
 
         const fetchDuration = Math.round(performance.now() - fetchStartTime);
@@ -418,11 +428,12 @@ export class ReadOperations {
     cacheKey: string,
     isProduction: boolean,
     skipPersistentCaches: boolean,
+    contentContext: ResolvedContentContext | null,
   ): Promise<string | null> {
     // Check extension resolution cache first to skip the API call entirely.
     // Once we know pages/home → pages/home.tsx, we never need to ask the API again.
     if (!skipPersistentCaches) {
-      const cachedResolvedPath = this.extensionResolutionCache.get(apiPath);
+      const cachedResolvedPath = this.extensionResolutionCache.get(`${cacheKeyPrefix}:${apiPath}`);
       if (cachedResolvedPath) {
         const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
         const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
@@ -441,6 +452,7 @@ export class ReadOperations {
       const resolved = await this.client.resolveFileWithExtension(
         apiPath,
         [...EXTENSION_PRIORITY],
+        contentContext ? toClientContext(contentContext) : undefined,
       );
       if (!resolved) return null;
 
@@ -470,9 +482,14 @@ export class ReadOperations {
     isProduction: boolean,
     ctx: ResolvedContentContext | null,
     isPreviewMode: boolean,
+    fileListCacheKey?: string,
   ): Promise<FileListMatchResult> {
     const candidatePaths = buildExtensionCandidatePaths(normalizedPath);
-    const resolved = await this.fileListIndex.findFirstMatch(candidatePaths);
+    const resolved = await this.fileListIndex.findFirstMatch(
+      candidatePaths,
+      fileListCacheKey,
+      ctx,
+    );
     if (resolved.status !== "hit" || !resolved.path || resolved.content === undefined) {
       return resolved;
     }
@@ -520,7 +537,7 @@ export class ReadOperations {
     const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
 
     // Cache the path mapping to avoid future API resolution calls.
-    this.extensionResolutionCache.set(requestedPath, resolvedPath);
+    this.extensionResolutionCache.set(`${cacheKeyPrefix}:${requestedPath}`, resolvedPath);
 
     logger.debug(logMessage, {
       basePath: requestedPath,
@@ -611,6 +628,7 @@ export class ReadOperations {
       releaseId: currentReleaseId,
       isPrefixInvalidated,
       skipPersistentCaches,
+      effectiveContentContext,
     } = buildReadFetchState({
       normalizedPath,
       contentContext: ctx,
@@ -619,6 +637,9 @@ export class ReadOperations {
       requestBranch,
       cacheVariant: optional ? "optional-exact" : undefined,
     });
+    const fileListCacheKey = effectiveContentContext
+      ? buildFileListCacheKey(effectiveContentContext)
+      : undefined;
 
     logger.debug("fetchContent context", {
       path: normalizedPath,
@@ -654,7 +675,8 @@ export class ReadOperations {
       isProduction,
       skipPersistentCaches,
       isPreviewMode,
-      ctx,
+      effectiveContentContext,
+      fileListCacheKey,
     );
     if (fileListMatch.status === "hit" && fileListMatch.content !== undefined) {
       return fileListMatch.content;
@@ -667,7 +689,7 @@ export class ReadOperations {
         isPublished,
         isProduction,
         isPreviewMode,
-        ctx,
+        effectiveContentContext,
         "indexed_without_content",
         optional,
       );
@@ -688,8 +710,9 @@ export class ReadOperations {
           cacheKeyPrefix,
           cacheKey,
           isProduction,
-          ctx,
+          effectiveContentContext,
           isPreviewMode,
+          fileListCacheKey,
         );
         if (
           resolvedFromFileList.status === "hit" &&
@@ -712,11 +735,10 @@ export class ReadOperations {
             isPublished,
             isProduction,
             isPreviewMode,
-            ctx,
+            effectiveContentContext,
             "indexed_without_content",
           );
 
-          this.extensionResolutionCache.set(normalizedPath, resolvedFromFileList.path);
           this.cacheResolvedContent(
             cacheKey,
             resolvedCacheKey,
@@ -743,6 +765,7 @@ export class ReadOperations {
         cacheKey,
         isProduction,
         skipPersistentCaches,
+        effectiveContentContext,
       );
       if (resolved !== null) return resolved;
     }
@@ -758,7 +781,7 @@ export class ReadOperations {
       isPublished,
       isProduction,
       isPreviewMode,
-      ctx,
+      effectiveContentContext,
       skipPersistentCaches
         ? "invalidation"
         : fileListMatch.status === "missing" && fileListMatch.fresh
@@ -945,6 +968,7 @@ export class ReadOperations {
     cacheKey: string,
     shouldCache: boolean,
     expectedMissing = false,
+    branch = "main",
   ): Promise<string> {
     logger.debug("API_FETCH_START - fetching draft from API", {
       path: normalizedPath,
@@ -955,6 +979,7 @@ export class ReadOperations {
     const content = await this.client.getFileContent(
       apiPath,
       expectedMissing ? { expectedMissing: true } : undefined,
+      { type: "branch", name: branch ?? "main" },
     );
 
     logger.debug("API_FETCH_DONE - got content from API", {

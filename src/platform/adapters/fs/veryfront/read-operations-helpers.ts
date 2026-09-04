@@ -26,6 +26,7 @@ interface ReadFetchState {
   isPrefixInvalidated: boolean;
   isReleaseInvalidated: boolean | undefined;
   skipPersistentCaches: boolean;
+  effectiveContentContext: ResolvedContentContext | null;
 }
 
 interface BuildReadFetchStateOptions {
@@ -84,6 +85,7 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
     isPrefixInvalidated,
     isReleaseInvalidated,
     skipPersistentCaches: !!(isPrefixInvalidated || isReleaseInvalidated),
+    effectiveContentContext,
   };
 }
 

@@ -109,6 +109,8 @@ function createWebSocketManager(options: {
   apiBaseUrl?: string;
   /** Branch this preview is pinned to; `null` previews the default branch. */
   branch?: string | null;
+  /** Request-scoped branch override on a reused contextual adapter. */
+  effectiveBranch?: string | null;
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
@@ -148,6 +150,11 @@ function createWebSocketManager(options: {
       sourceType: "branch",
       projectSlug: "test-project",
       branch,
+    }),
+    getEffectiveContentContext: options.effectiveBranch === undefined ? undefined : () => ({
+      sourceType: "branch",
+      projectSlug: "test-project",
+      branch: options.effectiveBranch ?? undefined,
     }),
     getContentSource: () => ({ type: "branch", branch }),
     getProjectDir: () => undefined,
@@ -947,6 +954,25 @@ describe("WebSocketManager", () => {
     assertEquals(clearCalls, 0, "a poke for another branch must not flush the preview caches");
     assertEquals(reloadCalls, 0, "a poke for another branch must not republish a reload");
 
+    manager.dispose();
+  });
+
+  it("matches pokes against the effective request branch", () => {
+    let clearCalls = 0;
+    const manager = createWebSocketManager({
+      branch: "main",
+      effectiveBranch: "feature-x",
+      clearMemoryCaches: () => {
+        clearCalls++;
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "feature-x" });
+
+    assertEquals(clearCalls, 1);
     manager.dispose();
   });
 

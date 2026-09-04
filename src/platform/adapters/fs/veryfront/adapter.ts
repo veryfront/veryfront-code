@@ -467,14 +467,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Whether running in proxy mode (shared adapter with per-request OAuth tokens) */
   private proxyMode: boolean;
 
-  private getCurrentFileListCacheKey(): string | undefined {
+  private getEffectiveContentContext(): ResolvedContentContext | null {
     const context = this.contentContext;
+    return context?.sourceType === "branch" && this.requestBranch
+      ? { ...context, branch: this.requestBranch }
+      : context;
+  }
+
+  private getCurrentFileListCacheKey(): string | undefined {
+    const context = this.getEffectiveContentContext();
     if (!context) return undefined;
-    return buildFileListCacheKey(
-      context.sourceType === "branch" && this.requestBranch
-        ? { ...context, branch: this.requestBranch }
-        : context,
-    );
+    return buildFileListCacheKey(context);
   }
 
   #getCurrentSourceSnapshotIdentity(): string | undefined {
@@ -517,9 +520,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     noContextMessage: string,
     lookupLabel: string,
     missReason: string,
-    options: { waitForWarmup?: boolean } = {},
+    options: {
+      waitForWarmup?: boolean;
+      cacheKey?: string;
+      contentContext?: ResolvedContentContext | null;
+    } = {},
   ): Promise<{ cacheKey: string; files: T[] | undefined } | undefined> {
-    const cacheKey = this.getCurrentFileListCacheKey();
+    const cacheKey = options.cacheKey ?? this.getCurrentFileListCacheKey();
     if (!cacheKey) {
       logger.debug(noContextMessage);
       return undefined;
@@ -540,7 +547,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     if (files === undefined) {
-      this.scheduleFileListWarmup(missReason, cacheKey);
+      this.scheduleFileListWarmup(missReason, cacheKey, options.contentContext);
       if (options.waitForWarmup) {
         files = await this.awaitFileListWarmup<T>(cacheKey) ?? files;
       }
@@ -658,7 +665,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const contentContextGetter = {
       isProductionMode: () => this.contentContext?.sourceType !== "branch",
       getReleaseId: () => this.contentContext?.releaseId ?? null,
-      getContentContext: () => this.contentContext,
+      getContentContext: () => this.getEffectiveContentContext(),
       getFileList: async () => {
         const cached = await this.getCachedFileListAsync<{
           id?: string;
@@ -705,12 +712,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.normalizer,
       contentContextGetter,
       (path) => this.statOps.getOriginalApiPath(path),
-      async () => {
+      async (cacheKey, contentContext) => {
         const cached = await this.getCachedFileListAsync<{ path: string; content?: string }>(
           "getFileListCache: no contentContext",
           "getFileListCache",
           "getFileListCache miss",
-          { waitForWarmup: true },
+          { waitForWarmup: true, cacheKey, contentContext },
         );
         return cached?.files;
       },
@@ -731,6 +738,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       client: this.client,
       invalidationCallbacks: this.invalidationCallbacks,
       getContentContext: () => this.contentContext,
+      getEffectiveContentContext: () => this.getEffectiveContentContext(),
       getContentSource: () => this.contentSource,
       getProjectDir: () => this.normalizer.getProjectDir(),
       clearMemoryCaches: () => this.clearMemoryCaches(),
@@ -1091,7 +1099,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
+  private scheduleFileListWarmup(
+    reason: string,
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ): void {
     if (!this.initialized || !this.contentContext) return;
 
     const effectiveCacheKey = cacheKey ?? this.getCurrentFileListCacheKey()!;
@@ -1104,7 +1116,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const warmupContext = this.contentContext;
+    const warmupBaseContext = this.contentContext;
+    const warmupContext = contentContext ?? this.getEffectiveContentContext();
+    if (!warmupContext) return;
+    const warmupIdentity = this.#getCurrentSourceSnapshotIdentity();
     const warmupSnapshotVersion = this.sourceSnapshotVersion;
     let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
@@ -1139,7 +1154,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // snapshot mutations and stands down when one won the race.
         const applied = await this.#runSourceSnapshotMutation(async () => {
           if (
-            this.contentContext !== warmupContext ||
+            this.contentContext !== warmupBaseContext ||
+            this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
             this.sourceSnapshotVersion !== warmupSnapshotVersion
           ) {
             return false;
@@ -1150,7 +1166,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
           // is pending. Remove the value that just landed before releasing the
           // mutation lock, so neither this waiter nor a later read sees it.
           if (
-            this.contentContext !== warmupContext ||
+            this.contentContext !== warmupBaseContext ||
+            this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
             this.sourceSnapshotVersion !== warmupSnapshotVersion
           ) {
             await this.cache.deleteAsync(effectiveCacheKey);
@@ -1351,14 +1368,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const refreshContext = this.contentContext;
-    const effectiveRefreshContext = refreshContext.sourceType === "branch" && this.requestBranch
-      ? { ...refreshContext, branch: this.requestBranch }
-      : refreshContext;
+    const effectiveRefreshContext = this.getEffectiveContentContext() ?? refreshContext;
     const cacheKey = buildFileListCacheKey(effectiveRefreshContext);
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
-    const files = await fetchFileListForContext(this.client, refreshContext);
+    const files = await fetchFileListForContext(this.client, effectiveRefreshContext);
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||

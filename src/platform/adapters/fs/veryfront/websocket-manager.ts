@@ -99,6 +99,7 @@ interface WebSocketDeps {
   defaultBranchName?: string;
 
   getContentContext: () => ResolvedContentContext | null;
+  getEffectiveContentContext?: () => ResolvedContentContext | null;
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
@@ -156,6 +157,10 @@ export class WebSocketManager {
     contentContext: ResolvedContentContext | null,
   ): string[] {
     return getPreviewInvalidationPrefixesHelper(contentContext);
+  }
+
+  private getActiveContentContext(): ResolvedContentContext | null {
+    return this.deps.getEffectiveContentContext?.() ?? this.deps.getContentContext();
   }
 
   private beginPreviewInvalidation(contentContext: ResolvedContentContext | null): void {
@@ -394,7 +399,7 @@ export class WebSocketManager {
           undefined)
         : undefined;
 
-      const contentContext = this.deps.getContentContext();
+      const contentContext = this.getActiveContentContext();
 
       const rawBranchId = payload.branchId;
       const pokeBranchId: string | null | undefined = typeof rawBranchId === "string" ||
@@ -682,7 +687,7 @@ export class WebSocketManager {
     const changedPaths = Array.from(this.pendingChangedPaths);
     this.pendingChangedPaths.clear();
 
-    const contentContext = this.deps.getContentContext();
+    const contentContext = this.getActiveContentContext();
     const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
@@ -868,7 +873,7 @@ export class WebSocketManager {
 
   private async performInvalidation(): Promise<void> {
     const startTime = currentTime();
-    const contentContext = this.deps.getContentContext();
+    const contentContext = this.getActiveContentContext();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
