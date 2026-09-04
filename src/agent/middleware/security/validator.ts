@@ -5,6 +5,7 @@ import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-u
 import {
   getAnthropicCompactedAssistantMessages,
   getProviderSendableAssistantMessages,
+  getProviderSendableToolMessages,
 } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import {
   registerTurnInputValidator,
@@ -503,6 +504,9 @@ function extractAdjacentRuns(
   const sendableAssistantMessages = role === "user" || role === "system"
     ? getProviderSendableAssistantMessages(messages)
     : undefined;
+  const sendableToolMessages = role === "system"
+    ? getProviderSendableToolMessages(messages)
+    : undefined;
   const anthropicCompactedAssistantMessages = role === "user"
     ? getAnthropicCompactedAssistantMessages(messages)
     : undefined;
@@ -518,6 +522,9 @@ function extractAdjacentRuns(
     if (message.role !== role) {
       if (role === "user" && message.role === "tool") continue;
       if (role === "user" && message.role === "system") continue;
+      if (role === "system" && message.role === "tool" && !sendableToolMessages?.has(message)) {
+        continue;
+      }
       if (
         message.role === "assistant" &&
         (!sendableAssistantMessages?.has(message) ||

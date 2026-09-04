@@ -446,6 +446,30 @@ export function getProviderSendableAssistantMessages(
   return sendable;
 }
 
+/** Tool messages retained after applying conversation-level provider call identity. */
+export function getProviderSendableToolMessages(
+  messages: readonly Message[],
+): ReadonlySet<Message> {
+  const sendable = new Set<Message>();
+  const providerExecutedToolCallIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+    if (message.role !== "tool") continue;
+    const converted = convertToTextGenerationRuntimeMessage(message, {
+      providerExecutedToolCallIds,
+    });
+    if (converted.role === "tool" && converted.content.length > 0) sendable.add(message);
+  }
+  return sendable;
+}
+
 /**
  * Assistant messages Anthropic removes when compacting completed historical
  * client-tool rounds. The request builder drops their tool calls once a later

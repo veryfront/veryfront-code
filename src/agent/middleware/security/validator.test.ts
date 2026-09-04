@@ -597,6 +597,27 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("validates the exact OpenAI system run across a dropped tool message", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/^foo\n\nbar$/] },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-prefix", role: "system", parts: [{ type: "text", text: "prefix" }] },
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "separator" }] },
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "foo" }] },
+        { id: "tool-1", role: "tool", parts: [] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "bar" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed",
+    );
+  });
+
   it("blocks a split injection across systems a sendable assistant turn separates", async () => {
     // An assistant message with real content survives conversion, so the
     // system messages stay apart on OpenAI-compatible providers - but the
