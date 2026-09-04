@@ -1874,6 +1874,14 @@ export class AgentRuntime {
               type: "data-veryfront.runtime_context",
               data: runRuntimeContext,
             });
+            let streamedResponseText = "";
+            const streamingCallbacks: AgentRuntimeStreamCallbacks = {
+              ...callbacks,
+              onChunk: (chunk) => {
+                streamedResponseText += chunk;
+                callbacks?.onChunk?.(chunk);
+              },
+            };
             inFlight = chain.execute(
               agentContext,
               async () => {
@@ -1885,7 +1893,7 @@ export class AgentRuntime {
                       memoryMessages,
                       controller,
                       encoder,
-                      callbacks,
+                      streamingCallbacks,
                       textPartId,
                       toolContext,
                       context,
@@ -1909,14 +1917,9 @@ export class AgentRuntime {
               },
             );
             const response = await inFlight;
-            // Turn persistence is the first thing the continuation does, so an
-            // untouched flag means a middleware answered without calling
-            // `next()` (a cache hit). No provider stream ran, so replay the
-            // response text after committing the accepted turn.
-            const answeredWithoutContinuation = !turnPersistence.persisted;
             if (!turnPersistence.persisted) await turnPersistence.persist();
             throwIfAborted(streamAbortSignal);
-            if (answeredWithoutContinuation && response.text.length > 0) {
+            if (response.text.length > 0 && response.text !== streamedResponseText) {
               sendSSE(controller, encoder, { type: "text-start", id: textPartId });
               sendSSE(controller, encoder, {
                 type: "text-delta",

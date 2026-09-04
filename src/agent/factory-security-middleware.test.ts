@@ -611,6 +611,45 @@ describe("resolveSecurityMiddleware", () => {
     }
   });
 
+  it("streams middleware fallback text after a continuation failure", async () => {
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/stream-fallback",
+      async doGenerate() {
+        throw new Error("Expected streaming path");
+      },
+      async doStream() {
+        throw new Error("provider unavailable");
+      },
+    };
+    const fallback: AgentMiddleware = async (_context, next) => {
+      try {
+        return await next();
+      } catch {
+        return {
+          text: "fallback answer",
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+        };
+      }
+    };
+    const assistant = agent({
+      id: "stream-fallback",
+      model: "hosted/stream-fallback",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [fallback],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "hello" })).toDataStreamResponse().text();
+
+    assertStringIncludes(body, "fallback answer");
+  });
+
   it("persists a turn once when a middleware invokes the continuation twice", async () => {
     // Persistence runs inside the middleware continuation, so a retry or
     // fallback wrapper must not write the turn's input to memory once per
