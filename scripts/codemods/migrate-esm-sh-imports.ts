@@ -3,6 +3,7 @@
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
+import { constants as nativeFsConstants } from "node:fs";
 import { open as openNativeFile, stat as statNativeFile } from "node:fs/promises";
 import { isAbsolute, parse as parsePath, relative } from "node:path";
 
@@ -787,7 +788,10 @@ async function readTextFileInsideProject(
   path: string,
   projectRoot: string,
 ): Promise<{ text: string; identity: StableFileIdentity }> {
-  const file = await openNativeFile(path, "r");
+  const file = await openNativeFile(
+    path,
+    Deno.build.os === "windows" ? "r" : nativeFsConstants.O_RDONLY | nativeFsConstants.O_NONBLOCK,
+  );
   try {
     const identity = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
