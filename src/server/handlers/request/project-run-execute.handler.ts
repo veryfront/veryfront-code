@@ -70,10 +70,10 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   message: "Knowledge ingest logs were truncated",
 });
 const ReflectApply = Reflect.apply;
-const RequestPrototypeClone = Request.prototype.clone;
-const RequestPrototypeJson = Request.prototype.json;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const RequestPrototypeClone = Request.prototype.clone;
+const RequestPrototypeJson = Request.prototype.json;
 
 export interface ProjectRunExecuteRequest {
   runId: string;
