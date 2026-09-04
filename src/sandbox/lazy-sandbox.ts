@@ -2,10 +2,8 @@ import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import {
-  bindSandboxAuthToken,
   fetchSandboxRuntimeUrl,
   fetchSandboxUrl,
-  readSandboxAuthToken,
   resolveSandboxApiUrl,
   resolveSandboxAuthToken,
 } from "./config.ts";
@@ -85,6 +83,17 @@ const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const stringReplace = String.prototype.replace;
+const lazySandboxAuthTokens = new WeakMap<object, string>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+
+function getLazySandboxAuthToken(sandbox: object): string {
+  const token = applyIntrinsic(weakMapGet, lazySandboxAuthTokens, [sandbox]) as
+    | string
+    | undefined;
+  if (!token) throw new TypeError("Lazy sandbox auth state is unavailable");
+  return token;
+}
 
 /** Resolves default sandbox runtime endpoint. */
 export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }): string {
@@ -147,9 +156,7 @@ export class LazySandbox {
 
   constructor(options: LazySandboxOptions = {}) {
     this.apiUrl = resolveSandboxApiUrl(options);
-    // Held off the instance: `private` is compile-time only, and `createLazy()`
-    // hands this object to project code through the public export surface.
-    bindSandboxAuthToken(this, resolveSandboxAuthToken(options));
+    applyIntrinsic(weakMapSet, lazySandboxAuthTokens, [this, resolveSandboxAuthToken(options)]);
     this.sandboxId = options.sandboxId?.trim() || undefined;
     this.sandboxEndpoint = options.sandboxEndpoint?.trim() || undefined;
     this.deleteOnClose = options.deleteOnClose ?? !this.sandboxId;
@@ -908,7 +915,7 @@ export class LazySandbox {
   }
 
   private authHeaders(): HeadersInit {
-    return { Authorization: `Bearer ${readSandboxAuthToken(this)}` };
+    return { Authorization: `Bearer ${getLazySandboxAuthToken(this)}` };
   }
 
   private jsonHeaders(): HeadersInit {

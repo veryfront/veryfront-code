@@ -14,10 +14,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
-import {
-  resolveHostOwnedApiBaseUrl,
-  resolveHostOwnedCliApiUrl,
-} from "../../../../../src/config/host-api-base.ts";
+import { resolveHostOwnedApiBaseUrl } from "../../../../../src/config/host-api-base.ts";
 
 describe("host API base", () => {
   it("does not trust an API base copied from a project env file", async () => {
@@ -45,22 +42,13 @@ describe("host API base", () => {
     }
   });
 
-  it("keeps VERYFRONT_API_URL ahead of VERYFRONT_API_BASE_URL for CLI callers", () => {
+  it("treats blank host API URLs as unset", () => {
     const originalBase = getEnv("VERYFRONT_API_BASE_URL");
     const originalUrl = getEnv("VERYFRONT_API_URL");
     try {
-      setEnv("VERYFRONT_API_BASE_URL", "https://base.example.com");
-      setEnv("VERYFRONT_API_URL", "https://api-url.example.com");
-
-      // `resolveCliApiUrl()` in cli/shared/constants.ts gives VERYFRONT_API_URL
-      // precedence, and the CLI preload has to keep following it when the
-      // credential comes from the token store.
-      assertEquals(resolveHostOwnedCliApiUrl(), "https://api-url.example.com");
-      // The REST API base keeps the EnvironmentConfig ordering it mirrors.
-      assertEquals(resolveHostOwnedApiBaseUrl(), "https://base.example.com");
-
-      deleteEnv("VERYFRONT_API_URL");
-      assertEquals(resolveHostOwnedCliApiUrl(), "https://base.example.com");
+      setEnv("VERYFRONT_API_BASE_URL", "   ");
+      setEnv("VERYFRONT_API_URL", "\t");
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://api.veryfront.com");
     } finally {
       if (originalBase === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
       else setEnv("VERYFRONT_API_BASE_URL", originalBase);
@@ -69,13 +57,13 @@ describe("host API base", () => {
     }
   });
 
-  it("treats blank host API URLs as unset", () => {
+  it("preserves API URL precedence over API base URL", () => {
     const originalBase = getEnv("VERYFRONT_API_BASE_URL");
     const originalUrl = getEnv("VERYFRONT_API_URL");
     try {
-      setEnv("VERYFRONT_API_BASE_URL", "   ");
-      setEnv("VERYFRONT_API_URL", "\t");
-      assertEquals(resolveHostOwnedApiBaseUrl(), "https://api.veryfront.com");
+      setEnv("VERYFRONT_API_URL", "https://preferred.example/graphql");
+      setEnv("VERYFRONT_API_BASE_URL", "https://fallback.example/api");
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://preferred.example/api");
     } finally {
       if (originalBase === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
       else setEnv("VERYFRONT_API_BASE_URL", originalBase);

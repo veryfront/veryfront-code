@@ -25,10 +25,15 @@ import {
   ScheduleRunCreateResponseSchema,
 } from "./schemas.ts";
 
-// Captured before project code runs. `requestJson` normalizes the API base
-// that a host-owned credential is attached to, so a served project that
-// replaces `String.prototype.replace`, `URL`, or the `origin` getter must not
-// be able to rewrite that destination and receive the Bearer token.
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+const DEFAULT_KNOWLEDGE_INGEST_RUN_NAME = "Ingest knowledge";
+const GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX = "schedule-run";
+// Captured before project code runs. `requestJson` normalizes the API base a
+// host-owned credential is attached to, so a served project that replaces
+// `String.prototype.replace`, `URL`, or the `origin` getter must not be able to
+// rewrite that destination and receive the Bearer token.
 const applyIntrinsic = Reflect.apply;
 const stringReplace = String.prototype.replace;
 const NativeURL = URL;
@@ -36,14 +41,9 @@ const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "or
 
 /** Read `origin` through the captured getter so a replaced accessor cannot lie. */
 function readUrlOrigin(url: URL): string {
-  return urlOriginGetter ? applyIntrinsic(urlOriginGetter, url, []) as string : url.origin;
+  if (!urlOriginGetter) throw new TypeError("Native URL origin getter is unavailable");
+  return applyIntrinsic(urlOriginGetter, url, []) as string;
 }
-
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
-const DEFAULT_KNOWLEDGE_INGEST_RUN_NAME = "Ingest knowledge";
-const GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX = "schedule-run";
 
 /** Configuration used by the Veryfront runs client. */
 export interface VeryfrontRunsClientConfig {

@@ -35,6 +35,10 @@ const mapEntries = Map.prototype.entries;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const mapSet = Map.prototype.set;
+const SetConstructor = Set;
+const setAdd = Set.prototype.add;
+const setClear = Set.prototype.clear;
+const setHas = Set.prototype.has;
 // Captured before project code runs: `getHostEnv` is on the credential path,
 // so a project that replaces `String.prototype.trim` must not observe — or
 // influence — how a host value is classified as blank.
@@ -64,6 +68,18 @@ const stringTrim = String.prototype.trim;
  * inherited environment.
  */
 const hostSecrets: Map<string, string> = new MapConstructor();
+const envFileValueKeys: Set<string> = new SetConstructor();
+
+/** @internal Record that an environment value came from a project env file. */
+export function markEnvFileValue(key: string): void {
+  apply(setAdd, envFileValueKeys, [key]);
+}
+
+/** @internal Clear project env provenance alongside the env loader's test reset. */
+export function clearEnvFileValueSources(): void {
+  if (!allowHostEnvTestOverlay) return;
+  apply(setClear, envFileValueKeys, []);
+}
 
 export type EnvOverlayStorage = {
   getStore: () => unknown;
@@ -170,6 +186,12 @@ export function getHostEnv(key: string): string | undefined {
   // the host environment is still reported verbatim.
   const secret = getHostSecret(key);
   return secret !== undefined ? secret : value;
+}
+
+/** Read host environment while excluding values copied from project env files. */
+export function getHostEnvExcludingEnvFile(key: string): string | undefined {
+  if (apply(setHas, envFileValueKeys, [key])) return getHostSecret(key);
+  return getHostEnv(key);
 }
 
 /** The host process environment alone, without host-private credentials. */

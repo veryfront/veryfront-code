@@ -9,13 +9,7 @@
 
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
-import {
-  bindSandboxAuthToken,
-  fetchSandboxUrl,
-  readSandboxAuthToken,
-  resolveSandboxApiUrl,
-  resolveSandboxAuthToken,
-} from "./config.ts";
+import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import { readExecStreamEvents } from "./exec-stream.ts";
 import type {
@@ -47,6 +41,17 @@ export type {
   SandboxSession,
 } from "./types.ts";
 
+const sandboxAuthTokens = new WeakMap<object, string>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+const applyIntrinsic = Reflect.apply;
+
+function getSandboxAuthToken(sandbox: object): string {
+  const token = applyIntrinsic(weakMapGet, sandboxAuthTokens, [sandbox]) as string | undefined;
+  if (!token) throw new TypeError("Sandbox auth state is unavailable");
+  return token;
+}
+
 /** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
   private constructor(
@@ -55,23 +60,13 @@ export class Sandbox {
     authToken: string,
     private apiUrl: string,
   ) {
-    // Held off the instance: `private` is compile-time only, and this object is
-    // handed to project code through the public `veryfront/sandbox` export.
-    bindSandboxAuthToken(this, authToken);
-  }
-
-  private static resolveApiUrl(options: SandboxOptions = {}): string {
-    return resolveSandboxApiUrl(options);
-  }
-
-  private static resolveAuthToken(options: SandboxOptions = {}): string {
-    return resolveSandboxAuthToken(options);
+    applyIntrinsic(weakMapSet, sandboxAuthTokens, [this, authToken]);
   }
 
   /** Create a new sandbox session. Claims a warm pod or creates a new one. */
   static async create(options: SandboxOptions = {}): Promise<Sandbox> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions`, {
       method: "POST",
@@ -100,8 +95,8 @@ export class Sandbox {
 
   /** Reconnect to an existing sandbox session. */
   static async get(id: string, options: SandboxOptions = {}): Promise<Sandbox> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${authToken}` },
@@ -119,15 +114,15 @@ export class Sandbox {
 
   /** Attach to an already-known sandbox session and endpoint without a reconnect lookup. */
   static attach(attachment: SandboxAttachment): Sandbox {
-    const apiUrl = Sandbox.resolveApiUrl(attachment);
-    const authToken = Sandbox.resolveAuthToken(attachment);
+    const apiUrl = resolveSandboxApiUrl(attachment);
+    const authToken = resolveSandboxAuthToken(attachment);
     return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl);
   }
 
   /** List sandbox sessions with optional pagination. */
   static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const params = new URLSearchParams();
     if (options.cursor) params.set("cursor", options.cursor);
@@ -210,7 +205,7 @@ export class Sandbox {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${readSandboxAuthToken(this)}`,
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ command, ...options }),
@@ -232,7 +227,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(this.apiUrl, this.sessionId, `/file?path=${encodeURIComponent(path)}`),
       {
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -250,7 +245,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(sandboxSessionRoute(this.apiUrl, this.sessionId, "/files"), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${readSandboxAuthToken(this)}`,
+        Authorization: `Bearer ${getSandboxAuthToken(this)}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ files }),
@@ -270,7 +265,7 @@ export class Sandbox {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${readSandboxAuthToken(this)}`,
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ command, ...options }),
@@ -295,7 +290,7 @@ export class Sandbox {
         `/commands/${encodeURIComponent(commandId)}`,
       ),
       {
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -317,7 +312,7 @@ export class Sandbox {
         `/commands/${encodeURIComponent(commandId)}/output`,
       ),
       {
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -342,7 +337,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(this.apiUrl, this.sessionId, "/commands"),
       {
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -369,7 +364,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -403,7 +398,7 @@ export class Sandbox {
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}/heartbeat`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -420,7 +415,7 @@ export class Sandbox {
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
       {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 

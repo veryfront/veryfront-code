@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { deleteHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import {
   _resetRuntimeConfig,
   _setRuntimeConfigForTesting,
@@ -9,6 +10,7 @@ import {
 } from "#veryfront/config/runtime-config.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
+import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
   getDefaultVeryfrontCloudModel,
@@ -43,6 +45,8 @@ function clearCloudEnv(): void {
 describe("platform/cloud/resolver", () => {
   afterEach(() => {
     clearCloudEnv();
+    deleteHostSecret("VERYFRONT_API_TOKEN");
+    __resetEnvLoaderForTests();
     _resetRuntimeConfig();
   });
 

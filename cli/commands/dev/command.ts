@@ -33,7 +33,7 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
-import { resolveHostOwnedCliApiUrl } from "#veryfront/config/host-api-base.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { guardedOutboundFetch } from "#cli/outbound-fetch";
 import { getApiUrl } from "#cli/shared/constants";
 
@@ -89,7 +89,7 @@ export async function preloadDevAuth(
   if (!apiToken) return { identity: null, projects: [] };
 
   const result = await fetchRemoteProjects(apiToken, {
-    apiBaseUrl: apiTokenSource === "token-store" ? resolveHostOwnedCliApiUrl() : getApiUrl(),
+    apiBaseUrl: apiTokenSource === "token-store" ? resolveHostOwnedApiBaseUrl() : getApiUrl(),
     transport: guardedOutboundFetch,
   });
   const identity = result.credentialType === "apiKey"
@@ -443,7 +443,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
             identity = result;
             const projectResult = await fetchRemoteProjects(undefined, {
-              apiBaseUrl: resolveHostOwnedCliApiUrl(),
+              apiBaseUrl: resolveHostOwnedApiBaseUrl(),
               transport: guardedOutboundFetch,
             });
             projects = projectResult.projects;

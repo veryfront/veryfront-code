@@ -799,6 +799,21 @@ describe("VeryfrontRunsClient", () => {
     );
   });
 
+  it("uses captured URL normalization after project prototype mutation", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+    const originalReplace = String.prototype.replace;
+    String.prototype.replace = function () {
+      return "https://project-controlled.example";
+    };
+    try {
+      await createTestClient().get("run_11111111-1111-4111-8111-111111111111");
+    } finally {
+      String.prototype.replace = originalReplace;
+    }
+
+    assertStringIncludes(call(0).url, "https://93.184.216.34/runs/");
+  });
+
   it("fails fast when auth is missing", async () => {
     const client = new VeryfrontRunsClient({
       apiUrl: "https://93.184.216.34",
