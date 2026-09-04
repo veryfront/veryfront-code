@@ -184,17 +184,29 @@ function scanQuotedValueEnd(text: string, start: number, quote: string): number 
   return undefined;
 }
 
-function hasValidQuotedValuePrefix(text: string, start: number, quote: string): boolean {
+function hasValidQuotedValuePrefix(
+  text: string,
+  start: number,
+  quote: string,
+  trailingSourceCharacter?: string,
+): boolean {
   for (let index = start + 1; index < text.length; index++) {
     const character = text[index]!;
     if (character.charCodeAt(0) < 0x20) return false;
     if (character !== "\\") continue;
     const escaped = text[++index];
-    if (escaped === undefined) return true;
+    if (escaped === undefined) {
+      if (trailingSourceCharacter === undefined) return true;
+      return trailingSourceCharacter === "u" ||
+        `\\"/bfnrt${quote === "'" ? "'" : ""}`.includes(trailingSourceCharacter);
+    }
     if (escaped === "u") {
       const availableHex = text.slice(index + 1, Math.min(index + 5, text.length));
       if (!/^[0-9a-f]*$/i.test(availableHex)) return false;
-      if (availableHex.length < 4) return true;
+      if (availableHex.length < 4) {
+        return trailingSourceCharacter === undefined ||
+          /^[0-9a-f]$/i.test(trailingSourceCharacter);
+      }
       index += 4;
       continue;
     }
@@ -492,7 +504,9 @@ function scanIncompleteLeadingObjectToolIds(
     if (keyQuote !== '"' && keyQuote !== "'") return undefined;
     const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
     if (keyEnd === undefined) {
-      if (!hasValidQuotedValuePrefix(fieldBody, index, keyQuote)) return undefined;
+      if (!hasValidQuotedValuePrefix(fieldBody, index, keyQuote, trailingSourceCharacter)) {
+        return undefined;
+      }
       break;
     }
     const key = parseQuotedScalar(fieldBody, index, keyEnd, keyQuote);
@@ -510,7 +524,9 @@ function scanIncompleteLeadingObjectToolIds(
     if (opening === '"' || opening === "'") {
       const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
       if (valueEnd === undefined) {
-        if (!hasValidQuotedValuePrefix(fieldBody, index, opening)) return undefined;
+        if (!hasValidQuotedValuePrefix(fieldBody, index, opening, trailingSourceCharacter)) {
+          return undefined;
+        }
         break;
       }
       // Every completed quoted member is parsed, not just ids, so an invalid
