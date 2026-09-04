@@ -1155,6 +1155,30 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("reserves bounded headroom for a cache namespace upgrade", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-namespace-headroom-test-" });
+    const nextPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/next.tsx", "export const next = true;"),
+    );
+    try {
+      for (let index = 0; index < MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY; index++) {
+        await writeTextFile(
+          join(tempDir, `jsx-prior-namespace-${index}.mjs`),
+          `export const old = ${index};`,
+        );
+      }
+
+      await withJsxArtifactWriteCapacity(tempDir, nextPath, async () => {
+        await writeTextFile(nextPath, "export const next = true;");
+      });
+
+      assertEquals(await getLocalFs().exists(nextPath), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("ignores a name too short to carry a path prefix", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-short-name-test-" });
     const sourcePath = "/tmp/source/ShortName.tsx";
@@ -1347,6 +1371,24 @@ describe("pruneSupersededJsxArtifacts", () => {
       }
       assertEquals(remaining.includes(unrelated), true);
       assertEquals(remaining.includes(written[0] ?? ""), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not sweep a live release tombstone", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-live-release-test-" });
+    const tombstone = join(
+      tempDir,
+      "jsx-live.mjs.lock.release-11111111-1111-4111-8111-111111111111",
+    );
+    try {
+      await writeTextFile(tombstone, "lease-owner");
+
+      await collectExcessJsxArtifacts(tempDir, new Map(), Date.now());
+
+      assertEquals(await getLocalFs().exists(tombstone), true);
+      assertEquals(hasScheduledJsxCachePrune(tempDir), true);
     } finally {
       await remove(tempDir, { recursive: true });
     }

@@ -64,6 +64,7 @@ import {
   markJsxArtifactServed,
   pruneSupersededJsxArtifacts,
   refreshJsxArtifactMtime,
+  refreshJsxArtifactsBounded,
   withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
 } from "./jsx-cache.ts";
@@ -475,15 +476,14 @@ export async function transformJsxImports(
   /** Source path to the artifact name this pass wrote, for one prune pass. */
   const writtenArtifacts = new Map<string, string>();
   const selectedArtifacts = new Set<string>();
-  const refreshSelectedArtifacts = async () => {
-    await Promise.all(
-      [...selectedArtifacts].map((artifactPath) =>
-        withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-          await assertLeaseOwned();
-          await refreshJsxArtifactMtime(artifactPath, 0);
-        })
-      ),
-    );
+  let selectedArtifactRefreshInFlight: Promise<void> | undefined;
+  const refreshSelectedArtifacts = (): Promise<void> => {
+    if (selectedArtifactRefreshInFlight) return selectedArtifactRefreshInFlight;
+    const run = refreshJsxArtifactsBounded([...selectedArtifacts]);
+    selectedArtifactRefreshInFlight = run.finally(() => {
+      selectedArtifactRefreshInFlight = undefined;
+    });
+    return selectedArtifactRefreshInFlight;
   };
   const selectedArtifactHeartbeat = setInterval(
     () => void refreshSelectedArtifacts().catch(() => undefined),

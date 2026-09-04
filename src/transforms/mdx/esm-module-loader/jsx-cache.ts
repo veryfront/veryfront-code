@@ -244,6 +244,28 @@ async function withJsxArtifactRefreshSlot<T>(operation: () => Promise<T>): Promi
   }
 }
 
+/** Refresh artifact mtimes through the process-wide bounded filesystem pool. */
+export function refreshJsxArtifactsBounded(artifactPaths: readonly string[]): Promise<void> {
+  let nextIndex = 0;
+  const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, artifactPaths.length);
+  const workers: Array<Promise<void>> = [];
+  for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+    workers[workers.length] = (async () => {
+      while (nextIndex < artifactPaths.length) {
+        const artifactPath = artifactPaths[nextIndex++];
+        if (artifactPath === undefined) continue;
+        await withJsxArtifactRefreshSlot(() =>
+          withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+            await assertLeaseOwned();
+            await refreshJsxArtifactMtime(artifactPath, 0);
+          })
+        );
+      }
+    })();
+  }
+  return Promise.all(workers).then(() => undefined);
+}
+
 function retainJsxArtifact(artifactPath: string): void {
   jsxArtifactActiveRefs.set(artifactPath, (jsxArtifactActiveRefs.get(artifactPath) ?? 0) + 1);
 }
@@ -431,24 +453,7 @@ export async function retainJsxArtifactsReferencedIn(
   let refreshInFlight: Promise<void> | undefined;
   const refreshAll = (): Promise<void> => {
     if (refreshInFlight) return refreshInFlight;
-    let nextIndex = 0;
-    const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, uniqueArtifactPaths.length);
-    const workers: Array<Promise<void>> = [];
-    for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-      workers[workers.length] = (async () => {
-        while (nextIndex < uniqueArtifactPaths.length) {
-          const artifactPath = uniqueArtifactPaths[nextIndex++];
-          if (artifactPath === undefined) continue;
-          await withJsxArtifactRefreshSlot(() =>
-            withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-              await assertLeaseOwned();
-              await refreshJsxArtifactMtime(artifactPath, 0);
-            })
-          );
-        }
-      })();
-    }
-    const run = Promise.all(workers).then(() => undefined);
+    const run = refreshJsxArtifactsBounded(uniqueArtifactPaths);
     refreshInFlight = run.finally(() => {
       refreshInFlight = undefined;
     });
@@ -803,6 +808,16 @@ async function countJsxArtifacts(esmCacheDir: string): Promise<number> {
   return count;
 }
 
+async function hasPriorNamespaceArtifact(esmCacheDir: string): Promise<boolean> {
+  for await (const entry of getLocalFs().readDir(esmCacheDir)) {
+    if (
+      entry.isFile && isJsxArtifactName(entry.name) &&
+      !entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)
+    ) return true;
+  }
+  return false;
+}
+
 /** Reserve one directory-wide artifact slot and hold it through the write. */
 export function withJsxArtifactWriteCapacity<T>(
   esmCacheDir: string,
@@ -821,7 +836,14 @@ export function withJsxArtifactWriteCapacity<T>(
         await assertLeaseOwned();
         await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
       }
-      if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
+      const remainingArtifacts = await countJsxArtifacts(esmCacheDir);
+      const namespaceRollHeadroom = MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY +
+        MAX_MDX_MODULE_IMPORTS_PER_FILE;
+      if (
+        remainingArtifacts >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY &&
+        (!await hasPriorNamespaceArtifact(esmCacheDir) ||
+          remainingArtifacts >= namespaceRollHeadroom)
+      ) {
         throw new JsxCacheCapacityError("JSX cache artifact quota is exhausted");
       }
       await assertLeaseOwned();
@@ -1002,14 +1024,19 @@ async function collectExcessJsxArtifacts(
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
 
-  // A tombstone is write-only after the recovery that renamed it: that
-  // recovery reads it back on the next line and nothing else ever opens it,
-  // so removing one here cannot disturb a concurrent recovery. The worst case
-  // is a recovery whose own read finds the file gone, which it already treats
-  // as "someone else won" and retries. No age floor applies for the same
-  // reason, and a tombstone inherits the mtime of the lock it replaced, which
-  // is stale by construction.
+  // Recovery tombstones inherit an already-stale lock mtime. Release
+  // tombstones can still be between rename and owner verification, so those
+  // remain protected for one full lease-stale interval before maintenance can
+  // remove an abandoned file.
   for (const name of leaseTombstones) {
+    if (name.includes(".lock.release-")) {
+      const modifiedAtMs = await readArtifactModifiedAtMs(join(esmCacheDir, name));
+      const collectableAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
+      if (modifiedAtMs > 0 && collectableAtMs > nowMs) {
+        noteRetry(collectableAtMs);
+        continue;
+      }
+    }
     try {
       await localFs.remove(join(esmCacheDir, name));
     } catch (error) {
