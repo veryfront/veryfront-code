@@ -343,6 +343,20 @@ describe("cli/sync/ignore", () => {
           "an anchored ignore covering the protected subtree cancels its earlier negation",
         );
 
+        const optionalGlobstarDirectoryChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.env/**/*",
+        ]);
+        assertEquals(
+          optionalGlobstarDirectoryChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          9,
+          "an optional globstar directory covering the subtree cancels its negation",
+        );
+
         const parentOnlyChecker = createIgnoreChecker([
           "!.env",
           ".env*",

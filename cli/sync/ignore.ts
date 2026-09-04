@@ -109,6 +109,7 @@ type GlobToken =
   | { type: "literal"; value: string }
   | { type: "single" }
   | { type: "star" }
+  | { type: "globstar-directory" }
   | { type: "double-star" };
 
 const MAX_IGNORE_PATTERN_LENGTH = 4_096;
@@ -209,8 +210,13 @@ function tokenizeGlob(pattern: string): GlobToken[] {
     const character = pattern[index]!;
     if (character === "*") {
       if (pattern[index + 1] === "*") {
-        tokens.push({ type: "double-star" });
-        index++;
+        if (pattern[index + 2] === "/") {
+          tokens.push({ type: "globstar-directory" });
+          index += 2;
+        } else {
+          tokens.push({ type: "double-star" });
+          index++;
+        }
       } else {
         tokens.push({ type: "star" });
       }
@@ -297,7 +303,10 @@ function epsilonClosure(tokens: readonly GlobToken[], states: ReadonlySet<number
   while (pending.length > 0) {
     const state = pending.pop()!;
     const token = tokens[state];
-    if (token?.type !== "star" && token?.type !== "double-star") continue;
+    if (
+      token?.type !== "star" && token?.type !== "double-star" &&
+      token?.type !== "globstar-directory"
+    ) continue;
     const next = state + 1;
     if (closure.has(next)) continue;
     closure.add(next);
@@ -323,7 +332,7 @@ function anchoredGlobCanMatchDescendant(
         nextStates.add(state + 1);
       } else if (token?.type === "star" && character !== "/") {
         nextStates.add(state);
-      } else if (token?.type === "double-star") {
+      } else if (token?.type === "double-star" || token?.type === "globstar-directory") {
         nextStates.add(state);
       }
     }
@@ -350,7 +359,7 @@ function anchoredGlobCoversEveryDescendant(
         nextStates.add(state + 1);
       } else if (token?.type === "star" && character !== "/") {
         nextStates.add(state);
-      } else if (token?.type === "double-star") {
+      } else if (token?.type === "double-star" || token?.type === "globstar-directory") {
         nextStates.add(state);
       }
     }
@@ -359,8 +368,14 @@ function anchoredGlobCoversEveryDescendant(
   }
 
   for (const state of states) {
-    if (tokens[state]?.type !== "double-star") continue;
-    if (epsilonClosure(tokens, new Set([state + 1])).has(tokens.length)) return true;
+    const token = tokens[state];
+    if (token?.type === "double-star") {
+      if (epsilonClosure(tokens, new Set([state + 1])).has(tokens.length)) return true;
+    }
+    if (
+      token?.type === "globstar-directory" && tokens[state + 1]?.type === "star" &&
+      epsilonClosure(tokens, new Set([state + 2])).has(tokens.length)
+    ) return true;
   }
   return false;
 }
