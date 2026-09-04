@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
 import { makeTempDir } from "#veryfront/testing/deno-compat";
 import { parse } from "npm:@babel/parser@7.29.2";
+import { stat as statNativeFile } from "node:fs/promises";
 import {
   assertPathInsideProject,
   filterNeedsResolution,
@@ -1095,6 +1096,34 @@ Deno.test("project writes refuse to create a missing manifest", async () => {
     assert(thrown instanceof Error);
     assertStringIncludes(thrown.message, "Create package.json");
     await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("project writes reject a file replaced after its source was read", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  const replacement = `${project}/replacement.ts`;
+  try {
+    const projectRoot = await Deno.realPath(project);
+    await Deno.writeTextFile(target, "original");
+    const identity = await statNativeFile(target, { bigint: true });
+    await Deno.writeTextFile(replacement, "replacement");
+    await Deno.rename(replacement, target);
+
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "updated", {
+          expectedIdentity: {
+            device: String(identity.dev),
+            inode: String(identity.ino),
+          },
+        }),
+      Error,
+      "changed after being read",
+    );
+    assertEquals(await Deno.readTextFile(target), "replacement");
   } finally {
     await Deno.remove(project, { recursive: true });
   }

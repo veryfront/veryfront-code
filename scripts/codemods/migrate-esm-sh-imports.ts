@@ -4,7 +4,7 @@ import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
 import { open as openNativeFile, stat as statNativeFile } from "node:fs/promises";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, parse as parsePath, relative } from "node:path";
 
 interface BabelGeneratorResult {
   code: string;
@@ -602,7 +602,7 @@ async function replaceTextFileInsideProject(
     await assertPathInsideProject(path, projectRoot);
     await assertPathInsideProject(tempPath, projectRoot);
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, await pathFileIdentity(path))) {
-      throw new Error("Refusing to write package.json because it changed after being read.");
+      throw new Error("Refusing to write a file because it changed after being read.");
     }
     await Deno.rename(tempPath, path);
   } finally {
@@ -666,7 +666,7 @@ export async function writeTextFileInsideProject(
       throw new Error("Refusing to write a path that changed after it was opened.");
     }
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
-      throw new Error("Refusing to write package.json because it changed after being read.");
+      throw new Error("Refusing to write a file because it changed after being read.");
     }
 
     const bytes = new TextEncoder().encode(content);
@@ -691,12 +691,12 @@ async function readTextFileInsideProject(
     const identity = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
-      throw new Error("package.json changed while it was being opened.");
+      throw new Error("A file changed while it was being opened.");
     }
     const text = await file.readFile({ encoding: "utf8" });
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
-      throw new Error("package.json changed while it was being read.");
+      throw new Error("A file changed while it was being read.");
     }
     return { text, identity };
   } finally {
@@ -944,7 +944,9 @@ async function main(args: string[]): Promise<void> {
   // Traversal and writes use the resolved root, but the report keeps the
   // spelling the caller passed: a relative project directory stays relative,
   // and no machine-specific filesystem layout leaks into the JSON output.
-  const displayRoot = projectDir.replace(/[/\\]+$/, "") || projectDir;
+  const displayRoot = projectDir === parsePath(projectDir).root
+    ? projectDir
+    : projectDir.replace(/[/\\]+$/, "") || projectDir;
   const toReportPath = (absolute: string): string => {
     const projectRelative = relative(projectRoot, absolute);
     if (
@@ -956,7 +958,10 @@ async function main(args: string[]): Promise<void> {
     const normalizedRelative = Deno.build.os === "windows"
       ? projectRelative.replaceAll("\\", "/")
       : projectRelative;
-    return normalizedRelative ? `${displayRoot}/${normalizedRelative}` : displayRoot;
+    if (!normalizedRelative) return displayRoot;
+    return /[/\\]$/.test(displayRoot)
+      ? `${displayRoot}${normalizedRelative}`
+      : `${displayRoot}/${normalizedRelative}`;
   };
 
   const sourceFiles: string[] = [];
@@ -975,11 +980,24 @@ async function main(args: string[]): Promise<void> {
   // Track the first-seen pin for each package across all files, including the
   // source file path and original URL so conflicts carry full location context.
   const allPins = new Map<string, { version: string; file: string; specifier: string }>();
-  const analyzedFiles: Array<{ file: string; source: string; result: EsmShFileResult }> = [];
+  const analyzedFiles: Array<{
+    file: string;
+    source: string;
+    identity: StableFileIdentity;
+    result: EsmShFileResult;
+  }> = [];
 
   for (const file of sourceFiles) {
     const reportFile = toReportPath(file);
-    const source = await Deno.readTextFile(file);
+    let source: string;
+    let identity: StableFileIdentity;
+    try {
+      const opened = await readTextFileInsideProject(file, projectRoot);
+      source = opened.text;
+      identity = opened.identity;
+    } catch {
+      throw new Error(`Failed to read ${reportFile} safely.`);
+    }
     let result: EsmShFileResult;
     try {
       result = migrateEsmShImports(source);
@@ -991,7 +1009,7 @@ async function main(args: string[]): Promise<void> {
     }
     if (!result.changed) continue;
 
-    analyzedFiles.push({ file, source, result });
+    analyzedFiles.push({ file, source, identity, result });
     // Collect every conflict before deciding which transformations are safe.
     for (const c of result.conflicts) {
       report.conflicts.push({ ...c, file: reportFile });
@@ -1091,14 +1109,14 @@ async function main(args: string[]): Promise<void> {
   const allNeedsResolution = new Set<string>();
   // Defer every write until analysis, manifest validation, conflict filtering,
   // and strict-mode gating have completed.
-  const fileResults: Array<{ file: string; code: string }> = [];
-  for (const { file, source, result: analyzedResult } of analyzedFiles) {
+  const fileResults: Array<{ file: string; code: string; identity: StableFileIdentity }> = [];
+  for (const { file, source, identity, result: analyzedResult } of analyzedFiles) {
     const result = conflictedPackages.size === 0
       ? analyzedResult
       : transformEsmShImports(source, conflictedPackages);
     if (!result.changed) continue;
 
-    fileResults.push({ file, code: result.code });
+    fileResults.push({ file, code: result.code, identity });
     report.filesChanged++;
     for (const rw of result.rewrites) {
       report.rewrites.push({ file: toReportPath(file), from: rw.from, to: rw.to });
@@ -1134,8 +1152,14 @@ async function main(args: string[]): Promise<void> {
       );
     }
 
-    for (const { file, code } of fileResults) {
-      await writeTextFileInsideProject(file, projectRoot, code);
+    for (const { file, code, identity } of fileResults) {
+      try {
+        await writeTextFileInsideProject(file, projectRoot, code, {
+          expectedIdentity: identity,
+        });
+      } catch {
+        throw new Error(`Failed to write ${toReportPath(file)} safely.`);
+      }
     }
   }
 
