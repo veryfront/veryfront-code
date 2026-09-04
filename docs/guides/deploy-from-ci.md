@@ -44,6 +44,12 @@ Use these operating controls:
 See [Configuration](./configuration.md) for the Cloud bootstrap environment
 variables.
 
+If the project uses a self-hosted API host, set `VERYFRONT_API_URL` in the job
+environment next to `VERYFRONT_API_TOKEN`. A CI secret is a credential you
+supplied, so it is not sent to a host that only `veryfront.json` or a committed
+`.env` file names. See
+[Credentials and the API host](./configuration.md#credentials-and-the-api-host).
+
 CI should use explicit project configuration, such as `VERYFRONT_PROJECT_SLUG`
 or committed config. Project reference precedence is
 `VERYFRONT_PROJECT_SLUG` or environment configuration, then

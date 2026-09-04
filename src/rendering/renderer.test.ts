@@ -1813,6 +1813,161 @@ describe("Renderer release asset cache isolation", () => {
     }
   });
 
+  it("bounds resolver probes while validating prewarm candidates", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => {
+      probeCount++;
+      return Promise.resolve(false);
+    };
+
+    // Tenant-shaped worst case: many page-like candidates that never resolve.
+    const doomedSlugs = Array.from({ length: 500 }, (_, index) => `/doomed-${index}`);
+    const maxRoutes = 12;
+    const resolvable = await (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(makeRenderContext(), doomedSlugs, maxRoutes);
+
+    try {
+      // Graceful degradation: nothing prewarms when no candidate resolves, and
+      // the probe count is pinned in both directions so neither an unbounded
+      // loop nor a silently probe-nothing implementation can pass.
+      assertEquals(resolvable, []);
+      assertEquals(
+        probeCount,
+        maxRoutes * 4,
+        `resolver probes must stay bounded even when no candidate resolves (got ${probeCount})`,
+      );
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
+  it("samples beyond an invalid candidate prefix", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = (slug) => {
+      probeCount++;
+      return Promise.resolve(slug === "/valid-app-route");
+    };
+
+    const slugs = Array.from({ length: 499 }, (_, index) => `/legacy-${index}`);
+    slugs.push("/valid-app-route");
+    const maxRoutes = 12;
+    const resolvable = await (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(makeRenderContext(), slugs, maxRoutes);
+
+    try {
+      assertEquals(resolvable, ["/valid-app-route"]);
+      assertEquals(probeCount, maxRoutes * 4);
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
+  it("keeps the prioritized candidate prefix when bounding probes", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => {
+      probeCount++;
+      return Promise.resolve(true);
+    };
+
+    // selectPrewarmSlugs ranks route-family siblings first; the probe cap must
+    // not thin them out by striding uniformly across the whole candidate list.
+    const siblings = Array.from(
+      { length: 12 },
+      (_, index) => `/blog/articles/sibling-${index}`,
+    );
+    const unrelated = Array.from({ length: 488 }, (_, index) => `/unrelated-${index}`);
+    const maxRoutes = 12;
+    const resolvable = await (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(
+      makeRenderContext(),
+      [...siblings, ...unrelated],
+      maxRoutes,
+    );
+
+    try {
+      assertEquals(resolvable, siblings);
+      // Stops as soon as the route cap is met, well inside the probe budget.
+      assertEquals(probeCount, maxRoutes);
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
+  it("uses one deadline for the complete resolver probe batch", async () => {
+    using time = new FakeTime();
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    // Production uses the clock captured before tenant modules load. Point this
+    // instance at FakeTime's clock so the deadline remains deterministic here.
+    (renderer as unknown as { prewarmNow: () => number }).prewarmNow = Date.now;
+    let probeCount = 0;
+    const probeOptions: { signal?: AbortSignal; deadline?: number }[] = [];
+    (renderer as unknown as {
+      pageExists: (
+        slug: string,
+        ctx: RenderContext,
+        options: { signal?: AbortSignal; deadline?: number },
+      ) => Promise<boolean>;
+    }).pageExists = (_slug, _ctx, options) => {
+      probeCount++;
+      probeOptions.push(options);
+      return new Promise<boolean>(() => {});
+    };
+
+    const startedAt = Date.now();
+    const filtering = (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(
+      makeRenderContext(),
+      Array.from({ length: 500 }, (_, index) => `/stalled-${index}`),
+      12,
+    );
+
+    await time.tickAsync(5_000);
+
+    try {
+      assertEquals(await filtering, []);
+      assertEquals(probeCount, 1);
+      // The stalled probe is cancelled and carries the batch deadline, so the
+      // resolver slot is not held for entity resolution's own default window.
+      assertEquals(probeOptions[0]?.signal?.aborted, true);
+      assertEquals(probeOptions[0]?.deadline, startedAt + 5_000);
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("prioritizes route-family siblings when prewarming production routes", async () => {
     const store = createInMemoryStore();
     const renderedSlugs: string[] = [];
@@ -2962,6 +3117,37 @@ describe("Renderer dependency pin cache isolation", () => {
         dependencyPinningCacheKey: "off",
       }),
       legacyKey,
+    );
+  });
+
+  it("returns no render cache key for an admitted application identity", () => {
+    const renderer = new Renderer();
+    const buildCacheKey = (renderer as unknown as {
+      buildCacheKey(
+        slug: string,
+        ctx: RenderContext,
+        options?: RenderOptions,
+      ): string | null;
+    }).buildCacheKey.bind(renderer);
+    const ctx = makeRenderContext();
+
+    // Trusted-proxy auth strips identity headers from the application request,
+    // so the request itself carries no cache-sensitive state; only the
+    // admitted identity marks this render as personalized.
+    assertEquals(
+      buildCacheKey("/", ctx, {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+        applicationIdentity: {
+          issuer: "https://issuer.example.test",
+          subject: "user-123",
+          groups: ["engineering"],
+          roles: ["reader"],
+          groupsComplete: true,
+          claims: { sub: "user-123" },
+        },
+      }),
+      null,
     );
   });
 

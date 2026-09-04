@@ -2,29 +2,31 @@ import { MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES } from "#veryfront/security/cred
 
 const IntrinsicReflectApply = Reflect.apply;
 const StringPrototypeTrim = String.prototype.trim;
-const RegExpPrototypeTest = RegExp.prototype.test;
-const TextEncoderEncode = TextEncoder.prototype.encode;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-11-20";
 const DEPRECATED_ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-04-04";
 const MAX_PROVIDER_CREDENTIAL_BYTES = 8 * 1024;
 const MAX_INFERENCE_CREDENTIAL_BYTES = MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES;
-const PROVIDER_CREDENTIAL_ENCODER = new TextEncoder();
-const CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
 
 function trimCredential(value: string): string {
   return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
 }
 
 function matchesCredentialPattern(value: string): boolean {
-  return IntrinsicReflectApply(RegExpPrototypeTest, CREDENTIAL_PATTERN, [value]) as boolean;
+  if (value.length === 0) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    if (code < 0x21 || code > 0x7e) return false;
+  }
+  return true;
 }
 
 function credentialByteLength(value: string): number {
-  return (IntrinsicReflectApply(TextEncoderEncode, PROVIDER_CREDENTIAL_ENCODER, [
-    value,
-  ]) as Uint8Array)
-    .byteLength;
+  // The visible-ASCII check runs before this function, so UTF-8 bytes and
+  // UTF-16 code units are identical. Avoid materializing secret-bearing bytes
+  // that a replaced typed-array intrinsic could observe.
+  return value.length;
 }
 
 /**

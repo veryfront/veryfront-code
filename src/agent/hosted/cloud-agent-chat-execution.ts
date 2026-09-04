@@ -34,6 +34,7 @@ import {
   type AgentServiceRuntimeConfig,
   type CreateAgentServiceRuntimeOptions,
 } from "../service/runtime.ts";
+import { resolveAgentServiceInferenceApiBaseUrl } from "../service/config.ts";
 import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import {
   createAgentServiceRegistrationLifecycle,
@@ -293,7 +294,10 @@ function createHostedChatContextBudgetOptions(
         maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,
         abortSignal,
       },
-      () => createHostedInferenceModelResolver(req),
+      () =>
+        createHostedInferenceModelResolver(req, {
+          apiBaseUrl: resolveAgentServiceInferenceApiBaseUrl(config),
+        }),
     ),
     logger: {
       debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
@@ -317,7 +321,9 @@ export async function prepareChatExecutionWithinProjectRuntime(
     spawnedFromToolCallId,
   } = req;
   const config = context.infrastructure.getConfig();
-  const resolveModelRuntime = createHostedInferenceModelResolver(req);
+  const resolveModelRuntime = createHostedInferenceModelResolver(req, {
+    apiBaseUrl: resolveAgentServiceInferenceApiBaseUrl(config),
+  });
   const projectServiceTraceAttributes = buildProjectServiceTraceAttributes({
     projectSlug: req.projectSlug,
     readEnv: getEnv,

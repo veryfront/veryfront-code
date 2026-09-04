@@ -24,6 +24,10 @@ import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
+type RenderToReadableStreamOptions = NonNullable<
+  Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+>;
+
 function createPipeableSSRStream(
   pipeImpl: (writable: NodeJS.WritableStream) => void,
   abortImpl: () => void = () => {},
@@ -45,6 +49,23 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+/**
+ * Read the script nonce React was handed, whichever shape its types use.
+ *
+ * React's streaming options accept either a bare nonce string or a
+ * `{ script, style }` pair, and which one the installed `@types/react-dom`
+ * declares varies by version. Taking the value as `unknown` keeps this
+ * assertion working across both without loosening what it checks.
+ */
+function readScriptNonce(nonce: unknown): string | undefined {
+  if (typeof nonce === "string") return nonce;
+  if (typeof nonce === "object" && nonce !== null && "script" in nonce) {
+    const { script } = nonce as { script?: unknown };
+    return typeof script === "string" ? script : undefined;
+  }
+  return undefined;
 }
 
 describe("rendering/ssr-renderer", () => {
@@ -94,15 +115,13 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: string | undefined;
+    let observedNonce: RenderToReadableStreamOptions["nonce"] | undefined;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
       renderToReadableStream: (_element, options) => {
-        // React 19's types widened `nonce` to `string | { script?; style? }`;
-        // the renderer always passes the response nonce as a plain string.
-        observedNonce = typeof options?.nonce === "string" ? options.nonce : undefined;
+        observedNonce = readScriptNonce(options?.nonce);
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode("<div>streamed</div>"));

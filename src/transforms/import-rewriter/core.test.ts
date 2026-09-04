@@ -573,7 +573,7 @@ describe("route import Adapter", () => {
 });
 
 describe("SSR import Adapter", () => {
-  it("preserves legacy regex scope and query order", () => {
+  it("preserves query order and ignores import-looking strings", () => {
     const code = [
       `import X from "@/x";`,
       `import Y from "./y.js";`,
@@ -588,7 +588,7 @@ describe("SSR import Adapter", () => {
       [
         `import X from "/_vf_modules/x.js?ssr=true&project=p&branch=b&v=v";`,
         `import Y from "./y.js?ssr=true&project=p&branch=b&v=v";`,
-        `const text = 'import Z from "/_vf_modules/z.js?ssr=true&project=p&branch=b&v=v";';`,
+        `const text = 'import Z from "@/z";';`,
       ].join("\n"),
     );
   });

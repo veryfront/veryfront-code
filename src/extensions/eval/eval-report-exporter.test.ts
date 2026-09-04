@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { EvalReport } from "veryfront/eval";
+import type { EvalMetricResult, EvalReport } from "veryfront/eval";
+import { summarizeEvalRecords } from "veryfront/eval";
 import {
   createEvalReportExporterRegistry,
   redactEvalReportForExport,
@@ -95,6 +96,34 @@ function createReport(): EvalReport {
   };
 }
 
+const failingCitationMetric: EvalMetricResult = {
+  name: "knowledge.citationPrecision",
+  family: "knowledge",
+  severity: "gate",
+  score: 0,
+  pass: false,
+  explanation: "0 of 1 citations were supported.",
+  evidence: {
+    tool: "knowledge.search",
+    citations: ["[1] secret roadmap passage"],
+    expected: ["Private roadmap: secret roadmap passage"],
+    supported: [],
+    unsupported: ["[1] secret roadmap passage"],
+    supportedCount: 0,
+    citationCount: 1,
+  },
+};
+
+/** Report whose only metric is a failing citation gate, so the summary carries a gate failure. */
+function createCitationFailureReport(): EvalReport {
+  const report = createReport();
+  const record = report.records[0];
+  assert(record);
+  record.metrics = [failingCitationMetric];
+  report.summary = summarizeEvalRecords(report.records);
+  return report;
+}
+
 describe("EvalReportExporterRegistry", () => {
   it("exports redacted reports to registered exporters in insertion order", async () => {
     const registry = createEvalReportExporterRegistry();
@@ -150,11 +179,68 @@ describe("EvalReportExporterRegistry", () => {
     // `evidence` carries, so it must not survive redaction either.
     assertEquals(exportedRecord.metrics?.[0]?.label, undefined);
     assertEquals(exportedReport.summary.metrics[0]?.label, undefined);
+    // The dataset hash is a deterministic digest of every example's id, input, reference, and
+    // metadata, so it identifies dataset content across runs and must not survive redaction.
     assertEquals(exportedReport.dataset, {
+      kind: "json",
+      examples: 1,
+    });
+  });
+
+  it("strips the dataset content hash unless export redaction explicitly allows it", () => {
+    const defaultRedacted = redactEvalReportForExport(createReport());
+    assertEquals(defaultRedacted.dataset, { kind: "json", examples: 1 });
+
+    const hashAllowed = redactEvalReportForExport(createReport(), {
+      includeDatasetHash: true,
+    });
+    assertEquals(hashAllowed.dataset, {
       kind: "json",
       examples: 1,
       hash: "sha256:fixture-dataset",
     });
+  });
+
+  it("withholds the dataset content hash from exporters unless the export context allows it", async () => {
+    // Integrations receive reports through `registry.export()`, so assert the stripping on that
+    // path with a context that sets no redaction at all, not only on `redactEvalReportForExport`.
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+    registry.register({
+      id: "braintrust",
+      export(report) {
+        exportedReports.push(report);
+      },
+    });
+
+    await registry.export(createReport(), { projectReference: "demo" });
+    assertEquals(exportedReports[0]?.dataset, { kind: "json", examples: 1 });
+
+    await registry.export(createReport(), {
+      projectReference: "demo",
+      redaction: { includeDatasetHash: true },
+    });
+    assertEquals(exportedReports[1]?.dataset, {
+      kind: "json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    });
+  });
+
+  it("leaves reports without dataset metadata untouched", () => {
+    // `EvalReport.dataset` is absent whenever the run had no resolvable dataset identity, so
+    // redaction must not synthesize an empty dataset object for exporters to trip over.
+    const report = createReport();
+    delete report.dataset;
+
+    assertEquals(redactEvalReportForExport(report).dataset, undefined);
+    assertEquals(
+      redactEvalReportForExport(report, {
+        includeDatasetPath: true,
+        includeDatasetHash: true,
+      }).dataset,
+      undefined,
+    );
   });
 
   it("uses call-time exporter membership throughout an in-flight export", async () => {
@@ -401,6 +487,51 @@ describe("EvalReportExporterRegistry", () => {
     });
   });
 
+  it("redacts gate failure evidence and explanations copied into the summary", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+
+    registry.register({
+      id: "capture",
+      export(report) {
+        exportedReports.push(report);
+      },
+    });
+
+    await registry.export(createCitationFailureReport());
+
+    const exportedReport = exportedReports[0];
+    assert(exportedReport);
+    const gateFailure = exportedReport.summary.gateFailures?.[0];
+    assert(gateFailure, "the failing citation gate must still be reported");
+    assertEquals(gateFailure.name, "knowledge.citationPrecision");
+    assertEquals(gateFailure.evidence, undefined);
+    assertEquals(gateFailure.explanation, undefined);
+    // Citation labels and expected-source labels are content-derived, so no part of the exported
+    // report may still carry them.
+    const serialized = JSON.stringify(exportedReport);
+    assert(
+      !serialized.includes("secret roadmap passage"),
+      "citation evidence must not survive default export redaction",
+    );
+    assert(
+      !serialized.includes("Private roadmap"),
+      "expected source labels must not survive default export redaction",
+    );
+  });
+
+  it("keeps gate failure details when export redaction explicitly allows them", () => {
+    const redacted = redactEvalReportForExport(createCitationFailureReport(), {
+      includeMetricEvidence: true,
+      includeMetricExplanations: true,
+    });
+
+    const gateFailure = redacted.summary.gateFailures?.[0];
+    assert(gateFailure);
+    assertEquals(gateFailure.explanation, "0 of 1 citations were supported.");
+    assertEquals(gateFailure.evidence, failingCitationMetric.evidence);
+  });
+
   it("keeps full record fields only when export redaction explicitly allows them", () => {
     const redacted = redactEvalReportForExport(createReport(), {
       includeInputs: true,
@@ -412,6 +543,7 @@ describe("EvalReportExporterRegistry", () => {
       includeMetricEvidence: true,
       includeMetricExplanations: true,
       includeDatasetPath: true,
+      includeDatasetHash: true,
       metadataAllowlist: ["topic", "tenantId"],
     });
     const record = redacted.records[0];

@@ -13,10 +13,22 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
+import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
-import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
+import {
+  DEFAULT_LOCAL_API_URL,
+  resolveRestApiBaseUrl,
+  trimTrailingSlashes,
+} from "#cli/shared/constants";
+import {
+  readConfigJsonFile,
+  resolveApiCredentialCandidatesForAuth,
+  resolveApiUrlTrust,
+} from "#cli/shared/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -24,52 +36,49 @@ import {
   slugToName,
 } from "./remote-file-tool-helpers.ts";
 
-function getApiBaseUrl(): string {
-  return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
+type ApiResult<T> = { ok: boolean; data?: T; error?: string; status: number };
+
+function validatedEndpoint(candidateApiBaseUrl: string): URL | ApiResult<never> {
+  const addDefaultRestPath = trimTrailingSlashes(new URL(candidateApiBaseUrl).pathname) === "";
+  const endpoint = new URL(resolveRestApiBaseUrl(candidateApiBaseUrl, addDefaultRestPath));
+  const loopback = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1" ||
+    endpoint.hostname === "[::1]" || endpoint.hostname === "::1";
+  if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) {
+    return {
+      ok: false,
+      error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
+      status: 400,
+    };
+  }
+  return endpoint;
 }
 
-function getApiToken(): string | undefined {
-  return getEnvironmentConfig().apiToken;
-}
-
-async function apiRequest<T>(
+async function sendApiRequest<T>(
+  endpoint: URL,
   method: string,
   path: string,
-  options: { body?: unknown; token?: string } = {},
-): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
-  const token = options.token ?? getApiToken();
-  if (!token) {
-    return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
-  }
-
-  const url = `${getApiBaseUrl()}/api${path}`;
-
+  token: string,
+  body?: unknown,
+): Promise<ApiResult<T>> {
+  const url = `${endpoint.toString().replace(/\/$/, "")}${path}`;
   try {
     const response = await fetch(url, {
       method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
     });
-
     if (!response.ok) {
       const errorText = await response.text();
       let errorMessage = errorText || `HTTP ${response.status}`;
-
       try {
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.message || errorJson.error || errorMessage;
       } catch {
-        // ignore JSON parse errors
+        // Keep the response text when the body is not JSON.
       }
-
       return { ok: false, error: errorMessage, status: response.status };
     }
-
     if (response.status === 204) return { ok: true, status: 204 };
-
     return { ok: true, data: (await response.json()) as T, status: response.status };
   } catch (error) {
     return {
@@ -78,6 +87,53 @@ async function apiRequest<T>(
       status: 0,
     };
   }
+}
+
+async function apiRequest<T>(
+  method: string,
+  path: string,
+  options: { body?: unknown; token?: string } = {},
+): Promise<ApiResult<T>> {
+  const env = getEnvironmentConfig();
+  const projectDir = cwd();
+  // Remote file tools send to apiBaseUrl, not the higher-precedence apiUrl
+  // used by GraphQL/auth calls. Classify the actual destination on its own so
+  // a trusted API_URL cannot mask a repository-steered API_BASE_URL.
+  const apiBaseSource = getEnvSource("VERYFRONT_API_BASE_URL");
+  const requestEnv = apiBaseSource.source === "unset" ? env : { ...env, apiUrl: undefined };
+  // Resolve in non-interactive precedence. These tools previously used
+  // `env.apiToken` directly, so a project `.env` VERYFRONT_API_TOKEN outranked
+  // the stored `veryfront login` token. The interactive ordering reverses that
+  // pair, which would silently switch which identity file operations use.
+  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
+  const candidate = options.token
+    ? candidates.find((entry) => entry.apiToken === options.token)
+    : candidates[0];
+  if (!candidate) {
+    const configFile = await readConfigJsonFile(projectDir);
+    const trust = resolveApiUrlTrust(requestEnv, configFile, join(projectDir, "veryfront.json"));
+    if (trust.repositorySteered) {
+      return {
+        ok: false,
+        error: `The project configures an untrusted API endpoint. Set ${
+          trust.steeringEnvKey ?? "VERYFRONT_API_BASE_URL"
+        } in your shell to confirm the endpoint before using remote file tools.`,
+        status: 403,
+      };
+    }
+    return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
+  }
+
+  const token = candidate.apiToken;
+  const candidateApiBaseUrl = candidate.validationEnv.apiBaseUrl || DEFAULT_LOCAL_API_URL;
+  let endpoint: URL | ApiResult<never>;
+  try {
+    endpoint = validatedEndpoint(candidateApiBaseUrl);
+  } catch {
+    return { ok: false, error: "The API endpoint must be a valid URL.", status: 400 };
+  }
+  if (!(endpoint instanceof URL)) return endpoint;
+  return await sendApiRequest<T>(endpoint, method, path, token, options.body);
 }
 
 interface RemoteFile {

@@ -3,6 +3,19 @@ import { NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
 
+const ReflectApply = Reflect.apply;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
+const HeadersGet = Headers.prototype.get;
+const RegExpExec = RegExp.prototype.exec;
+const StringStartsWith = String.prototype.startsWith;
+const StringSlice = String.prototype.slice;
+
+function readRequestHeader(request: Request, name: string): string | null {
+  if (!RequestHeadersGetter) return null;
+  const headers = ReflectApply(RequestHeadersGetter, request, []) as Headers;
+  return ReflectApply(HeadersGet, headers, [name]) as string | null;
+}
+
 /** Public API contract for hosted service auth error code. */
 export type HostedServiceAuthErrorCode =
   | "UNAUTHENTICATED"
@@ -232,12 +245,16 @@ async function getAuthProvider(
 
 /** Request payload for get hosted service token from. */
 export function getHostedServiceTokenFromRequest(request: Request): string | null {
-  const cookies = request.headers.get("cookie") || "";
-  const cookieMatch = cookies.match(/(?:^|;\s*)authToken=([^;]+)/);
+  const cookies = readRequestHeader(request, "cookie") || "";
+  const cookieMatch = ReflectApply(RegExpExec, /(?:^|;\s*)authToken=([^;]+)/, [cookies]) as
+    | RegExpExecArray
+    | null;
   if (cookieMatch?.[1]) return cookieMatch[1];
 
-  const authHeader = request.headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
+  const authHeader = readRequestHeader(request, "authorization");
+  if (authHeader && ReflectApply(StringStartsWith, authHeader, ["Bearer "])) {
+    return ReflectApply(StringSlice, authHeader, [7]) as string;
+  }
 
   return null;
 }

@@ -122,7 +122,7 @@ export async function ensureCachedJsxModulePatched(
  */
 export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 32;
 
-/** Hard count ceiling for JSX artifacts in one cache directory. */
+/** Hard count ceiling for current-namespace JSX artifacts in one cache directory. */
 export const MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY = 4 * MAX_MDX_MODULE_IMPORTS_PER_FILE;
 
 /**
@@ -533,7 +533,8 @@ const JSX_LEASE_TOMBSTONE_PATTERN =
 function isJsxLeaseTombstoneName(name: string): boolean {
   if (
     !name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
-    !name.startsWith(JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME)
+    !name.startsWith(JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME) &&
+    !name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)
   ) {
     return false;
   }
@@ -779,14 +780,25 @@ const MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES = 256;
 const JSX_CACHE_PRUNE_REQUEST_DIRECTORY = ".jsx-prune-requests-v1";
 const JSX_CACHE_PRUNE_REQUEST_PREFIX = "request-";
 
+interface PersistedJsxCachePruneRequest {
+  esmCacheDir: string;
+  fireAtMs: number;
+  generation: string;
+}
+
 /** At most one pending follow-up prune per cache directory. */
 const scheduledJsxCachePrunes = new Map<
   string,
-  { timer: ReturnType<typeof setTimeout>; fireAtMs: number }
+  {
+    timer: ReturnType<typeof setTimeout> | undefined;
+    fireAtMs: number;
+    persistedGeneration?: string;
+  }
 >();
 const queuedJsxCachePrunes = new Map<string, number>();
 const inFlightJsxCachePrunes = new Set<string>();
 let persistedJsxCachePrunePromotion: Promise<void> | undefined;
+let persistedJsxCachePrunePromotionRequested = false;
 
 function getPersistedJsxCachePruneRequestDirectory(): string {
   return join(getMdxEsmCacheDir(), JSX_CACHE_PRUNE_REQUEST_DIRECTORY);
@@ -802,35 +814,47 @@ async function getPersistedJsxCachePruneRequestPath(esmCacheDir: string): Promis
 async function persistJsxCachePruneRequest(
   esmCacheDir: string,
   fireAtMs: number,
-): Promise<void> {
+): Promise<string | undefined> {
   const localFs = getLocalFs();
   const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   try {
     await localFs.mkdir(requestDirectory, { recursive: true });
     const requestPath = await getPersistedJsxCachePruneRequestPath(esmCacheDir);
-    try {
-      const existing = IntrinsicJSONParse(await localFs.readTextFile(requestPath));
-      if (
-        typeof existing === "object" && existing !== null &&
-        (existing as { esmCacheDir?: unknown }).esmCacheDir === esmCacheDir &&
-        typeof (existing as { fireAtMs?: unknown }).fireAtMs === "number" &&
-        (existing as { fireAtMs: number }).fireAtMs <= fireAtMs
-      ) return;
-    } catch { /* a missing or malformed request is replaced below */ }
-    const request = IntrinsicObjectCreate(null) as {
-      esmCacheDir: string;
-      fireAtMs: number;
-    };
-    request.esmCacheDir = esmCacheDir;
-    request.fireAtMs = fireAtMs;
-    await localFs.writeTextFile(
-      requestPath,
-      IntrinsicJSONStringify(request),
-    );
+    return await withJsxArtifactLock(requestPath, async (assertLeaseOwned) => {
+      let effectiveFireAtMs = fireAtMs;
+      try {
+        const existing = IntrinsicJSONParse(await localFs.readTextFile(requestPath));
+        if (
+          typeof existing === "object" && existing !== null &&
+          (existing as { esmCacheDir?: unknown }).esmCacheDir === esmCacheDir &&
+          typeof (existing as { fireAtMs?: unknown }).fireAtMs === "number"
+        ) {
+          effectiveFireAtMs = Math.min(
+            (existing as { fireAtMs: number }).fireAtMs,
+            fireAtMs,
+          );
+          if (
+            (existing as { fireAtMs: number }).fireAtMs <= fireAtMs &&
+            typeof (existing as { generation?: unknown }).generation === "string"
+          ) return (existing as { generation: string }).generation;
+        }
+      } catch { /* a missing or malformed request is replaced below */ }
+      const request = IntrinsicObjectCreate(null) as PersistedJsxCachePruneRequest;
+      request.esmCacheDir = esmCacheDir;
+      request.fireAtMs = effectiveFireAtMs;
+      request.generation = cryptoRandomUUID();
+      await assertLeaseOwned();
+      await localFs.writeTextFile(
+        requestPath,
+        IntrinsicJSONStringify(request),
+      );
+      return request.generation;
+    });
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to persist JSX cache prune request`, {
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
   }
 }
 
@@ -846,14 +870,22 @@ async function removePersistedJsxCachePruneRequest(path: string): Promise<void> 
   }
 }
 
-async function retirePersistedJsxCachePruneRequest(esmCacheDir: string): Promise<void> {
+async function retirePersistedJsxCachePruneRequest(
+  esmCacheDir: string,
+  expectedGeneration: string,
+): Promise<void> {
   const path = await getPersistedJsxCachePruneRequestPath(esmCacheDir);
   try {
-    const current = IntrinsicJSONParse(await getLocalFs().readTextFile(path));
-    if (
-      typeof current === "object" && current !== null &&
-      (current as { esmCacheDir?: unknown }).esmCacheDir === esmCacheDir
-    ) await removePersistedJsxCachePruneRequest(path);
+    await withJsxArtifactLock(path, async (assertLeaseOwned) => {
+      const current = IntrinsicJSONParse(await getLocalFs().readTextFile(path));
+      if (
+        typeof current !== "object" || current === null ||
+        (current as { esmCacheDir?: unknown }).esmCacheDir !== esmCacheDir ||
+        (current as { generation?: unknown }).generation !== expectedGeneration
+      ) return;
+      await assertLeaseOwned();
+      await removePersistedJsxCachePruneRequest(path);
+    });
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to retire completed JSX prune request`, {
@@ -864,14 +896,19 @@ async function retirePersistedJsxCachePruneRequest(esmCacheDir: string): Promise
 }
 
 async function promotePersistedJsxCachePruneRequest(): Promise<void> {
-  if (
-    scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES ||
-    queuedJsxCachePrunes.size > 0
-  ) return;
+  if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) return;
+
+  const queuedCandidates = [...queuedJsxCachePrunes].sort(
+    (left, right) => left[1] - right[1],
+  );
+  const persistedCandidates: PersistedJsxCachePruneRequest[] = [];
   const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   try {
     for await (const entry of getLocalFs().readDir(requestDirectory)) {
-      if (!entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)) continue;
+      if (
+        !entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX) ||
+        !entry.name.endsWith(".json")
+      ) continue;
       const requestPath = join(requestDirectory, entry.name);
       let request: unknown;
       try {
@@ -883,23 +920,20 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
       if (
         typeof request !== "object" || request === null ||
         typeof (request as { esmCacheDir?: unknown }).esmCacheDir !== "string" ||
-        typeof (request as { fireAtMs?: unknown }).fireAtMs !== "number"
+        typeof (request as { fireAtMs?: unknown }).fireAtMs !== "number" ||
+        typeof (request as { generation?: unknown }).generation !== "string"
       ) {
         await removePersistedJsxCachePruneRequest(requestPath);
         continue;
       }
-      const { esmCacheDir, fireAtMs } = request as { esmCacheDir: string; fireAtMs: number };
+      const { esmCacheDir, fireAtMs, generation } = request as PersistedJsxCachePruneRequest;
       if (
         scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir) ||
         inFlightJsxCachePrunes.has(esmCacheDir)
       ) {
         continue;
       }
-      scheduleJsxCachePruneRetry(
-        esmCacheDir,
-        Math.max(fireAtMs - Date.now(), 0),
-      );
-      if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) return;
+      persistedCandidates.push({ esmCacheDir, fireAtMs, generation });
     }
   } catch (error) {
     if (!isNotFoundError(error)) {
@@ -908,15 +942,48 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
       });
     }
   }
+
+  persistedCandidates.sort((left, right) => left.fireAtMs - right.fireAtMs);
+  let queuedIndex = 0;
+  let persistedIndex = 0;
+  while (scheduledJsxCachePrunes.size < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+    const queued = queuedCandidates[queuedIndex];
+    const persisted = persistedCandidates[persistedIndex];
+    if (queued === undefined && persisted === undefined) break;
+    if (persisted !== undefined && (queued === undefined || persisted.fireAtMs <= queued[1])) {
+      persistedIndex++;
+      scheduleJsxCachePruneRetry(
+        persisted.esmCacheDir,
+        Math.max(persisted.fireAtMs - Date.now(), 0),
+        persisted.generation,
+      );
+      continue;
+    }
+    if (queued !== undefined) {
+      queuedIndex++;
+      queuedJsxCachePrunes.delete(queued[0]);
+      scheduleJsxCachePruneRetry(
+        queued[0],
+        Math.max(queued[1] - Date.now(), 0),
+      );
+    }
+  }
 }
 
 function requestPersistedJsxCachePrunePromotion(): void {
-  if (persistedJsxCachePrunePromotion !== undefined) return;
+  if (persistedJsxCachePrunePromotion !== undefined) {
+    persistedJsxCachePrunePromotionRequested = true;
+    return;
+  }
+  persistedJsxCachePrunePromotionRequested = false;
   const promotion = promotePersistedJsxCachePruneRequest();
   persistedJsxCachePrunePromotion = promotion;
   void promotion.finally(() => {
     if (persistedJsxCachePrunePromotion === promotion) {
       persistedJsxCachePrunePromotion = undefined;
+      if (persistedJsxCachePrunePromotionRequested) {
+        requestPersistedJsxCachePrunePromotion();
+      }
     }
   });
 }
@@ -932,26 +999,6 @@ function queueJsxCachePrune(esmCacheDir: string, fireAtMs: number): void {
     return;
   }
   queuedJsxCachePrunes.set(esmCacheDir, fireAtMs);
-}
-
-function promoteQueuedJsxCachePrune(): void {
-  if (
-    scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES ||
-    queuedJsxCachePrunes.size === 0
-  ) return;
-  let selectedDirectory: string | undefined;
-  let selectedFireAtMs = Number.POSITIVE_INFINITY;
-  for (const [directory, fireAtMs] of queuedJsxCachePrunes) {
-    if (fireAtMs >= selectedFireAtMs) continue;
-    selectedDirectory = directory;
-    selectedFireAtMs = fireAtMs;
-  }
-  if (selectedDirectory === undefined) return;
-  queuedJsxCachePrunes.delete(selectedDirectory);
-  scheduleJsxCachePruneRetry(
-    selectedDirectory,
-    Math.max(selectedFireAtMs - Date.now(), 0),
-  );
 }
 
 async function revisitJsxCacheDirectory(esmCacheDir: string): Promise<void> {
@@ -985,35 +1032,54 @@ async function revisitJsxCacheDirectory(esmCacheDir: string): Promise<void> {
 function scheduleJsxCachePruneRetry(
   esmCacheDir: string,
   delayMs: number,
+  persistedGeneration?: string,
 ): void {
   const fireAtMs = Date.now() + delayMs;
   const pending = scheduledJsxCachePrunes.get(esmCacheDir);
   if (pending) {
-    if (pending.fireAtMs <= fireAtMs) return;
-    clearTimeout(pending.timer);
+    if (pending.timer !== undefined && pending.fireAtMs <= fireAtMs) return;
+    if (pending.timer !== undefined) clearTimeout(pending.timer);
   } else if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
     queueJsxCachePrune(esmCacheDir, fireAtMs);
     return;
   }
   const timer = setTimeout(() => {
-    scheduledJsxCachePrunes.delete(esmCacheDir);
-    promoteQueuedJsxCachePrune();
+    const fired = scheduledJsxCachePrunes.get(esmCacheDir);
+    if (fired?.timer !== timer) return;
+    // Keep the map entry as this pass's reserved timer slot. A follow-up that
+    // the pass schedules can then replace it even when every other slot is
+    // occupied, without overflowing to persistence and racing completion.
+    fired.timer = undefined;
     void (async () => {
       inFlightJsxCachePrunes.add(esmCacheDir);
       try {
         await revisitJsxCacheDirectory(esmCacheDir);
+        const followUp = scheduledJsxCachePrunes.get(esmCacheDir);
         if (
-          !scheduledJsxCachePrunes.has(esmCacheDir) &&
-          !queuedJsxCachePrunes.has(esmCacheDir)
-        ) await retirePersistedJsxCachePruneRequest(esmCacheDir);
+          followUp?.timer === undefined &&
+          !queuedJsxCachePrunes.has(esmCacheDir) &&
+          fired.persistedGeneration !== undefined
+        ) {
+          await retirePersistedJsxCachePruneRequest(
+            esmCacheDir,
+            fired.persistedGeneration,
+          );
+        }
       } finally {
         inFlightJsxCachePrunes.delete(esmCacheDir);
+        if (scheduledJsxCachePrunes.get(esmCacheDir)?.timer === undefined) {
+          scheduledJsxCachePrunes.delete(esmCacheDir);
+        }
         requestPersistedJsxCachePrunePromotion();
       }
     })();
   }, delayMs);
   unrefTimer(timer);
-  scheduledJsxCachePrunes.set(esmCacheDir, { timer, fireAtMs });
+  scheduledJsxCachePrunes.set(esmCacheDir, {
+    timer,
+    fireAtMs,
+    persistedGeneration: pending?.persistedGeneration ?? persistedGeneration,
+  });
 }
 
 /**
@@ -1039,7 +1105,9 @@ export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
 
 /** Drop every pending follow-up prune (test isolation only). */
 function cancelScheduledJsxCachePrunes(): void {
-  for (const pending of scheduledJsxCachePrunes.values()) clearTimeout(pending.timer);
+  for (const pending of scheduledJsxCachePrunes.values()) {
+    if (pending.timer !== undefined) clearTimeout(pending.timer);
+  }
   scheduledJsxCachePrunes.clear();
   queuedJsxCachePrunes.clear();
   if (lazyJsxArtifactHeartbeat !== undefined) {
@@ -1101,22 +1169,15 @@ function isJsxArtifactName(name: string): boolean {
   return name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) && name.endsWith(".mjs");
 }
 
-async function countJsxArtifacts(esmCacheDir: string): Promise<number> {
+async function countCurrentNamespaceJsxArtifacts(esmCacheDir: string): Promise<number> {
   let count = 0;
   for await (const entry of getLocalFs().readDir(esmCacheDir)) {
-    if (entry.isFile && isJsxArtifactName(entry.name)) count++;
+    if (
+      entry.isFile && entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX) &&
+      entry.name.endsWith(".mjs")
+    ) count++;
   }
   return count;
-}
-
-async function hasPriorNamespaceArtifact(esmCacheDir: string): Promise<boolean> {
-  for await (const entry of getLocalFs().readDir(esmCacheDir)) {
-    if (
-      entry.isFile && isJsxArtifactName(entry.name) &&
-      !entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)
-    ) return true;
-  }
-  return false;
 }
 
 /** Reserve one directory-wide artifact slot and hold it through the write. */
@@ -1133,18 +1194,15 @@ export function withJsxArtifactWriteCapacity<T>(
         await assertLeaseOwned();
         return await operation(assertLeaseOwned);
       }
-      if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
+      if (
+        await countCurrentNamespaceJsxArtifacts(esmCacheDir) >=
+          MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY
+      ) {
         await assertLeaseOwned();
         await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
       }
-      const remainingArtifacts = await countJsxArtifacts(esmCacheDir);
-      const namespaceRollHeadroom = MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY +
-        MAX_MDX_MODULE_IMPORTS_PER_FILE;
-      if (
-        remainingArtifacts >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY &&
-        (!await hasPriorNamespaceArtifact(esmCacheDir) ||
-          remainingArtifacts >= namespaceRollHeadroom)
-      ) {
+      const remainingArtifacts = await countCurrentNamespaceJsxArtifacts(esmCacheDir);
+      if (remainingArtifacts >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
         throw new JsxCacheCapacityError("JSX cache artifact quota is exhausted");
       }
       await assertLeaseOwned();
@@ -1364,12 +1422,14 @@ async function collectExcessJsxArtifacts(
   const strandedNamespaceNames = new Set(strandedNamespaceArtifacts);
   let directoryExcess = Math.max(
     0,
-    allArtifactNames.length - MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
+    allArtifactNames.filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)).length -
+      MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
   );
   if (directoryExcess > 0) {
     const protectedNames = new Set(currentByPrefix.values());
     const datedArtifacts = await Promise.all(
       allArtifactNames
+        .filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX))
         .filter((name) => !protectedNames.has(name))
         .map(async (name) => ({
           name,

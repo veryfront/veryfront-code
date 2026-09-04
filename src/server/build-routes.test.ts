@@ -135,6 +135,23 @@ describe("server/build-routes", () => {
       );
     });
 
+    it("orders routes by path regardless of directory-read order", async () => {
+      // `readDir` order is a filesystem detail (ext4 returns hash order), so
+      // an unsorted walk makes the SSG page list, the route manifest and the
+      // render order vary between machines for one commit. The mock yields
+      // entries in insertion order, so listing them non-lexically here
+      // reproduces exactly that.
+      const adapter = createMockAdapter({
+        "/project/pages/blog.mdx": "# Blog",
+        "/project/pages/index.mdx": "# Home",
+        "/project/pages/about.mdx": "# About",
+      });
+
+      const routes = await collectPagesRoutes(adapter, "/project");
+
+      assertEquals(routes.map((route) => route.path), ["/", "/about", "/blog"]);
+    });
+
     it("discovers .mdx files", async () => {
       const adapter = createMockAdapter({
         "/project/pages/hello.mdx": "# Hello",
@@ -301,6 +318,38 @@ describe("server/build-routes", () => {
       const routes = await collectPagesRoutes(adapter, "/project", ["/nonexistent"]);
       assertEquals(routes, []);
     });
+
+    it("orders routes by path regardless of directory iteration order", async () => {
+      // `readDir` yields entries in filesystem order, which differs between
+      // filesystems and between runs on the same machine. The route list feeds
+      // `ssgPaths` and the build manifest, so it must not inherit that order.
+      const adapter = createMockAdapter({
+        "/project/pages/zebra.mdx": "# Zebra",
+        "/project/pages/blog.mdx": "# Blog",
+        "/project/pages/index.mdx": "# Home",
+        "/project/pages/about.mdx": "# About",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/about", "/blog", "/zebra"]);
+    });
+
+    it("breaks route-path ties on the source file", async () => {
+      // `about.tsx` and `about/index.tsx` both resolve to `/about`. Consumers
+      // key on the route path -- code splitting derives one entry name per
+      // route -- so the tie must not be left to `readDir` order.
+      const forward = createMockAdapter({
+        "/project/pages/about.tsx": "export default () => <div/>",
+        "/project/pages/about/index.tsx": "export default () => <div/>",
+      });
+      const reversed = createMockAdapter({
+        "/project/pages/about/index.tsx": "export default () => <div/>",
+        "/project/pages/about.tsx": "export default () => <div/>",
+      });
+
+      const expected = ["/project/pages/about.tsx", "/project/pages/about/index.tsx"];
+      assertEquals((await collectPagesRoutes(forward, "/project")).map((r) => r.file), expected);
+      assertEquals((await collectPagesRoutes(reversed, "/project")).map((r) => r.file), expected);
+    });
   });
 
   describe("collectAppRoutes", () => {
@@ -381,6 +430,18 @@ describe("server/build-routes", () => {
         Error,
         "app traversal denied",
       );
+    });
+
+    it("orders app routes by path regardless of directory-read order", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/docs/page.tsx": "export default function Docs() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/blog/page.tsx": "export default function Blog() {}",
+      });
+
+      const routes = await collectAppRoutes(adapter, "/project");
+
+      assertEquals(routes.map((route) => route.path), ["/", "/blog", "/docs"]);
     });
 
     it("discovers page.tsx at app root", async () => {
@@ -533,6 +594,34 @@ describe("server/build-routes", () => {
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
       assertEquals(routes[0]!.segmentDirs, ["/project/app", "/project/app/blog"]);
+    });
+
+    it("orders routes by path regardless of directory iteration order", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/zebra/page.tsx": "export default function Z() {}",
+        "/project/app/docs/page.tsx": "export default function D() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/about/page.tsx": "export default function A() {}",
+      });
+      const routes = await collectAppRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/about", "/docs", "/zebra"]);
+    });
+
+    it("breaks route-path ties on the page file", async () => {
+      // A nested directory named `app` re-roots its subtree, so both page
+      // files below claim `/`. The tie must not be left to `readDir` order.
+      const forward = createMockAdapter({
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/app/page.tsx": "export default function Nested() {}",
+      });
+      const reversed = createMockAdapter({
+        "/project/app/app/page.tsx": "export default function Nested() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+      });
+
+      const expected = ["/project/app/app/page.tsx", "/project/app/page.tsx"];
+      assertEquals((await collectAppRoutes(forward, "/project")).map((r) => r.pageFile), expected);
+      assertEquals((await collectAppRoutes(reversed, "/project")).map((r) => r.pageFile), expected);
     });
   });
 });

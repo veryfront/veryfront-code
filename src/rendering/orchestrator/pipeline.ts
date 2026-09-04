@@ -759,6 +759,9 @@ export class RenderPipeline {
     };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+    // Mirror the fallback in resolveModuleLoaderConfig so stale-cache recovery
+    // classifies and purges the same namespace the module loader compiled into.
+    const contentSourceId = options?.contentSourceId ?? this.config.contentSourceId;
     const cacheKey = this.buildCacheKey(slug, options, dependencyPinningCacheKey);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
@@ -1116,11 +1119,13 @@ export class RenderPipeline {
       if (isMdxEsmExportMismatchError(error)) {
         const recovered = await recoverStaleMdxEsmPreviewCaches({
           adapter: this.config.adapter,
+          projectDir: this.config.projectDir,
           projectId,
           projectSlug,
-          contentSourceId: options?.contentSourceId,
+          contentSourceId,
           slug,
           pagePath: slug,
+          mode: this.config.mode,
         });
 
         if (recovered) {
@@ -1129,7 +1134,7 @@ export class RenderPipeline {
             slug,
             projectId,
             projectSlug,
-            contentSourceId: options?.contentSourceId,
+            contentSourceId,
           });
           return await renderOnce();
         }
@@ -1489,8 +1494,9 @@ export class RenderPipeline {
 
   /**
    * Build a cache key that is safe for multi-tenant + query-param aware caching.
-   * Returns null when request contains sensitive headers (Authorization/Cookie) and
-   * no explicit cacheKey override was provided, to avoid leaking personalized HTML.
+   * Returns null when request contains sensitive headers (Authorization/Cookie) or an
+   * admitted application identity, and no explicit cacheKey override was provided, to
+   * avoid leaking personalized HTML.
    *
    * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
    */
@@ -1513,6 +1519,10 @@ export class RenderPipeline {
         composition,
       );
     }
+    // Trusted-proxy identities arrive via headers that are stripped from the
+    // application request before this check runs, so an identity-bearing
+    // render must never share the anonymous slug-based cache key.
+    if (options?.applicationIdentity != null) return null;
     const req = options?.request;
     if (req) {
       if (requestHasCacheSensitiveState(req)) return null;

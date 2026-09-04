@@ -142,6 +142,7 @@ import {
   filterRuntimeProjectEnv,
   runWithProjectEnv,
 } from "../project-env/index.ts";
+import { runWithTrustedProjectEnv } from "../project-env/storage.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { projectMiddlewareRuntime, runInProjectFilesystemContext } from "./project-middleware.ts";
 import {
@@ -775,9 +776,22 @@ export function createVeryfrontHandler(
           const isolatedEnvForRequest = shouldIsolateEnv
             ? filterRuntimeProjectEnv(envVarsForRequest)
             : undefined;
+          const trustedProjectEnvIdentity = ctx.projectId || ctx.projectSlug || ctx.environmentId
+            ? {
+              projectId: ctx.projectId,
+              projectSlug: ctx.projectSlug,
+              environmentId: ctx.environmentId,
+            }
+            : undefined;
           const runInRequestProjectEnv = <T>(operation: () => T): T =>
             isolatedEnvForRequest === undefined
               ? operation()
+              : trustedProjectEnvIdentity
+              ? runWithTrustedProjectEnv(
+                isolatedEnvForRequest,
+                trustedProjectEnvIdentity,
+                operation,
+              )
               : runWithProjectEnv(isolatedEnvForRequest, operation);
 
           const runInFilesystemContext = <T>(operation: () => Promise<T>) =>

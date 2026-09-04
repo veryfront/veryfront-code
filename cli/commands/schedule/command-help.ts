@@ -13,7 +13,7 @@ export const scheduleHelp: CommandHelp = {
     {
       flag: "--remote",
       description:
-        "Run the pushed source schedule in the Veryfront cloud runtime; cannot be combined with --input (run only)",
+        "Run the pushed schedule in Veryfront Cloud; uses explicit project references or package/directory inference when no module config exists, and cannot be combined with --input (run only)",
     },
     {
       flag: "-d, --dir <path>",

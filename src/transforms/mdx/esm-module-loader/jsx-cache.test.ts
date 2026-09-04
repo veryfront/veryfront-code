@@ -45,7 +45,11 @@ import {
   withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
 } from "./jsx-cache.ts";
-import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
+import {
+  MAX_MDX_MODULE_CODE_BYTES,
+  MAX_MDX_MODULE_IMPORTS_PER_FILE,
+  ModuleSourceLimitError,
+} from "./module-fetcher/limits.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
@@ -1155,7 +1159,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
-  it("reserves bounded headroom for a cache namespace upgrade", async () => {
+  it("reserves the full current-namespace capacity after a namespace upgrade", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-namespace-headroom-test-" });
     const nextPath = join(
       tempDir,
@@ -1166,6 +1170,21 @@ describe("pruneSupersededJsxArtifacts", () => {
         await writeTextFile(
           join(tempDir, `jsx-prior-namespace-${index}.mjs`),
           `export const old = ${index};`,
+        );
+      }
+      // A previous rollout may already have consumed one request's worth of
+      // the new namespace before another disjoint 500-import page renders.
+      // Prior generations must not consume the current namespace's own quota.
+      for (let index = 0; index < MAX_MDX_MODULE_IMPORTS_PER_FILE; index++) {
+        await writeTextFile(
+          join(
+            tempDir,
+            buildMdxJsxCacheFileName(
+              `/tmp/source/current-${index}.tsx`,
+              `export const current = ${index};`,
+            ),
+          ),
+          `export const current = ${index};`,
         );
       }
 
@@ -2369,6 +2388,7 @@ describe("scheduled prune bound", () => {
     promotePersistedJsxCachePruneRequest,
     queuedJsxCachePruneCount,
     retirePersistedJsxCachePruneRequest,
+    scheduleJsxCachePruneRetry,
     scheduledJsxCachePruneCount,
   } = __jsxCacheInternals;
 
@@ -2424,7 +2444,8 @@ describe("scheduled prune bound", () => {
         join(tempDir, buildMdxJsxCacheFileName(sourcePath, "export const v = 1;")),
         "export const v = 1;",
       );
-      await persistJsxCachePruneRequest(tempDir, Date.now());
+      const generation = await persistJsxCachePruneRequest(tempDir, Date.now());
+      if (generation === undefined) throw new Error("failed to persist the test prune request");
       await promotePersistedJsxCachePruneRequest();
       await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -2432,10 +2453,51 @@ describe("scheduled prune bound", () => {
       assertEquals(hasScheduledJsxCachePrune(tempDir), true);
     } finally {
       cancelScheduledJsxCachePrunes();
-      await retirePersistedJsxCachePruneRequest(tempDir);
       await clearPersistedJsxCachePruneRequestsForTests(requestPrefix);
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("promotes an earlier persisted request while queued work remains", async () => {
+    await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
+    const trigger = `${persistedTestPrefix}trigger`;
+    scheduleJsxCachePruneRetry(trigger, 0);
+    for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES - 1; entry++) {
+      ensureJsxCacheSweepArmed(`${persistedTestPrefix}scheduled-${entry}`);
+    }
+    ensureJsxCacheSweepArmed(`${persistedTestPrefix}queued`);
+    const persisted = `${persistedTestPrefix}persisted-earlier`;
+    await persistJsxCachePruneRequest(persisted, Date.now() + 10_000);
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (hasScheduledJsxCachePrune(persisted)) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    assertEquals(
+      hasScheduledJsxCachePrune(persisted),
+      true,
+      "an occupied queue must not starve earlier persisted work",
+    );
+  });
+
+  it("retires only the persisted generation that completed", async () => {
+    const directory = `${persistedTestPrefix}generation`;
+    const firstGeneration = await persistJsxCachePruneRequest(directory, Date.now() + 20_000);
+    const replacementGeneration = await persistJsxCachePruneRequest(directory, Date.now());
+    if (firstGeneration === undefined || replacementGeneration === undefined) {
+      throw new Error("failed to persist the test prune generations");
+    }
+
+    await retirePersistedJsxCachePruneRequest(directory, firstGeneration);
+    assertEquals(
+      await hasPersistedJsxCachePrune(directory),
+      true,
+      "a newer writer's cleanup request must survive older work completing",
+    );
+
+    await retirePersistedJsxCachePruneRequest(directory, replacementGeneration);
+    assertEquals(await hasPersistedJsxCachePrune(directory), false);
   });
 });
 

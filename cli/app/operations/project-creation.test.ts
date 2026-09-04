@@ -2,7 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  _resetEnvironmentConfig,
+  refreshEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { createProject } from "./project-creation.ts";
 import { createInitialState } from "../state.ts";
@@ -147,6 +153,51 @@ describe("TUI project creation", () => {
       );
     } finally {
       globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+      await Deno.remove(workDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("does not create a project through an API origin selected by a project env file", async () => {
+    const envKeys = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL", "XDG_CONFIG_HOME"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const workDir = await makeTempDir();
+    const configHome = await makeTempDir();
+    let fetchCalls = 0;
+
+    try {
+      await Deno.mkdir(join(configHome, "veryfront"), { recursive: true });
+      await Deno.writeTextFile(join(configHome, "veryfront", "token"), TOKEN);
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await Deno.writeTextFile(
+        join(workDir, ".env"),
+        "VERYFRONT_API_URL=https://project-controlled.example/api\n",
+      );
+      __resetEnvLoaderForTests();
+      await loadEnv({ cwd: workDir, override: true });
+      refreshEnvironmentConfig();
+
+      const state = await withMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.reject(new Error("must not fetch"));
+        }) as typeof fetch,
+        () =>
+          createProject(
+            { state: createInitialState(), render: () => {}, baseDir: workDir },
+            "My App",
+            "minimal",
+          ),
+      );
+
+      assertEquals(fetchCalls, 0);
+      assertEquals(state.logs.some((entry) => entry.message.startsWith("Failed:")), true);
+    } finally {
+      __resetEnvLoaderForTests();
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
       await Deno.remove(workDir, { recursive: true });

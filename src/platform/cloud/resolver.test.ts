@@ -18,12 +18,14 @@ import {
   getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
   resolveVeryfrontApiBaseUrlFromHostEnv,
+  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
 } from "./resolver.ts";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_URL",
+  "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_DEFAULT_MODEL",
@@ -195,6 +197,19 @@ describe("platform/cloud/resolver", () => {
     assertEquals(
       resolveVeryfrontApiBaseUrlFromHostEnv(),
       "http://veryfront-api.veryfront-staging.svc",
+    );
+  });
+
+  it("normalizes the optional public API base URL independently", () => {
+    assertEquals(resolveVeryfrontPublicApiBaseUrlFromHostEnv(), undefined);
+
+    setEnv(
+      "VERYFRONT_PUBLIC_API_BASE_URL",
+      " https://api.staging.veryfront.org/graphql/ ",
+    );
+    assertEquals(
+      resolveVeryfrontPublicApiBaseUrlFromHostEnv(),
+      "https://api.staging.veryfront.org/api",
     );
   });
 

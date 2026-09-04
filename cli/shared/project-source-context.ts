@@ -6,7 +6,7 @@ import {
   type RuntimeAdapter,
 } from "veryfront/platform";
 import { runtime } from "#cli/runtime-adapter";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "./runtime-auth.ts";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "./runtime-auth.ts";
 
 interface ProxyProjectSourceContext {
   projectSlug: string;
@@ -63,12 +63,13 @@ export async function applyProjectSourceRuntimeAuth(
   projectDir: string,
   config: VeryfrontConfig,
 ) {
-  return await applyRuntimeAuthContext({
-    linkedProjectSlug: await resolveLinkedProjectSlug(
+  return await applyQualifiedRuntimeAuth(
+    projectDir,
+    await resolveLinkedProjectSlug(
       projectDir,
       config.projectSlug ?? config.fs?.veryfront?.projectSlug,
     ),
-  });
+  );
 }
 
 export async function withProjectSourceContext<T>(
