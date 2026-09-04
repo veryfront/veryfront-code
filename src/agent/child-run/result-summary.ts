@@ -434,7 +434,10 @@ function addToolArrayFieldValues(
   pattern: RegExp,
 ): void {
   pattern.lastIndex = 0;
+  let inspectedFields = 0;
   for (const match of text.matchAll(pattern)) {
+    if (inspectedFields >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
+    inspectedFields += 1;
     const fieldName = match[1];
     const bodyStart = match.index + match[0].length;
     const boundedBody = text.slice(
@@ -444,6 +447,18 @@ function addToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
+    if (fieldName === "tools" && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT) {
+      // Full JSON parsing stays under the small per-field cap above. A tool
+      // object's top-level id/name can safely be scanned farther within the
+      // already bounded head/tail window, so long descriptions or schemas do
+      // not hide an identifier that follows them.
+      const windowBody = text.slice(bodyStart);
+      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
+      addToolIdsFromLeadingObjectFields(
+        target,
+        windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
+      );
+    }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
 }

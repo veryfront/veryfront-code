@@ -270,6 +270,15 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
     });
 
+    it("preserves an ID after long metadata in a bounded tool object", () => {
+      const text = '"tools": [{"description":"' + "a".repeat(2_500) +
+        '","id":"create_agent"}]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
+    });
+
     it("prioritizes declared tool arrays across windows over integration matches", () => {
       const integrations = Array.from(
         { length: 50 },
