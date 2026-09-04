@@ -1170,6 +1170,20 @@ Deno.test(
   },
 );
 
+Deno.test("missing POSIX filenames may contain a literal backslash", async () => {
+  if (Deno.build.os === "windows") return;
+  const project = await makeTempDir();
+  try {
+    await assertPathInsideProject(
+      `${project}/foo\\bar.ts`,
+      await Deno.realPath(project),
+      { allowMissing: true },
+    );
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 Deno.test("project writes stay bound to the file opened before a path swap", async () => {
   if (Deno.build.os === "windows") return;
 

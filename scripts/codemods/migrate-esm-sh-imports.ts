@@ -5,7 +5,7 @@ import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
 import { constants as nativeFsConstants } from "node:fs";
 import { open as openNativeFile, stat as statNativeFile } from "node:fs/promises";
-import { isAbsolute, parse as parsePath, relative } from "node:path";
+import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
 
 interface BabelGeneratorResult {
   code: string;
@@ -480,10 +480,7 @@ function containmentPrefix(root: string): string {
 
 /** Directory portion of `path`, accepting either separator spelling. */
 function parentDirOf(path: string): string {
-  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  if (index < 0) return ".";
-  const parent = path.slice(0, index);
-  return parent === "" ? PATH_SEPARATOR : parent;
+  return nativeDirname(path);
 }
 
 class SafeFileGuardError extends Error {
