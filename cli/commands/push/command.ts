@@ -1352,7 +1352,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         } finally {
           spinner.stop();
         }
-        if (!quiet || jsonOutput) {
+        if (!quiet) {
           if (dryRun && jsonOutput) {
             outputPushDryRunResult(
               config.projectSlug,
@@ -1400,7 +1400,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           await deleteFiles(client, projectApiReference(config), target.branchId, deleteOps, true);
         }
 
-        if (jsonOutput) {
+        if (jsonOutput && !quiet) {
           outputPushDryRunResult(
             config.projectSlug,
             branchName,
@@ -1802,7 +1802,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         spinner.stop();
       }
 
-      if (quiet && !jsonOutput) return;
+      // `quiet` suppresses the result envelope in every mode, JSON included:
+      // embedded callers (`deploy-project` bootstrap push, `createStagedPushOptions`)
+      // pass it precisely because they emit the single result envelope for the
+      // command the user actually ran, and a second one would break that contract.
+      if (quiet) return;
 
       outputPushResult(
         config.projectSlug,

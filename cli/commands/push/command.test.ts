@@ -662,6 +662,14 @@ describe("push JSON output", () => {
           console.log = captureConsoleLog(pushOutput);
           await pushCommand({ projectDir, prune: true });
           assertEquals(JSON.parse(pushOutput[0]!).data.protectedDeleted, [".env.production.json"]);
+
+          // `quiet` still suppresses the envelope in JSON mode. Embedded callers
+          // such as the deploy bootstrap push pass it so the command the user ran
+          // stays the only result line on stdout.
+          const quietOutput: string[] = [];
+          console.log = captureConsoleLog(quietOutput);
+          await pushCommand({ projectDir, prune: true, quiet: true });
+          assertEquals(quietOutput, []);
         });
       });
     } finally {
@@ -5245,7 +5253,6 @@ describe("push deletion ownership", () => {
 
   it("reconciles late remote-only files during no-op forced prune", async () => {
     const originalFetch = globalThis.fetch;
-    const originalLog = console.log;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -5260,9 +5267,6 @@ describe("push deletion ownership", () => {
 
         let fileListCalls = 0;
         const deleted: string[] = [];
-        const output: string[] = [];
-        setJsonMode(true);
-        console.log = captureConsoleLog(output);
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -5295,7 +5299,6 @@ describe("push deletion ownership", () => {
 
         assertEquals(fileListCalls, 3);
         assertEquals([...deleted].sort(), [".env.production", "late-remote.ts"]);
-        assertEquals(JSON.parse(output[0]!).data.protectedDeleted, [".env.production"]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
         assertEquals(
@@ -5314,8 +5317,6 @@ describe("push deletion ownership", () => {
         );
       });
     } finally {
-      setJsonMode(false);
-      console.log = originalLog;
       globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
