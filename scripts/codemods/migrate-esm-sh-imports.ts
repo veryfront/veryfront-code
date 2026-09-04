@@ -944,9 +944,11 @@ async function main(args: string[]): Promise<void> {
   // Traversal and writes use the resolved root, but the report keeps the
   // spelling the caller passed: a relative project directory stays relative,
   // and no machine-specific filesystem layout leaks into the JSON output.
+  const trailingSeparators = Deno.build.os === "windows" ? /[/\\]+$/ : /\/+$/;
+  const endsWithSeparator = Deno.build.os === "windows" ? /[/\\]$/ : /\/$/;
   const displayRoot = projectDir === parsePath(projectDir).root
     ? projectDir
-    : projectDir.replace(/[/\\]+$/, "") || projectDir;
+    : projectDir.replace(trailingSeparators, "") || projectDir;
   const toReportPath = (absolute: string): string => {
     const projectRelative = relative(projectRoot, absolute);
     if (
@@ -959,13 +961,17 @@ async function main(args: string[]): Promise<void> {
       ? projectRelative.replaceAll("\\", "/")
       : projectRelative;
     if (!normalizedRelative) return displayRoot;
-    return /[/\\]$/.test(displayRoot)
+    return endsWithSeparator.test(displayRoot)
       ? `${displayRoot}${normalizedRelative}`
       : `${displayRoot}/${normalizedRelative}`;
   };
 
   const sourceFiles: string[] = [];
-  await collectSourceFiles(projectRoot, sourceFiles);
+  try {
+    await collectSourceFiles(projectRoot, sourceFiles);
+  } catch {
+    throw new Error(`Failed to scan ${displayRoot} safely.`);
+  }
   sourceFiles.sort(compareCodeUnits);
 
   const report: EsmShReport = {
@@ -1144,12 +1150,16 @@ async function main(args: string[]): Promise<void> {
     // specifiers in source files without a corresponding pin entry.
     if (JSON.stringify(updatedDeps) !== JSON.stringify(existingDeps)) {
       pkgJson["dependencies"] = updatedDeps;
-      await writeTextFileInsideProject(
-        pkgJsonPath,
-        projectRoot,
-        JSON.stringify(pkgJson, null, 2) + "\n",
-        { allowMissing: true, expectedIdentity: pkgJsonFileIdentity },
-      );
+      try {
+        await writeTextFileInsideProject(
+          pkgJsonPath,
+          projectRoot,
+          JSON.stringify(pkgJson, null, 2) + "\n",
+          { allowMissing: true, expectedIdentity: pkgJsonFileIdentity },
+        );
+      } catch {
+        throw new Error(`Failed to write ${toReportPath(pkgJsonPath)} safely.`);
+      }
     }
 
     for (const { file, code, identity } of fileResults) {

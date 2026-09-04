@@ -1217,6 +1217,45 @@ Deno.test(
 );
 
 Deno.test(
+  "POSIX report paths preserve a trailing backslash in the project name",
+  async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parent = await makeTempDir();
+    const project = `${parent}/project\\`;
+    try {
+      await Deno.mkdir(project);
+      await Deno.writeTextFile(
+        `${project}/app.ts`,
+        'import { x } from "https://esm.sh/lodash@4.17.21";\n',
+      );
+      await Deno.writeTextFile(
+        `${project}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n",
+      );
+
+      let report: { rewrites: Array<{ file: string }> } | undefined;
+      const originalLog = console.log.bind(console);
+      console.log = (message: string) => {
+        try {
+          report = JSON.parse(message);
+        } catch { /* ignore non-JSON lines */ }
+      };
+      try {
+        await main(["--", project]);
+      } finally {
+        console.log = originalLog;
+      }
+
+      assert(report !== undefined);
+      assertEquals(report.rewrites.map((rewrite) => rewrite.file), [`${project}/app.ts`]);
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
   "intra-file version conflict leaves source and package.json unchanged",
   async () => {
     // Same package at two different versions in one file: an intra-file conflict.
