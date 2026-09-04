@@ -109,6 +109,26 @@ export async function preloadDevAuth(
   return { identity, projects: result.projects };
 }
 
+/**
+ * Run the interactive login behind the `a` shortcut and report a refusal.
+ *
+ * The keyboard handler dispatches shortcuts without awaiting them, so a
+ * rejection escapes as an unhandled promise rejection and tears the dev server
+ * down. `login()` now refuses when a repository chose the API endpoint, and
+ * that refusal is exactly the message the developer must read, so print it on
+ * the dev output line instead of letting it escape.
+ */
+export async function loginForDevShortcut(
+  attemptLogin: () => Promise<AuthIdentity | null> = login,
+): Promise<AuthIdentity | null> {
+  try {
+    return await attemptLogin();
+  } catch (err) {
+    console.log(`  ${errorColor("✗")} ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 export function createSelectedProjectPushOptions(
   projectDir: string,
   project: RemoteProject,
@@ -446,7 +466,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             }
 
             console.log(`  ${dim("Opening browser...")}`);
-            const result = await login();
+            const result = await loginForDevShortcut();
             if (!result) return;
 
             identity = result;

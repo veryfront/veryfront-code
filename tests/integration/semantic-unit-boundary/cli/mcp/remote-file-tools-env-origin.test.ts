@@ -20,6 +20,7 @@ import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.t
 import { join } from "veryfront/platform/path";
 
 import { vfRemoteListFiles } from "../../../../../cli/mcp/remote-file-tools.ts";
+import { deleteToken, saveToken } from "../../../../../cli/auth/token-store.ts";
 
 describe("remote file tools env-file API origin", () => {
   it("does not send a shell token to a project env API origin", async () => {
@@ -52,6 +53,60 @@ describe("remote file tools env-file API origin", () => {
         assertEquals(result.success, false);
       }, { prefix: "vf-remote-file-tools-origin-" });
       assertEquals(fetchCalls, 0);
+    } finally {
+      __resetEnvLoaderForTests();
+      envKeys.forEach((key, index) => {
+        const value = savedEnv[index];
+        if (value === undefined) deleteEnv(key);
+        else setEnv(key, value);
+      });
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("keeps the project env token ahead of the stored login token", async () => {
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "XDG_CONFIG_HOME",
+    ];
+    const savedEnv = envKeys.map((key) => getEnv(key));
+    const authorizations: string[] = [];
+
+    try {
+      envKeys.forEach((key) => deleteEnv(key));
+      __resetEnvLoaderForTests();
+      await withTempDir(async (dir) => {
+        setEnv("XDG_CONFIG_HOME", join(dir, "config"));
+        await writeTextFile(
+          join(dir, ".env"),
+          "VERYFRONT_API_TOKEN=project-env-token\n",
+        );
+        await loadEnv({ cwd: dir, override: true });
+        refreshEnvironmentConfig();
+        await saveToken("stored-login-token");
+
+        try {
+          // These tools used to read the environment token directly, so a
+          // project `.env` VERYFRONT_API_TOKEN outranked a stored
+          // `veryfront login`. Resolving them in interactive precedence swaps
+          // that pair and silently changes which identity file operations use.
+          const result = await withMockFetch(
+            ((_input: string | URL | Request, init?: RequestInit) => {
+              authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+              return Promise.resolve(Response.json({ data: [] }));
+            }) as typeof fetch,
+            () => vfRemoteListFiles.execute({ project: "project", limit: 50 }),
+          );
+
+          assertEquals(result.success, true);
+        } finally {
+          await deleteToken();
+        }
+      }, { prefix: "vf-remote-file-tools-precedence-" });
+
+      assertEquals(authorizations, ["Bearer project-env-token"]);
     } finally {
       __resetEnvLoaderForTests();
       envKeys.forEach((key, index) => {

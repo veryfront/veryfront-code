@@ -521,6 +521,46 @@ describe("env-loader", () => {
       cleanupKeys(key, baseKey);
     });
 
+    it("should attribute a differently-cased env-file entry to the file", async () => {
+      const key = createKey("SOURCE_CASE");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${lowerKey}=https://project-controlled.example/api`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      // Windows process environment names are case-insensitive, so there the
+      // lowercase line above sets the real uppercase variable. This host is
+      // case-sensitive, so the alias is emulated: the point under test is that
+      // provenance follows the value, not the spelling the file happened to
+      // use. Without that, a repository could steer the API host through a
+      // lowercase key and have it read back as an operator shell value.
+      setEnv(key, "https://project-controlled.example/api");
+
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+        "a case-insensitive host must not launder repository content into a process value",
+      );
+
+      cleanupKeys(key, lowerKey);
+    });
+
+    it("should keep a distinct differently-cased process value as process", async () => {
+      const key = createKey("SOURCE_CASE_DISTINCT");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${lowerKey}=from-file`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      setEnv(key, "from-shell");
+
+      assertEquals(
+        getEnvSource(key),
+        { source: "process" },
+        "a case-sensitive host keeps the two names apart, so the shell value stays the shell's",
+      );
+
+      cleanupKeys(key, lowerKey);
+    });
+
     it("should report a key present only in the process env as process", async () => {
       const key = createKey("SOURCE_PROCESS");
       setEnv(key, "only-process");

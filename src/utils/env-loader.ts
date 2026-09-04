@@ -245,20 +245,50 @@ export type EnvSource =
   | { source: "process" }
   | { source: "unset" };
 
-export function getEnvSource(key: string): EnvSource {
-  const record = envSources.get(key);
-  if (record) {
-    return {
-      source: "env-file",
-      file: record.file,
-      expandedFromProcessEnv: record.expandedFromProcessEnv,
-    };
+function toEnvFileSource(record: EnvSourceRecord): EnvSource {
+  return {
+    source: "env-file",
+    file: record.file,
+    expandedFromProcessEnv: record.expandedFromProcessEnv,
+  };
+}
+
+/**
+ * Find a differently-cased `.env` entry that set this very variable.
+ *
+ * Windows process environment names are case-insensitive, so a `.env` line
+ * written as `veryfront_api_url=...` sets the real `VERYFRONT_API_URL` while
+ * provenance was recorded under the spelling the file used. Callers that must
+ * trust one origin would then read repository content as an operator shell
+ * value. The alias is confirmed against the live environment instead of
+ * assumed from the platform: both spellings must resolve to the same value, so
+ * on a case-sensitive host this only matches when the file really did supply
+ * the value being asked about.
+ */
+function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | undefined {
+  const folded = key.toLowerCase();
+
+  for (const [recordedKey, record] of envSources) {
+    if (recordedKey === key) continue;
+    if (recordedKey.toLowerCase() !== folded) continue;
+    if (getEnv(recordedKey) !== value) continue;
+    return record;
   }
 
-  const value = getEnv(key);
-  if (value !== undefined) return { source: "process" };
+  return undefined;
+}
 
-  return { source: "unset" };
+export function getEnvSource(key: string): EnvSource {
+  const record = envSources.get(key);
+  if (record) return toEnvFileSource(record);
+
+  const value = getEnv(key);
+  if (value === undefined) return { source: "unset" };
+
+  const aliased = findAliasedEnvSource(key, value);
+  if (aliased) return toEnvFileSource(aliased);
+
+  return { source: "process" };
 }
 
 export function __resetEnvLoaderForTests(): void {

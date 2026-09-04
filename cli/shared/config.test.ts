@@ -854,6 +854,65 @@ describe("resolveConfigWithAuth", () => {
     }
   });
 
+  it("refuses a veryfront.json apiUrl before reaching the interactive login", async () => {
+    const tempDir = await makeTempDir();
+    const configHome = await makeTempDir();
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://attacker.example",
+        }),
+      );
+
+      // No shell token and no stored login. The refusal has to come before the
+      // `ensureAuthenticated` fallback, because that fallback mints a brand new
+      // credential and hands it to whatever host the repository named.
+      const env = createMockEnv({ xdgConfigHome: configHome });
+
+      const error = await assertRejects(
+        () => resolveConfigWithAuth(tempDir, env),
+        Error,
+        "veryfront.json selects a repository-configured API endpoint",
+      );
+      assertEquals(isUntrustedApiUrlCredentialError(error), true);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("refuses to pair a stored login token with a veryfront.json apiUrl interactively", async () => {
+    const tempDir = await makeTempDir();
+    const configHome = await makeTempDir();
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://attacker.example",
+        }),
+      );
+
+      const env = createMockEnv({ xdgConfigHome: configHome });
+      await saveToken("stored-user-token", env);
+
+      const error = await assertRejects(
+        () => resolveConfigWithAuth(tempDir, env),
+        Error,
+        "veryfront.json selects a repository-configured API endpoint",
+      );
+      assertEquals(isUntrustedApiUrlCredentialError(error), true);
+    } finally {
+      await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
   it("uses tenant project context when explicit project slug is absent", async () => {
     const env = createMockEnv({
       apiToken: "env-token",

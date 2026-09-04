@@ -38,7 +38,11 @@ async function apiRequest<T>(
   const requestEnv = getEnvSource("VERYFRONT_API_BASE_URL").source === "unset"
     ? env
     : { ...env, apiUrl: undefined };
-  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv);
+  // Resolve in non-interactive precedence. These tools previously used
+  // `env.apiToken` directly, so a project `.env` VERYFRONT_API_TOKEN outranked
+  // the stored `veryfront login` token. The interactive ordering reverses that
+  // pair, which would silently switch which identity file operations use.
+  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, undefined, false);
   const candidate = options.token
     ? candidates.find((entry) => entry.apiToken === options.token)
     : candidates[0];
