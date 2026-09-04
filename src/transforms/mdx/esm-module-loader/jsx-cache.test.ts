@@ -730,6 +730,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     releaseJsxArtifact,
     removeJsxArtifactUnlessServed,
     retainJsxArtifact,
+    scheduleJsxCachePruneRetry,
   } = __jsxCacheInternals;
 
   afterEach(() => {
@@ -1181,6 +1182,56 @@ describe("pruneSupersededJsxArtifacts", () => {
       );
       assertEquals(remaining.includes(written[0] ?? ""), true);
     } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("re-arms a scheduled sweep that a lease failure aborted partway", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-abort-test-" });
+    const strandedName = "jsx-superseded-namespace-aborted.mjs";
+    const localFs = getLocalFs();
+    const originalReadTextFile = localFs.readTextFile.bind(localFs);
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+
+    try {
+      await writeTextFile(join(tempDir, strandedName), "export const old = 1;");
+      // Old enough that the sweep reaches the removal, which needs the lease.
+      const agedAt = new Date(Date.now() - JSX_CACHE_VARIANT_MIN_AGE_MS - 60_000);
+      await localFs.utime?.(join(tempDir, strandedName), agedAt, agedAt);
+      // An operational failure reading back the lease owner, not a contended
+      // lock: the ownership fence throws, so the pass aborts instead of
+      // preserving the artifact and naming its own retry.
+      let leaseReads = 0;
+      localFs.readTextFile = () => {
+        leaseReads++;
+        return Promise.reject(new Error("EIO"));
+      };
+
+      scheduleJsxCachePruneRetry(tempDir, 0);
+      // The entry is armed before the timer fires and dropped when it does, so
+      // wait for the pass to reach the lease and for its rejection to settle.
+      for (
+        let attempt = 0;
+        attempt < 200 && (leaseReads === 0 || !hasScheduledJsxCachePrune(tempDir));
+        attempt++
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      assertEquals(leaseReads > 0, true, "the scheduled pass must have reached the lease");
+      assertEquals(
+        hasScheduledJsxCachePrune(tempDir),
+        true,
+        "an aborted sweep drops its own timer, so it must arm the next one itself",
+      );
+      assertEquals(
+        await getLocalFs().exists(join(tempDir, strandedName)),
+        true,
+        "the artifact the aborted pass could not reach must still be there to collect",
+      );
+    } finally {
+      localFs.readTextFile = originalReadTextFile;
       await remove(tempDir, { recursive: true });
     }
   });

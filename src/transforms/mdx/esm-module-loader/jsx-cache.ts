@@ -664,6 +664,15 @@ function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void 
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
         error: error instanceof Error ? error.message : String(error),
       });
+      // A pass that throws, rather than preserving an artifact and naming a
+      // retry, never reaches the scheduling at its end: a lease it could not
+      // acquire aborts it partway. This callback has already dropped the
+      // directory's entry, so without re-arming here the excess it left waits
+      // for an unrelated future transform.
+      scheduleJsxCachePruneRetry(
+        esmCacheDir,
+        JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      );
     });
   }, delayMs);
   unrefTimer(timer);
@@ -1038,6 +1047,7 @@ export const __jsxCacheInternals = {
   rememberNormalizedModule,
   removeJsxArtifactUnlessServed,
   retainJsxArtifact,
+  scheduleJsxCachePruneRetry,
   servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
   wasJsxArtifactRecentlyServed,
 };
