@@ -1558,17 +1558,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (deleteResult.conflicts.length > 0) {
         spinner.stop();
-        const appliedUploads = new Set(uploadResult.applied);
-        const appliedDeletes = new Set(deleteResult.applied);
-        await writeAppliedSyncTarget(
-          projectDir,
-          config,
-          project,
-          branchName,
-          syncBaselineRemoteFiles,
-          uploadOps.filter((op) => appliedUploads.has(op.path)),
-          deleteOps.filter((op) => appliedDeletes.has(op.path)),
-        );
+        await writeConfirmedAppliedSyncTarget();
         throw pushConflictError(deleteResult.conflicts, protectedDeleteContext());
       }
 

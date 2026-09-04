@@ -271,6 +271,14 @@ describe("cli/sync/ignore", () => {
         assertEquals(canceledNegationChecker.isIgnored(".env"), true);
         assertEquals(warnings.length, 8, "a later matching ignore rule cancels the warning");
 
+        const broadlyCanceledChecker = createIgnoreChecker(["!.env/**", ".env"]);
+        assertEquals(broadlyCanceledChecker.isIgnored(".env"), true);
+        assertEquals(
+          warnings.length,
+          8,
+          "a later parent-directory ignore cancels descendant negations",
+        );
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
         assertEquals(warnings.length, 8, "JSON mode must not emit human warning text");

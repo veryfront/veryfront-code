@@ -330,8 +330,18 @@ function hasEffectiveDescendantNegation(
   normalizedPath: string,
   canceledNegations: ReadonlySet<IgnoreRule>,
 ): boolean {
-  for (const rule of rules) {
+  const descendantProbe = `${normalizedPath}/__veryfront_probe__.json`;
+  let lastBroadIgnoreIndex = -1;
+  for (let index = 0; index < rules.length; index++) {
+    const rule = rules[index]!;
+    if (!rule.negated && rule.regex.test(normalizedPath) && rule.regex.test(descendantProbe)) {
+      lastBroadIgnoreIndex = index;
+    }
+  }
+  for (let index = 0; index < rules.length; index++) {
+    const rule = rules[index]!;
     if (!negatedRuleTargetsDescendant(rule, normalizedPath)) continue;
+    if (index < lastBroadIgnoreIndex) continue;
     if (!canceledNegations.has(rule)) return true;
   }
   return false;
