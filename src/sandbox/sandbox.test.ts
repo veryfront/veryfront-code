@@ -81,6 +81,16 @@ describe("Sandbox", () => {
     __resetEnvLoaderForTests();
   });
 
+  it("does not expose ambient authentication through a static class method", () => {
+    setEnv("VERYFRONT_API_URL", "https://api.test.com");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    assertEquals(
+      (Sandbox as unknown as Record<string, unknown>).resolveAuthToken,
+      undefined,
+    );
+  });
+
   describe("create()", () => {
     it("should create a sandbox and return instance", async () => {
       mockFetch([

@@ -1,6 +1,11 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/logger.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
-import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
+import {
+  clearEnvFileValueSources,
+  getEnv,
+  markEnvFileValue,
+  setEnv,
+} from "#veryfront/platform/compat/process/env.ts";
 import { cwd as getCwd } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
@@ -40,6 +45,7 @@ export async function loadEnv(
         if (existing && !override) continue;
 
         setEnv(key, value);
+        markEnvFileValue(key);
         applyIntrinsic(mapSet, envSources, [key, file]);
         totalVars++;
 
@@ -180,4 +186,5 @@ export function getEnvSource(
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
   applyIntrinsic(mapClear, envSources, []);
+  clearEnvFileValueSources();
 }

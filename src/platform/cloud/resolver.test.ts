@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import {
   _resetRuntimeConfig,
   _setRuntimeConfigForTesting,
@@ -9,6 +10,9 @@ import {
 } from "#veryfront/config/runtime-config.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
   getDefaultVeryfrontCloudModel,
@@ -43,6 +47,8 @@ function clearCloudEnv(): void {
 describe("platform/cloud/resolver", () => {
   afterEach(() => {
     clearCloudEnv();
+    deleteHostSecret("VERYFRONT_API_TOKEN");
+    __resetEnvLoaderForTests();
     _resetRuntimeConfig();
   });
 
@@ -135,6 +141,21 @@ describe("platform/cloud/resolver", () => {
       assertEquals(getVeryfrontCloudBootstrap().apiToken, undefined);
       assertEquals(getVeryfrontCloudAuthToken(), undefined);
       assertEquals(isVeryfrontCloudEnabled(), false);
+    });
+  });
+
+  it("does not pair stored login auth with an API origin loaded from project env", async () => {
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    await withTempDir(async (dir) => {
+      await writeTextFile(
+        `${dir}/.env`,
+        "VERYFRONT_API_BASE_URL=https://project-controlled.example/api\n",
+      );
+      await loadEnv({ cwd: dir });
+
+      const bootstrap = getVeryfrontCloudBootstrap();
+      assertEquals(bootstrap.apiBaseUrl, "https://api.veryfront.com");
+      assertEquals(bootstrap.apiToken, "stored-login-token");
     });
   });
 

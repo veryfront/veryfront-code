@@ -1,5 +1,5 @@
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv, getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import {
   getCurrentVeryfrontCloudContext,
   type VeryfrontCloudContext,
@@ -59,6 +59,12 @@ function normalizeApiBaseUrl(value: string | undefined): string | undefined {
 export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
   return normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_BASE_URL")) ??
     normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
+}
+
+function resolveHostCredentialApiBaseUrl(): string {
+  return normalizeApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")) ??
+    normalizeApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
+    DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
@@ -138,6 +144,7 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 }
 
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
+  const requestContext = getCurrentRequestContext();
   const scopedContext = getCurrentVeryfrontCloudContext();
   const scopedApiBaseUrl = scopedContext?.apiBaseUrl?.trim();
   const resolvedContext = getResolvedVeryfrontCloudContext();
@@ -153,8 +160,13 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
     };
   }
 
+  const usesHostCredential = requestContext?.token === undefined &&
+    scopedContext?.apiToken === undefined &&
+    getHostEnv("VERYFRONT_API_TOKEN") !== undefined;
   return {
-    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+    apiBaseUrl: usesHostCredential
+      ? resolveHostCredentialApiBaseUrl()
+      : resolveVeryfrontApiBaseUrlFromHostEnv(),
     ...resolvedContext,
   };
 }
@@ -162,7 +174,7 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
 /** Resolve the trusted host identity used by direct server-side platform clients. */
 export function getVeryfrontCloudHostBootstrap(): VeryfrontCloudBootstrap {
   return {
-    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+    apiBaseUrl: resolveHostCredentialApiBaseUrl(),
     apiToken: getHostEnv("VERYFRONT_API_TOKEN"),
     projectSlug: getHostEnv("VERYFRONT_PROJECT_SLUG"),
     serviceLayer: normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),

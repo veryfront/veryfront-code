@@ -63,18 +63,10 @@ export class Sandbox {
     applyIntrinsic(weakMapSet, sandboxAuthTokens, [this, authToken]);
   }
 
-  private static resolveApiUrl(options: SandboxOptions = {}): string {
-    return resolveSandboxApiUrl(options);
-  }
-
-  private static resolveAuthToken(options: SandboxOptions = {}): string {
-    return resolveSandboxAuthToken(options);
-  }
-
   /** Create a new sandbox session. Claims a warm pod or creates a new one. */
   static async create(options: SandboxOptions = {}): Promise<Sandbox> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions`, {
       method: "POST",
@@ -103,8 +95,8 @@ export class Sandbox {
 
   /** Reconnect to an existing sandbox session. */
   static async get(id: string, options: SandboxOptions = {}): Promise<Sandbox> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${authToken}` },
@@ -122,15 +114,15 @@ export class Sandbox {
 
   /** Attach to an already-known sandbox session and endpoint without a reconnect lookup. */
   static attach(attachment: SandboxAttachment): Sandbox {
-    const apiUrl = Sandbox.resolveApiUrl(attachment);
-    const authToken = Sandbox.resolveAuthToken(attachment);
+    const apiUrl = resolveSandboxApiUrl(attachment);
+    const authToken = resolveSandboxAuthToken(attachment);
     return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl);
   }
 
   /** List sandbox sessions with optional pagination. */
   static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const params = new URLSearchParams();
     if (options.cursor) params.set("cursor", options.cursor);
