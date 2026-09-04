@@ -1932,9 +1932,14 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
-      ...(waitingNodes === undefined
-        ? {}
-        : { _activeCompositeChildIds: waitingNodes.map(({ nodeId }) => nodeId) }),
+      ...(waitingNodes === undefined ? {} : {
+        _activeCompositeChildIds: [
+          ...new Set([
+            ...(nodeStates[node.id]?._activeCompositeChildIds ?? []),
+            ...waitingNodes.map(({ nodeId }) => nodeId),
+          ]),
+        ],
+      }),
     };
 
     this.config.onNodeComplete?.(node.id, state);
@@ -2032,9 +2037,14 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
-      ...(waitingNodes === undefined
-        ? {}
-        : { _activeCompositeChildIds: waitingNodes.map(({ nodeId }) => nodeId) }),
+      ...(waitingNodes === undefined ? {} : {
+        _activeCompositeChildIds: [
+          ...new Set([
+            ...(nodeStates[node.id]?._activeCompositeChildIds ?? []),
+            ...waitingNodes.map(({ nodeId }) => nodeId),
+          ]),
+        ],
+      }),
     };
 
     this.config.onNodeComplete?.(node.id, state);

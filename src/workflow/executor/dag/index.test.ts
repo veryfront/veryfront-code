@@ -3724,6 +3724,23 @@ describe("DAGExecutor", () => {
       assertEquals(resumed.waiting, true);
       assertEquals(resumed.waitingNode, "group/b");
       assertEquals(resumed.nodeStates["group/b"]?.status, "running");
+
+      const completedResult = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...resumed.nodeStates,
+            "group/b": {
+              ...resumed.nodeStates["group/b"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+      assertEquals(completedResult.completed, true);
+      assertEquals(completedResult.nodeStates["group/a"]?.status, "completed");
     });
 
     it("resumes an active static producer before a newly ready callback sibling", async () => {
