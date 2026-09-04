@@ -573,44 +573,29 @@ function isNotFoundError(error: unknown): boolean {
       (error as { code?: unknown }).code === "ENOENT");
 }
 
-async function replaceTextFileInsideProject(
+async function writeTextFileInsideProjectOnWindows(
   path: string,
   projectRoot: string,
   content: string,
   expectedIdentity?: StableFileIdentity,
 ): Promise<void> {
-  const parent = parentDirOf(path);
-  const tempPath = `${parent}${PATH_SEPARATOR}.veryfront-codemod-${crypto.randomUUID()}.tmp`;
-  const tempFile = await Deno.open(tempPath, { write: true, createNew: true });
-  let tempFileOpen = true;
+  // Open the destination before trusting its path, but do not mutate it until
+  // the opened identity and current in-project path agree. A parent swapped to
+  // a junction or symlink can redirect this open, but never a later write.
+  const file = await openNativeFile(path, "r+");
   try {
-    // The temporary file was created atomically and this handle cannot be
-    // redirected by a later path replacement.
-    await assertPathInsideProject(tempPath, projectRoot);
-    const bytes = new TextEncoder().encode(content);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const written = await tempFile.write(bytes.subarray(offset));
-      if (written === 0) throw new Error("Could not finish writing the migration result");
-      offset += written;
-    }
-    tempFile.close();
-    tempFileOpen = false;
-    // Renaming a sibling replaces the directory entry itself instead of
-    // following a final-component symlink. If an ancestor moved, the source
-    // path no longer resolves and the rename fails without touching a target.
+    const opened = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
-    await assertPathInsideProject(tempPath, projectRoot);
-    if (expectedIdentity && !sameFileIdentity(expectedIdentity, await pathFileIdentity(path))) {
+    if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
+      throw new Error("Refusing to write a path that changed after it was opened.");
+    }
+    if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
       throw new Error("Refusing to write a file because it changed after being read.");
     }
-    await Deno.rename(tempPath, path);
+    await file.truncate(0);
+    await file.writeFile(content, { encoding: "utf8" });
   } finally {
-    if (tempFileOpen) tempFile.close();
-    try {
-      await assertPathInsideProject(tempPath, projectRoot);
-      await Deno.remove(tempPath);
-    } catch { /* already renamed, missing, or no longer safe to address by path */ }
+    await file.close();
   }
 }
 
@@ -639,7 +624,7 @@ export async function writeTextFileInsideProject(
       }
       throw error;
     }
-    await replaceTextFileInsideProject(path, projectRoot, content, expectedIdentity);
+    await writeTextFileInsideProjectOnWindows(path, projectRoot, content, expectedIdentity);
     return;
   }
 
