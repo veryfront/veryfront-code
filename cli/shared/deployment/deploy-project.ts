@@ -498,9 +498,9 @@ export function resolveBootstrapPush(
  * immediately before accepting the receipt, so edits made while the deploy is
  * resolving its target cannot promote a stale upload.
  *
- * The scan reads every source file, so it is O(project size). A deploy that
- * pushes pays for it more than once: once here, once inside `pushCommand`, once
- * more when that push records its receipt, and once again in the final gate.
+ * Each observation scans every source file twice around Git probes, so it is
+ * O(project size). A deploy that pushes pays for it more than once: here,
+ * inside `pushCommand`, when that push records its receipt, and in the final gate.
  * The reads are what make the proof a proof, and a push already uploads the
  * same bytes, so the scans are not the cost that dominates a deploy. An
  * ensure-pushed deploy that skips the push pays for this decision read and the
@@ -521,19 +521,24 @@ export interface LocalSourceObservation {
 }
 
 export async function observeLocalSource(projectDir: string): Promise<LocalSourceObservation> {
-  // Bracket the source scan with Git probes. The first keeps writes during a
-  // slow Git command inside the digest, and the second refuses a HEAD or
-  // cleanliness transition that occurred while source bytes were read.
-  const beforeDigest = await resolveGitSource(projectDir);
+  // Bracket two matching source scans with Git probes. Git fences committed
+  // and visible worktree changes, while the repeated digest also catches a
+  // supported file hidden by .gitignore changing during either Git command.
+  const firstGit = await resolveGitSource(projectDir);
+  const firstDigest = await computeLocalSourceDigest(projectDir);
+  const middleGit = await resolveGitSource(projectDir);
   const sourceDigest = await computeLocalSourceDigest(projectDir);
-  const afterDigest = await resolveGitSource(projectDir);
-  const gitSource = beforeDigest.commitSha === afterDigest.commitSha &&
-      beforeDigest.clean === afterDigest.clean &&
-      beforeDigest.repositoryAvailable === afterDigest.repositoryAvailable &&
-      beforeDigest.indeterminate === afterDigest.indeterminate
-    ? afterDigest
+  const finalGit = await resolveGitSource(projectDir);
+  const gitStable = (left: GitSource, right: GitSource) =>
+    left.commitSha === right.commitSha &&
+    left.clean === right.clean &&
+    left.repositoryAvailable === right.repositoryAvailable &&
+    left.indeterminate === right.indeterminate;
+  const gitSource = gitStable(firstGit, middleGit) &&
+      gitStable(middleGit, finalGit) && firstDigest === sourceDigest
+    ? finalGit
     : {
-      ...afterDigest,
+      ...finalGit,
       commitSha: null,
       clean: false,
       indeterminate: true as const,
