@@ -285,6 +285,17 @@ describe("cli/sync/ignore", () => {
           "a later parent-directory ignore cancels descendant negations",
         );
 
+        const wildcardCanceledChecker = createIgnoreChecker([
+          "!.env/foo.ts",
+          ".env/*.ts",
+        ]);
+        assertEquals(wildcardCanceledChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          8,
+          "a later wildcard that covers a fixed negation cancels the warning",
+        );
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
         assertEquals(warnings.length, 8, "JSON mode must not emit human warning text");

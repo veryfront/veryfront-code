@@ -350,13 +350,29 @@ function hasEffectiveDescendantNegation(
 function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<IgnoreRule> {
   const canceled = new Set<IgnoreRule>();
   const laterPositivePatterns = new Set<string>();
+  const laterPositiveRules: IgnoreRule[] = [];
   for (let index = rules.length - 1; index >= 0; index--) {
     const rule = rules[index]!;
     const signature = `${rule.regex.source}\u0000${rule.regex.flags}`;
     if (rule.negated) {
-      if (laterPositivePatterns.has(signature)) canceled.add(rule);
+      let literalPath = "";
+      for (const token of rule.globTokens) {
+        if (token.type !== "literal") {
+          literalPath = "";
+          break;
+        }
+        literalPath += token.value;
+      }
+      if (
+        laterPositivePatterns.has(signature) ||
+        (literalPath.length > 0 &&
+          laterPositiveRules.some((positive) => positive.regex.test(literalPath)))
+      ) {
+        canceled.add(rule);
+      }
     } else {
       laterPositivePatterns.add(signature);
+      laterPositiveRules.push(rule);
     }
   }
   return canceled;
