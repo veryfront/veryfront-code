@@ -307,9 +307,20 @@ describe("cli/sync/ignore", () => {
           "a root-anchored positive cannot cancel an unanchored descendant negation",
         );
 
+        const parentOnlyChecker = createIgnoreChecker([
+          "!.env",
+          ".env*",
+        ]);
+        assertEquals(parentOnlyChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          10,
+          "a parent-only positive cannot cancel a negation that also matches descendants",
+        );
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 9, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 10, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

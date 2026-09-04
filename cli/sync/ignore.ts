@@ -365,10 +365,13 @@ function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<Ign
       }
       if (
         laterPositivePatterns.has(signature) ||
-        (literalPath.length > 0 &&
-          laterPositiveRules.some((positive) =>
-            (rule.anchored || !positive.anchored) && positive.regex.test(literalPath)
-          ))
+        (literalPath.length > 0 && laterPositiveRules.some((positive) => {
+          if (!(rule.anchored || !positive.anchored) || !positive.regex.test(literalPath)) {
+            return false;
+          }
+          const descendantProbe = `${literalPath}/__veryfront_probe__.json`;
+          return !rule.regex.test(descendantProbe) || positive.regex.test(descendantProbe);
+        }))
       ) {
         canceled.add(rule);
       }
