@@ -68,7 +68,24 @@ Binary images, fonts, archives, and other unsupported files remain outside
 this handoff. Manage those files through another reviewed delivery path.
 
 Both commands use the same `.vfignore` rules. Ignored files and unsupported
-extensions are not reconciled with Veryfront.
+extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
+re-include `.env`, `.env.*`, `.veryfront`, or `.git` paths: those stay ignored
+so local secrets and CLI state are never uploaded. Push prints a warning naming
+each path whose negation was dropped. Pull does the same for protected `.env`
+paths, and rejects remote `.git` or `.veryfront` metadata before changing local
+files. Names that only begin with `.env`, such as `.envoy/` or `.environments/`,
+are not protected and stay negatable. Run `veryfront push --prune` once after
+upgrading to remove any protected path that an older CLI uploaded. Rotate any
+credential that was previously exposed.
+
+`push --prune` deletes every protected remote path, including one that was
+authored in the web editor rather than uploaded by an older CLI, and the
+patterns match directories too, so `.env.d/config.json` is in scope. Push
+prints the paths it removes, and `--json` runs carry the same list as
+`protectedDeleted` on the result envelope (`protectedWouldDelete` under
+`--dry-run`). Use `veryfront push --prune --dry-run` to review the list before
+a real prune, and move any file you must keep to a path outside the protected
+set.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked

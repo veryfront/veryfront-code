@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { stub } from "#std/testing/mock";
+import { scanLocalFiles } from "../commands/push/command.ts";
+import { setJsonMode } from "../shared/json-output.ts";
 import { createDefaultIgnoreChecker, createIgnoreChecker, loadIgnorePatterns } from "./ignore.ts";
 
 describe("cli/sync/ignore", () => {
@@ -21,6 +25,47 @@ describe("cli/sync/ignore", () => {
         await Deno.writeTextFile(`${projectDir}/.vfignore`, "generated/**\n");
         const patterns = await loadIgnorePatterns(projectDir);
         assertEquals(patterns.includes("generated/**"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("allows the advertised number of project rules in addition to defaults", async () => {
+      await withTempDir(async (projectDir) => {
+        await Deno.writeTextFile(
+          `${projectDir}/.vfignore`,
+          Array.from({ length: 1_024 }, (_, index) => `generated-${index}`).join("\n"),
+        );
+
+        const patterns = await loadIgnorePatterns(projectDir);
+        const checker = createIgnoreChecker(patterns);
+
+        assertEquals(checker.isIgnored("generated-1023"), true);
+      });
+    });
+
+    it("reports the size limit for an oversized .vfignore", async () => {
+      await withTempDir(async (projectDir) => {
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "x".repeat(256 * 1_024 + 1));
+        await assertRejects(
+          () => loadIgnorePatterns(projectDir),
+          Error,
+          ".vfignore must not exceed 262144 characters",
+        );
+      });
+    });
+
+    it("keeps secrets ignored when .vfignore negates the defaults", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/.vfignore`,
+          "!.env*.json\n!.veryfront\n!.veryfront/**\n",
+        );
+        const checker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
+
+        assertEquals(checker.isIgnored(".env.production.json"), true);
+        assertEquals(checker.isIgnored(".veryfront/state.json"), true);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -109,12 +154,301 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored("logs/keep.log"), false);
     });
 
+    it("should not let negations re-include secrets or CLI state", () => {
+      const checker = createIgnoreChecker([
+        ".env*",
+        ".veryfront",
+        ".git",
+        "!.env*.json",
+        "!.env/**",
+        "!.veryfront",
+        "!.veryfront/**",
+        "!.git/**",
+      ]);
+
+      assertEquals(checker.isIgnored(".env.production.json"), true);
+      assertEquals(checker.isIgnored("config/.env.staging.yaml"), true);
+      assertEquals(checker.isIgnored(".env/credentials.json"), true);
+      assertEquals(checker.isIgnored(".env.d/production.json"), true);
+      assertEquals(checker.isIgnored(".ENV.PRODUCTION.JSON"), true);
+      assertEquals(checker.isIgnored(".ENV/credentials.json"), true);
+      assertEquals(checker.isIgnored(".veryfront"), true);
+      assertEquals(checker.isIgnored(".veryfront/state.json"), true);
+      assertEquals(checker.isIgnored(".git/config"), true);
+      assertEquals(checker.isProtected(".env/credentials.json"), true);
+      assertEquals(checker.isProtected("src/app.ts"), false);
+    });
+
+    it("should keep negations working for names that only start with .env", () => {
+      const checker = createIgnoreChecker([
+        ".env*",
+        "!.envoy",
+        "!.envoy/**",
+        "!.environments",
+        "!.environments/**",
+      ]);
+
+      assertEquals(checker.isIgnored(".envoy/config.json"), false);
+      assertEquals(checker.isIgnored(".environments/prod.json"), false);
+      assertEquals(checker.isProtected(".envoy/config.json"), false);
+      assertEquals(checker.isProtected(".environments/prod.json"), false);
+    });
+
+    it("keeps negated .env-prefixed directories traversable by push", async () => {
+      await withTempDir(async (projectDir) => {
+        await Deno.mkdir(`${projectDir}/.envoy`, { recursive: true });
+        await Deno.mkdir(`${projectDir}/.environments`, { recursive: true });
+        await Deno.writeTextFile(`${projectDir}/.envoy/config.json`, "{}\n");
+        await Deno.writeTextFile(`${projectDir}/.environments/prod.json`, "{}\n");
+        const checker = createIgnoreChecker([
+          ".env*",
+          "!.envoy",
+          "!.envoy/**",
+          "!.environments",
+          "!.environments/**",
+        ]);
+
+        const files = await scanLocalFiles(projectDir, checker);
+
+        assertEquals(files.map((file) => file.path).sort(), [
+          ".environments/prod.json",
+          ".envoy/config.json",
+        ]);
+      });
+    });
+
+    it("warns only for a negated protected path and keeps JSON output clean", () => {
+      const warnings: string[] = [];
+      const warningStub = stub(console, "warn", (...values: unknown[]) => {
+        warnings.push(values.map(String).join(" "));
+      });
+      const path = ".env/credentials\u001b[31mforged.json";
+
+      try {
+        assertEquals(createIgnoreChecker([]).isIgnored(path), true);
+        assertEquals(warnings, [], "protection without a negation must stay silent");
+
+        const checker = createIgnoreChecker([`!${path}`]);
+        assertEquals(checker.isIgnored(path), true);
+        assertEquals(checker.isIgnored(path), true);
+        assertEquals(warnings.length, 1, "one dropped negation must emit one warning");
+        assertEquals(
+          warnings[0]?.includes("\u001b"),
+          false,
+          "warning text must not carry terminal controls",
+        );
+
+        assertEquals(createIgnoreChecker(["!keep.ts"]).isIgnored(".env.production.json"), true);
+        assertEquals(warnings.length, 1, "a protected file must not be treated as a directory");
+
+        const descendantChecker = createIgnoreChecker([".env*", "!.env/**"]);
+        assertEquals(descendantChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          2,
+          "a protected parent must warn before traversal drops a descendant negation",
+        );
+
+        const divergentDescendantChecker = createIgnoreChecker(["!.env**", ".env*"]);
+        assertEquals(divergentDescendantChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          3,
+          "a later parent match must not hide a negation still effective for descendants",
+        );
+
+        const wildcardChecker = createIgnoreChecker([".env*", "!**/.env/**"]);
+        assertEquals(wildcardChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(warnings.length, 4, "a recursive prefix must not hide the warning");
+
+        const internalWildcardChecker = createIgnoreChecker([
+          "src/.env*",
+          "!src/**/.env/**",
+        ]);
+        assertEquals(internalWildcardChecker.isIgnored("src/.env", { isDirectory: true }), true);
+        assertEquals(warnings.length, 5, "an internal wildcard must not hide the warning");
+
+        const anchoredRootFileChecker = createIgnoreChecker([".git", "!/*.ts"]);
+        assertEquals(anchoredRootFileChecker.isIgnored(".git", { isDirectory: true }), true);
+        assertEquals(warnings.length, 5, "a root file rule must not warn for protected children");
+
+        const anchoredRecursiveFileChecker = createIgnoreChecker([".env*", "!/**.json"]);
+        assertEquals(anchoredRecursiveFileChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(warnings.length, 6, "an anchored double-star must retain its warning");
+
+        const unanchoredNestedChecker = createIgnoreChecker([".env*", "!foo/bar.json"]);
+        assertEquals(unanchoredNestedChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(warnings.length, 7, "an unanchored nested rule must retain its warning");
+
+        const anchoredOtherPrefixChecker = createIgnoreChecker([".env*", "!/foo**.json"]);
+        assertEquals(anchoredOtherPrefixChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(warnings.length, 7, "an unrelated anchored prefix must not warn");
+
+        const embeddedDoubleStarChecker = createIgnoreChecker([
+          ".env*",
+          "!/foo**/bar.json",
+        ]);
+        assertEquals(
+          embeddedDoubleStarChecker.isIgnored("foo/.env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(warnings.length, 8, "an embedded double-star must retain its warning");
+
+        const canceledNegationChecker = createIgnoreChecker([
+          ".env*",
+          "!.env/**",
+          ".env/**",
+        ]);
+        assertEquals(canceledNegationChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(warnings.length, 8, "a later matching ignore rule cancels the warning");
+
+        const broadlyCanceledChecker = createIgnoreChecker(["!.env/**", ".env"]);
+        assertEquals(broadlyCanceledChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          8,
+          "a later parent-directory ignore cancels descendant negations",
+        );
+
+        const wildcardCanceledChecker = createIgnoreChecker([
+          "!.env/foo.ts",
+          ".env/*.ts",
+        ]);
+        assertEquals(wildcardCanceledChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          8,
+          "a later wildcard that covers a fixed negation cancels the warning",
+        );
+
+        const differentlyAnchoredChecker = createIgnoreChecker([
+          "!secret.json",
+          "/secret.json",
+        ]);
+        assertEquals(differentlyAnchoredChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          9,
+          "a root-anchored positive cannot cancel an unanchored descendant negation",
+        );
+
+        const anchoredSubtreeChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.env/**",
+        ]);
+        assertEquals(anchoredSubtreeChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          9,
+          "an anchored ignore covering the protected subtree cancels its earlier negation",
+        );
+
+        const optionalGlobstarDirectoryChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.env/**/*",
+        ]);
+        assertEquals(
+          optionalGlobstarDirectoryChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          9,
+          "an optional globstar directory covering the subtree cancels its negation",
+        );
+
+        const boundarySensitiveGlobstarChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.**/n**",
+        ]);
+        assertEquals(
+          boundarySensitiveGlobstarChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          10,
+          "a nonempty globstar directory must end at a separator before advancing",
+        );
+
+        const leadingGlobstarDirectoryChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.**/*",
+        ]);
+        assertEquals(
+          leadingGlobstarDirectoryChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          10,
+          "a leading globstar directory can still cover the protected subtree",
+        );
+
+        const parentOnlyChecker = createIgnoreChecker([
+          "!.env",
+          ".env*",
+        ]);
+        assertEquals(parentOnlyChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          11,
+          "a parent-only positive cannot cancel a negation that also matches descendants",
+        );
+
+        const anchoredParentOnlyChecker = createIgnoreChecker([
+          "!/.env",
+          ".env*",
+        ]);
+        assertEquals(
+          anchoredParentOnlyChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          12,
+          "an anchored literal negation must include its implicit descendants",
+        );
+
+        const partialWildcardChecker = createIgnoreChecker([
+          "!foo.ts",
+          "*e*",
+        ]);
+        assertEquals(partialWildcardChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          13,
+          "one matching descendant probe must not imply full wildcard coverage",
+        );
+
+        setJsonMode(true);
+        assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
+        assertEquals(warnings.length, 13, "JSON mode must not emit human warning text");
+      } finally {
+        setJsonMode(false);
+        warningStub.restore();
+      }
+    });
+
     it("should handle directory-trailing-slash patterns", () => {
       const checker = createIgnoreChecker(["build/"]);
 
       assertEquals(checker.isIgnored("build"), true);
       assertEquals(checker.isIgnored("src/build"), true);
       assertEquals(checker.isIgnored("building"), false);
+    });
+
+    it("bounds repository-controlled ignore rule complexity", () => {
+      assertThrows(
+        () => createIgnoreChecker([`${"segment/".repeat(128)}file.ts`]),
+        Error,
+        ".vfignore patterns must not exceed",
+      );
+      assertThrows(
+        () => createIgnoreChecker(Array.from({ length: 1_025 }, (_, index) => `file-${index}`)),
+        Error,
+        "1024 rules",
+      );
     });
   });
 

@@ -33,6 +33,13 @@ export interface PlanPushChangesOptions {
   remoteFiles: readonly PushRemoteFile[];
   baselineFiles: Readonly<Record<string, SyncFileSnapshot>>;
   deletePaths: readonly string[];
+  /**
+   * Protected remote paths selected for unconditional cleanup during prune.
+   * Only entries that also appear in {@link PlanPushChangesOptions.deletePaths}
+   * are honoured: a protected path outside that set would be dropped from the
+   * sync baseline without ever being queued for deletion.
+   */
+  protectedDeletePaths?: readonly string[];
   force: boolean;
   /** Treat the exact remote snapshot as the baseline for a newly created branch. */
   remoteFilesAreBaseline?: boolean;
@@ -62,6 +69,10 @@ function requiredContent(file: PushRemoteFile): string {
 export async function planPushChanges(
   options: PlanPushChangesOptions,
 ): Promise<PushChangePlan> {
+  const requestedDeletePaths = new Set(options.deletePaths);
+  const protectedDeletePaths = new Set(
+    (options.protectedDeletePaths ?? []).filter((path) => requestedDeletePaths.has(path)),
+  );
   const remoteByPath = new Map<string, PushRemoteFile>();
   const remoteDigests = new Map<string, string>();
   const nextFiles: Record<string, SyncFileSnapshot> = {};
@@ -69,6 +80,10 @@ export async function planPushChanges(
   for (const file of options.remoteFiles) {
     if (remoteByPath.has(file.path)) {
       throw new Error(`Veryfront returned duplicate remote file path "${file.path}".`);
+    }
+    if (protectedDeletePaths.has(file.path)) {
+      remoteByPath.set(file.path, file);
+      continue;
     }
     const digest = await computeContentDigest(requiredContent(file));
     remoteByPath.set(file.path, file);
@@ -138,6 +153,12 @@ export async function planPushChanges(
 
     if (options.force) {
       deletes.push({ path });
+      delete nextFiles[path];
+      continue;
+    }
+
+    if (protectedDeletePaths.has(path)) {
+      deletes.push({ path, expectedVersionId: requiredVersionId(remote) });
       delete nextFiles[path];
       continue;
     }
