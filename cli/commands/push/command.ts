@@ -619,7 +619,7 @@ export async function deleteFiles(
         conflicts.push(op.path);
         break;
       }
-      cliLogger.error(`Failed to delete ${op.path}:`, error);
+      if (!isJsonMode()) cliLogger.error(`Failed to delete ${op.path}:`, error);
       failed++;
     }
   }
@@ -1256,6 +1256,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 projectApiReference(config),
                 target.source,
               );
+              // Late reconciliation can mutate a target whose initial plan
+              // was empty. Invalidate the old attestation before the first
+              // possible delete, matching the normal mutation path.
+              await clearPushReceipt(projectDir);
               const lateDeleteResult = await deleteForcedPruneRemoteOnlyFiles(
                 client,
                 projectApiReference(config),
