@@ -104,6 +104,33 @@ describe("ConversationMemory", () => {
     await memory.clear();
     assertEquals(await memory.getMessages(), []);
   });
+
+  it("does not resurrect a snapshot after a concurrent clear", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+    await memory.clear();
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("does not replay an in-flight addition already present in the snapshot", async () => {
+    const memory = new ConversationMemory({ type: "conversation", maxTokens: 100 });
+    const concurrent = userMessage("assistant", "concurrent output");
+    const addition = memory.add(concurrent);
+    const rollback = captureMemoryRollback(memory, []);
+    await addition;
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals((await memory.getMessages()).map((message) => message.id), ["assistant"]);
+  });
 });
 
 describe("BufferMemory", () => {
@@ -258,6 +285,40 @@ describe("SummaryMemory", () => {
     assertEquals(
       (await memory.getMessages()).map((message) => message.id),
       ["history", "assistant"],
+    );
+  });
+
+  it("does not resurrect summary state after a concurrent clear", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    for (let index = 1; index <= 3; index++) {
+      await memory.add(userMessage(String(index), `topic ${index}`));
+    }
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+    await memory.clear();
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("does not replay an in-flight summarized addition from its snapshot", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    await memory.add(userMessage("history-1", "first"));
+    await memory.add(userMessage("history-2", "second"));
+    const concurrent = userMessage("assistant", "concurrent output");
+    const addition = memory.add(concurrent);
+    const rollback = captureMemoryRollback(memory, []);
+    await addition;
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(
+      (await memory.getMessages()).filter((message) => message.id === "assistant").length,
+      1,
     );
   });
 });

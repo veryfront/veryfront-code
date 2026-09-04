@@ -99,12 +99,15 @@ function getBasicStatsWithTrace<M extends MinimalMessage>(
 abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   protected messages: M[] = [];
   private rollbackObservers = new Set<(message: M) => void>();
+  private clearVersion = 0;
   protected abstract readonly memoryType: BasicMemoryType;
   protected abstract readonly spanPrefix: string;
 
   constructor() {
     registerMemoryRollbackFactory(this, () => {
       const messages = [...this.messages];
+      const snapshotMessages = new Set(messages);
+      const clearVersion = this.clearVersion;
       const additions: M[] = [];
       const observe = (message: M) => additions.push(message);
       this.rollbackObservers.add(observe);
@@ -118,9 +121,12 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
         commit: close,
         rollback: async (rejectedMessages) => {
           close();
+          if (this.clearVersion !== clearVersion) return;
           const laterAdditions = rejectedMessages === undefined
             ? []
-            : additions.filter((message) => !rejectedMessages.has(message));
+            : additions.filter((message) =>
+              !snapshotMessages.has(message) && !rejectedMessages.has(message)
+            );
           this.messages = [...messages];
           for (const message of laterAdditions) await this.add(message);
         },
@@ -140,7 +146,10 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
 
   clear(): Promise<void> {
     return clearMessagesWithTrace(
-      () => (this.messages = []),
+      () => {
+        this.messages = [];
+        this.clearVersion += 1;
+      },
       `${this.spanPrefix}.clear`,
       this.memoryType,
     );
@@ -237,6 +246,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   private summaryThreshold: number;
   private summaryMaxChars: number;
   private maxTokens?: number;
+  private clearVersion = 0;
 
   constructor(private config: MemoryConfigBase) {
     this.summaryThreshold = config.maxMessages || 20;
@@ -247,7 +257,9 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
     registerMemoryRollbackFactory(this, () => {
       const messages = [...this.messages];
+      const snapshotMessages = new Set(messages);
       const summary = this.summary;
+      const clearVersion = this.clearVersion;
       const additions: M[] = [];
       const observe = (message: M) => additions.push(message);
       this.rollbackObservers.add(observe);
@@ -261,9 +273,12 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         commit: close,
         rollback: async (rejectedMessages) => {
           close();
+          if (this.clearVersion !== clearVersion) return;
           const laterAdditions = rejectedMessages === undefined
             ? []
-            : additions.filter((message) => !rejectedMessages.has(message));
+            : additions.filter((message) =>
+              !snapshotMessages.has(message) && !rejectedMessages.has(message)
+            );
           this.messages = [...messages];
           this.summary = summary;
           for (const message of laterAdditions) await this.add(message);
@@ -323,6 +338,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         () => {
           this.messages = [];
           this.summary = "";
+          this.clearVersion += 1;
         },
         { "memory.type": "summary" },
       ),
