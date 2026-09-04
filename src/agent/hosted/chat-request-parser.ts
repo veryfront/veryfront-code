@@ -31,6 +31,7 @@ import {
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 import { registerHostedInferenceCredential } from "./inference-credential.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import {
   MAX_GRANTED_INTEGRATION_TOOL_NAMES,
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
@@ -53,6 +54,29 @@ function readRequestHeader(request: Request, name: string): string | undefined {
   const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
   if (value === null) return undefined;
   return (IntrinsicReflectApply(StringTrim, value, []) as string) || undefined;
+}
+
+/**
+ * Reads and validates the inference token header with the same visible-ASCII
+ * and byte-size checks `credentials.inferenceAuthToken` gets from its Zod
+ * schema on the runtime-invocation path (`inferenceCredential()` in
+ * `agent-invocation-contract.ts`). Without this, a malformed or oversized
+ * header value is accepted and bound here, then only fails later inside
+ * `requireInferenceProviderCredential` at the point the credential is
+ * actually used -- potentially after the run has already been durably
+ * accepted.
+ */
+function readInferenceTokenHeader(request: Request): string | undefined | Response {
+  const value = readRequestHeader(request, INFERENCE_TOKEN_HEADER);
+  if (value === undefined) return undefined;
+  try {
+    return requireInferenceProviderCredential(value, "Inference token header");
+  } catch (error) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid request",
+      validationMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** Internal control-plane credential for exact-run durable event appends. */
@@ -629,6 +653,11 @@ export async function parseHostedChatRequestFromRequest(
     });
   }
 
+  const inferenceAuthToken = readInferenceTokenHeader(request);
+  if (inferenceAuthToken instanceof Response) {
+    return inferenceAuthToken;
+  }
+
   const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: authenticatedRequest.userId,
@@ -645,7 +674,7 @@ export async function parseHostedChatRequestFromRequest(
     options.verifyRunEventAppendToken,
     false,
     undefined,
-    readRequestHeader(request, INFERENCE_TOKEN_HEADER),
+    inferenceAuthToken,
   );
 }
 
