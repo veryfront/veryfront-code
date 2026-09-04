@@ -521,7 +521,7 @@ function addToolArrayFieldValues(
   allowIncompleteLeadingObject = false,
 ): void {
   pattern.lastIndex = 0;
-  let extendedScans = 0;
+  const extendedCandidates: Array<{ fieldName: string; bodyStart: number }> = [];
   for (const match of text.matchAll(pattern)) {
     const fieldName = match[1];
     const bodyStart = match.index + match[0].length;
@@ -532,26 +532,22 @@ function addToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
-    if (
-      closingBracket === -1 && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT &&
-      extendedScans < CHILD_RUN_CONTRACT_FACT_LIMIT
-    ) {
-      // Full parsing stays bounded to a fixed number of fields in the already
-      // bounded head/tail window. Parsing complete leading elements, rather
-      // than scanning for object-looking text, stops at the first malformed
-      // element and still reaches ids after long descriptions or schemas.
-      extendedScans += 1;
-      const windowBody = text.slice(bodyStart);
-      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-      const scanned = scanCompleteLeadingArrayValues(
-        windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
-      );
-      addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
-      if (
-        fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject
-      ) {
-        addToolIdsFromIncompleteLeadingObject(target, windowBody.slice(scanned.nextIndex));
-      }
+    if (closingBracket === -1) extendedCandidates.push({ fieldName, bodyStart });
+    if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
+  }
+
+  // Full parsing stays bounded to a fixed number of fields in the already
+  // bounded head/tail window. Reserve that work for the latest declarations,
+  // so earlier long arrays without IDs cannot hide a later contract fact.
+  for (const { fieldName, bodyStart } of extendedCandidates.slice(-CHILD_RUN_CONTRACT_FACT_LIMIT)) {
+    const windowBody = text.slice(bodyStart);
+    const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
+    const scanned = scanCompleteLeadingArrayValues(
+      windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
+    );
+    addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
+    if (fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject) {
+      addToolIdsFromIncompleteLeadingObject(target, windowBody.slice(scanned.nextIndex));
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
@@ -563,7 +559,7 @@ function addProviderToolArrayFieldValues(
   pattern: RegExp,
 ): void {
   pattern.lastIndex = 0;
-  let extendedScans = 0;
+  const extendedCandidates: number[] = [];
   for (const match of text.matchAll(pattern)) {
     const bodyStart = match.index + match[0].length;
     const boundedBody = text.slice(
@@ -573,20 +569,19 @@ function addProviderToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromParsedArray(target, parseCompleteLeadingArrayValues(fieldBody), false);
-    if (
-      closingBracket === -1 && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT &&
-      extendedScans < CHILD_RUN_CONTRACT_FACT_LIMIT
-    ) {
-      extendedScans += 1;
-      const windowBody = text.slice(bodyStart);
-      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-      if (windowClosingBracket !== -1) {
-        addToolIdsFromParsedArray(
-          target,
-          parseCompleteLeadingArrayValues(windowBody.slice(0, windowClosingBracket)),
-          false,
-        );
-      }
+    if (closingBracket === -1) extendedCandidates.push(bodyStart);
+    if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
+  }
+
+  for (const bodyStart of extendedCandidates.slice(-CHILD_RUN_CONTRACT_FACT_LIMIT)) {
+    const windowBody = text.slice(bodyStart);
+    const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
+    if (windowClosingBracket !== -1) {
+      addToolIdsFromParsedArray(
+        target,
+        parseCompleteLeadingArrayValues(windowBody.slice(0, windowClosingBracket)),
+        false,
+      );
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }

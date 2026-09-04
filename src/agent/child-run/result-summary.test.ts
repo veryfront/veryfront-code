@@ -425,6 +425,16 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
     });
 
+    it("reserves extended scans for later tool declarations", () => {
+      const noIdArray = `tools: [{"description":"${"a".repeat(2_100)}"}]\n`;
+      const text = noIdArray.repeat(50) +
+        `tools: [{"description":"${"b".repeat(2_500)}","id":"critical_tool"}]`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
     it("scans complete provider ID arrays beyond the fast prefix", () => {
       const padding = Array.from(
         { length: 20 },
