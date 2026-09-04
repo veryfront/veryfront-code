@@ -16,12 +16,18 @@ export const MAX_PORT_ATTEMPTS = 100;
 export const DEFAULT_API_URL = "https://api.veryfront.com";
 export const DEFAULT_LOCAL_API_URL = "https://api.veryfront.com";
 
+export function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
+}
+
 /** Normalize an API endpoint for REST requests without rewriting custom REST prefixes. */
 export function resolveRestApiBaseUrl(
   value: string,
   addDefaultRestPath: boolean,
 ): string {
-  const normalized = value.trim().replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(value.trim());
   if (normalized.endsWith("/graphql")) return `${normalized.slice(0, -8)}/api`;
   if (normalized.endsWith("/api") || !addDefaultRestPath) return normalized;
   return `${normalized}/api`;

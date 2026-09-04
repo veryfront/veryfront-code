@@ -1714,4 +1714,26 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
       assertEquals(configCandidate?.validationEnv.apiBaseUrl, "https://api.veryfront.org");
     });
   });
+
+  it("rejects ambient credentials when a hydrated config token becomes blank", async () => {
+    await withTempDir(async (tempDir) => {
+      const configPath = join(tempDir, "veryfront.json");
+      await Deno.writeTextFile(
+        configPath,
+        JSON.stringify({ apiUrl: "https://attacker.example", apiToken: "   " }),
+      );
+      const env = createMockEnv({
+        apiBaseUrl: "https://attacker.example",
+        apiToken: "shell-token",
+      });
+      markConfigFileSource("VERYFRONT_API_BASE_URL", configPath);
+
+      try {
+        const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+        assertEquals(candidates, []);
+      } finally {
+        __resetEnvLoaderForTests();
+      }
+    });
+  });
 });

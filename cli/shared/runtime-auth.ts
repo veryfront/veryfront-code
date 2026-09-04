@@ -120,27 +120,22 @@ export async function applyQualifiedRuntimeAuth(
       normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN")) !== normalizeEnvValue(configFile.apiToken));
   const staleConfigBase = apiBaseSource.source === "config-file" &&
     (apiBaseSource.file !== configPath || configFile?.apiUrl === undefined ||
-      configFile.apiToken === undefined ||
+      normalizeEnvValue(configFile.apiToken) === undefined ||
       !resolveApiUrlTrust(env, configFile, configPath).steeringConfigFile);
-  const requestEnv = apiBaseSource.source === "unset"
-    ? env
-    : staleConfigBase
-    ? { ...env, apiBaseUrl: DEFAULT_API_URL, apiUrl: undefined }
-    : { ...env, apiUrl: undefined };
+  let requestEnv = env;
+  if (apiBaseSource.source !== "unset") requestEnv = { ...env, apiUrl: undefined };
+  if (staleConfigBase) requestEnv = { ...env, apiBaseUrl: DEFAULT_API_URL, apiUrl: undefined };
   const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
   const candidate = candidates[0];
   const trust = resolveApiUrlTrust(requestEnv, configFile, configPath);
   if (
     !candidate &&
-    trust.repositorySteered
+    trust.repositorySteered &&
+    !staleConfigBase
   ) {
     await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
-  if (staleConfigBase) deleteEnv("VERYFRONT_API_BASE_URL");
-  if (staleConfigToken) {
-    deleteEnv("VERYFRONT_API_TOKEN");
-    markProcessEnvSource("VERYFRONT_API_TOKEN");
-  }
+  clearStaleRuntimeAuth(staleConfigBase, staleConfigToken);
   const candidateApiBaseUrl = runtimeApiBaseUrl(candidate?.validationEnv.apiBaseUrl);
   const preservesImplicitDefault = candidateApiBaseUrl !== undefined &&
     isSameApiEndpoint(candidateApiBaseUrl, DEFAULT_API_URL) &&
@@ -150,32 +145,59 @@ export async function applyQualifiedRuntimeAuth(
     apiBaseUrl: preservesImplicitDefault ? undefined : candidateApiBaseUrl,
     linkedProjectSlug,
   });
-  if (context.apiBaseUrl && trust.repositorySteered) {
-    const source = trust.steeringEnvFile ?? join(projectDir, "veryfront.json");
-    if (trust.steeringConfigFile && candidate?.apiTokenSource === "config-file") {
-      markConfigFileSource("VERYFRONT_API_BASE_URL", source);
-      markConfigFileSource("VERYFRONT_API_TOKEN", source);
-    } else if (trust.steeringEnvFile) {
-      markEnvFileSource("VERYFRONT_API_BASE_URL", source);
-    }
-  }
-  if (candidate?.apiTokenSource === "config-file") {
-    markConfigFileSource("VERYFRONT_API_TOKEN", configPath);
-  }
-  if (
-    apiBaseSource.source === "config-file" && candidate?.apiTokenSource === "config-file" &&
-    configFile?.apiUrl === undefined
-  ) {
-    markProcessEnvSource("VERYFRONT_API_BASE_URL");
-  }
-  if (apiBaseSource.source === "config-file" && candidate?.apiTokenSource !== "config-file") {
-    if (!candidate) {
-      deleteEnv("VERYFRONT_API_BASE_URL");
-      deleteEnv("VERYFRONT_API_TOKEN");
-    }
-    markProcessEnvSource("VERYFRONT_API_BASE_URL");
-    markProcessEnvSource("VERYFRONT_API_TOKEN");
-  }
+  markTrustedRuntimeEndpoint(context, trust, candidate?.apiTokenSource, projectDir);
+  updateRuntimeAuthProvenance(
+    apiBaseSource.source,
+    candidate?.apiTokenSource,
+    configFile?.apiUrl,
+    configPath,
+    candidate !== undefined,
+  );
   refreshEnvironmentConfig();
   return context;
+}
+
+function updateRuntimeAuthProvenance(
+  apiBaseSource: string,
+  tokenSource: string | undefined,
+  configApiUrl: string | undefined,
+  configPath: string,
+  hasCandidate: boolean,
+): void {
+  if (tokenSource === "config-file") markConfigFileSource("VERYFRONT_API_TOKEN", configPath);
+  if (apiBaseSource !== "config-file") return;
+  if (tokenSource === "config-file" && configApiUrl === undefined) {
+    markProcessEnvSource("VERYFRONT_API_BASE_URL");
+    return;
+  }
+  if (tokenSource === "config-file") return;
+  if (!hasCandidate) {
+    deleteEnv("VERYFRONT_API_BASE_URL");
+    deleteEnv("VERYFRONT_API_TOKEN");
+  }
+  markProcessEnvSource("VERYFRONT_API_BASE_URL");
+  markProcessEnvSource("VERYFRONT_API_TOKEN");
+}
+
+function clearStaleRuntimeAuth(staleConfigBase: boolean, staleConfigToken: boolean): void {
+  if (staleConfigBase) deleteEnv("VERYFRONT_API_BASE_URL");
+  if (!staleConfigToken) return;
+  deleteEnv("VERYFRONT_API_TOKEN");
+  markProcessEnvSource("VERYFRONT_API_TOKEN");
+}
+
+function markTrustedRuntimeEndpoint(
+  context: RuntimeAuthContext,
+  trust: ReturnType<typeof resolveApiUrlTrust>,
+  tokenSource: string | undefined,
+  projectDir: string,
+): void {
+  if (!context.apiBaseUrl || !trust.repositorySteered) return;
+  const source = trust.steeringEnvFile ?? join(projectDir, "veryfront.json");
+  if (trust.steeringConfigFile && tokenSource === "config-file") {
+    markConfigFileSource("VERYFRONT_API_BASE_URL", source);
+    markConfigFileSource("VERYFRONT_API_TOKEN", source);
+  } else if (trust.steeringEnvFile) {
+    markEnvFileSource("VERYFRONT_API_BASE_URL", source);
+  }
 }

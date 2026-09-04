@@ -260,7 +260,7 @@ describe("cli/shared/runtime-auth", () => {
     assertEquals(getEnvSource("VERYFRONT_API_BASE_URL").source, "unset");
   });
 
-  it("clears config-derived auth when no replacement credential exists", async () => {
+  it("clears config-derived auth when its token becomes blank", async () => {
     await useTempConfigHome();
     const projectDir = await makeTempDir({ prefix: "vf-runtime-auth-config-cleared-" });
     tempDirs.push(projectDir);
@@ -270,7 +270,10 @@ describe("cli/shared/runtime-auth", () => {
       JSON.stringify({ apiUrl: "https://runtime.example/graphql", apiToken: "project-token" }),
     );
     await applyQualifiedRuntimeAuth(projectDir);
-    await Deno.writeTextFile(configPath, JSON.stringify({}));
+    await Deno.writeTextFile(
+      configPath,
+      JSON.stringify({ apiUrl: "https://runtime.example/graphql", apiToken: "   " }),
+    );
     _resetEnvironmentConfig();
 
     const context = await applyQualifiedRuntimeAuth(projectDir);

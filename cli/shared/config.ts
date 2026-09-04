@@ -22,6 +22,7 @@ import {
   resolveCliApiUrl,
   resolveCliApiUrlWithOrigin,
   resolveRestApiBaseUrl,
+  trimTrailingSlashes,
 } from "./constants.ts";
 import { readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
@@ -255,59 +256,7 @@ export function resolveApiUrlTrust(
   const { apiUrl, origin } = resolveCliApiUrlWithOrigin(env, configFile?.apiUrl);
 
   if (origin.source === "env") {
-    // The same variable means different things depending on where it was read.
-    // Set in the operator's own shell it confirms the host; read out of a
-    // project `.env` file it is just more repository content.
-    const source = getEnvSource(origin.key);
-    if (source.source === "config-file") {
-      const matchesCurrentConfig = source.file === configFilePath &&
-        configFile?.apiUrl !== undefined &&
-        (isSameApiEndpoint(apiUrl, configFile.apiUrl) ||
-          isSameApiEndpoint(apiUrl, apiBaseUrlForRequest(configFile.apiUrl)) ||
-          isSameApiEndpoint(apiUrl, `${apiBaseUrlForRequest(configFile.apiUrl)}/api`));
-      return {
-        apiUrl,
-        repositorySteered: !isSameApiEndpoint(apiUrl, DEFAULT_API_URL),
-        ...(matchesCurrentConfig ? { steeringConfigFile: configFilePath } : {}),
-      };
-    }
-    // Compare a project .env value with the endpoint selected after removing
-    // EVERY repository-controlled override, not just the one that happened to
-    // win. `apiBaseUrl` falls back to `apiUrl.replace("/graphql", "/api")`
-    // (src/config/environment-config.ts), so clearing `apiUrl` alone leaves the
-    // same attacker host as the fallback and the comparison comes out equal —
-    // marking a repository-steered endpoint trusted. A project `.env` that sets
-    // VERYFRONT_API_BASE_URL directly has the same problem. An operator's own
-    // shell value is preserved: only keys whose source is a repository `.env`
-    // file are stripped.
-    const operatorEnv = { ...env };
-    for (const key of API_URL_ENV_KEYS) {
-      if (getEnvSource(key).source !== "env-file") continue;
-      if (key === "VERYFRONT_API_URL") operatorEnv.apiUrl = undefined;
-      // `apiBaseUrl` is required, so reset it to the hosted default rather than
-      // clearing it: keeping the repository value would let the comparison
-      // succeed against the very host being judged.
-      else operatorEnv.apiBaseUrl = DEFAULT_API_URL;
-    }
-    // apiBaseUrl also derives from apiUrl when unset, so a repository
-    // VERYFRONT_API_URL reaches the baseline through it even when the file
-    // never set VERYFRONT_API_BASE_URL. Keep a real operator shell value.
-    if (
-      operatorEnv.apiUrl === undefined &&
-      getEnvSource("VERYFRONT_API_BASE_URL").source !== "process"
-    ) {
-      operatorEnv.apiBaseUrl = DEFAULT_API_URL;
-    }
-    const operatorApiUrl = source.source === "env-file" ? resolveCliApiUrl(operatorEnv) : apiUrl;
-    if (source.source === "env-file" && !isSameApiEndpoint(apiUrl, operatorApiUrl)) {
-      return {
-        apiUrl,
-        repositorySteered: true,
-        steeringEnvFile: source.file,
-        steeringEnvKey: origin.key,
-      };
-    }
-    return { apiUrl, repositorySteered: false };
+    return resolveEnvironmentApiUrlTrust(env, configFile, configFilePath, apiUrl, origin.key);
   }
 
   if (origin.source !== "config-file") return { apiUrl, repositorySteered: false };
@@ -319,6 +268,55 @@ export function resolveApiUrlTrust(
     repositorySteered: !isSameApiEndpoint(apiUrl, resolveCliApiUrl(env)),
     steeringConfigFile: configFilePath,
   };
+}
+
+function resolveEnvironmentApiUrlTrust(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  configFilePath: string,
+  apiUrl: string,
+  key: ApiUrlEnvKey,
+): ApiUrlTrust {
+  const source = getEnvSource(key);
+  if (source.source === "config-file") {
+    const configApiUrl = configFile?.apiUrl;
+    const requestBase = configApiUrl === undefined ? undefined : apiBaseUrlForRequest(configApiUrl);
+    const matchesCurrentConfig = source.file === configFilePath && configApiUrl !== undefined &&
+      (isSameApiEndpoint(apiUrl, configApiUrl) ||
+        isSameApiEndpoint(apiUrl, requestBase!) ||
+        isSameApiEndpoint(apiUrl, `${requestBase}/api`));
+    return {
+      apiUrl,
+      repositorySteered: !isSameApiEndpoint(apiUrl, DEFAULT_API_URL),
+      ...(matchesCurrentConfig ? { steeringConfigFile: configFilePath } : {}),
+    };
+  }
+
+  if (source.source !== "env-file") return { apiUrl, repositorySteered: false };
+  const operatorApiUrl = resolveCliApiUrl(withoutRepositoryApiUrls(env));
+  if (isSameApiEndpoint(apiUrl, operatorApiUrl)) return { apiUrl, repositorySteered: false };
+  return {
+    apiUrl,
+    repositorySteered: true,
+    steeringEnvFile: source.file,
+    steeringEnvKey: key,
+  };
+}
+
+function withoutRepositoryApiUrls(env: EnvironmentConfig): EnvironmentConfig {
+  const operatorEnv = { ...env };
+  for (const key of API_URL_ENV_KEYS) {
+    if (getEnvSource(key).source !== "env-file") continue;
+    if (key === "VERYFRONT_API_URL") operatorEnv.apiUrl = undefined;
+    else operatorEnv.apiBaseUrl = DEFAULT_API_URL;
+  }
+  if (
+    operatorEnv.apiUrl === undefined &&
+    getEnvSource("VERYFRONT_API_BASE_URL").source !== "process"
+  ) {
+    operatorEnv.apiBaseUrl = DEFAULT_API_URL;
+  }
+  return operatorEnv;
 }
 
 /**
@@ -395,7 +393,10 @@ function isRepositorySuppliedCredential(
 }
 
 function apiBaseUrlForRequest(apiUrl: string): string {
-  return apiUrl.replace(/\/(?:graphql|api)\/?$/, "").replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(apiUrl);
+  if (normalized.endsWith("/graphql")) return normalized.slice(0, -8);
+  if (normalized.endsWith("/api")) return normalized.slice(0, -4);
+  return normalized;
 }
 
 async function resolveApiTokenForMode(
@@ -449,7 +450,7 @@ async function resolveApiCredentialCandidates(
     });
   }
 
-  if (configFile?.apiToken) {
+  if (configFile?.apiToken?.trim()) {
     candidates.push({
       apiToken: configFile.apiToken,
       apiTokenSource: "config-file",
@@ -470,7 +471,7 @@ async function resolveApiCredentialCandidates(
   if (envToken && envSource.source === "env-file") {
     candidates.push({
       apiToken: envToken,
-      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+      apiTokenSource: "env-file",
       validationEnv,
       authoritative: envSource.source !== "env-file",
     });
@@ -510,10 +511,7 @@ export async function resolveApiCredentialCandidatesForAuth(
     apiUrl: configEndpoint.apiUrl,
     ...(configFile?.apiUrl
       ? {
-        apiBaseUrl: configEndpoint.origin.source === "env" &&
-            configEndpoint.origin.key === "VERYFRONT_API_BASE_URL"
-          ? resolveRestApiBaseUrl(configEndpoint.apiUrl, false)
-          : resolveRestApiBaseUrl(configEndpoint.apiUrl, false),
+        apiBaseUrl: resolveRestApiBaseUrl(configEndpoint.apiUrl, false),
       }
       : {}),
   };
@@ -530,7 +528,7 @@ export async function resolveApiCredentialCandidatesForAuth(
   if (
     trust.repositorySteered && apiBaseSource.source === "config-file" &&
     (trust.steeringConfigFile === undefined ||
-      (configFile?.apiToken === undefined && isSameApiEndpoint(env.apiBaseUrl, trust.apiUrl)))
+      (!configFile?.apiToken?.trim() && isSameApiEndpoint(env.apiBaseUrl, trust.apiUrl)))
   ) {
     return [];
   }

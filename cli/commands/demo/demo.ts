@@ -660,12 +660,12 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     console.log();
 
     await waitForEnter("Press Enter to exit...");
-  } catch (failure) {
-    if (!isUntrustedApiUrlCredentialError(failure)) throw failure;
+  } catch (error_) {
+    if (!isUntrustedApiUrlCredentialError(error_)) throw error_;
     failed = true;
     console.log();
-    const message = failure instanceof Error
-      ? failure.message
+    const message = error_ instanceof Error
+      ? error_.message
       : "Veryfront refused to send credentials to the configured API URL.";
     console.log(`  ${error("✗")} ${message}`);
   } finally {

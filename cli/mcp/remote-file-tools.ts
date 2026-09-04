@@ -18,7 +18,11 @@ import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
-import { DEFAULT_LOCAL_API_URL, resolveRestApiBaseUrl } from "#cli/shared/constants";
+import {
+  DEFAULT_LOCAL_API_URL,
+  resolveRestApiBaseUrl,
+  trimTrailingSlashes,
+} from "#cli/shared/constants";
 import {
   readConfigJsonFile,
   resolveApiCredentialCandidatesForAuth,
@@ -32,11 +36,64 @@ import {
   slugToName,
 } from "./remote-file-tool-helpers.ts";
 
+type ApiResult<T> = { ok: boolean; data?: T; error?: string; status: number };
+
+function validatedEndpoint(candidateApiBaseUrl: string): URL | ApiResult<never> {
+  const addDefaultRestPath = trimTrailingSlashes(new URL(candidateApiBaseUrl).pathname) === "";
+  const endpoint = new URL(resolveRestApiBaseUrl(candidateApiBaseUrl, addDefaultRestPath));
+  const loopback = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1" ||
+    endpoint.hostname === "[::1]" || endpoint.hostname === "::1";
+  if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) {
+    return {
+      ok: false,
+      error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
+      status: 400,
+    };
+  }
+  return endpoint;
+}
+
+async function sendApiRequest<T>(
+  endpoint: URL,
+  method: string,
+  path: string,
+  token: string,
+  body?: unknown,
+): Promise<ApiResult<T>> {
+  const url = `${endpoint.toString().replace(/\/$/, "")}${path}`;
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = errorText || `HTTP ${response.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.message || errorJson.error || errorMessage;
+      } catch {
+        // Keep the response text when the body is not JSON.
+      }
+      return { ok: false, error: errorMessage, status: response.status };
+    }
+    if (response.status === 204) return { ok: true, status: 204 };
+    return { ok: true, data: (await response.json()) as T, status: response.status };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Network error",
+      status: 0,
+    };
+  }
+}
+
 async function apiRequest<T>(
   method: string,
   path: string,
   options: { body?: unknown; token?: string } = {},
-): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
+): Promise<ApiResult<T>> {
   const env = getEnvironmentConfig();
   const projectDir = cwd();
   // Remote file tools send to apiBaseUrl, not the higher-precedence apiUrl
@@ -69,67 +126,14 @@ async function apiRequest<T>(
 
   const token = candidate.apiToken;
   const candidateApiBaseUrl = candidate.validationEnv.apiBaseUrl || DEFAULT_LOCAL_API_URL;
-  let addDefaultRestPath = false;
+  let endpoint: URL | ApiResult<never>;
   try {
-    addDefaultRestPath = new URL(candidateApiBaseUrl).pathname.replace(/\/+$/, "") === "";
-  } catch {
-    // The request below reports invalid endpoint syntax.
-  }
-  const restBaseUrl = resolveRestApiBaseUrl(
-    candidateApiBaseUrl,
-    addDefaultRestPath,
-  );
-  let endpoint: URL;
-  try {
-    endpoint = new URL(restBaseUrl);
+    endpoint = validatedEndpoint(candidateApiBaseUrl);
   } catch {
     return { ok: false, error: "The API endpoint must be a valid URL.", status: 400 };
   }
-  const loopback = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1" ||
-    endpoint.hostname === "[::1]" || endpoint.hostname === "::1";
-  if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) {
-    return {
-      ok: false,
-      error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
-      status: 400,
-    };
-  }
-  const url = `${restBaseUrl}${path}`;
-
-  try {
-    const response = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = errorText || `HTTP ${response.status}`;
-
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.message || errorJson.error || errorMessage;
-      } catch {
-        // ignore JSON parse errors
-      }
-
-      return { ok: false, error: errorMessage, status: response.status };
-    }
-
-    if (response.status === 204) return { ok: true, status: 204 };
-
-    return { ok: true, data: (await response.json()) as T, status: response.status };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Network error",
-      status: 0,
-    };
-  }
+  if (!(endpoint instanceof URL)) return endpoint;
+  return await sendApiRequest<T>(endpoint, method, path, token, options.body);
 }
 
 interface RemoteFile {

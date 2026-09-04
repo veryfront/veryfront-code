@@ -101,6 +101,58 @@ interface ParsedEnvEntry {
   expandedFromProcessEnv: boolean;
 }
 
+interface EnvParserState {
+  currentKey: string | null;
+  currentValue: string;
+  inMultiline: boolean;
+  quoteChar: '"' | "'" | null;
+}
+
+function parseEnvLine(
+  originalLine: string,
+  state: EnvParserState,
+  record: (key: string, raw: string) => void,
+): void {
+  if (state.inMultiline) {
+    const endQuoteIndex = originalLine.indexOf(state.quoteChar!);
+    if (endQuoteIndex === -1) {
+      state.currentValue += `\n${originalLine}`;
+      return;
+    }
+    state.currentValue += `\n${originalLine.substring(0, endQuoteIndex)}`;
+    record(state.currentKey!, state.currentValue);
+    state.currentKey = null;
+    state.currentValue = "";
+    state.inMultiline = false;
+    state.quoteChar = null;
+    return;
+  }
+
+  const line = originalLine.trim();
+  if (!line || line.startsWith("#") || line.startsWith("//")) return;
+  const equalIndex = line.indexOf("=");
+  if (equalIndex === -1) return;
+
+  const key = line.substring(0, equalIndex).trim();
+  let value = line.substring(equalIndex + 1).trim();
+  if (value.startsWith('"') || value.startsWith("'")) {
+    state.quoteChar = value[0] as '"' | "'";
+    value = value.substring(1);
+    const endQuoteIndex = value.indexOf(state.quoteChar);
+    if (endQuoteIndex !== -1) record(key, value.substring(0, endQuoteIndex));
+    else {
+      state.currentKey = key;
+      state.currentValue = value;
+      state.inMultiline = true;
+    }
+    return;
+  }
+
+  const commentMatch = value.match(/\s#/);
+  if (commentMatch?.index !== undefined) value = value.substring(0, commentMatch.index).trim();
+  record(key, value);
+}
+
 function parseEnvFile(
   content: string,
   priorVars: Readonly<Record<string, string>> = {},
@@ -132,66 +184,13 @@ function parseEnvFile(
     else tainted.delete(normalizedKey);
   };
 
-  const lines = content.split("\n");
-
-  let currentKey: string | null = null;
-  let currentValue = "";
-  let inMultiline = false;
-  let quoteChar: '"' | "'" | null = null;
-
-  for (let line of lines) {
-    if (inMultiline) {
-      const endQuoteIndex = line.indexOf(quoteChar!);
-      if (endQuoteIndex === -1) {
-        currentValue += `\n${line}`;
-        continue;
-      }
-
-      currentValue += `\n${line.substring(0, endQuoteIndex)}`;
-      record(currentKey!, currentValue);
-
-      currentKey = null;
-      currentValue = "";
-      inMultiline = false;
-      quoteChar = null;
-      continue;
-    }
-
-    line = line.trim();
-    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
-
-    const equalIndex = line.indexOf("=");
-    if (equalIndex === -1) continue;
-
-    const key = line.substring(0, equalIndex).trim();
-    let value = line.substring(equalIndex + 1).trim();
-
-    if (value.startsWith('"') || value.startsWith("'")) {
-      quoteChar = value[0] as '"' | "'";
-      value = value.substring(1);
-
-      const endQuoteIndex = value.indexOf(quoteChar);
-      if (endQuoteIndex !== -1) {
-        record(key, value.substring(0, endQuoteIndex));
-        continue;
-      }
-
-      currentKey = key;
-      currentValue = value;
-      inMultiline = true;
-      continue;
-    }
-
-    // Strip inline comments only when the `#` is preceded by whitespace. A `#`
-    // that is part of the value itself (e.g. a URL fragment like
-    // `rediss://host:6379/0#pool=5`) has no leading space and must be preserved.
-    const commentMatch = value.match(/\s#/);
-    if (commentMatch?.index !== undefined) {
-      value = value.substring(0, commentMatch.index).trim();
-    }
-
-    record(key, value);
-  }
+  const state: EnvParserState = {
+    currentKey: null,
+    currentValue: "",
+    inMultiline: false,
+    quoteChar: null,
+  };
+  for (const line of content.split("\n")) parseEnvLine(line, state, record);
 
   return entries;
 }
