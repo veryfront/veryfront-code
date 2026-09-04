@@ -475,7 +475,10 @@ function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
  * nothing even when an id appears before the malformed text. A completed
  * object returns nothing because complete elements are parsed separately.
  */
-function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undefined {
+function scanIncompleteLeadingObjectToolIds(
+  fieldBody: string,
+  trailingSourceCharacter?: string,
+): string[] | undefined {
   const ids: string[] = [];
   let index = 0;
   while (/\s/.test(fieldBody[index] ?? "")) index += 1;
@@ -523,7 +526,7 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
       if (valueEnd === undefined) {
         const nested = fieldBody.slice(index);
         const validPrefix = opening === "{"
-          ? scanIncompleteLeadingObjectToolIds(nested) !== undefined
+          ? scanIncompleteLeadingObjectToolIds(nested, trailingSourceCharacter) !== undefined
           : isValidIncompleteArrayPrefix(nested);
         if (!validPrefix) return undefined;
         break;
@@ -548,7 +551,13 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
     }
 
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (index >= fieldBody.length) break;
+    if (index >= fieldBody.length) {
+      if (
+        trailingSourceCharacter !== undefined &&
+        !/[\s,}]/.test(trailingSourceCharacter)
+      ) return undefined;
+      break;
+    }
     if (fieldBody[index] !== ",") return undefined;
     index += 1;
   }
@@ -556,8 +565,14 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
   return ids;
 }
 
-function addToolIdsFromIncompleteLeadingObject(target: string[], fieldBody: string): void {
-  for (const id of scanIncompleteLeadingObjectToolIds(fieldBody) ?? []) {
+function addToolIdsFromIncompleteLeadingObject(
+  target: string[],
+  fieldBody: string,
+  trailingSourceCharacter?: string,
+): void {
+  for (
+    const id of scanIncompleteLeadingObjectToolIds(fieldBody, trailingSourceCharacter) ?? []
+  ) {
     addToolIdFact(target, id);
   }
 }
@@ -609,6 +624,7 @@ function addToolArrayFieldValues(
   text: string,
   pattern: RegExp,
   allowIncompleteLeadingObject = false,
+  trailingSourceCharacter?: string,
 ): void {
   pattern.lastIndex = 0;
   let coveredUntil = 0;
@@ -637,7 +653,11 @@ function addToolArrayFieldValues(
       );
       addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
       if (fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject) {
-        addToolIdsFromIncompleteLeadingObject(target, windowBody.slice(scanned.nextIndex));
+        addToolIdsFromIncompleteLeadingObject(
+          target,
+          windowBody.slice(scanned.nextIndex),
+          trailingSourceCharacter,
+        );
       }
       coveredUntil = windowClosingBracket === -1
         ? text.length
@@ -786,6 +806,9 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
       toolWindows[index]!,
       fieldPattern,
       text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT && index === 0,
+      index === 0 && text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
+        ? text[toolHeadLength]
+        : undefined,
     );
   }
   for (let index = 0; index < windows.length; index++) {
