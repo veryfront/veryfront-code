@@ -205,6 +205,30 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(getRuntimeRemoteToolSources(restricted), []);
   });
 
+  it("preserves an explicitly configured MCP source behind the allowlist", () => {
+    const mcpServer = {
+      id: "docs",
+      transport: { type: "http" as const, url: "https://docs.example.test/mcp" },
+      toolPolicy: { allow: ["search_docs", "delete_project"] },
+    };
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: { search_docs: true, delete_project: true },
+        providerTools: undefined,
+        mcpServers: [mcpServer],
+      }),
+      { allowedTools: ["search_docs"] },
+    );
+
+    assertEquals(restricted.tools, { search_docs: true });
+    assertEquals(restricted.mcpServers, [{
+      ...mcpServer,
+      toolPolicy: { allow: ["search_docs"] },
+    }]);
+    assertEquals(getRuntimeAllowedRemoteTools(restricted), ["search_docs"]);
+    assertEquals(getRuntimeRemoteToolSources(restricted).length, 1);
+  });
+
   it("does not add generic delegation to a tools-true source agent", () => {
     const restricted = applyAgUiRuntimeRestrictions(
       createConfig({ tools: true, delegates: undefined }),
