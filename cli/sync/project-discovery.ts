@@ -1,6 +1,7 @@
 import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 export interface RemoteProject {
   id: string;
@@ -17,7 +18,10 @@ export interface ProjectDiscoveryResult {
   error?: string;
 }
 
-export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDiscoveryResult> {
+export async function fetchRemoteProjects(
+  apiToken?: string,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<ProjectDiscoveryResult> {
   const token = apiToken?.trim() || await readToken();
 
   if (!token) {
@@ -29,7 +33,7 @@ export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDis
   }
 
   const apiKeyCredential = isApiKeyToken(token);
-  const user = apiKeyCredential ? null : await validateToken(token);
+  const user = apiKeyCredential ? null : await validateToken(token, env);
 
   if (!apiKeyCredential && !user) {
     return {
@@ -40,7 +44,7 @@ export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDis
   }
 
   try {
-    const response = await fetch(`${getApiUrl()}/projects`, {
+    const response = await fetch(`${getApiUrl(env)}/projects`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

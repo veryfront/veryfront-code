@@ -9,6 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
 import { FakeTime } from "#std/testing/time";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import {
   type AgentServiceRegistrationLogger,
   createAgentServiceRegistrationLifecycle,
@@ -354,7 +355,7 @@ function scriptedHeartbeatFetch(
       return Promise.resolve(
         options.registrationResponse?.(
           registrationAttempts,
-          init?.signal ?? undefined,
+          observeFetchRequestInit(init).signal ?? undefined,
         ) ?? jsonResponse(serviceResponse),
       );
     }

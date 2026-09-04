@@ -299,6 +299,37 @@ Use [Providers](./providers.md) for model-provider setup. Use
 [Agent service runtime](./agent-service-runtime.md) for the registration
 variables used by standalone agent services.
 
+### Credentials and the API host
+
+A `veryfront.json` `apiUrl`, and a `VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL`
+set in a project `.env` file, point the CLI at a different API host. Both of
+those files ship with a clone, so whoever wrote the repository chooses that
+host. Veryfront never sends a credential you supplied yourself to a host the
+repository chose: commands such as `pull`, `merge`, `deploy`, `login`, and
+`whoami` refuse instead of authenticating.
+
+To reach a self-hosted API host, pair the host and the credential from one
+source:
+
+- Put both `apiUrl` and `apiToken` in `veryfront.json`.
+- Or set both `VERYFRONT_API_URL` and `VERYFRONT_API_TOKEN` in the same project
+  `.env` file. A token that `$NAME` expansion copied out of your shell does not
+  count as coming from the file, because the secret is still yours.
+- Or confirm the host yourself: set `VERYFRONT_API_URL` in your shell for
+  GraphQL commands, or set `VERYFRONT_API_BASE_URL` for REST consumers such as
+  `dev`, `start`, `eval`, `styles build-artifact`, and the `vf_remote_*` tools.
+  Set the variable in the CI job environment to the API endpoint, including any base path it needs.
+  Any credential then applies, including a CI secret and a `veryfront login`
+  session.
+
+Naming the default `https://api.veryfront.com` needs no confirmation, in any
+equivalent spelling.
+
+In CI, set the API URL variable used by the command next to
+`VERYFRONT_API_TOKEN` in the job environment whenever the project uses a
+self-hosted API host, so a non-interactive run has a confirmed host. See
+[Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
+
 ## SSR transform cache
 
 Veryfront compiles every page and its local import tree before it can render on
