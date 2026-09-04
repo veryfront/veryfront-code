@@ -56,6 +56,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<StatIndexSnapshot> | null = null;
   private buildingIndexScopeKey: string | null = null;
+  private buildingIndexGeneration: number | null = null;
   private indexScopeKey: string | null = null;
   private indexGeneration = 0;
   private indexBuiltAt = 0;
@@ -219,11 +220,14 @@ export class StatOperations extends VeryfrontOperationsBase {
       const waitStart = performance.now();
       const building = this.buildingIndex;
       const buildingScopeKey = this.buildingIndexScopeKey;
+      const buildingGeneration = this.buildingIndexGeneration;
       const snapshot = await building;
       logger.debug("ensureIndexBuilt - concurrent build done", {
         waitMs: Math.round(performance.now() - waitStart),
       });
-      if (buildingScopeKey === scopeKey) return snapshot;
+      if (buildingScopeKey === scopeKey && buildingGeneration === this.indexGeneration) {
+        return snapshot;
+      }
       return await this.ensureIndexBuilt(contentContext, rebuildsLeft);
     }
 
@@ -231,12 +235,14 @@ export class StatOperations extends VeryfrontOperationsBase {
     const building = this.buildIndex(generation, contentContext, scopeKey);
     this.buildingIndex = building;
     this.buildingIndexScopeKey = scopeKey;
+    this.buildingIndexGeneration = generation;
     let snapshot: StatIndexSnapshot;
     try {
       snapshot = await building;
     } finally {
       this.buildingIndex = null;
       this.buildingIndexScopeKey = null;
+      this.buildingIndexGeneration = null;
     }
 
     // A warmup that publishes the very listing this build asked for bumps the

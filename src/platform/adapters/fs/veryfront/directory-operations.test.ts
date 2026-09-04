@@ -194,6 +194,41 @@ describe("DirectoryOperations", () => {
       assertEquals(cache.get(`${buildDirCacheKeyPrefix(null)}:`), undefined);
     });
 
+    it("rebuilds a same-scope waiter after an in-flight tree is cleared", async () => {
+      const firstListing = Promise.withResolvers<Array<{ path: string }>>();
+      let listingCalls = 0;
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => Promise.resolve([]),
+          listPublishedFiles: () => Promise.resolve([]),
+        } as any,
+        new FileCache({ enabled: false, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => null,
+          getFileList: () => {
+            listingCalls++;
+            return listingCalls === 1
+              ? firstListing.promise
+              : Promise.resolve([{ path: "new.ts" }]);
+          },
+        },
+      );
+
+      const oldRead = dirOps.readdir("");
+      await Promise.resolve();
+      dirOps.clearTree();
+      const newRead = dirOps.readdir("");
+      firstListing.resolve([{ path: "old.ts" }]);
+
+      assertEquals((await oldRead).map((entry) => entry.name), ["old.ts"]);
+      assertEquals((await newRead).map((entry) => entry.name), ["new.ts"]);
+      assertEquals(listingCalls, 2);
+    });
+
     it("should clear tree on clearTree call", async () => {
       const dirOps = createDirOpsWithFiles([
         { path: "index.tsx" },

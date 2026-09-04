@@ -773,6 +773,36 @@ describe("StatOperations", () => {
       assertEquals(buildCount, 1);
     });
 
+    it("rebuilds a same-scope waiter after an in-flight index is cleared", async () => {
+      const firstListing = Promise.withResolvers<ProjectFile[]>();
+      let listingCalls = 0;
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch",
+          projectSlug: "test",
+          branch: "main",
+        }),
+        getFileList: () => {
+          listingCalls++;
+          return listingCalls === 1 ? firstListing.promise : Promise.resolve([makeFile("new.ts")]);
+        },
+        isPersistentCacheInvalidated: () => false,
+      };
+      const statOps = createStatOps(createMockClient(), new PathNormalizer(), contextProvider);
+
+      const oldStat = statOps.stat("old.ts");
+      await Promise.resolve();
+      statOps.clearIndex();
+      const newStat = statOps.stat("new.ts");
+      firstListing.resolve([makeFile("old.ts")]);
+
+      await oldStat.catch(() => undefined);
+      assertEquals((await newStat).isFile, true);
+      assertEquals(listingCalls, 2);
+    });
+
     it("should fall back to API when no file list provider exists", async () => {
       let apiCalled = false;
       const client = createMockClient({

@@ -18,6 +18,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   private treeScopeKey: string | null = null;
   private buildingTree: Promise<Map<string, DirNode>> | null = null;
   private buildingTreeScopeKey: string | null = null;
+  private buildingTreeGeneration: number | null = null;
   private treeGeneration = 0;
 
   readdir(path: string): Promise<DirectoryEntry[]> {
@@ -90,8 +91,9 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     if (this.buildingTree) {
       const building = this.buildingTree;
       const buildingScopeKey = this.buildingTreeScopeKey;
+      const buildingGeneration = this.buildingTreeGeneration;
       const tree = await building;
-      if (buildingScopeKey === scopeKey) return tree;
+      if (buildingScopeKey === scopeKey && buildingGeneration === this.treeGeneration) return tree;
       return await this.ensureTreeBuilt(contentContext);
     }
 
@@ -99,11 +101,13 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     const building = this.buildTree(generation, contentContext, scopeKey);
     this.buildingTree = building;
     this.buildingTreeScopeKey = scopeKey;
+    this.buildingTreeGeneration = generation;
     try {
       return await building;
     } finally {
       this.buildingTree = null;
       this.buildingTreeScopeKey = null;
+      this.buildingTreeGeneration = null;
     }
   }
 
