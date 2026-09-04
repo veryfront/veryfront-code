@@ -32,6 +32,9 @@ export class FileListIndex {
       contentContext?: ResolvedContentContext | null,
     ) => Promise<Array<FileListCacheEntry> | undefined>,
     private readonly getSnapshotVersion?: () => number,
+    private readonly isSourceInvalidated?: (
+      contentContext?: ResolvedContentContext | null,
+    ) => boolean,
   ) {}
 
   setReadyPromise(promise: Promise<void>): void {
@@ -192,6 +195,10 @@ export class FileListIndex {
       fileList = await this.getFileListCache(cacheKey, contentContext);
       versionAfterRead = this.getSnapshotVersion?.();
       if (versionBeforeRead !== versionAfterRead) return null;
+    }
+    if (this.isSourceInvalidated?.(contentContext)) {
+      logger.debug("getOrBuildFileListIndex: discarding read during source invalidation");
+      return null;
     }
     const stableSnapshotVersion = versionBeforeRead === versionAfterRead
       ? versionAfterRead

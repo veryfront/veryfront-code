@@ -21,7 +21,7 @@ import {
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { toClientContext } from "./adapter-content-context.ts";
 
 export {
@@ -63,6 +63,14 @@ export class ReadOperations {
     this.fileListIndex = new FileListIndex(
       this.getFileListCache,
       getFileListSnapshotVersion,
+      (contentContext) => {
+        const context = contentContext ?? this.contextProvider?.getContentContext();
+        return context
+          ? this.contextProvider?.isPersistentCacheInvalidated?.(
+            buildFileCacheKeyPrefix(context),
+          ) ?? false
+          : false;
+      },
     );
   }
 

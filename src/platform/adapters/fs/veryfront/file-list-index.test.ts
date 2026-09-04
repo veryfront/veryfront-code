@@ -213,6 +213,30 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       assertEquals(reads, 2, "the read is retried a bounded number of times");
     });
 
+    it("discards a settled retry while the source prefix remains invalidated", async () => {
+      let snapshotVersion = 1;
+      let invalidated = false;
+      let reads = 0;
+      const index = new FileListIndex(
+        () => {
+          reads++;
+          if (reads === 1) {
+            snapshotVersion += 1;
+            invalidated = true;
+          }
+          return Promise.resolve([{ path: "stale.css", content: "stale" }]);
+        },
+        () => snapshotVersion,
+        () => invalidated,
+      );
+
+      assertEquals(await index.match("stale.css"), {
+        status: "unavailable",
+        fresh: false,
+      });
+      assertEquals(reads, 2);
+    });
+
     it("rebuilds when a refreshed listing changes inline content", async () => {
       let callCount = 0;
       const entry = { path: "a.ts", content: "v1" };
