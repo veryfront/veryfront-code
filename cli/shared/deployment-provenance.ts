@@ -189,6 +189,81 @@ export function getProjectTarget(
   return client.get<ProjectTarget>(`/projects/${projectReference}`);
 }
 
+function gitCommandEnvironment(): Record<string, string> {
+  const gitEnv = env();
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith("GIT_")) delete gitEnv[key];
+  }
+  return gitEnv;
+}
+
+function normalizeCommitSha(value: string | undefined): string | null {
+  return value && COMMIT_SHA_PATTERN.test(value) ? value.toLowerCase() : null;
+}
+
+type GitCommandResult = Awaited<ReturnType<typeof runCommand>>;
+
+function gitSourcesAgree(
+  repositoryAvailable: boolean,
+  envSha: string | undefined,
+  normalizedEnvSha: string | null,
+  normalizedHeadSha: string | null,
+): boolean {
+  if (!repositoryAvailable || envSha === undefined) return true;
+  return normalizedEnvSha !== null &&
+    (normalizedHeadSha === null || normalizedEnvSha === normalizedHeadSha);
+}
+
+function gitProbesAreIndeterminate(
+  head: GitCommandResult,
+  status: GitCommandResult,
+  normalizedHeadSha: string | null,
+  gitMetadataPresent: boolean,
+  envShaDescribesCheckout: boolean,
+): boolean {
+  if (head.success && normalizedHeadSha === null) return true;
+  if (head.success && !status.success) return true;
+  if (!head.success && !status.success && gitMetadataPresent) return true;
+  return !head.success && envShaDescribesCheckout;
+}
+
+async function gitSourceFromProbes(
+  projectDir: string,
+  envSha: string | undefined,
+  head: GitCommandResult,
+  status: GitCommandResult,
+): Promise<GitSource> {
+  const normalizedEnvSha = normalizeCommitSha(envSha);
+  const normalizedHeadSha = normalizeCommitSha(head.success ? head.stdout?.trim() : undefined);
+  const gitMetadataPresent = !head.success && !status.success
+    ? await hasGitMetadata(projectDir)
+    : false;
+  const repositoryAvailable = head.success || status.success || gitMetadataPresent;
+  const envShaDescribesCheckout = repositoryAvailable && envSha !== undefined;
+  const sourcesAgree = gitSourcesAgree(
+    repositoryAvailable,
+    envSha,
+    normalizedEnvSha,
+    normalizedHeadSha,
+  );
+  const indeterminate = !sourcesAgree || gitProbesAreIndeterminate(
+    head,
+    status,
+    normalizedHeadSha,
+    gitMetadataPresent,
+    envShaDescribesCheckout,
+  );
+  const commitSha = indeterminate || !repositoryAvailable
+    ? null
+    : normalizedEnvSha ?? normalizedHeadSha;
+  return {
+    commitSha,
+    clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
+    repositoryAvailable,
+    ...(indeterminate ? { indeterminate: true } : {}),
+  };
+}
+
 async function hasGitMetadata(projectDir: string): Promise<boolean> {
   let current: string;
   try {
@@ -212,10 +287,7 @@ async function hasGitMetadata(projectDir: string): Promise<boolean> {
 
 export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   const envSha = getEnv("GITHUB_SHA")?.trim();
-  const gitEnv = env();
-  for (const key of Object.keys(gitEnv)) {
-    if (key.startsWith("GIT_")) delete gitEnv[key];
-  }
+  const gitEnv = gitCommandEnvironment();
   let commandResults;
   try {
     commandResults = await Promise.all([
@@ -266,7 +338,7 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
     const repositoryAvailable = await hasGitMetadata(projectDir);
     const indeterminate = repositoryAvailable || envSha !== undefined;
     return {
-      commitSha: envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null,
+      commitSha: normalizeCommitSha(envSha),
       clean: false,
       repositoryAvailable,
       ...(indeterminate ? { indeterminate: true } : {}),
@@ -274,16 +346,6 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   }
 
   const [head, status] = commandResults;
-
-  const headSha = head.success ? head.stdout?.trim() : undefined;
-  const normalizedEnvSha = envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null;
-  const normalizedHeadSha = headSha && COMMIT_SHA_PATTERN.test(headSha)
-    ? headSha.toLowerCase()
-    : null;
-  const gitMetadataPresent = !head.success && !status.success
-    ? await hasGitMetadata(projectDir)
-    : false;
-  const repositoryAvailable = head.success || status.success || gitMetadataPresent;
   // A directory with no repository around it has no HEAD for an environment
   // SHA to agree or disagree with: GITHUB_SHA names the checkout the process
   // happens to run under, not this source. Reading it as evidence about this
@@ -292,32 +354,11 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   // clean, digest-only provenance — stands, exactly as it does off CI. Nothing
   // is vouched for either way: `commitSha` never adopts an environment SHA
   // that no local commit confirmed.
-  const envShaDescribesCheckout = repositoryAvailable && envSha !== undefined;
-  const sourcesAgree = !envShaDescribesCheckout ||
-    (normalizedEnvSha !== null &&
-      (!normalizedHeadSha || normalizedEnvSha === normalizedHeadSha));
-  const probesIndeterminate = (head.success && normalizedHeadSha === null) ||
-    (head.success && !status.success) ||
-    (!head.success && !status.success && gitMetadataPresent) ||
-    // `git status` can succeed where `git rev-parse HEAD` cannot — an unborn
-    // repository, or a checkout that has lost its Git metadata. Without this
-    // the CI-supplied SHA would be returned as `commitSha` even though no
-    // local commit was ever verified, letting a Git-backed receipt carrying
-    // the same SHA pass validation against a checkout that can no longer
-    // prove it. Only a CI SHA is affected: with no environment SHA there is
-    // nothing to vouch for, so that case keeps its existing behaviour.
-    (!head.success && envShaDescribesCheckout);
-  const indeterminate = !sourcesAgree || probesIndeterminate;
-  const commitSha = indeterminate || !repositoryAvailable
-    ? null
-    : normalizedEnvSha ?? normalizedHeadSha;
-
-  return {
-    commitSha,
-    clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
-    repositoryAvailable,
-    ...(indeterminate ? { indeterminate: true } : {}),
-  };
+  // `git status` can succeed where `git rev-parse HEAD` cannot: an unborn
+  // repository, or a checkout that has lost its Git metadata. The helper
+  // keeps that case indeterminate so an environment SHA cannot stand in for a
+  // local commit that was never verified.
+  return await gitSourceFromProbes(projectDir, envSha, head, status);
 }
 
 /**
@@ -441,7 +482,13 @@ export async function writePushReceipt(
     ...receipt,
     controlPlane: normalizeControlPlane(receipt.controlPlane),
     commitSha: receipt.commitSha?.toLowerCase() ?? null,
-    ...(receipt.localPaths ? { localPaths: [...new Set(receipt.localPaths)].sort() } : {}),
+    ...(receipt.localPaths
+      ? {
+        localPaths: [...new Set(receipt.localPaths)].sort((left, right) =>
+          left.localeCompare(right)
+        ),
+      }
+      : {}),
     pushedAt: receipt.pushedAt ?? new Date().toISOString(),
   };
 

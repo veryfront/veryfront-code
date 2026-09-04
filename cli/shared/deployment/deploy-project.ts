@@ -437,6 +437,18 @@ function resolveDigestOnlySourceRefresh(
   return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
 }
 
+function resolveMismatchedCommitRefresh(
+  receipt: PushReceipt,
+  gitSource: LocalSourceObservation["gitSource"],
+): BootstrapPushKind {
+  // A checkout on a different commit must reach validatePushReceipt holding
+  // the original receipt. A checkout that lost its commit may refresh only
+  // when neither cleanliness nor a source digest still proves that receipt.
+  if (gitSource.commitSha !== null) return "none";
+  if (receipt.localSourceDigest !== undefined) return "none";
+  return receipt.clean ? "none" : "refresh";
+}
+
 function resolveStaleSourceRefresh(
   receipt: PushReceipt,
   local: LocalSourceObservation,
@@ -450,16 +462,7 @@ function resolveStaleSourceRefresh(
     // that receipt into one that matches. When the checkout no longer resolves
     // to any commit, a clean receipt still fails closed the same way, while a
     // dirty one proves nothing about the upload and keeps its refresh.
-    const checkoutNamesAnotherCommit = gitSource.commitSha !== null;
-    if (checkoutNamesAnotherCommit) return "none";
-    // The "a dirty receipt proves nothing" reasoning above predates receipt
-    // digests. A receipt carrying one can still prove its uploaded source even
-    // though the checkout no longer names a commit, so it has to reach
-    // {@link validatePushReceipt} still holding its original commitSha:
-    // refreshing here would rewrite that to null first, and the missing-current
-    // -commit refusal would never fire for provenance that was genuinely lost.
-    if (receipt.localSourceDigest !== undefined) return "none";
-    return receipt.clean ? "none" : "refresh";
+    return resolveMismatchedCommitRefresh(receipt, gitSource);
   }
   // Digests compare the file set push uploads, so where the receipt has one it
   // decides outright: an edit Git cannot see is caught, and a tree dirty only
