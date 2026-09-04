@@ -373,10 +373,10 @@ function collectCompletedCompositeChildIds(
 ): void {
   for (const node of nodes) {
     const status = nodeStates[node.id]?.status;
-    if (status !== "completed" && status !== "skipped") continue;
+    if (status !== "completed") continue;
 
     if (node.config.type === "parallel") {
-      for (const childId of collectWorkflowNodeIds(node.config.nodes)) target.add(childId);
+      collectExecutedCompositeNodeIds(node.config.nodes, nodeStates, target);
       continue;
     }
     if (node.config.type === "branch") {
@@ -389,7 +389,7 @@ function collectCompletedCompositeChildIds(
         : branch === "else"
         ? (node.config.else ?? [])
         : [];
-      for (const childId of collectWorkflowNodeIds(selected)) target.add(childId);
+      collectExecutedCompositeNodeIds(selected, nodeStates, target);
       continue;
     }
     if (node.config.type === "map") {
@@ -397,6 +397,7 @@ function collectCompletedCompositeChildIds(
       if (Array.isArray(output)) {
         for (let index = 0; index < output.length; index++) {
           const wrapperId = `${node.id}_${index}`;
+          if (nodeStates[wrapperId] === undefined) continue;
           target.add(wrapperId);
           const wrapperOutput = nodeStates[wrapperId]?.output;
           if (typeof wrapperOutput !== "object" || wrapperOutput === null) continue;
@@ -407,12 +408,79 @@ function collectCompletedCompositeChildIds(
       }
       continue;
     }
-    const prefix = node.config.type === "loop" ? `${node.id}/` : undefined;
-    if (!prefix) continue;
-    for (const childId of Object.keys(nodeStates)) {
-      if (childId.startsWith(prefix)) target.add(childId);
+    if (node.config.type === "loop" && Array.isArray(node.config.steps)) {
+      collectExecutedCompositeNodeIds(node.config.steps, nodeStates, target);
     }
   }
+}
+
+function collectExecutedCompositeNodeIds(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  target: Set<string>,
+): void {
+  for (const node of nodes) {
+    if (nodeStates[node.id] === undefined) continue;
+    target.add(node.id);
+    collectCompletedCompositeChildIds([node], nodeStates, target);
+  }
+}
+
+function collectCompositeSubWorkflowOwnerPaths(
+  nodes: readonly WorkflowNode[],
+  parentPath: string,
+  target: Set<string>,
+): void {
+  for (const node of nodes) {
+    switch (node.config.type) {
+      case "subWorkflow": {
+        const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
+        target.add(ownerPath);
+        if (
+          typeof node.config.workflow !== "string" &&
+          Array.isArray(node.config.workflow.steps)
+        ) {
+          collectCompositeSubWorkflowOwnerPaths(node.config.workflow.steps, ownerPath, target);
+        }
+        break;
+      }
+      case "parallel":
+        collectCompositeSubWorkflowOwnerPaths(node.config.nodes, parentPath, target);
+        break;
+      case "branch":
+        collectCompositeSubWorkflowOwnerPaths(node.config.then, parentPath, target);
+        collectCompositeSubWorkflowOwnerPaths(node.config.else ?? [], parentPath, target);
+        break;
+      case "loop":
+        if (Array.isArray(node.config.steps)) {
+          collectCompositeSubWorkflowOwnerPaths(node.config.steps, parentPath, target);
+        }
+        break;
+    }
+  }
+}
+
+function createCompositeNodeStateView(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  parentPath: string,
+): Record<string, NodeState> {
+  const declaredIds = collectWorkflowNodeIds([...nodes]);
+  const allowedOwnerPaths = new Set<string>();
+  collectCompositeSubWorkflowOwnerPaths(nodes, parentPath, allowedOwnerPaths);
+  const visible = Object.create(null) as Record<string, NodeState>;
+  for (const [nodeId, state] of Object.entries(nodeStates)) {
+    const ownerPath = state._subWorkflowOwnerPath;
+    if (ownerPath !== undefined) {
+      const allowed = [...allowedOwnerPaths].some((candidate) =>
+        isSubWorkflowDescendant(ownerPath, candidate)
+      );
+      if (allowed) visible[nodeId] = state;
+      continue;
+    }
+    if (declaredIds.has(nodeId)) visible[nodeId] = state;
+  }
+  return visible;
 }
 
 function collectPreviouslyProducedSubWorkflowNodeIds(
@@ -471,7 +539,7 @@ function createSeededSubWorkflowNodeStates(
     nodeStates,
     scope,
   );
-  const seededNodeStates: Record<string, NodeState> = {};
+  const seededNodeStates = Object.create(null) as Record<string, NodeState>;
   for (const [nodeId, state] of Object.entries(nodeStates)) {
     if (scope.declaredNodeIds.has(nodeId)) continue;
     if (
@@ -493,7 +561,7 @@ function ownSubWorkflowResultNodeStates(
   declaredNodeIds: ReadonlySet<string>,
   ownedNodeIds: ReadonlySet<string>,
 ): { ownedResultNodeStates: Record<string, NodeState>; producedNodeIds: Set<string> } {
-  const ownedResultNodeStates: Record<string, NodeState> = {};
+  const ownedResultNodeStates = Object.create(null) as Record<string, NodeState>;
   const producedNodeIds = new Set(ownedNodeIds);
   for (const [childId, childState] of Object.entries(resultNodeStates)) {
     const state = childState._subWorkflowOwnerPath
@@ -1363,6 +1431,11 @@ export class DAGExecutor {
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
+    const parallelNodeStates = createCompositeNodeStateView(
+      config.nodes,
+      nodeStates,
+      scope.subWorkflowPath,
+    );
 
     const result = await this.executeUnwrapped(
       config.nodes,
@@ -1373,7 +1446,7 @@ export class DAGExecutor {
         input: context.input,
         // Carry already-accumulated child states so completed children are
         // skipped on resume instead of re-executing (H8).
-        nodeStates,
+        nodeStates: parallelNodeStates,
         currentNodes: [],
         context,
         checkpoints: [],
@@ -1392,7 +1465,7 @@ export class DAGExecutor {
     // The outer batch commits this snapshot only if the composite eventually
     // completes or waits; a final failed state discards it in full.
     applyContextPatch(context, result.contextPatch);
-    applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch(parallelNodeStates, result.nodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined
@@ -1453,6 +1526,12 @@ export class DAGExecutor {
       return { state, contextPatch: createSetContextPatch(), waiting: false };
     }
 
+    const branchNodeStates = createCompositeNodeStateView(
+      branchNodes,
+      nodeStates,
+      scope.subWorkflowPath,
+    );
+
     const result = await this.executeUnwrapped(
       branchNodes,
       {
@@ -1462,7 +1541,7 @@ export class DAGExecutor {
         input: context.input,
         // Carry already-accumulated child states so completed children are
         // skipped on resume instead of re-executing (H8).
-        nodeStates,
+        nodeStates: branchNodeStates,
         currentNodes: [],
         context,
         checkpoints: [],
@@ -1477,7 +1556,7 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
 
     applyContextPatch(context, result.contextPatch);
-    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch(branchNodeStates, result.nodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined

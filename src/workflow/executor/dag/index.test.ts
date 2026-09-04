@@ -3901,6 +3901,179 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates.release?.status, "running");
     });
 
+    it("does not claim children for a composite that was skipped", async () => {
+      const skipped = parallel("skipped-group", [
+        waitForApproval("shared-review", { message: "Never raised" }),
+      ]);
+      const active = {
+        ...subWorkflow("active", {
+          workflow: {
+            id: "active-workflow",
+            steps: [waitForApproval("shared-review", { message: "Already approved" })],
+          },
+        }),
+        dependsOn: ["skipped-group"],
+      };
+      const result = await executor.execute(
+        [skipped, active],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "skipped-group": {
+              nodeId: "skipped-group",
+              status: "skipped",
+              attempt: 1,
+            },
+            active: { nodeId: "active", status: "running", attempt: 1 },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.active?.status, "completed");
+    });
+
+    it("claims only the selected branch inside a completed parallel", async () => {
+      const completedParallel: WorkflowNode = {
+        id: "completed-group",
+        dependsOn: [],
+        config: {
+          type: "parallel",
+          nodes: [{
+            id: "gate",
+            dependsOn: [],
+            config: {
+              type: "branch",
+              condition: () => true,
+              then: [{ id: "taken", dependsOn: [], config: { type: "step" } as any }],
+              else: [waitForApproval("shared-review", { message: "Untaken" })],
+            },
+          }],
+        },
+      };
+      const active = {
+        ...subWorkflow("active", {
+          workflow: {
+            id: "active-workflow",
+            steps: [waitForApproval("shared-review", { message: "Already approved" })],
+          },
+        }),
+        dependsOn: ["completed-group"],
+      };
+      const result = await executor.execute(
+        [completedParallel, active],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "completed-group": {
+              nodeId: "completed-group",
+              status: "completed",
+              attempt: 1,
+            },
+            gate: {
+              nodeId: "gate",
+              status: "completed",
+              output: { branch: "then" },
+              attempt: 1,
+            },
+            taken: { nodeId: "taken", status: "completed", attempt: 1 },
+            active: { nodeId: "active", status: "running", attempt: 1 },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.active?.status, "completed");
+    });
+
+    it("does not claim ownerless states solely from a completed loop prefix", async () => {
+      const completedLoop = loop("loop", {
+        while: () => false,
+        maxIterations: 1,
+        steps: () => [],
+      });
+      const active = {
+        ...subWorkflow("active", {
+          workflow: {
+            id: "active-workflow",
+            steps: [waitForApproval("loop/review", { message: "Already approved" })],
+          },
+        }),
+        dependsOn: ["loop"],
+      };
+      const result = await executor.execute(
+        [completedLoop, active],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            loop: { nodeId: "loop", status: "completed", attempt: 1 },
+            active: { nodeId: "active", status: "running", attempt: 1 },
+            "loop/review": {
+              nodeId: "loop/review",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.active?.status, "completed");
+    });
+
+    it("preserves an ownerless __proto__ child while seeding", async () => {
+      const nodeStates: Record<string, NodeState> = {
+        active: { nodeId: "active", status: "running", attempt: 1 },
+      };
+      Object.defineProperty(nodeStates, "__proto__", {
+        value: { nodeId: "__proto__", status: "completed", attempt: 1 },
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      const result = await executor.execute(
+        [subWorkflow("active", {
+          workflow: {
+            id: "proto-workflow",
+            steps: [waitForApproval("__proto__", { message: "Already approved" })],
+          },
+        })],
+        createTestRun({ status: "waiting", nodeStates }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(Object.hasOwn(result.nodeStates, "__proto__"), true);
+      assertEquals(result.nodeStates["__proto__"]?.status, "completed");
+    });
+
+    it("isolates a deferred parallel from a dynamic sub-workflow child", async () => {
+      const dynamic = subWorkflow("dynamic", {
+        workflow: {
+          id: "dynamic-workflow",
+          steps: () => [{ id: "group/review", config: { type: "step" } as any }],
+        },
+      });
+      const group = parallel("group", [
+        waitForApproval("review", { message: "Approve the group" }),
+      ]);
+
+      const result = await executor.execute([dynamic, group], createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "group/review");
+      assertEquals(result.nodeStates.group?.status, "running");
+    });
+
     it("keeps statically defined sibling sub-workflows in one batch", async () => {
       const staticRelease = (id: string, approvalId: string): WorkflowNode => ({
         ...subWorkflow(id, {
