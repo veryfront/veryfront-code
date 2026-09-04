@@ -1,4 +1,4 @@
-import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
+import { computeCodeHash, computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
 import type {
   BuildResult,
   BundleOptions,
@@ -53,6 +53,9 @@ import {
   ProjectBoundaryViolationError,
   type ProjectSourceSnapshot,
 } from "./project-source-snapshot.ts";
+import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
+import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -67,6 +70,13 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicReflectOwnKeys = Reflect.ownKeys;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const trustedRequestContextAccessor = currentRequestContext;
 
 /**
  * A specifier the HTTP plugin fetches rather than a path. URL schemes are
@@ -1781,7 +1791,11 @@ async function loadAndTranspileModule(
     decoratorOptions,
     allowHostTypeScriptConfigReads,
   );
-  return await loadModuleFromCode(source, fs, `${projectDir}\u0000${modulePath}`);
+  return await loadModuleFromCode(
+    source,
+    fs,
+    `${projectDir}\u0000${modulePath}\u0000${await bundledModuleScopeDiscriminator()}`,
+  );
 }
 
 function buildTranspiledModuleSource(
@@ -2067,38 +2081,91 @@ export function getUserDependencies(
  *
  * The key carries the project and route path as well as the code, so two
  * projects that happen to bundle byte-identical output never share a module,
- * and with it module state.
+ * and with it module state. Hosted projects can share one virtual project dir,
+ * so the owner also carries the request's scope discriminator: the registry
+ * scope (project, mode, version) and a digest of the active project-env
+ * overlay. A module whose top-level init ran under one tenant's or
+ * environment's env overlay is never reused under another.
  */
-const bundledModules = new Map<string, Promise<APIRoute>>();
-
-/** Bundled routes a dev session can hold before the oldest is dropped. */
-const MAX_BUNDLED_MODULES = 64;
-
-async function bundledModuleKey(owner: string, code: string): Promise<string> {
-  return await computeHash(`${owner}\u0000${code}`);
+interface BundledModuleRecord {
+  readonly loading: Promise<APIRoute>;
 }
 
-function loadModuleFromCode(
+const bundledModules = new IntrinsicMap<string, BundledModuleRecord>();
+
+/**
+ * Identity of the scope a bundled module may be reused within.
+ *
+ * In proxy mode every hosted project resolves to the host runtime's shared
+ * project dir, and per-request env isolation (`runWithProjectEnv`) hands each
+ * scope its own env overlay, so `projectDir`/`modulePath`/code alone would let
+ * a module initialized under one project's or environment's overlay serve a
+ * later request in a different scope — leaking module-level clients, secrets,
+ * and mutable state across tenants. Fold the ambient registry scope (project,
+ * mode, version) and a digest of the active env overlay into the owner so
+ * reuse stays within one scope. Local single-tenant loads carry neither and
+ * keep their current key.
+ */
+export async function bundledModuleScopeDiscriminator(): Promise<string> {
+  const scopeId = tryGetRegistryScopeId() ?? "";
+  const environmentName = trustedRequestContextAccessor()?.environmentName ?? "";
+  const envSnapshot = getProjectEnvSnapshot();
+  let serializedEnv = "";
+  if (envSnapshot) {
+    // Project code executes in this realm and can replace ordinary Object and
+    // Array methods. The snapshot is a frozen, null-prototype record whose own
+    // keys were inserted in deterministic order, so captured own-key traversal
+    // plus length framing gives a canonical encoding without crossing a
+    // mutable prototype.
+    const keys = IntrinsicReflectOwnKeys(envSnapshot);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      if (typeof key !== "string") continue;
+      const value = envSnapshot[key]!;
+      serializedEnv += `${key.length}:${key}${value.length}:${value}`;
+    }
+  }
+
+  // Raw UTF-16 framing keeps lone surrogates distinct from U+FFFD. TextEncoder
+  // normalizes both to the same UTF-8 replacement bytes.
+  return await computeCodeHash({
+    code: scopeId,
+    css: environmentName,
+    sourceMap: serializedEnv,
+  });
+}
+
+async function bundledModuleKey(owner: string, code: string): Promise<string> {
+  return await computeCodeHash({ code: owner, css: code });
+}
+
+export async function loadModuleFromCode(
   code: string,
   fs: FileSystem,
   owner: string,
 ): Promise<APIRoute> {
-  return bundledModuleKey(owner, code).then((key) => {
-    const cached = bundledModules.get(key);
-    if (cached) return cached;
+  const key = await bundledModuleKey(owner, code);
+  const cached = IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) as
+    | BundledModuleRecord
+    | undefined;
+  if (cached) return await cached.loading;
 
-    const loading = importModuleFromCode(code, fs);
-    bundledModules.set(key, loading);
+  const loading = importModuleFromCode(code, fs);
+  const record = { loading } satisfies BundledModuleRecord;
+  IntrinsicReflectApply(MapPrototypeSet, bundledModules, [key, record]);
 
-    // A failed build must not be remembered as this route's module.
-    loading.catch(() => bundledModules.delete(key));
-
-    if (bundledModules.size > MAX_BUNDLED_MODULES) {
-      const oldest = bundledModules.keys().next();
-      if (!oldest.done) bundledModules.delete(oldest.value);
+  // Deno retains every imported ESM record for the life of the process. Keep
+  // one matching lookup entry too: evicting only this map caused a later visit
+  // to import the same scope under a fresh temp URL, retaining a duplicate ESM
+  // record and resetting its module state each time.
+  try {
+    return await loading;
+  } catch (error) {
+    if (IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) === record) {
+      IntrinsicReflectApply(MapPrototypeDelete, bundledModules, [key]);
     }
-    return loading;
-  });
+    throw error;
+  }
 }
 
 async function importModuleFromCode(

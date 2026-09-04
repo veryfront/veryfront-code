@@ -1144,6 +1144,7 @@ describe("WebSocketManager", () => {
     } ? T | undefined
       : never;
     let capturedChangedPaths: string[] | undefined;
+    const styleEvents: string[] = [];
 
     const manager = createWebSocketManager({
       client: {
@@ -1156,15 +1157,25 @@ describe("WebSocketManager", () => {
         }],
       },
       invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
         triggerReload: (changedPaths, project) => {
           capturedChangedPaths = changedPaths;
           capturedProject = project;
         },
       },
-      pregenerateStyles: async () => ({
-        hash: "hash-1",
-        assetPath: "/_vf/css/hash-1.css",
-      }),
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+      pregenerateStyles: async () => {
+        styleEvents.push("pregenerate");
+        return {
+          hash: "hash-1",
+          assetPath: "/_vf/css/hash-1.css",
+        };
+      },
     });
 
     manager.connect("project-1");
@@ -1190,6 +1201,95 @@ describe("WebSocketManager", () => {
     assertEquals(capturedChangedPaths, ["app/page.tsx"]);
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
+    // The CSS caches are dropped once, after the new source snapshot is
+    // installed: clearing before that would only drop entries a concurrent
+    // request can refill from the snapshot the poke is replacing.
+    assertEquals(styleEvents, [
+      "replace-snapshot",
+      "invalidate",
+      "pregenerate",
+    ]);
+
+    manager.dispose();
+  });
+
+  it("does not clear the CSS caches twice when style pre-generation fails", async () => {
+    // The catch around the snapshot swap exists for a poke that never reached
+    // the clear. Style pre-generation runs after it, so a throw there must not
+    // drop the caches a second time.
+    const styleEvents: string[] = [];
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: async () => [{
+          path: "app/page.tsx",
+          type: "page",
+          size: 32,
+          updated_at: "2026-03-22T00:00:00.000Z",
+          content: "<div class='text-red-500'/>",
+        }],
+      },
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
+      },
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+      pregenerateStyles: () => {
+        styleEvents.push("pregenerate-failed");
+        return Promise.reject(new Error("pre-generation failed"));
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(styleEvents, [
+      "replace-snapshot",
+      "invalidate",
+      "pregenerate-failed",
+    ]);
+
+    manager.dispose();
+  });
+
+  it("clears the CSS caches when the source fetch fails before any clear ran", async () => {
+    const styleEvents: string[] = [];
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => Promise.reject(new Error("fetch failed")),
+      },
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
+      },
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(styleEvents, ["invalidate"]);
 
     manager.dispose();
   });

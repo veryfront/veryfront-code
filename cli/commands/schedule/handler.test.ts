@@ -165,11 +165,18 @@ describe("schedule command", () => {
     ];
     const output: string[] = [];
 
+    const sentinelKey = `__vfScheduleConfigExecuted_${crypto.randomUUID().replace(/-/g, "")}`;
+    const globals = globalThis as unknown as Record<string, unknown>;
+
     try {
       await Deno.mkdir(`${projectDir}/schedules`, { recursive: true });
+      // Detect execution two ways: an in-process side effect (a global the
+      // module sets on evaluation) and a competing projectSlug that would win
+      // over veryfront.json if the module were ever imported.
       await Deno.writeTextFile(
         `${projectDir}/veryfront.config.ts`,
-        'throw new Error("remote schedules must not import local runtime config");\n',
+        `globalThis[${JSON.stringify(sentinelKey)}] = true;\n` +
+          'export default { projectSlug: "module-config-must-not-run" };\n',
       );
       await Deno.writeTextFile(
         `${projectDir}/veryfront.json`,
@@ -226,6 +233,11 @@ describe("schedule command", () => {
       }
 
       assertEquals(exitCode, 0);
+      assertEquals(
+        sentinelKey in globals,
+        false,
+        "remote schedule run must not execute local veryfront.config.ts",
+      );
       assertEquals(requests.map((request) => request.url), [
         `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions`,
         `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules/${scheduleId}/runs`,
@@ -262,6 +274,7 @@ describe("schedule command", () => {
         },
       });
     } finally {
+      delete globals[sentinelKey];
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
