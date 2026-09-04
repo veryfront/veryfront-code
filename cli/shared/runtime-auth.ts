@@ -101,6 +101,9 @@ export async function applyQualifiedRuntimeAuth(
     : { ...env, apiUrl: undefined };
   const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
   const candidate = candidates[0];
+  const repositorySelectedApiEnvironment =
+    getEnvSource("VERYFRONT_API_URL").source === "env-file" ||
+    getEnvSource("VERYFRONT_API_BASE_URL").source === "env-file";
   if (
     !candidate &&
     resolveApiUrlTrust(requestEnv, await readConfigFile(projectDir)).repositorySteered
@@ -109,7 +112,7 @@ export async function applyQualifiedRuntimeAuth(
   }
   return await applyRuntimeAuthContext({
     apiToken: candidate?.apiToken ?? null,
-    apiBaseUrl: candidate?.validationEnv.apiBaseUrl,
+    apiBaseUrl: repositorySelectedApiEnvironment ? undefined : candidate?.validationEnv.apiBaseUrl,
     linkedProjectSlug,
   });
 }

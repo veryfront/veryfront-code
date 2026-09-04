@@ -4,6 +4,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "veryfront/platform/path";
 import { saveToken } from "../auth/token-store.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
 import {
   applyQualifiedRuntimeAuth,
   applyRuntimeAuthContext,
@@ -13,6 +15,7 @@ import {
 
 const ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_URL",
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
@@ -52,6 +55,8 @@ async function useTempConfigHome(): Promise<string> {
 
 describe("cli/shared/runtime-auth", () => {
   afterEach(async () => {
+    _resetEnvironmentConfig();
+    __resetEnvLoaderForTests();
     clearEnv();
     for (const dir of tempDirs) {
       try {
@@ -158,6 +163,28 @@ describe("cli/shared/runtime-auth", () => {
     });
     assertEquals(getEnv("VERYFRONT_API_TOKEN"), "project-token");
     assertEquals(getEnv("VERYFRONT_API_BASE_URL"), "https://runtime.example");
+  });
+
+  it("does not materialize a repository env URL as an operator API base", async () => {
+    await useTempConfigHome();
+    await saveToken("stored-token");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-runtime-auth-env-pair-" });
+    tempDirs.push(projectDir);
+    await Deno.writeTextFile(
+      join(projectDir, ".env"),
+      "VERYFRONT_API_URL=https://runtime.example/graphql\n" +
+        "VERYFRONT_API_TOKEN=project-token\n",
+    );
+    __resetEnvLoaderForTests();
+    _resetEnvironmentConfig();
+    await loadEnv({ cwd: projectDir, override: true });
+
+    const context = await applyQualifiedRuntimeAuth(projectDir);
+
+    assertEquals(context.apiToken, "project-token");
+    assertEquals(context.apiBaseUrl, undefined);
+    assertEquals(getEnv("VERYFRONT_API_BASE_URL"), undefined);
+    assertEquals(getEnv("VERYFRONT_API_URL"), "https://runtime.example/graphql");
   });
 
   it("reads the persisted project link without inferring from the directory name", async () => {
