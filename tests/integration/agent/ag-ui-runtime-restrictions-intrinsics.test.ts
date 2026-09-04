@@ -5,7 +5,10 @@ import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { applyAgUiRuntimeRestrictions } from "#veryfront/agent/ag-ui/runtime-restrictions.ts";
 import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
+import type { ToolDefinition } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
+import { prepareAgentRuntimeStep } from "#veryfront/agent/runtime/agent-runtime-step.ts";
+import { getRuntimeProviderTools } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 
 function createConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
@@ -70,7 +73,7 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
       Array.prototype.some = function () {
         return true;
       } as any;
-      Array.prototype[Symbol.iterator] = function* () {
+      Array.prototype[Symbol.iterator] = function* (): ArrayIterator<unknown> {
         yield* Reflect.apply(originalIterator, this, []);
         if (
           this.length === 3 &&
@@ -85,6 +88,7 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
         if (this === delegateTarget) {
           yield "admin";
         }
+        return undefined;
       };
 
       restricted = applyAgUiRuntimeRestrictions(createConfig({ delegates: ["writer", "admin"] }), {
@@ -126,6 +130,79 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
     );
     assertEquals(rebuiltProviderTools, []);
     assertEquals(rebuiltDelegates, ["writer"]);
+  });
+
+  it("keeps narrowed tools intact through runtime preparation", async () => {
+    const allowed: ToolDefinition = {
+      name: "allowed_lookup",
+      description: "Allowed lookup",
+      parameters: { type: "object", properties: {} },
+    };
+    const denied: ToolDefinition = {
+      name: "delete_project",
+      description: "Denied tool injected through a hostile iterator.",
+      parameters: { type: "object", properties: {} },
+    };
+    const providerTools = ["web_search"];
+    const originalIterator = Array.prototype[Symbol.iterator];
+    const originalEvery = Array.prototype.every;
+
+    try {
+      Array.prototype[Symbol.iterator] = function* (): ArrayIterator<unknown> {
+        yield* Reflect.apply(originalIterator, this, []);
+        if ((this[0] as { name?: string } | undefined)?.name === allowed.name) {
+          yield denied;
+        }
+        if (this[0] === "web_search") yield "web_fetch";
+        return undefined;
+      };
+      // deno-lint-ignore no-explicit-any -- hostile validator replacement
+      Array.prototype.every = function () {
+        if (this === providerTools) {
+          this[this.length] = "web_fetch";
+          return true;
+        }
+        return Reflect.apply(originalEvery, this, arguments);
+      } as any;
+
+      const validatedProviderTools = getRuntimeProviderTools({
+        system: "Answer directly.",
+        model: "anthropic/claude-sonnet-4-6",
+        providerTools,
+      });
+      const prepared = await prepareAgentRuntimeStep({
+        agentId: "researcher",
+        activeSkillToolAvailability: undefined,
+        allowedRemoteToolNames: [],
+        config: {
+          system: "Answer directly.",
+          model: "anthropic/claude-sonnet-4-6",
+          tools: { allowed_lookup: true },
+        },
+        effectiveModel: "anthropic/claude-sonnet-4-6",
+        forwardedRemoteToolDefinitions: undefined,
+        getAvailableTools: () => Promise.resolve([allowed]),
+        supportsToolCalling: true,
+        messages: [],
+        mode: "stream",
+        providerToolNames: validatedProviderTools,
+        remoteToolSources: [],
+        resolveRuntimeState: () => Promise.resolve({ systemPrompt: "Answer directly." }),
+        runtimeContext: undefined,
+        step: 0,
+        systemPrompt: "Answer directly.",
+        toolContextBase: undefined,
+      });
+
+      assertEquals(
+        prepared.toolExposurePlan.authorized.map((definition) => definition.name),
+        ["allowed_lookup", "web_search"],
+      );
+      assertEquals(providerTools, ["web_search"]);
+    } finally {
+      Array.prototype[Symbol.iterator] = originalIterator;
+      Array.prototype.every = originalEvery;
+    }
   });
 
   it("does not consume configured tool entries through a patched array iterator", () => {

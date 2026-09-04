@@ -42,9 +42,10 @@ it("copies authorized tools without a mutable array iterator", () => {
   const originalIterator = Array.prototype[Symbol.iterator];
   let plan!: ReturnType<typeof createToolExposurePlan>;
   try {
-    Array.prototype[Symbol.iterator] = function* () {
+    Array.prototype[Symbol.iterator] = function* (): ArrayIterator<unknown> {
       yield* Reflect.apply(originalIterator, this, []);
       if (this === allowed) yield denied;
+      return undefined;
     };
     plan = createToolExposurePlan({
       authorized: allowed,

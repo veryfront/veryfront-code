@@ -1529,11 +1529,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
         };
         if (payload.forwardedProps?.veryfront) {
+          const veryfront = payload.forwardedProps.veryfront;
           payload.forwardedProps = {
             ...payload.forwardedProps,
-            veryfront: { ...payload.forwardedProps.veryfront },
+            veryfront: { ...veryfront },
           };
-          delete payload.forwardedProps.veryfront.runtimeOverrides;
+          delete payload.forwardedProps.veryfront?.runtimeOverrides;
         }
         return payload;
       },

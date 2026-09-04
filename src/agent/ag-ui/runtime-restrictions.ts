@@ -1,15 +1,19 @@
-import type { AgentConfig, AgentMcpServerConfig, AgentMcpToolPolicy } from "../types.ts";
+import type {
+  AgentConfig,
+  AgentMcpServerConfig,
+  AgentMcpToolPolicy,
+} from "#veryfront/agent/types.ts";
 import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
-import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
-import { INVOKE_AGENT_TOOL_ID } from "../runtime/agent-delegation.ts";
-import { DEFAULT_MAX_STEPS } from "../runtime/constants.ts";
-import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
-import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "#veryfront/agent/runtime/agent-delegation-names.ts";
+import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
+import { DEFAULT_MAX_STEPS } from "#veryfront/agent/runtime/constants.ts";
+import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import {
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
-} from "../runtime/runtime-tool-config.ts";
+} from "#veryfront/agent/runtime/runtime-tool-config.ts";
 
 const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 
@@ -342,7 +346,9 @@ export function applyAgUiRuntimeRestrictionsForModel(
   const configuredProviderTools = toToolNameLookup(config.providerTools ?? []);
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
   const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
-  const configuredMcpTools = getConfiguredMcpToolNames(config.mcpServers, allowedToolNames);
+  const configuredMcpTools = config.tools === true
+    ? getConfiguredMcpToolNames(config.mcpServers, allowedToolNames)
+    : createNullPrototypeObject(null) as ToolNameLookup;
   const policyFreeMcpTools = getPolicyFreeMcpToolNames(config.mcpServers, allowedToolNames);
   restricted.tools = restrictConfiguredTools(
     config.tools,
@@ -392,7 +398,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
     const configuredConcreteLocalTool = typeof configuredTool === "object" &&
       configuredTool !== null && getRemoteToolProvenance(configuredTool) === undefined;
     if (
-      toolName !== undefined && configuredMcpTools[toolName] === true &&
+      config.tools === true && toolName !== undefined && configuredMcpTools[toolName] === true &&
       visibleLocalTools[toolName] !== true && providerToolNames[toolName] !== true &&
       !(configuredProviderTools[toolName] === true && policyFreeMcpTools[toolName] === true) &&
       !configuredConcreteLocalTool &&

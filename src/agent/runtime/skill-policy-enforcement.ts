@@ -308,24 +308,33 @@ export function filterToolsAfterSubmittedFormInput(
   const hasSubmittedFormInput = hasSubmittedFormInputResult(messages) ||
     runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
   if (!hasSubmittedFormInput) {
-    return [...tools];
+    const snapshot: ToolDefinition[] = [];
+    for (let index = 0; index < tools.length; index++) {
+      const tool = tools[index];
+      if (tool !== undefined) snapshot[snapshot.length] = tool;
+    }
+    return snapshot;
   }
 
   const activeSkillReferences = getActiveSkillReferenceSnapshot(
     activeSkill?.id,
     activeSkill?.toolAvailability,
   );
-  return tools.flatMap((tool) => {
+  const filtered: ToolDefinition[] = [];
+  for (let index = 0; index < tools.length; index++) {
+    const tool = tools[index];
+    if (tool === undefined) continue;
     if (POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name)) {
-      return [];
+      continue;
     }
     if (tool.name !== LOAD_SKILL_TOOL_ID) {
-      return [tool];
+      filtered[filtered.length] = tool;
+      continue;
     }
     if (!activeSkill?.id || activeSkillReferences.length === 0) {
-      return [];
+      continue;
     }
-    return [{
+    filtered[filtered.length] = {
       ...tool,
       parameters: {
         type: "object",
@@ -336,8 +345,9 @@ export function filterToolsAfterSubmittedFormInput(
         required: ["skillId", "file"],
         additionalProperties: false,
       },
-    }];
-  });
+    };
+  }
+  return filtered;
 }
 
 export type SkillPolicyResult =

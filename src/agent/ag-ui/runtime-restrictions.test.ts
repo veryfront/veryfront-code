@@ -1,16 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import { clearMCPRegistry, registerTool } from "#veryfront/mcp";
-import { createEphemeralAgent } from "../factory.ts";
-import { getAvailableTools } from "../runtime/tool-helpers.ts";
-import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
+import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
+import { getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { getRuntimeRemoteToolSources } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
   getRuntimeAllowedRemoteTools,
   resolveRuntimeToolLoading,
-} from "../runtime/runtime-tool-config.ts";
+} from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   applyAgUiRuntimeRestrictions,
@@ -228,6 +228,27 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     }]);
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["search_docs"]);
     assertEquals(getRuntimeRemoteToolSources(restricted)?.length, 1);
+  });
+
+  it("does not widen an explicit selector with catalog-only MCP candidates", () => {
+    const selectors: Array<Record<string, boolean>> = [{ search_docs: false }, {}];
+    for (const tools of selectors) {
+      const restricted = applyAgUiRuntimeRestrictions(
+        createConfig({
+          tools,
+          providerTools: undefined,
+          mcpServers: [{
+            id: "docs",
+            transport: { type: "http", url: "https://docs.example.test/mcp" },
+          }],
+        }),
+        { allowedTools: ["search_docs"] },
+      );
+
+      assertEquals(restricted.tools, tools);
+      assertEquals(restricted.mcpServers, []);
+      assertEquals(getRuntimeAllowedRemoteTools(restricted), []);
+    }
   });
 
   it("preserves an allowlisted MCP candidate from a tools-true catalog", () => {

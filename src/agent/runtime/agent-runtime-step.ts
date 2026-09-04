@@ -29,6 +29,24 @@ import { getProviderToolProfile } from "./provider-tool-compat.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
+const IntrinsicSet = Set;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicSetAdd = Set.prototype.add;
+const IntrinsicSetHas = Set.prototype.has;
+
+function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
+  return IntrinsicReflectApply(IntrinsicSetHas, set, [value]) as boolean;
+}
+
+function collectToolNames(tools: readonly ToolDefinition[]): Set<string> {
+  const names = new IntrinsicSet<string>();
+  for (let index = 0; index < tools.length; index++) {
+    const tool = tools[index];
+    if (tool !== undefined) IntrinsicReflectApply(IntrinsicSetAdd, names, [tool.name]);
+  }
+  return names;
+}
+
 export type AgentRuntimeStepMode = "generate" | "stream";
 
 export type RuntimeStepToolLoader = (
@@ -248,28 +266,43 @@ export async function prepareAgentRuntimeStep(
   );
   const excludedToolNames = input.excludedToolNames;
   if (excludedToolNames !== undefined) {
-    tools = tools.filter((tool) => !excludedToolNames.has(tool.name));
+    const included: ToolDefinition[] = [];
+    for (let index = 0; index < tools.length; index++) {
+      const tool = tools[index];
+      if (tool !== undefined && !setHas(excludedToolNames, tool.name)) {
+        included[included.length] = tool;
+      }
+    }
+    tools = included;
   }
   if (
     integrationToolDiscovery?.status === "unavailable" &&
     input.forwardedRemoteToolDefinitions?.length
   ) {
-    const forwardedToolNames = new Set(
-      input.forwardedRemoteToolDefinitions.map((tool) => tool.name),
-    );
-    const usableForwardedTools = tools.filter((tool) => forwardedToolNames.has(tool.name));
+    const forwardedToolNames = collectToolNames(input.forwardedRemoteToolDefinitions);
+    const usableForwardedTools: ToolDefinition[] = [];
+    for (let index = 0; index < tools.length; index++) {
+      const tool = tools[index];
+      if (tool !== undefined && setHas(forwardedToolNames, tool.name)) {
+        usableForwardedTools[usableForwardedTools.length] = tool;
+      }
+    }
     if (usableForwardedTools.length > 0) {
       integrationToolDiscovery = { status: "ok", tools: usableForwardedTools };
     }
   }
-  const existingToolNames = new Set(tools.map((tool) => tool.name));
-  tools = [
-    ...tools,
-    ...createProviderNativeToolExposureDefinitions({
-      model: input.effectiveModel ?? input.config.model,
-      toolNames: input.providerToolNames ?? [],
-    }).filter((tool) => !existingToolNames.has(tool.name)),
-  ];
+  const existingToolNames = collectToolNames(tools);
+  const providerToolDefinitions = createProviderNativeToolExposureDefinitions({
+    model: input.effectiveModel ?? input.config.model,
+    toolNames: input.providerToolNames ?? [],
+  });
+  for (let index = 0; index < providerToolDefinitions.length; index++) {
+    const tool = providerToolDefinitions[index];
+    if (tool !== undefined && !setHas(existingToolNames, tool.name)) {
+      tools[tools.length] = tool;
+      IntrinsicReflectApply(IntrinsicSetAdd, existingToolNames, [tool.name]);
+    }
+  }
   const toolExposureState = input.toolExposureState ?? createToolExposureState();
   if (input.toolExposureCheckpoint) {
     const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);

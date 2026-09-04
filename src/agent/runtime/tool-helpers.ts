@@ -406,6 +406,13 @@ function addToolDefinition(
   intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
 }
 
+function hasToolDefinitionName(tools: readonly ToolDefinition[], name: string): boolean {
+  for (let index = 0; index < tools.length; index++) {
+    if (tools[index]?.name === name) return true;
+  }
+  return false;
+}
+
 /**
  * Merge forwarded integration tool definitions into the remote defs array.
  * Forwarded definitions are provided by the API when the runtime cannot
@@ -583,7 +590,7 @@ export async function getAvailableTools(
     const def = remoteDefsToAppend[index];
     if (def === undefined) continue;
     // Skip if already present (e.g., explicitly configured by name)
-    if (!tools.some((t) => t.name === def.name)) {
+    if (!hasToolDefinitionName(tools, def.name)) {
       logToolDefinition(def.name, def);
       intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
     }

@@ -10,6 +10,19 @@ import {
 } from "./tool-exposure.ts";
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
 
+const ArrayIsArray = Array.isArray;
+
+function snapshotStringArray(value: unknown): string[] | undefined {
+  if (!ArrayIsArray(value)) return undefined;
+  const snapshot: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const entry = value[index];
+    if (typeof entry !== "string") return undefined;
+    snapshot[snapshot.length] = entry;
+  }
+  return snapshot;
+}
+
 /** Internal schema-loading mode derived from the authored tools selector. */
 export type RuntimeToolLoadingMode = "eager" | "deferred";
 
@@ -74,10 +87,7 @@ export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | un
     return undefined;
   }
   const raw = configWithRuntimeFilters.__vfAllowedRemoteTools;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+  return snapshotStringArray(raw) ?? [];
 }
 
 /** Return trusted run-scoped source policy; malformed internal state fails closed. */
@@ -99,11 +109,7 @@ export function getRuntimeSourceIntegrationPolicyFromContext(
 }
 
 export function getRuntimeProviderTools(config: AgentConfig): string[] {
-  const raw = config.providerTools;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+  return snapshotStringArray(config.providerTools) ?? [];
 }
 
 /** Return a supported trusted private exposure checkpoint. */
