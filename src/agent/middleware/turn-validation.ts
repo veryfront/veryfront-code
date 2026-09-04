@@ -35,8 +35,12 @@ export type TurnInputValidator = (messages: Message[]) => Promise<void>;
  */
 export type TurnMessageValidator = (history: Message[], turnInput: Message[]) => Promise<void>;
 
+/** Validate provider assemblies created only by a memory projection rewrite. */
+export type TurnMessageProjectionValidator = (messages: Message[]) => Promise<void>;
+
 const turnInputValidators = new WeakMap<AgentContext, TurnInputValidator>();
 const turnMessageValidators = new WeakMap<AgentContext, TurnMessageValidator>();
+const turnMessageProjectionValidators = new WeakMap<AgentContext, TurnMessageProjectionValidator>();
 
 /**
  * Register a post-middleware input validator for a turn, composing with any
@@ -86,4 +90,28 @@ export function registerTurnMessageValidator(
 /** Resolve the cross-turn conversation validator registered for a turn, if any. */
 export function getTurnMessageValidator(context: AgentContext): TurnMessageValidator | undefined {
   return turnMessageValidators.get(context);
+}
+
+/** Register validation for provider assemblies newly exposed by memory rewriting. */
+export function registerTurnMessageProjectionValidator(
+  context: AgentContext,
+  validate: TurnMessageProjectionValidator,
+): void {
+  const previous = turnMessageProjectionValidators.get(context);
+  turnMessageProjectionValidators.set(
+    context,
+    previous
+      ? async (messages) => {
+        await previous(messages);
+        await validate(messages);
+      }
+      : validate,
+  );
+}
+
+/** Resolve memory-projection validation registered for a turn, if any. */
+export function getTurnMessageProjectionValidator(
+  context: AgentContext,
+): TurnMessageProjectionValidator | undefined {
+  return turnMessageProjectionValidators.get(context);
 }

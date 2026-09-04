@@ -263,6 +263,20 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends Bas
 const DEFAULT_SUMMARY_MAX_CHARS = 4_000;
 const SUMMARY_OMISSION_MARKER = "; [...]; ";
 const SUMMARY_MESSAGE_PREFIX = "Previous conversation summary:\n";
+const summaryMemoryProjectionMessages = new WeakSet<object>();
+const summaryProjectionWeakSetAdd = WeakSet.prototype.add;
+const summaryProjectionWeakSetHas = WeakSet.prototype.has;
+const summaryProjectionReflectApply = Reflect.apply;
+
+/** Whether this message is the provider projection synthesized by summary memory. */
+export function isSummaryMemoryProjectionMessage(message: unknown): boolean {
+  return typeof message === "object" && message !== null &&
+    summaryProjectionReflectApply(
+      summaryProjectionWeakSetHas,
+      summaryMemoryProjectionMessages,
+      [message],
+    ) as boolean;
+}
 
 /** Implement summary memory. */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
@@ -371,6 +385,11 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
             parts: summaryParts,
             timestamp: Date.now(),
           };
+          summaryProjectionReflectApply(
+            summaryProjectionWeakSetAdd,
+            summaryMemoryProjectionMessages,
+            [summaryMessage],
+          );
 
           return [summaryMessage as M, ...this.messages];
         },

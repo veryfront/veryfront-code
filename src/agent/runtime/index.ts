@@ -65,6 +65,7 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import {
   getTurnInputValidator,
+  getTurnMessageProjectionValidator,
   getTurnMessageValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -375,13 +376,18 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
   const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
   for (const key of ObjectKeys(descriptors)) {
     const descriptor = descriptors[key];
-    if (!descriptor?.enumerable) continue;
+    if (!descriptor) continue;
     const value = "value" in descriptor
       ? descriptor.value
       : descriptor.get
       ? IntrinsicReflectApply(descriptor.get, part, [])
       : undefined;
-    detached[key] = cloneStructuredValuePreservingOpaque(value);
+    ObjectDefineProperty(detached, key, {
+      value: cloneStructuredValuePreservingOpaque(value),
+      enumerable: descriptor.enumerable,
+      configurable: true,
+      writable: true,
+    });
   }
   return detached as MessagePart;
 }
@@ -1601,18 +1607,19 @@ export class AgentRuntime {
     if (validateTurnInput) await validateTurnInput(committedInputMessages);
 
     const validateTurnMessages = context && getTurnMessageValidator(context);
+    const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
     let validated = committedInputMessages;
     let history: Message[] = [];
-    if (validateTurnMessages) {
+    if (validateTurnMessages || validateProjectedMessages) {
       history = await this.memory.getMessages();
+      if (history.length > 0) validated = [...history, ...committedInputMessages];
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
-      if (history.length > 0) {
-        validated = [...history, ...committedInputMessages];
+      if (validateTurnMessages && history.length > 0) {
         await validateTurnMessages(history, committedInputMessages);
       }
     }
-    const rollbackMemory = validateTurnMessages
+    const rollbackMemory = validateTurnMessages || validateProjectedMessages
       ? captureMemoryRollback(this.memory, history)
       : undefined;
     let persisted: Message[];
@@ -1623,13 +1630,13 @@ export class AgentRuntime {
       rollbackMemory?.commit();
       throw error;
     }
-    if (
-      validateTurnMessages && persisted.length > 0 &&
-      !providerTranscriptsEqual(persisted, validated) &&
-      !providerTranscriptIsOrderedSubset(persisted, validated)
-    ) {
+    if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
       try {
-        await validateTurnMessages([], persisted);
+        if (providerTranscriptIsOrderedSubset(persisted, validated)) {
+          await validateProjectedMessages?.(persisted);
+        } else {
+          await validateTurnMessages?.([], persisted);
+        }
       } catch (error) {
         // A memory policy can rewrite the transcript while adding this turn,
         // notably when summary memory compacts old messages. If validation of

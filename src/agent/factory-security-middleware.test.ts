@@ -7,7 +7,10 @@ import { agentAsTool } from "#veryfront/agent/composition/composition.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { ConversationMemory } from "#veryfront/agent/memory/index.ts";
 import { cacheMiddleware } from "#veryfront/agent/middleware/cache/cache.ts";
-import { registerTurnMessageValidator } from "#veryfront/agent/middleware/turn-validation.ts";
+import {
+  registerTurnMessageProjectionValidator,
+  registerTurnMessageValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 import type {
   AgentContext,
   AgentMiddleware,
@@ -893,6 +896,7 @@ describe("resolveSecurityMiddleware", () => {
 
   it("does not revalidate retained messages after bounded-memory trimming", async () => {
     let validatorCalls = 0;
+    let projectionValidatorCalls = 0;
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/trimmed-validator-calls",
@@ -906,6 +910,10 @@ describe("resolveSecurityMiddleware", () => {
     const recorder: AgentMiddleware = (context, next) => {
       registerTurnMessageValidator(context, () => {
         validatorCalls += 1;
+        return Promise.resolve();
+      });
+      registerTurnMessageProjectionValidator(context, () => {
+        projectionValidatorCalls += 1;
         return Promise.resolve();
       });
       return next();
@@ -926,6 +934,7 @@ describe("resolveSecurityMiddleware", () => {
     }
 
     assertEquals(validatorCalls, 2);
+    assertEquals(projectionValidatorCalls, 1);
   });
 
   it("persists a turn once when a middleware invokes the continuation twice", async () => {
@@ -1181,6 +1190,43 @@ describe("resolveSecurityMiddleware", () => {
 
     assertEquals(prompts[1]?.includes("hello from accessor"), true);
     assertEquals(prompts[1]?.includes("mutated after commit"), false);
+  });
+
+  it("preserves a non-enumerable provider-visible text field", async () => {
+    const prompts: string[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/non-enumerable-part",
+      async doGenerate(options: unknown) {
+        prompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const part = { type: "text" as const } as { type: "text"; text: string };
+    Object.defineProperty(part, "text", {
+      value: "non-enumerable request",
+      enumerable: false,
+    });
+    const assistant = agent({
+      id: "non-enumerable-part",
+      model: "hosted/non-enumerable-part",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: [{ id: "hidden", role: "user", parts: [part] }] });
+
+    assertEquals(prompts[0]?.includes("non-enumerable request"), true);
   });
 
   it("rejects a middleware rewrite that merges valid values into a blocked system prompt", async () => {

@@ -9,8 +9,10 @@ import {
 } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import {
   registerTurnInputValidator,
+  registerTurnMessageProjectionValidator,
   registerTurnMessageValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
+import { isSummaryMemoryProjectionMessage } from "#veryfront/agent/memory/memory.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -931,8 +933,15 @@ export function securityMiddleware(
     registerTurnMessageValidator(context, async (history, turnInput) => {
       const individualValues = history.length === 0
         ? {
-          texts: turnInput.flatMap(extractMessageInputText),
-          assembled: turnInput.flatMap(extractMessageAssembledTexts),
+          texts: turnInput
+            .filter((message) => !isSummaryMemoryProjectionMessage(message))
+            .flatMap(extractMessageInputText),
+          assembled: [
+            ...turnInput
+              .filter(isSummaryMemoryProjectionMessage)
+              .flatMap(extractMessageInputText),
+            ...turnInput.flatMap(extractMessageAssembledTexts),
+          ],
         }
         : { texts: [], assembled: [] };
       const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
@@ -949,6 +958,20 @@ export function securityMiddleware(
       assertTextsNeedNoSanitization(
         inputValidator,
         [...individualValues.texts, ...individualValues.assembled, ...runTexts],
+        "Provider-visible messages contain content sanitization removes",
+        config.onViolation,
+      );
+    });
+    registerTurnMessageProjectionValidator(context, async (messages) => {
+      const runTexts = extractMergedRunTexts(messages, new Set(messages));
+      await assertInputTextsValid(
+        inputValidator,
+        { texts: [], assembled: runTexts },
+        config.onViolation,
+      );
+      assertTextsNeedNoSanitization(
+        inputValidator,
+        runTexts,
         "Provider-visible messages contain content sanitization removes",
         config.onViolation,
       );

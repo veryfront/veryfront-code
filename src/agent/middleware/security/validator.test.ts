@@ -10,8 +10,10 @@ import {
 } from "#veryfront/agent/output-schema.ts";
 import {
   getTurnInputValidator,
+  getTurnMessageProjectionValidator,
   getTurnMessageValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
+import { SummaryMemory } from "#veryfront/agent/memory/memory.ts";
 import {
   COMMON_BLOCKED_PATTERNS,
   InputValidator,
@@ -616,6 +618,42 @@ describe("securityMiddleware", () => {
       Error,
       "Input validation failed",
     );
+  });
+
+  it("validates a provider system run newly exposed by memory trimming", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/^foo\n\nbar$/] },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-0", role: "system", parts: [{ type: "text", text: "prefix" }] },
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "foo" }] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "bar" }] },
+      ],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProjection = getTurnMessageProjectionValidator(context);
+    if (!validateProjection) throw new Error("Expected projection validation");
+
+    await assertRejects(
+      () => validateProjection((context.input as Message[]).slice(1)),
+      Error,
+      "Input validation failed",
+    );
+  });
+
+  it("does not apply caller input length limits to summary-memory projections", async () => {
+    const middleware = securityMiddleware({ input: { maxLength: 8 } });
+    const context = createContext({ input: "next" });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateTurn = getTurnMessageValidator(context);
+    if (!validateTurn) throw new Error("Expected turn validation");
+    const memory = new SummaryMemory<Message>({ type: "summary", maxMessages: 2 });
+    for (const [id, text] of [["one", "one"], ["two", "two"], ["three", "three"]]) {
+      await memory.add({ id, role: "user", parts: [{ type: "text", text }] });
+    }
+
+    await validateTurn([], await memory.getMessages());
   });
 
   it("blocks a split injection across systems a sendable assistant turn separates", async () => {
