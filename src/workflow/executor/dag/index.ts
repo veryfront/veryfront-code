@@ -238,11 +238,22 @@ function narrowReservationsToSelectedBranches(
           typeof node.config.workflow !== "string" &&
           Array.isArray(node.config.workflow.steps)
         ) {
+          const nestedOwnerPath = subWorkflowOwnerPath(ownerPath, node.id);
+          const nestedState = nodeStates[node.id];
+          const nestedStateOwner = nestedState?._subWorkflowOwnerPath;
+          const nestedStateBelongsToOwner = nestedStateOwner === undefined ||
+            isSubWorkflowDescendant(nestedStateOwner, nestedOwnerPath);
+          if (nestedStateBelongsToOwner && nestedState?.status === "skipped") {
+            for (const childId of collectWorkflowNodeIds(node.config.workflow.steps)) {
+              reservations.delete(childId);
+            }
+            break;
+          }
           narrowReservationsToSelectedBranches(
             node.config.workflow.steps,
             nodeStates,
             reservations,
-            ownerPath,
+            nestedOwnerPath,
             branchOwnerPaths,
           );
         }
@@ -315,10 +326,14 @@ function collectStaticSubWorkflowReservation(
         !Array.isArray(node.config.workflow.steps)
       ) return;
       const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
-      const ownerStatus = parentPath &&
+      const recordedState = nodeStates[node.id];
+      const recordedOwner = recordedState?._subWorkflowOwnerPath;
+      const recordedSkipped = recordedState?.status === "skipped" &&
+        (recordedOwner === undefined || isSubWorkflowDescendant(recordedOwner, ownerPath));
+      const ownerStatus = recordedSkipped ? "skipped" : parentPath &&
           (ancestorOwnerStatus === "completed" || ancestorOwnerStatus === "skipped")
         ? ancestorOwnerStatus
-        : nodeStates[node.id]?.status;
+        : recordedState?.status;
       if (ownerStatus === "skipped") childIds.clear();
       else if (ownerStatus === "completed") {
         narrowReservationsToSelectedBranches(
@@ -644,6 +659,7 @@ function createCompositeNodeStateView(
   nodeStates: Readonly<Record<string, NodeState>>,
   parentPath: string,
   context: WorkflowContext,
+  scope: ExecutionScope,
 ): Record<string, NodeState> {
   const declaredIds = collectWorkflowNodeIds([...nodes]);
   collectCompositeLoopStateEvidence(nodes, context, declaredIds);
@@ -656,6 +672,18 @@ function createCompositeNodeStateView(
     declaredIds,
     allowedOwnerPaths,
   );
+  const claimedLegacyIds = new Set<string>();
+  for (const [ownerPath, ownerNodeId] of scope.subWorkflowReservationOwners) {
+    if (
+      ownerPath === parentPath ||
+      (parentPath.length > 0 && isSubWorkflowDescendant(parentPath, ownerPath))
+    ) continue;
+    const ownerStatus = reservationOwnerStatus(ownerPath, ownerNodeId, nodeStates, scope);
+    if (ownerStatus !== "completed" && ownerStatus !== "skipped") continue;
+    for (const nodeId of scope.subWorkflowNodeReservations.get(ownerPath) ?? []) {
+      claimedLegacyIds.add(nodeId);
+    }
+  }
   const visible = Object.create(null) as Record<string, NodeState>;
   for (const [nodeId, state] of Object.entries(nodeStates)) {
     const ownerPath = state._subWorkflowOwnerPath;
@@ -665,7 +693,7 @@ function createCompositeNodeStateView(
       if (allowed) visible[nodeId] = state;
       continue;
     }
-    if (declaredIds.has(nodeId)) visible[nodeId] = state;
+    if (declaredIds.has(nodeId) && !claimedLegacyIds.has(nodeId)) visible[nodeId] = state;
   }
   return visible;
 }
@@ -1678,7 +1706,13 @@ export class DAGExecutor {
                 executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(nodes, run, scope, options, attemptSignal),
                 selectChildNodeStates: (nodes, states) =>
-                  createCompositeNodeStateView(nodes, states, scope.subWorkflowPath, context),
+                  createCompositeNodeStateView(
+                    nodes,
+                    states,
+                    scope.subWorkflowPath,
+                    context,
+                    scope,
+                  ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -1806,6 +1840,7 @@ export class DAGExecutor {
       nodeStates,
       scope.subWorkflowPath,
       context,
+      scope,
     );
 
     const result = await this.executeUnwrapped(
@@ -1902,6 +1937,7 @@ export class DAGExecutor {
       nodeStates,
       scope.subWorkflowPath,
       context,
+      scope,
     );
 
     const result = await this.executeUnwrapped(

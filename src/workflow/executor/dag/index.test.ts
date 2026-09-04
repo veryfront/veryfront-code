@@ -5159,6 +5159,94 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["shared-review"]?.completedAt, approvedAt);
     });
 
+    it("does not seed a completed sub-workflow child into a later parallel", async () => {
+      const nodes: WorkflowNode[] = [
+        subWorkflow("producer", {
+          workflow: {
+            id: "producer-workflow",
+            steps: [waitForApproval("group/review", { message: "Producer review" })],
+          },
+        }),
+        {
+          ...parallel("group", [
+            waitForApproval("review", { message: "Parallel review" }),
+          ]),
+          dependsOn: ["producer"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            producer: { nodeId: "producer", status: "completed", attempt: 1 },
+            "group/review": {
+              nodeId: "group/review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "group/review");
+      assertEquals(result.nodeStates.group?.status, "running");
+      assertEquals(result.nodeStates["group/review"]?.status, "running");
+    });
+
+    it("does not claim descendants of a skipped nested sub-workflow", async () => {
+      const producer = subWorkflow("producer", {
+        workflow: {
+          id: "producer-workflow",
+          steps: [
+            subWorkflow("skipped-inner", {
+              workflow: {
+                id: "skipped-workflow",
+                steps: [waitForApproval("shared-review", { message: "Skipped review" })],
+              },
+            }),
+          ],
+        },
+      });
+      const consumer = {
+        ...subWorkflow("consumer", {
+          workflow: {
+            id: "consumer-workflow",
+            steps: [waitForApproval("shared-review", { message: "Consumer review" })],
+          },
+        }),
+        dependsOn: ["producer"],
+      };
+      const completedAt = new Date("2026-01-01T00:00:00.000Z");
+
+      const result = await executor.execute(
+        [producer, consumer],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            producer: { nodeId: "producer", status: "completed", attempt: 1 },
+            "skipped-inner": { nodeId: "skipped-inner", status: "skipped", attempt: 1 },
+            consumer: { nodeId: "consumer", status: "running", attempt: 1 },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "completed",
+              attempt: 1,
+              completedAt,
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates.consumer?.status, "completed");
+      assertEquals(result.nodeStates["shared-review"]?.completedAt, completedAt);
+    });
+
     it("keeps slash-containing sub-workflow owner paths distinct", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
