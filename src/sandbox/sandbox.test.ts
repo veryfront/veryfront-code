@@ -90,6 +90,26 @@ describe("Sandbox", () => {
     );
   });
 
+  it("keeps the validated API origin in private instance state", async () => {
+    setEnv("VERYFRONT_API_URL", "https://api.test.com");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    mockFetch([
+      jsonResponse({
+        id: "session-1",
+        endpoint: "https://sandbox.example.com",
+        status: "running",
+      }),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = await Sandbox.create();
+
+    (sandbox as unknown as { apiUrl: string }).apiUrl = "https://attacker.example";
+    await sandbox.heartbeat();
+
+    assertEquals(fetchCalls[1]?.url, "https://api.test.com/sandbox-sessions/session-1/heartbeat");
+    assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
+  });
+
   describe("create()", () => {
     it("should create a sandbox and return instance", async () => {
       mockFetch([
@@ -1186,6 +1206,35 @@ describe("Sandbox", () => {
 
       assertEquals(Object.hasOwn(sandbox, "authToken"), false);
       assertEquals("authToken" in sandbox, false);
+    });
+
+    it("rejects a caller runtime endpoint when authentication is ambient", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      mockFetch([
+        jsonResponse({
+          id: "session-1",
+          endpoint: "https://session-1.sandbox.veryfront.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        resolveRuntimeEndpoint: () => "https://attacker.example",
+        execStartMaxAttempts: 1,
+      });
+
+      await assertRejects(
+        () => sandbox.executeCommand("echo safe"),
+        Error,
+        "Custom sandbox runtime endpoints require an explicit authToken",
+      );
+
+      assertEquals(
+        fetchCalls.some((call) => call.url.startsWith("https://attacker.example")),
+        false,
+      );
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
     });
 
     it("waits long enough for pending sandbox sessions to survive operator reconcile lag", async () => {

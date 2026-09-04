@@ -1,4 +1,4 @@
-import { REQUEST_ERROR } from "#veryfront/errors";
+import { CONFIG_INVALID, REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import {
@@ -83,16 +83,28 @@ const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const stringReplace = String.prototype.replace;
-const lazySandboxAuthTokens = new WeakMap<object, string>();
+const NativeURL = URL;
+const urlHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
+const regExpExec = RegExp.prototype.exec;
+interface LazySandboxPrivateState {
+  authToken: string;
+  apiUrl: string;
+  allowsCustomRuntimeEndpoint: boolean;
+}
+const lazySandboxPrivateStates = new WeakMap<object, LazySandboxPrivateState>();
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 
-function getLazySandboxAuthToken(sandbox: object): string {
-  const token = applyIntrinsic(weakMapGet, lazySandboxAuthTokens, [sandbox]) as
-    | string
+function getLazySandboxPrivateState(sandbox: object): LazySandboxPrivateState {
+  const state = applyIntrinsic(weakMapGet, lazySandboxPrivateStates, [sandbox]) as
+    | LazySandboxPrivateState
     | undefined;
-  if (!token) throw new TypeError("Lazy sandbox auth state is unavailable");
-  return token;
+  if (!state) throw new TypeError("Lazy sandbox private state is unavailable");
+  return state;
+}
+
+function getLazySandboxAuthToken(sandbox: object): string {
+  return getLazySandboxPrivateState(sandbox).authToken;
 }
 
 /** Resolves default sandbox runtime endpoint. */
@@ -103,12 +115,16 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
 
   let hostname: string;
   try {
-    hostname = new URL(input.endpoint).hostname;
+    if (!urlHostnameGetter) return input.endpoint;
+    const url = new NativeURL(input.endpoint);
+    hostname = applyIntrinsic(urlHostnameGetter, url, []) as string;
   } catch {
     return input.endpoint;
   }
 
-  const match = hostname.match(VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN);
+  const match = applyIntrinsic(regExpExec, VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN, [hostname]) as
+    | RegExpExecArray
+    | null;
   const shortId = match?.[1];
   if (!shortId) {
     return input.endpoint;
@@ -124,7 +140,6 @@ function normalizeDataPlaneBaseUrl(url: string): string {
 
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
 export class LazySandbox {
-  private readonly apiUrl: string;
   private readonly sandboxId: string | undefined;
   private readonly sandboxEndpoint: string | undefined;
   private readonly deleteOnClose: boolean;
@@ -155,8 +170,14 @@ export class LazySandbox {
   private readonly activeBackgroundCommands = new Map<string, TrackedBackgroundCommand>();
 
   constructor(options: LazySandboxOptions = {}) {
-    this.apiUrl = resolveSandboxApiUrl(options);
-    applyIntrinsic(weakMapSet, lazySandboxAuthTokens, [this, resolveSandboxAuthToken(options)]);
+    const explicitAuthToken = options.authToken === undefined
+      ? ""
+      : applyIntrinsic(stringTrim, options.authToken, []) as string;
+    applyIntrinsic(weakMapSet, lazySandboxPrivateStates, [this, {
+      apiUrl: resolveSandboxApiUrl(options),
+      authToken: resolveSandboxAuthToken(options),
+      allowsCustomRuntimeEndpoint: explicitAuthToken.length > 0,
+    }]);
     this.sandboxId = options.sandboxId?.trim() || undefined;
     this.sandboxEndpoint = options.sandboxEndpoint?.trim() || undefined;
     this.deleteOnClose = options.deleteOnClose ?? !this.sandboxId;
@@ -420,7 +441,9 @@ export class LazySandbox {
     const pending = {
       promise: (async () => {
         const res = await this.fetchControl(
-          `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(currentSessionId)}/heartbeat`,
+          `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+            encodeURIComponent(currentSessionId)
+          }/heartbeat`,
           {
             method: "POST",
             headers: this.authHeaders(),
@@ -531,11 +554,14 @@ export class LazySandbox {
 
   private async bootstrapCreatedSession(): Promise<void> {
     const projectId = this.resolveProjectId();
-    const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions`, {
-      method: "POST",
-      headers: this.jsonHeaders(),
-      body: JSON.stringify(projectId ? { project_id: projectId } : {}),
-    });
+    const res = await this.fetchControl(
+      `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions`,
+      {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -593,7 +619,9 @@ export class LazySandbox {
 
   private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
     const res = await this.fetchControl(
-      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+        encodeURIComponent(sessionId)
+      }`,
       {
         headers: this.authHeaders(),
       },
@@ -615,7 +643,9 @@ export class LazySandbox {
       await sleep(this.pollIntervalMs);
 
       const res = await this.fetchControl(
-        `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+        `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+          encodeURIComponent(sessionId)
+        }`,
         {
           headers: this.authHeaders(),
         },
@@ -718,7 +748,9 @@ export class LazySandbox {
 
   private async deleteSession(sessionId: string): Promise<void> {
     await this.fetchControl(
-      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+        encodeURIComponent(sessionId)
+      }`,
       {
         method: "DELETE",
         headers: this.authHeaders(),
@@ -869,8 +901,18 @@ export class LazySandbox {
   }
 
   private resolveRuntimeEndpointFor(endpoint: string, sessionId: string): string {
-    return this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
-      resolveDefaultSandboxRuntimeEndpoint({ endpoint });
+    const defaultEndpoint = resolveDefaultSandboxRuntimeEndpoint({ endpoint });
+    const resolved = this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
+      defaultEndpoint;
+    if (
+      normalizeDataPlaneBaseUrl(resolved) !== normalizeDataPlaneBaseUrl(defaultEndpoint) &&
+      !getLazySandboxPrivateState(this).allowsCustomRuntimeEndpoint
+    ) {
+      throw CONFIG_INVALID.create({
+        detail: "Custom sandbox runtime endpoints require an explicit authToken.",
+      });
+    }
+    return resolved;
   }
 
   private shouldUseInternalDataPlane(endpoint: string, sessionId: string): boolean {
@@ -887,7 +929,7 @@ export class LazySandbox {
     const sessionId = this.requireSessionId();
     if (!this.resolveRuntimeEndpointOption) {
       return {
-        baseUrl: sandboxSessionRoute(this.apiUrl, sessionId),
+        baseUrl: sandboxSessionRoute(getLazySandboxPrivateState(this).apiUrl, sessionId),
         kind: "proxy",
       };
     }
@@ -901,7 +943,7 @@ export class LazySandbox {
     }
 
     return {
-      baseUrl: sandboxSessionRoute(this.apiUrl, sessionId),
+      baseUrl: sandboxSessionRoute(getLazySandboxPrivateState(this).apiUrl, sessionId),
       kind: "proxy",
     };
   }
