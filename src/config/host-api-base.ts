@@ -21,10 +21,10 @@ function getHostApiEnv(key: "VERYFRONT_API_BASE_URL" | "VERYFRONT_API_URL"): str
 
 /** Resolve the API origin paired with a host-private stored login token. */
 export function resolveHostOwnedApiBaseUrl(): string {
-  const hostBase = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL"));
-  if (hostBase) return hostBase;
   const hostApiUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_URL"));
-  return hostApiUrl
-    ? applyIntrinsic(stringReplace, hostApiUrl, ["/graphql", "/api"]) as string
-    : DEFAULT_HOST_API_BASE_URL;
+  if (hostApiUrl) {
+    return applyIntrinsic(stringReplace, hostApiUrl, ["/graphql", "/api"]) as string;
+  }
+  return normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL")) ??
+    DEFAULT_HOST_API_BASE_URL;
 }

@@ -41,14 +41,27 @@ export type {
   SandboxSession,
 } from "./types.ts";
 
+const sandboxAuthTokens = new WeakMap<object, string>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+const applyIntrinsic = Reflect.apply;
+
+function getSandboxAuthToken(sandbox: object): string {
+  const token = applyIntrinsic(weakMapGet, sandboxAuthTokens, [sandbox]) as string | undefined;
+  if (!token) throw new TypeError("Sandbox auth state is unavailable");
+  return token;
+}
+
 /** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
   private constructor(
     private endpoint: string,
     private sessionId: string,
-    private authToken: string,
+    authToken: string,
     private apiUrl: string,
-  ) {}
+  ) {
+    applyIntrinsic(weakMapSet, sandboxAuthTokens, [this, authToken]);
+  }
 
   private static resolveApiUrl(options: SandboxOptions = {}): string {
     return resolveSandboxApiUrl(options);
@@ -200,7 +213,7 @@ export class Sandbox {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.authToken}`,
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ command, ...options }),
@@ -222,7 +235,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(this.apiUrl, this.sessionId, `/file?path=${encodeURIComponent(path)}`),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -240,7 +253,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(sandboxSessionRoute(this.apiUrl, this.sessionId, "/files"), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.authToken}`,
+        Authorization: `Bearer ${getSandboxAuthToken(this)}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ files }),
@@ -260,7 +273,7 @@ export class Sandbox {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.authToken}`,
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ command, ...options }),
@@ -285,7 +298,7 @@ export class Sandbox {
         `/commands/${encodeURIComponent(commandId)}`,
       ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -307,7 +320,7 @@ export class Sandbox {
         `/commands/${encodeURIComponent(commandId)}/output`,
       ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -332,7 +345,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(this.apiUrl, this.sessionId, "/commands"),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -359,7 +372,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -393,7 +406,7 @@ export class Sandbox {
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}/heartbeat`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -410,7 +423,7 @@ export class Sandbox {
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
       {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 

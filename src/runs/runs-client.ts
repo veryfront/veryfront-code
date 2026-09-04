@@ -30,6 +30,15 @@ const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_KNOWLEDGE_INGEST_RUN_NAME = "Ingest knowledge";
 const GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX = "schedule-run";
+const applyIntrinsic = Reflect.apply;
+const stringReplace = String.prototype.replace;
+const NativeURL = URL;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+
+function readUrlOrigin(url: URL): string {
+  if (!urlOriginGetter) throw new TypeError("Native URL origin getter is unavailable");
+  return applyIntrinsic(urlOriginGetter, url, []) as string;
+}
 
 /** Configuration used by the Veryfront runs client. */
 export interface VeryfrontRunsClientConfig {
@@ -474,8 +483,8 @@ export class VeryfrontRunsClient {
     } = {},
   ): Promise<T> {
     const { apiUrl, authToken } = this.resolveConnection();
-    const normalizedApiUrl = apiUrl.replace(/\/+$/, "");
-    const apiOrigin = new URL(normalizedApiUrl).origin;
+    const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
+    const apiOrigin = readUrlOrigin(new NativeURL(normalizedApiUrl));
     const raw = await requestWithRetry(
       `${normalizedApiUrl}${path}`,
       authToken,
@@ -486,7 +495,7 @@ export class VeryfrontRunsClient {
       },
       {
         authorizeUrl: (target) => {
-          if (target.origin !== apiOrigin) {
+          if (readUrlOrigin(target) !== apiOrigin) {
             throw new Error("Runs request blocked: destination origin is not authorized");
           }
         },

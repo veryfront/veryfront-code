@@ -47,4 +47,19 @@ describe("host API base", () => {
       else setEnv("VERYFRONT_API_URL", originalUrl);
     }
   });
+
+  it("preserves API URL precedence over API base URL", () => {
+    const originalBase = getEnv("VERYFRONT_API_BASE_URL");
+    const originalUrl = getEnv("VERYFRONT_API_URL");
+    try {
+      setEnv("VERYFRONT_API_URL", "https://preferred.example/graphql");
+      setEnv("VERYFRONT_API_BASE_URL", "https://fallback.example/api");
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://preferred.example/api");
+    } finally {
+      if (originalBase === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+      else setEnv("VERYFRONT_API_BASE_URL", originalBase);
+      if (originalUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+      else setEnv("VERYFRONT_API_URL", originalUrl);
+    }
+  });
 });

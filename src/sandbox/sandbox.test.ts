@@ -257,6 +257,7 @@ describe("Sandbox", () => {
       try {
         const sandbox = await Sandbox.create();
         assertEquals(sandbox.id, "session-host-transport");
+        assertEquals(Object.hasOwn(sandbox, "authToken"), false);
       } finally {
         deleteHostSecret("VERYFRONT_API_TOKEN");
       }
@@ -1158,6 +1159,15 @@ describe("Sandbox", () => {
   });
 
   describe("createLazy()", () => {
+    it("keeps ambient auth out of the public lazy sandbox object", () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      const sandbox = Sandbox.createLazy();
+
+      assertEquals(Object.hasOwn(sandbox, "authToken"), false);
+      assertEquals("authToken" in sandbox, false);
+    });
+
     it("waits long enough for pending sandbox sessions to survive operator reconcile lag", async () => {
       mockTimers({ advanceTimeByMs: true });
 
