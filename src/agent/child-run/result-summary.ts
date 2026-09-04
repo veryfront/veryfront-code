@@ -22,10 +22,13 @@ const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^first,? [^.?!]+[.?!]\s*/i,
 ];
 const MODEL_FIELD_PATTERN = /(?:^|[,{(\s])["']?model["']?\s*[:=]\s*["']([^"'`\s]+)["']/gim;
+const MODEL_FIELD_TAIL_PATTERN = /[,{(\s]["']?model["']?\s*[:=]\s*["']([^"'`\s]+)["']/gim;
 const MODEL_ID_PATTERN =
   /\b(?:veryfront-cloud\/)?(?:anthropic|openai|google|google-ai-studio|mistral|xai|deepseek|moonshot|moonshotai|cohere|perplexity|groq|azure)\/[A-Za-z0-9._:-]+\b/g;
 const TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s*\[/gim;
+const TOOL_IDS_FIELD_TAIL_PATTERN = /[,{(\s]["']?(tool_ids|tools)["']?\s*[:=]\s*\[/gim;
 const PROVIDER_TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[/gim;
+const PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN = /[,{(\s]["']?provider_tool_ids["']?\s*[:=]\s*\[/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const CONTRACT_FACT_SCALAR_PATTERN =
@@ -657,8 +660,16 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
       text.slice(text.length - (CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT - toolHeadLength)),
     ]
     : windows;
-  for (const boundedText of windows) {
-    addPatternMatches(modelIds, boundedText, MODEL_FIELD_PATTERN, 1);
+  // A tail window starts at a cut, not at the start of the child result, so it
+  // matches with patterns that drop the start-of-text alternative. A field at
+  // the start of a tail line still matches through its preceding newline.
+  for (let index = 0; index < windows.length; index++) {
+    addPatternMatches(
+      modelIds,
+      windows[index]!,
+      index === 0 ? MODEL_FIELD_PATTERN : MODEL_FIELD_TAIL_PATTERN,
+      1,
+    );
   }
   for (const boundedText of windows) {
     addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
@@ -667,12 +678,16 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
     addToolArrayFieldValues(
       toolIds,
       toolWindows[index]!,
-      TOOL_IDS_FIELD_PATTERN,
+      index === 0 ? TOOL_IDS_FIELD_PATTERN : TOOL_IDS_FIELD_TAIL_PATTERN,
       text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT && index === 0,
     );
   }
-  for (const boundedText of windows) {
-    addProviderToolArrayFieldValues(providerToolIds, boundedText, PROVIDER_TOOL_IDS_FIELD_PATTERN);
+  for (let index = 0; index < windows.length; index++) {
+    addProviderToolArrayFieldValues(
+      providerToolIds,
+      windows[index]!,
+      index === 0 ? PROVIDER_TOOL_IDS_FIELD_PATTERN : PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN,
+    );
   }
   for (const boundedText of windows) {
     addPatternMatches(toolIds, boundedText, INTEGRATION_TOOL_ID_PATTERN);

@@ -348,6 +348,24 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("does not treat a tail window cut as a tool field boundary", () => {
+      const opener = "tools:['bogus_tool']";
+      const text = `${"p".repeat(70_000)}z"${opener}${"y".repeat(96_000 - opener.length)}`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("does not treat a tail window cut as a model field boundary", () => {
+      const field = "model:'bogus/model'";
+      const text = `${"p".repeat(70_000)}z"${field}${"y".repeat(64_000 - field.length)}`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {
       const text = 'tools: [{"id":"first_tool"},{"id":"critical_tool","description":"' +
         "y ".repeat(70_000);
