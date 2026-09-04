@@ -363,16 +363,16 @@ export async function retainJsxArtifactsReferencedIn(
   esmCacheDir: string,
 ): Promise<() => void> {
   const artifactPaths: string[] = [];
-  const staticArtifactPaths: string[] = [];
+  const lazyArtifactPaths: string[] = [];
   for (const imported of await parseImports(code)) {
     const artifactPath = resolveOwnedJsxArtifactPath(imported.n, esmCacheDir);
     if (artifactPath === undefined) continue;
     artifactPaths.push(artifactPath);
-    if (imported.d > -1) retainLazyJsxArtifact(artifactPath);
-    else {
-      staticArtifactPaths.push(artifactPath);
-      retainJsxArtifact(artifactPath);
-    }
+    if (imported.d > -1) lazyArtifactPaths.push(artifactPath);
+    // Both static and lazy artifacts stay actively pinned until the parent
+    // import settles. Lazy retention starts only at release, when the parent
+    // module cache lifetime begins.
+    retainJsxArtifact(artifactPath);
   }
   if (artifactPaths.length === 0) return () => {};
 
@@ -393,7 +393,7 @@ export async function retainJsxArtifactsReferencedIn(
   try {
     await refreshAll();
   } catch (error) {
-    for (const artifactPath of staticArtifactPaths) releaseJsxArtifact(artifactPath);
+    for (const artifactPath of artifactPaths) releaseJsxArtifact(artifactPath);
     throw error;
   }
   const heartbeat = setInterval(
@@ -414,7 +414,8 @@ export async function retainJsxArtifactsReferencedIn(
       // immediately following prune pass.
       markJsxArtifactServed(artifactPath, nowMs);
     }
-    for (const artifactPath of staticArtifactPaths) releaseJsxArtifact(artifactPath);
+    for (const artifactPath of artifactPaths) releaseJsxArtifact(artifactPath);
+    for (const artifactPath of lazyArtifactPaths) retainLazyJsxArtifact(artifactPath);
   };
 }
 
