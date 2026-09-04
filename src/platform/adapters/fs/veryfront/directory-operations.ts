@@ -26,7 +26,9 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
         const ctx = this.contextProvider?.getContentContext();
-        const cacheKey = `${buildDirCacheKeyPrefix(ctx)}:${normalizedPath}`;
+        const scopeKey = buildDirCacheKeyPrefix(ctx);
+        const cacheKey = `${scopeKey}:${normalizedPath}`;
+        const generation = this.treeGeneration;
 
         const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
         if (cached) {
@@ -61,7 +63,12 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           });
         }
 
-        this.cache.set(cacheKey, entries);
+        const currentScopeKey = buildDirCacheKeyPrefix(
+          this.contextProvider?.getContentContext(),
+        );
+        if (generation === this.treeGeneration && currentScopeKey === scopeKey) {
+          this.cache.set(cacheKey, entries);
+        }
 
         logger.debug("Listed directory", {
           path: normalizedPath,

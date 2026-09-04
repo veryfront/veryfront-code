@@ -67,6 +67,20 @@ export class StatOperations extends VeryfrontOperationsBase {
     cooldownMs: API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS,
   });
 
+  private cacheResolutionIfCurrent(
+    cacheKey: string,
+    value: string,
+    generation: number,
+    scopeKey: string,
+  ): void {
+    const currentScopeKey = buildStatCacheKeyPrefix(
+      this.contextProvider?.getContentContext(),
+    );
+    if (generation === this.indexGeneration && currentScopeKey === scopeKey) {
+      this.cache.set(cacheKey, value);
+    }
+  }
+
   stat(path: string): Promise<FileInfo> {
     return withSpan("fs.veryfront.stat", () => this.statWithoutSpan(path), { "fs.path": path });
   }
@@ -588,7 +602,9 @@ export class StatOperations extends VeryfrontOperationsBase {
     const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
-    const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:resolve:${normalizedPath}`;
+    const scopeKey = buildStatCacheKeyPrefix(ctx);
+    const cacheKey = `${scopeKey}:resolve:${normalizedPath}`;
+    const generation = this.indexGeneration;
 
     logger.debug("resolveFile called", {
       basePath,
@@ -616,12 +632,12 @@ export class StatOperations extends VeryfrontOperationsBase {
     if (!hasCachedFileList) {
       const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, ctx);
       if (typeof apiResolved === "string") {
-        this.cache.set(cacheKey, apiResolved);
+        this.cacheResolutionIfCurrent(cacheKey, apiResolved, generation, scopeKey);
         return apiResolved;
       }
 
       if (apiResolved === null) {
-        this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+        this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
         return null;
       }
     }
@@ -652,7 +668,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         normalizedPath,
         indexMs,
       });
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
       return null;
     }
 
@@ -661,7 +677,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         normalizedPath,
         indexMs,
       });
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
       return null;
     }
 
@@ -680,11 +696,11 @@ export class StatOperations extends VeryfrontOperationsBase {
       "wildcard",
     );
     if (typeof apiResolved === "string") {
-      this.cache.set(cacheKey, apiResolved);
+      this.cacheResolutionIfCurrent(cacheKey, apiResolved, generation, scopeKey);
       return apiResolved;
     }
     if (apiResolved === null) {
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
     }
     return null;
   }

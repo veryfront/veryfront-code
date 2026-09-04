@@ -7,6 +7,7 @@ import { FileCache } from "../cache/file-cache.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
+import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
 
 function createMockClient(overrides: Record<string, unknown> = {}): VeryfrontApiClient {
   return {
@@ -568,6 +569,38 @@ describe("StatOperations", () => {
 
       assertEquals(await pending, "pages/about.tsx");
       assertEquals(searchedBranches, ["main"]);
+    });
+
+    it("does not publish a negative resolution after its generation is cleared", async () => {
+      const lookup = Promise.withResolvers<boolean>();
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch",
+          projectSlug: "test",
+          branch: "main",
+        }),
+        hasCachedFileList: () => lookup.promise,
+        isPersistentCacheInvalidated: () => false,
+      };
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const statOps = new StatOperations(
+        createMockClient(),
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+      );
+      const pending = statOps.resolveFile("pages/missing");
+      await Promise.resolve();
+      statOps.clearIndex();
+      lookup.resolve(false);
+
+      assertEquals(await pending, null);
+      const cacheKey = `${
+        buildStatCacheKeyPrefix(contextProvider.getContentContext())
+      }:resolve:pages/missing`;
+      assertEquals(await cache.getAsync(cacheKey), undefined);
     });
 
     it("should retry pages-prefixed API patterns after an incomplete index miss", async () => {

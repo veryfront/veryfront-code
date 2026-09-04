@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileCache } from "../cache/file-cache.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildDirCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 
@@ -163,6 +163,35 @@ describe("DirectoryOperations", () => {
         ["added.tsx", "index.tsx"],
         "clearing the cache must let the new listing through",
       );
+    });
+
+    it("does not publish a directory cache entry after its generation is cleared", async () => {
+      const listing = Promise.withResolvers<Array<{ path: string }>>();
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const contextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => null,
+        getFileList: () => listing.promise,
+      };
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => Promise.resolve([]),
+          listPublishedFiles: () => Promise.resolve([]),
+        } as any,
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+      );
+
+      const pending = dirOps.readdir("");
+      await Promise.resolve();
+      dirOps.clearTree();
+      listing.resolve([{ path: "stale.ts" }]);
+
+      assertEquals((await pending).map((entry) => entry.name), ["stale.ts"]);
+      assertEquals(cache.get(`${buildDirCacheKeyPrefix(null)}:`), undefined);
     });
 
     it("should clear tree on clearTree call", async () => {

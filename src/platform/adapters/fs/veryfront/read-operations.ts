@@ -23,6 +23,7 @@ import type { ResolvedContentContext } from "./types.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { toClientContext } from "./adapter-content-context.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 export {
   endRequestMetrics,
@@ -44,6 +45,8 @@ export class ReadOperations {
     cleanupIntervalMs: IN_FLIGHT_CLEANUP_INTERVAL_MS,
   });
   private readonly fileListIndex: FileListIndex;
+  private readonly inFlightAuthorityScopes = new Map<string, number>();
+  private nextInFlightAuthorityScope = 1;
   /** Caches extensionless base paths → resolved full paths to avoid repeated API resolution calls */
   private readonly extensionResolutionCache = new Map<string, string>();
   private requestBranchScope: string | null | undefined;
@@ -81,6 +84,21 @@ export class ReadOperations {
   clearFileListIndex(): void {
     this.fileListIndex.clear();
     this.extensionResolutionCache.clear();
+  }
+
+  private getInFlightKey(cacheKey: string): string {
+    const token = currentRequestContext()?.token;
+    if (!token) return `${cacheKey}:authority:adapter`;
+    let scope = this.inFlightAuthorityScopes.get(token);
+    if (scope === undefined) {
+      if (this.inFlightAuthorityScopes.size >= MAX_IN_FLIGHT_REQUESTS) {
+        const oldest = this.inFlightAuthorityScopes.keys().next().value;
+        if (oldest !== undefined) this.inFlightAuthorityScopes.delete(oldest);
+      }
+      scope = this.nextInFlightAuthorityScope++;
+      this.inFlightAuthorityScopes.set(token, scope);
+    }
+    return `${cacheKey}:authority:${scope}`;
   }
 
   private syncRequestBranchScope(): string | null | undefined {
@@ -357,7 +375,8 @@ export class ReadOperations {
       logger.warn("Cleaned up in-flight requests", cleanupResult);
     }
 
-    const existingEntry = this.inFlightRequests.get(cacheKey);
+    const inFlightKey = this.getInFlightKey(cacheKey);
+    const existingEntry = this.inFlightRequests.get(inFlightKey);
     if (existingEntry) {
       logger.debug("Deduplicating request - joining existing fetch", {
         path: normalizedPath,
@@ -426,11 +445,11 @@ export class ReadOperations {
 
         return result;
       } finally {
-        this.inFlightRequests.delete(cacheKey);
+        this.inFlightRequests.delete(inFlightKey);
       }
     })();
 
-    this.inFlightRequests.set(cacheKey, fetchPromise, Date.now());
+    this.inFlightRequests.set(inFlightKey, fetchPromise, Date.now());
     return fetchPromise;
   }
 

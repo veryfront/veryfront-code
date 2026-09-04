@@ -1019,6 +1019,33 @@ describe("ReadOperations", () => {
   });
 
   describe("readOptionalTextFile", () => {
+    it("does not deduplicate optional reads across request credentials", async () => {
+      const firstFetch = Promise.withResolvers<string>();
+      let fetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fetchCount++;
+          return fetchCount === 1 ? firstFetch.promise : Promise.resolve("token-b content");
+        },
+      });
+      const readOps = createReadyReadOps(client, false, createBranchContext());
+
+      const first = runWithRequestContext(
+        { projectSlug: "test", token: "token-a", productionMode: false },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      await Promise.resolve();
+      const second = runWithRequestContext(
+        { projectSlug: "test", token: "token-b", productionMode: false },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      await Promise.resolve();
+      firstFetch.resolve("token-a content");
+
+      assertEquals(await Promise.all([first, second]), ["token-a content", "token-b content"]);
+      assertEquals(fetchCount, 2);
+    });
+
     it("should share request cache entries only between exact optional reads", async () => {
       let fetchCount = 0;
       const client = createMockClient({
