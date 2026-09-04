@@ -1,22 +1,42 @@
-import type { Message } from "../types.ts";
+import type { Message } from "#veryfront/agent/types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
 
+const syntheticMessageIds = new WeakSet<object>();
+const syntheticMessageTimestamps = new WeakSet<object>();
+
+/** Whether normalization supplied this message id from the wall clock. */
+export function hasSyntheticMessageId(message: object): boolean {
+  return syntheticMessageIds.has(message);
+}
+
+/** Whether normalization supplied this message timestamp from the wall clock. */
+export function hasSyntheticMessageTimestamp(message: object): boolean {
+  return syntheticMessageTimestamps.has(message);
+}
+
+/** Preserve synthesized-field provenance when middleware clones a message. */
+export function propagateSyntheticMessageMarks(source: object, target: object): void {
+  if (syntheticMessageIds.has(source)) syntheticMessageIds.add(target);
+  if (syntheticMessageTimestamps.has(source)) syntheticMessageTimestamps.add(target);
+}
+
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
 
   if (typeof input === "string") {
-    return [
-      {
-        id: `msg_${now}`,
-        role: "user",
-        parts: [{ type: "text", text: input }],
-        timestamp: now,
-      },
-    ];
+    const message: Message = {
+      id: `msg_${now}`,
+      role: "user",
+      parts: [{ type: "text", text: input }],
+      timestamp: now,
+    };
+    syntheticMessageIds.add(message);
+    syntheticMessageTimestamps.add(message);
+    return [message];
   }
 
   return input.map((msg, index) => {
@@ -29,6 +49,10 @@ export function normalizeInput(input: string | Message[]): Message[] {
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
+    if (msg.id == null || syntheticMessageIds.has(msg)) syntheticMessageIds.add(normalized);
+    if (msg.timestamp == null || syntheticMessageTimestamps.has(msg)) {
+      syntheticMessageTimestamps.add(normalized);
+    }
     return isRuntimeGeneratedUserMessage(msg)
       ? markRuntimeGeneratedUserMessage(normalized)
       : normalized;

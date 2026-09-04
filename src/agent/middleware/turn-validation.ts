@@ -6,8 +6,8 @@
  * replace the array or mutate a message in place, and conversation memory can
  * contribute earlier messages that the provider merges with this turn's. Both
  * are visible only to the runtime, so a middleware that needs to inspect the
- * committed shape registers a hook here and the runtime invokes it before the
- * turn is committed.
+ * committed shape registers a hook here. The runtime invokes it before the
+ * turn is committed and again before dispatch when memory rewrites the shape.
  *
  * The hooks live in this middleware-agnostic module rather than in any one
  * middleware so the runtime depends on the contract, not on an implementation:
@@ -16,7 +16,7 @@
  * @module agent/middleware/turn-validation
  */
 
-import type { AgentContext, Message } from "../types.ts";
+import type { AgentContext, Message } from "#veryfront/agent/types.ts";
 
 /**
  * Validate the resolved post-middleware input for one turn.
@@ -29,9 +29,9 @@ export type TurnInputValidator = (messages: Message[]) => Promise<void>;
  * Validate the full provider-bound conversation assembled for one turn.
  *
  * Receives the persisted history and this turn's resolved input separately, so
- * a hook can tell which messages the turn is actually adding. History it cannot
- * rewrite is already committed, so rejecting a turn over history alone would
- * reject every later turn too.
+ * a hook can tell which messages the turn is actually adding. When memory
+ * rewrites the transcript during persistence, the runtime passes the complete
+ * provider-bound transcript as `turnInput` with empty `history`.
  */
 export type TurnMessageValidator = (history: Message[], turnInput: Message[]) => Promise<void>;
 

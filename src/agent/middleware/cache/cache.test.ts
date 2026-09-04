@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { AgentContext, AgentResponse } from "../../types.ts";
+import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/types.ts";
+import { normalizeInput } from "#veryfront/agent/runtime/input-utils.ts";
 import { cacheMiddleware, createCache } from "./cache.ts";
 
 function createResponse(text: string): AgentResponse {
@@ -35,6 +36,55 @@ describe("cacheMiddleware", () => {
     assertEquals(third.text, "response-2");
     assertEquals(executions, 2);
 
+    middleware.destroy();
+  });
+
+  it("hits for identical messages despite synthesized ids and timestamps", async () => {
+    const middleware = cacheMiddleware({ strategy: "memory" });
+    let executions = 0;
+    const next = async (): Promise<AgentResponse> => createResponse(`response-${++executions}`);
+    const contextAt = (stamp: number, text: string): AgentContext => {
+      const originalNow = Date.now;
+      Date.now = () => stamp;
+      try {
+        return {
+          agentId: "agent",
+          input: normalizeInput([
+            { role: "user", parts: [{ type: "text", text }] },
+          ] as unknown as Message[]),
+          platform: {},
+        };
+      } finally {
+        Date.now = originalNow;
+      }
+    };
+
+    assertEquals((await middleware(contextAt(1_000, "hello"), next)).text, "response-1");
+    assertEquals((await middleware(contextAt(2_000, "hello"), next)).text, "response-1");
+    assertEquals((await middleware(contextAt(3_000, "different"), next)).text, "response-2");
+    assertEquals(executions, 2);
+    middleware.destroy();
+  });
+
+  it("keeps caller-supplied message identity in the cache key", async () => {
+    const middleware = cacheMiddleware({ strategy: "memory" });
+    let executions = 0;
+    const next = async (): Promise<AgentResponse> => createResponse(`response-${++executions}`);
+    const contextWithId = (id: string): AgentContext => ({
+      agentId: "agent",
+      input: normalizeInput([{
+        id,
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+        timestamp: 1_000,
+      }]),
+      platform: {},
+    });
+
+    assertEquals((await middleware(contextWithId("caller-1"), next)).text, "response-1");
+    assertEquals((await middleware(contextWithId("caller-2"), next)).text, "response-2");
+    assertEquals((await middleware(contextWithId("caller-1"), next)).text, "response-1");
+    assertEquals(executions, 2);
     middleware.destroy();
   });
 });

@@ -62,7 +62,10 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { getTurnInputValidator, getTurnMessageValidator } from "../middleware/turn-validation.ts";
+import {
+  getTurnInputValidator,
+  getTurnMessageValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -1419,25 +1422,25 @@ export class AgentRuntime {
     if (validateTurnInput) await validateTurnInput(inputMessages);
 
     const validateTurnMessages = context && getTurnMessageValidator(context);
+    let validated = inputMessages;
     if (validateTurnMessages) {
       const history = await this.memory.getMessages();
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
-      if (history.length > 0) await validateTurnMessages(history, inputMessages);
+      if (history.length > 0) {
+        validated = [...history, ...inputMessages];
+        await validateTurnMessages(history, inputMessages);
+      }
     }
-    // Validation deliberately stops at the pre-write assembly. A memory
-    // implementation that rewrites the transcript while persisting (summary
-    // compaction folds old turns into a synthesized leading system message)
-    // could assemble a merge this pass never saw, but a post-write rejection
-    // cannot be rolled back through the Memory interface: every later turn
-    // would re-read the same transcript and be rejected, leaving the
-    // conversation permanently unusable with no operator-visible cause.
-    // Closing that gap needs a Memory-level remedy (rollback, or validation
-    // inside compaction), not a check here that fails closed forever. For the
-    // same reason the hook only judges merges this turn contributes to, so a
-    // transcript it cannot rewrite never bricks the conversation either.
     for (const msg of inputMessages) await this.memory.add(msg);
     const persisted = await this.memory.getMessages();
+    if (
+      validateTurnMessages && persisted.length > 0 &&
+      !(persisted.length === validated.length &&
+        persisted.every((message, index) => message === validated[index]))
+    ) {
+      await validateTurnMessages([], persisted);
+    }
     return persisted.length > 0 ? persisted : inputMessages;
   }
 

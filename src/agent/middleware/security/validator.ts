@@ -1,8 +1,12 @@
-import type { AgentContext, AgentResponse, Message } from "../../types.ts";
+import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/types.ts";
 import { createError, toError } from "#veryfront/errors";
-import { getOutputSchemaParser } from "../../output-schema.ts";
-import { hasProviderSendableAssistantContent } from "../../runtime/text-generation-runtime-message-converter.ts";
-import { registerTurnInputValidator, registerTurnMessageValidator } from "../turn-validation.ts";
+import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
+import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
+import { hasProviderSendableAssistantContent } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import {
+  registerTurnInputValidator,
+  registerTurnMessageValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -469,8 +473,10 @@ function extractMessageAssembledTexts(message: Message): string[] {
  * `hasProviderSendableAssistantContent` predicate is reused rather than
  * reimplemented so the two cannot drift apart.
  *
- * Messages of other roles end the run. For *system* runs that stays true even
- * for a message the converter would drop, because the hoisted run in
+ * A system message is transparent to a user run because Anthropic hoists it
+ * out of the message list before merging adjacent user blocks. Messages of
+ * other roles end the run. For *system* runs that stays true even for a
+ * message the converter would drop, because the hoisted run in
  * `extractMergedSystemRuns` already assembles every system message in the
  * conversation, so any pair a dropped message sits between is covered there.
  */
@@ -488,6 +494,7 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
   for (const message of messages) {
     if (message.role !== role) {
       if (role === "user" && message.role === "tool") continue;
+      if (role === "user" && message.role === "system") continue;
       if (role === "user" && !hasProviderSendableAssistantContent(message)) continue;
       flushRun();
       continue;
@@ -683,7 +690,9 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
 
     if (!messageChanged) return message;
     changed = true;
-    return { ...message, parts };
+    const rewritten = { ...message, parts };
+    propagateSyntheticMessageMarks(message, rewritten);
+    return rewritten;
   });
 
   return changed ? sanitizedMessages : messages;
@@ -713,8 +722,9 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
  * the turns they followed. Sanitization already rewrites caller text by
  * definition, and this only happens for input a rewrite was required for
  * (`sanitize: true`), so correctness is preserved at the cost of position.
- * Adjacent user runs are contiguous by construction, so collapsing one does
- * not move text past any other turn.
+ * A user run can span system messages that Anthropic hoists, so sanitizing a
+ * harmful run can move later user text ahead of those instructions. This only
+ * occurs for caller text that already required a security rewrite.
  */
 function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Message[] {
   const rewrites = new Map<Message, Message["parts"]>();
@@ -750,7 +760,10 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
   if (rewrites.size === 0) return messages;
   return messages.map((message) => {
     const parts = rewrites.get(message);
-    return parts === undefined ? message : { ...message, parts };
+    if (parts === undefined) return message;
+    const rewritten = { ...message, parts };
+    propagateSyntheticMessageMarks(message, rewritten);
+    return rewritten;
   });
 }
 

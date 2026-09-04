@@ -4,7 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   accumulateUsage,
   getMaxSteps,
+  hasSyntheticMessageId,
+  hasSyntheticMessageTimestamp,
   normalizeInput,
+  propagateSyntheticMessageMarks,
   resolveValidatedTurnInput,
 } from "./input-utils.ts";
 
@@ -108,6 +111,23 @@ describe("input-utils", () => {
       assertExists(message.timestamp);
       assertEquals(typeof message.timestamp, "number");
       assertEquals(message.timestamp > 0, true);
+    });
+
+    it("marks synthesized fields across normalization and middleware copies", () => {
+      const [message] = normalizeInput("hello");
+      assertExists(message);
+      assertEquals(hasSyntheticMessageId(message), true);
+      assertEquals(hasSyntheticMessageTimestamp(message), true);
+
+      const copy = { ...message, parts: [...message.parts] };
+      propagateSyntheticMessageMarks(message, copy);
+      assertEquals(hasSyntheticMessageId(copy), true);
+      assertEquals(hasSyntheticMessageTimestamp(copy), true);
+
+      const [renormalized] = normalizeInput([copy]);
+      assertExists(renormalized);
+      assertEquals(hasSyntheticMessageId(renormalized), true);
+      assertEquals(hasSyntheticMessageTimestamp(renormalized), true);
     });
   });
 
