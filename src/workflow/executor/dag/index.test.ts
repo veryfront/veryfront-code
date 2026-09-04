@@ -1377,6 +1377,39 @@ describe("DAGExecutor", () => {
       assertEquals(result.context.repeat_loop_state, undefined);
     });
 
+    it("does not delete a pre-existing user value when no loop state was written", async () => {
+      let observed: unknown;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (_node, context) => {
+          observed = context.repeat_loop_state;
+          return { success: true, output: "done", executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        loop("producer", {
+          maxIterations: 1,
+          while: () => false,
+          steps: [],
+          onComplete: () => ({ repeat_loop_state: null }),
+        }),
+        {
+          ...loop("repeat", {
+            maxIterations: 1,
+            while: () => false,
+            steps: () => [],
+          }),
+          dependsOn: ["producer"],
+        },
+        { id: "after", dependsOn: ["repeat"], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(observed, null);
+      assertEquals(result.context.repeat_loop_state, null);
+    });
+
     it("does not re-execute a step declared before the loop", async () => {
       const executed: string[] = [];
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {

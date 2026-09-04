@@ -35,6 +35,10 @@ interface ExecuteLoopNodeStrategyInput {
   abortSignal?: AbortSignal;
 }
 
+const ArrayIsArray = Array.isArray;
+const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectHasOwn = Object.hasOwn;
+
 /**
  * A `NodeState` in the shape that survives the context's JSON round trip.
  *
@@ -60,6 +64,13 @@ interface PersistedLoopState {
   previousResults: unknown[];
   iterationNodeStates?: Record<string, PersistedNodeState>;
   completedNodeIds?: string[];
+}
+
+function isPersistedLoopState(value: unknown): value is PersistedLoopState {
+  return typeof value === "object" && value !== null &&
+    NumberIsSafeInteger((value as { iteration?: unknown }).iteration) &&
+    ((value as { iteration: number }).iteration >= 0) &&
+    ArrayIsArray((value as { previousResults?: unknown }).previousResults);
 }
 
 /**
@@ -146,7 +157,10 @@ export async function executeLoopNodeStrategy(
   // "maxIterations" below.
   let exitedViaCondition = false;
 
-  const existingLoopState = context[loopStateKey] as PersistedLoopState | undefined;
+  const existingLoopStateValue = context[loopStateKey];
+  const existingLoopState = isPersistedLoopState(existingLoopStateValue)
+    ? existingLoopStateValue
+    : undefined;
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).
@@ -373,8 +387,8 @@ export async function executeLoopNodeStrategy(
     ...completionUpdates,
   });
   if (
-    typeof config.steps === "function" &&
-    !Object.hasOwn(completionUpdates, loopStateKey)
+    typeof config.steps === "function" && existingLoopState !== undefined &&
+    !ObjectHasOwn(completionUpdates, loopStateKey)
   ) {
     contextPatch.delete.push(loopStateKey);
   }
