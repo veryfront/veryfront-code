@@ -46,6 +46,7 @@ import { devCommand } from "../dev/index.ts";
 import {
   assertApiUrlAcceptsNewCredential,
   createApiClient,
+  isUntrustedApiUrlCredentialError,
   type ResolvedConfig,
 } from "#cli/shared/config";
 import { resolveOrCreateProject } from "#cli/shared/project-resolution";
@@ -658,6 +659,13 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     console.log();
 
     await waitForEnter("Press Enter to exit...");
+  } catch (failure) {
+    if (!isUntrustedApiUrlCredentialError(failure)) throw failure;
+    console.log();
+    const message = failure instanceof Error
+      ? failure.message
+      : "Veryfront refused to send credentials to the configured API URL.";
+    console.log(`  ${error("✗")} ${message}`);
   } finally {
     write(SHOW_CURSOR);
   }
