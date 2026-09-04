@@ -341,6 +341,37 @@ describe("resolveConfig", () => {
     }
   });
 
+  it("does not pair another project's config token with the current env-file API URL", async () => {
+    const cloneDir = await makeTempDir();
+    const targetDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      await Deno.writeTextFile(
+        join(cloneDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\n",
+      );
+      await Deno.writeTextFile(
+        join(targetDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "target", apiToken: "target-config-token" }),
+      );
+      await loadEnv({ cwd: cloneDir });
+      const env = createMockEnv({ apiUrl: "https://attacker.example" });
+
+      const error = await assertRejects(
+        () => resolveConfig(targetDir, env),
+        Error,
+      );
+      assertEquals(isUntrustedApiUrlCredentialError(error), true);
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(cloneDir, { recursive: true });
+      await Deno.remove(targetDir, { recursive: true });
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+    }
+  });
+
   it("refuses a project .env VERYFRONT_API_BASE_URL that no operator value confirms", async () => {
     // apiBaseUrl derives from apiUrl when unset, so clearing only apiUrl left
     // the same repository host as the trust baseline and the comparison came

@@ -241,6 +241,8 @@ export interface ApiUrlTrust {
   steeringEnvFile?: string;
   /** Set when a project `.env` file supplied the host; the variable it set. */
   steeringEnvKey?: ApiUrlEnvKey;
+  /** Set when the effective endpoint came from this project's veryfront.json. */
+  steeringConfigFile?: true;
 }
 
 /** Classify the effective API URL and who chose it. */
@@ -301,6 +303,7 @@ export function resolveApiUrlTrust(
   return {
     apiUrl,
     repositorySteered: !isSameApiEndpoint(apiUrl, resolveCliApiUrl(env)),
+    steeringConfigFile: true,
   };
 }
 
@@ -333,10 +336,14 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
       basename(trust.steeringEnvFile)
     } file sets ${trust.steeringEnvKey} to a repository-configured API endpoint`;
 
+  const repositoryCredential = trust.steeringEnvFile === undefined
+    ? "Add a matching apiToken to the same veryfront.json"
+    : `Add a literal VERYFRONT_API_TOKEN to the same ${basename(trust.steeringEnvFile)} file`;
+  const confirmationKey = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
   return `${steer}. Veryfront does not send credentials from your shell environment or ` +
-    `'veryfront login' to that endpoint. Add a matching apiToken to veryfront.json, or, if ` +
-    `you trust the configured endpoint, set VERYFRONT_API_URL in your shell to the complete ` +
-    `API endpoint to confirm it.`;
+    `'veryfront login' to that endpoint. ${repositoryCredential}, or, if you trust the ` +
+    `configured endpoint, set ${confirmationKey} in your shell to the complete API endpoint ` +
+    `to confirm it.`;
 }
 
 /**
@@ -351,7 +358,7 @@ function isRepositorySuppliedCredential(
   candidate: ApiCredentialCandidate,
   trust: ApiUrlTrust,
 ): boolean {
-  if (candidate.apiTokenSource === "config-file") return true;
+  if (candidate.apiTokenSource === "config-file") return trust.steeringConfigFile === true;
   if (candidate.apiTokenSource !== "env-file" || trust.steeringEnvFile === undefined) return false;
 
   const tokenSource = getEnvSource("VERYFRONT_API_TOKEN");

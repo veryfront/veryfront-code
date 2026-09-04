@@ -5,6 +5,8 @@ import { readProjectLink } from "./project-link.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
+  /** Prequalified credential, or null to suppress ambient stored-login fallback. */
+  apiToken?: string | null;
 }
 
 export interface RuntimeAuthContext {
@@ -34,9 +36,10 @@ export async function resolveLinkedProjectSlug(
 export async function resolveRuntimeAuthContext(
   options: RuntimeAuthOptions,
 ): Promise<RuntimeAuthContext> {
-  const envToken = normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN"));
-  const storedToken = envToken ? undefined : normalizeEnvValue(await readToken() ?? undefined);
-  const apiToken = envToken ?? storedToken;
+  const apiToken = options.apiToken === undefined
+    ? normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN")) ??
+      normalizeEnvValue(await readToken() ?? undefined)
+    : normalizeEnvValue(options.apiToken ?? undefined);
 
   const envProjectSlug = normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG"));
   const projectSlug = envProjectSlug ?? normalizeEnvValue(options.linkedProjectSlug);

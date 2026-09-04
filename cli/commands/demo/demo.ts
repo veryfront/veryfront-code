@@ -561,6 +561,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   }
 
   write(HIDE_CURSOR);
+  let failed = false;
 
   try {
     write(CLEAR_SCREEN + MOVE_HOME);
@@ -661,6 +662,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     await waitForEnter("Press Enter to exit...");
   } catch (failure) {
     if (!isUntrustedApiUrlCredentialError(failure)) throw failure;
+    failed = true;
     console.log();
     const message = failure instanceof Error
       ? failure.message
@@ -670,5 +672,5 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     write(SHOW_CURSOR);
   }
 
-  exitProcess(0);
+  exitProcess(failed ? 1 : 0);
 }

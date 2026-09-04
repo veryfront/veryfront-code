@@ -47,11 +47,13 @@ async function apiRequest<T>(
     ? candidates.find((entry) => entry.apiToken === options.token)
     : candidates[0];
   if (!candidate) {
-    if (resolveApiUrlTrust(requestEnv, null).repositorySteered) {
+    const trust = resolveApiUrlTrust(requestEnv, null);
+    if (trust.repositorySteered) {
       return {
         ok: false,
-        error:
-          "The project configures an untrusted API endpoint. Set VERYFRONT_API_URL or VERYFRONT_API_BASE_URL in your shell to confirm the endpoint before using remote file tools.",
+        error: `The project configures an untrusted API endpoint. Set ${
+          trust.steeringEnvKey ?? "VERYFRONT_API_BASE_URL"
+        } in your shell to confirm the endpoint before using remote file tools.`,
         status: 403,
       };
     }

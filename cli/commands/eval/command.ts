@@ -5,7 +5,7 @@
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { Agent, AgentResponse } from "veryfront/agent";
-import type { VeryfrontConfig } from "veryfront/config";
+import { getEnvironmentConfig, type VeryfrontConfig } from "veryfront/config";
 import {
   isErroredToolExecutionResult,
   type Tool,
@@ -42,6 +42,12 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import {
+  assertApiUrlAcceptsNewCredential,
+  readConfigFile,
+  resolveApiCredentialCandidatesForAuth,
+  resolveApiUrlTrust,
+} from "#cli/shared/config";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
 import {
@@ -591,7 +597,14 @@ export async function hydrateEvalRuntimeAuth(
   projectDir: string,
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
+  const env = getEnvironmentConfig();
+  const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir, false);
+  const candidate = candidates[0];
+  if (!candidate && resolveApiUrlTrust(env, await readConfigFile(projectDir)).repositorySteered) {
+    await assertApiUrlAcceptsNewCredential(env, projectDir);
+  }
   return await applyRuntimeAuthContext({
+    apiToken: candidate?.apiToken ?? null,
     linkedProjectSlug: await resolveLinkedProjectSlug(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
