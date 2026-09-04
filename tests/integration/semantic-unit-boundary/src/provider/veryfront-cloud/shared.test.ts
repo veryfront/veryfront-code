@@ -96,4 +96,35 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
       );
     },
   );
+
+  it(
+    "is not fooled by a poisoned Set.prototype.has into treating every origin as host-allowed",
+    async () => {
+      const privateAddress = "10.42.0.5";
+      const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider", INTERNAL_API_BASE_URL);
+      const originalSetHas = Set.prototype.has;
+      // deno-lint-ignore no-explicit-any
+      (Set.prototype as any).has = () => true;
+      try {
+        await withEnv(
+          { [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "" },
+          () =>
+            assertRejects(
+              () =>
+                __runWithOutboundFetchTransportForTests(
+                  {
+                    fetch: () => Promise.resolve(new Response(null, { status: 204 })),
+                    pinnedFetch: () => Promise.resolve(new Response(null, { status: 204 })),
+                    resolveHost: () => Promise.resolve([privateAddress]),
+                  },
+                  () => wrappedFetch(`${INTERNAL_API_BASE_URL}/chat/completions`),
+                ),
+              OutboundRequestBlockedError,
+            ),
+        );
+      } finally {
+        Set.prototype.has = originalSetHas;
+      }
+    },
+  );
 });

@@ -83,7 +83,15 @@ const URLUsernameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "use
 const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
 const URLOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
+const URLSearchGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")?.get;
+const URLHashGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeTrim = String.prototype.trim;
+const NativeSet = Set;
+const SetPrototypeAdd = NativeSet.prototype.add;
+const SetPrototypeHas = NativeSet.prototype.has;
 
 function readNativeURLString<T>(target: T, getter: ((this: T) => string) | undefined): string {
   if (!getter) {
@@ -191,41 +199,51 @@ async function fetchWithHostTransport(
   });
 }
 
+// Routed entirely through intrinsics captured at module load, so tenant code sharing this
+// realm cannot poison the allowlist by replacing String/Set/URL prototype methods.
 function parseAllowedInternalProviderOrigins(value: string | undefined): ReadonlySet<string> {
-  if (!value?.trim()) return new Set();
+  if (typeof value !== "string") return new NativeSet<string>();
+  const trimmedValue = IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+  if (!trimmedValue) return new NativeSet<string>();
 
-  const origins = new Set<string>();
-  for (const entry of value.split(",")) {
+  const origins = new NativeSet<string>();
+  const entries = IntrinsicReflectApply(StringPrototypeSplit, value, [","]) as string[];
+  for (const entry of entries) {
+    const trimmedEntry = IntrinsicReflectApply(StringPrototypeTrim, entry, []) as string;
     let url: URL;
     try {
-      url = new URL(entry.trim());
+      url = new NativeURL(trimmedEntry);
     } catch {
       throw new TypeError(
         `${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} must contain comma-separated HTTP origins`,
       );
     }
     if (
-      (url.protocol !== "http:" && url.protocol !== "https:") ||
-      url.username.length > 0 ||
-      url.password.length > 0 ||
-      url.pathname !== "/" ||
-      url.search.length > 0 ||
-      url.hash.length > 0
+      (readNativeURLString(url, URLProtocolGet) !== "http:" &&
+        readNativeURLString(url, URLProtocolGet) !== "https:") ||
+      readNativeURLString(url, URLUsernameGet).length > 0 ||
+      readNativeURLString(url, URLPasswordGet).length > 0 ||
+      readNativeURLString(url, URLPathnameGet) !== "/" ||
+      readNativeURLString(url, URLSearchGet).length > 0 ||
+      readNativeURLString(url, URLHashGet).length > 0
     ) {
       throw new TypeError(
         `${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} entries must be HTTP origins without paths, credentials, query strings, or fragments`,
       );
     }
-    origins.add(url.origin);
+    IntrinsicReflectApply(SetPrototypeAdd, origins, [readNativeURLString(url, URLOriginGet)]);
   }
   return origins;
 }
 
 /** Whether `base.origin` is on the host-owned internal-provider allowlist ({@link HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}). */
 export function isHostAllowedInternalProviderOrigin(base: URL): boolean {
-  return parseAllowedInternalProviderOrigins(
+  const allowedOrigins = parseAllowedInternalProviderOrigins(
     getHostEnv(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
-  ).has(readNativeURLString(base, URLOriginGet));
+  );
+  return IntrinsicReflectApply(SetPrototypeHas, allowedOrigins, [
+    readNativeURLString(base, URLOriginGet),
+  ]) as boolean;
 }
 
 function snapshotOutboundFetchTransport(
