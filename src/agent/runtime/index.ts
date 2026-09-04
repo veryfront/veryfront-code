@@ -1449,8 +1449,10 @@ export class AgentRuntime {
         ? markRuntimeGeneratedUserMessage(cloned)
         : cloned;
     });
-    if (validateTurnMessages && history.length > 0) {
-      validated = [...history, ...committedInputMessages];
+    if (validateTurnMessages) {
+      validated = history.length > 0
+        ? [...history, ...committedInputMessages]
+        : committedInputMessages;
     }
     let persisted: Message[];
     try {
@@ -1919,7 +1921,7 @@ export class AgentRuntime {
             const response = await inFlight;
             if (!turnPersistence.persisted) await turnPersistence.persist();
             throwIfAborted(streamAbortSignal);
-            if (response.text.length > 0 && response.text !== streamedResponseText) {
+            if (response.text.length > 0 && streamedResponseText.length === 0) {
               sendSSE(controller, encoder, { type: "text-start", id: textPartId });
               sendSSE(controller, encoder, {
                 type: "text-delta",
