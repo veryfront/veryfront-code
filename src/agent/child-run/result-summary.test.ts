@@ -357,6 +357,15 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["first_tool", "critical_tool"] });
     });
 
+    it("recovers a trailing tool ID when its declaration crosses the tail window", () => {
+      const text = "p".repeat(70_000) + "\n" +
+        'tools: [{"description":"' + "x".repeat(70_000) + '","id":"critical_tool"}]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
     it("prioritizes declared tool arrays across windows over integration matches", () => {
       const integrations = Array.from(
         { length: 50 },
