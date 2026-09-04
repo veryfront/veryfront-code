@@ -423,6 +423,48 @@ function scanNestedArrayOrObjectEnd(
   return parseCompleteArrayValue(fieldBody, start, index, fieldBody[start]).ok ? index : null;
 }
 
+function isValidIncompleteArrayPrefix(fieldBody: string): boolean {
+  let index = 0;
+  while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+  if (fieldBody[index] !== "[") return false;
+  index += 1;
+  while (index < fieldBody.length) {
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (index >= fieldBody.length) return true;
+    const valueStart = index;
+    const opening = fieldBody[index];
+    if (opening === '"' || opening === "'") {
+      const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
+      if (valueEnd === undefined) return hasValidQuotedValuePrefix(fieldBody, index, opening);
+      if (parseQuotedScalar(fieldBody, index, valueEnd, opening) === undefined) return false;
+      index = valueEnd;
+    } else if (opening === "{" || opening === "[") {
+      const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
+      if (valueEnd === null) return false;
+      if (valueEnd === undefined) {
+        const nested = fieldBody.slice(index);
+        return opening === "{"
+          ? scanIncompleteLeadingObjectToolIds(nested) !== undefined
+          : isValidIncompleteArrayPrefix(nested);
+      }
+      index = valueEnd;
+    } else {
+      while (
+        index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "]"
+      ) index += 1;
+      const token = fieldBody.slice(valueStart, index).trim();
+      if (index >= fieldBody.length) return CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(token);
+      if (!CONTRACT_FACT_SCALAR_PATTERN.test(token)) return false;
+    }
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (index >= fieldBody.length) return true;
+    if (fieldBody[index] === "]") return false;
+    if (fieldBody[index] !== ",") return false;
+    index += 1;
+  }
+  return true;
+}
+
 /**
  * Scans a tool object that the bounded window left unclosed.
  *
@@ -444,7 +486,10 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
     const keyQuote = fieldBody[index];
     if (keyQuote !== '"' && keyQuote !== "'") return undefined;
     const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
-    if (keyEnd === undefined) break;
+    if (keyEnd === undefined) {
+      if (!hasValidQuotedValuePrefix(fieldBody, index, keyQuote)) return undefined;
+      break;
+    }
     const key = parseQuotedScalar(fieldBody, index, keyEnd, keyQuote);
     if (key === undefined) return undefined;
     index = keyEnd;
@@ -473,7 +518,14 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
       index = valueEnd;
     } else if (opening === "{" || opening === "[") {
       const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
-      if (valueEnd === undefined) break;
+      if (valueEnd === undefined) {
+        const nested = fieldBody.slice(index);
+        const validPrefix = opening === "{"
+          ? scanIncompleteLeadingObjectToolIds(nested) !== undefined
+          : isValidIncompleteArrayPrefix(nested);
+        if (!validPrefix) return undefined;
+        break;
+      }
       if (valueEnd === null) return undefined;
       index = valueEnd;
     } else {
