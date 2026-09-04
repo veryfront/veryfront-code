@@ -13,6 +13,10 @@ export type ExecuteChildGraph = (
 
 export interface NodeStrategyRuntime {
   executeChildGraph: ExecuteChildGraph;
+  selectChildNodeStates?: (
+    nodes: readonly WorkflowNode[],
+    nodeStates: Readonly<Record<string, NodeState>>,
+  ) => Record<string, NodeState>;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
   abortSignal?: AbortSignal;
 }

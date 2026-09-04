@@ -4074,6 +4074,60 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates.group?.status, "running");
     });
 
+    it("retains map-generated approval state when an enclosing parallel resumes", async () => {
+      const nodes = [parallel("group", [
+        map("orders", {
+          items: [{}],
+          processor: {
+            id: "order-workflow",
+            steps: [waitForApproval("review", { message: "Review the order" })],
+          },
+        }),
+      ])];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertExists(first.waitingNode);
+      const waitingState = first.nodeStates[first.waitingNode];
+      assertExists(waitingState);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            [first.waitingNode]: {
+              ...waitingState,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.completed, true);
+      assertEquals(resumed.waiting, false);
+    });
+
+    it("isolates a deferred map from a dynamic sub-workflow child", async () => {
+      const dynamic = subWorkflow("dynamic", {
+        workflow: {
+          id: "dynamic-workflow",
+          steps: () => [{ id: "orders_0", config: { type: "step" } as any }],
+        },
+      });
+      const orders = map("orders", {
+        items: [{}],
+        processor: waitForApproval("approval", { message: "Approve the order" }),
+      });
+
+      const result = await executor.execute([dynamic, orders], createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "orders_0");
+      assertEquals(result.nodeStates.orders?.status, "running");
+    });
+
     it("keeps statically defined sibling sub-workflows in one batch", async () => {
       const staticRelease = (id: string, approvalId: string): WorkflowNode => ({
         ...subWorkflow(id, {

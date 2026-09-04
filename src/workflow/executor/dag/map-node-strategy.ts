@@ -137,6 +137,7 @@ export async function executeMapNodeStrategy(
   if (collidingChildId) {
     throwMapChildIdCollision(node.id, collidingChildId);
   }
+  const childNodeStates = runtime.selectChildNodeStates?.(childNodes, nodeStates) ?? nodeStates;
 
   const result = await runtime.executeChildGraph(
     childNodes,
@@ -147,7 +148,7 @@ export async function executeMapNodeStrategy(
       input: context.input,
       // Carry already-accumulated child states so completed children are
       // skipped on resume instead of re-executing (H8).
-      nodeStates,
+      nodeStates: childNodeStates,
       currentNodes: [],
       context: { ...context },
       checkpoints: [],
@@ -159,7 +160,7 @@ export async function executeMapNodeStrategy(
   );
   runtime.abortSignal?.throwIfAborted();
 
-  applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+  applyRecordPatch(nodeStates, createRecordPatch(childNodeStates, result.nodeStates));
 
   const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
 

@@ -468,6 +468,13 @@ function createCompositeNodeStateView(
   const declaredIds = collectWorkflowNodeIds([...nodes]);
   const allowedOwnerPaths = new Set<string>();
   collectCompositeSubWorkflowOwnerPaths(nodes, parentPath, allowedOwnerPaths);
+  collectCompositeMapStateEvidence(
+    nodes,
+    nodeStates,
+    parentPath,
+    declaredIds,
+    allowedOwnerPaths,
+  );
   const visible = Object.create(null) as Record<string, NodeState>;
   for (const [nodeId, state] of Object.entries(nodeStates)) {
     const ownerPath = state._subWorkflowOwnerPath;
@@ -481,6 +488,65 @@ function createCompositeNodeStateView(
     if (declaredIds.has(nodeId)) visible[nodeId] = state;
   }
   return visible;
+}
+
+function collectCompositeMapStateEvidence(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  parentPath: string,
+  declaredIds: Set<string>,
+  allowedOwnerPaths: Set<string>,
+): void {
+  for (const node of nodes) {
+    if (node.config.type === "map") {
+      const output = nodeStates[node.id]?.output;
+      if (!Array.isArray(output)) continue;
+      for (let index = 0; index < output.length; index++) {
+        const wrapperId = `${node.id}_${index}`;
+        if (nodeStates[wrapperId] === undefined) continue;
+        declaredIds.add(wrapperId);
+        allowedOwnerPaths.add(subWorkflowOwnerPath(parentPath, wrapperId));
+      }
+      continue;
+    }
+    if (node.config.type === "parallel") {
+      collectCompositeMapStateEvidence(
+        node.config.nodes,
+        nodeStates,
+        parentPath,
+        declaredIds,
+        allowedOwnerPaths,
+      );
+    } else if (node.config.type === "branch") {
+      collectCompositeMapStateEvidence(
+        [...node.config.then, ...(node.config.else ?? [])],
+        nodeStates,
+        parentPath,
+        declaredIds,
+        allowedOwnerPaths,
+      );
+    } else if (node.config.type === "loop" && Array.isArray(node.config.steps)) {
+      collectCompositeMapStateEvidence(
+        node.config.steps,
+        nodeStates,
+        parentPath,
+        declaredIds,
+        allowedOwnerPaths,
+      );
+    } else if (
+      node.config.type === "subWorkflow" && typeof node.config.workflow !== "string" &&
+      Array.isArray(node.config.workflow.steps)
+    ) {
+      const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
+      collectCompositeMapStateEvidence(
+        node.config.workflow.steps,
+        nodeStates,
+        ownerPath,
+        declaredIds,
+        allowedOwnerPaths,
+      );
+    }
+  }
 }
 
 function collectPreviouslyProducedSubWorkflowNodeIds(
@@ -1309,6 +1375,8 @@ export class DAGExecutor {
                 // children, so the root-keyspace flag is inherited unchanged.
                 executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(nodes, run, scope, options, attemptSignal),
+                selectChildNodeStates: (nodes, states) =>
+                  createCompositeNodeStateView(nodes, states, scope.subWorkflowPath),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
