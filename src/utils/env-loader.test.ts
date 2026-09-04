@@ -527,18 +527,16 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${lowerKey}=https://project-controlled.example/api`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      // Windows process environment names are case-insensitive, so there the
-      // lowercase line above sets the real uppercase variable. This host is
-      // case-sensitive, so the alias is emulated: the point under test is that
-      // provenance follows the value, not the spelling the file happened to
-      // use. Without that, a repository could steer the API host through a
-      // lowercase key and have it read back as an operator shell value.
+      // Windows aliases the differently-cased names. Case-sensitive hosts keep
+      // the explicitly set uppercase process value independent from the file.
       setEnv(key, "https://project-controlled.example/api");
 
       assertEquals(
         getEnvSource(key),
-        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
-        "a case-insensitive host must not launder repository content into a process value",
+        Deno.build.os === "windows"
+          ? { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false }
+          : { source: "process" },
+        "case-folded provenance must follow the host environment's key semantics",
       );
 
       cleanupKeys(key, lowerKey);

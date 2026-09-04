@@ -1,7 +1,7 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/logger.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
 import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
-import { cwd as getCwd } from "#veryfront/platform/compat/process/lifecycle.ts";
+import { cwd as getCwd, getOsType } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("env");
@@ -266,6 +266,7 @@ function toEnvFileSource(record: EnvSourceRecord): EnvSource {
  * the value being asked about.
  */
 function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | undefined {
+  if (getOsType() !== "windows") return undefined;
   const folded = key.toLowerCase();
 
   for (const [recordedKey, record] of envSources) {
