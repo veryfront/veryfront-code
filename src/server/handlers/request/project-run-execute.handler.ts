@@ -69,6 +69,9 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   level: "warn",
   message: "Knowledge ingest logs were truncated",
 });
+const IntrinsicReflectApply = Reflect.apply;
+const RequestPrototypeClone = Request.prototype.clone;
+const RequestPrototypeJson = Request.prototype.json;
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -627,7 +630,8 @@ async function readLocalEvalRuntimeRestrictions(
 ): Promise<AgUiRuntimeRestrictions | undefined> {
   let body: unknown;
   try {
-    body = await request.clone().json();
+    const cloned = IntrinsicReflectApply(RequestPrototypeClone, request, []) as Request;
+    body = await (IntrinsicReflectApply(RequestPrototypeJson, cloned, []) as Promise<unknown>);
   } catch {
     // The AG-UI handler rejects a body it cannot parse, so there is nothing to
     // restrict here.
