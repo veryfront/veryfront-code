@@ -24,6 +24,7 @@ const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const NativeURL = URL;
+const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringPrototypeReplace = String.prototype.replace;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
@@ -44,6 +45,8 @@ interface ParsedVeryfrontCloudModelId {
   provider: VeryfrontCloudProviderId;
   modelId: string;
 }
+
+const INTERNAL_CLUSTER_DNS_SUFFIX = ".svc.cluster.local";
 
 const GATEWAY_PATHS = new Map<VeryfrontCloudProviderId, string>([
   ["anthropic", "ai/gateway/anthropic/v1"],
@@ -126,9 +129,18 @@ function requireSecureInferenceApiBaseUrl(value: string): void {
   ) as string;
   // 0.0.0.0 binds all interfaces and is intentionally not an HTTP exception.
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  if (readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback) {
+  // Kubernetes internal-service DNS only resolves inside the cluster's own DNS server, so it's not internet-reachable the way a plain HTTP origin would be.
+  const internalCluster = IntrinsicReflectApply(
+    StringPrototypeEndsWith,
+    hostname,
+    [INTERNAL_CLUSTER_DNS_SUFFIX],
+  ) as boolean;
+  if (
+    readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback && !internalCluster
+  ) {
     throw CONFIG_INVALID.create({
-      detail: "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+      detail:
+        "Run-scoped inference credentials require HTTPS, a loopback, or an internal cluster API base URL",
     });
   }
 }

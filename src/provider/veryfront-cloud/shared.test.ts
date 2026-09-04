@@ -7,6 +7,7 @@ import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
+  requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
@@ -138,6 +139,43 @@ describe("provider/veryfront-cloud/shared", () => {
         TypeError,
         expectedMessage,
       );
+    }
+  });
+
+  it("trusts an internal cluster hostname as an API base URL for run-scoped inference credentials", () => {
+    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local";
+    const bootstrap = runWithVeryfrontCloudContext(
+      { apiBaseUrl, apiToken: "vf_scoped_token" },
+      () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+    );
+    assertEquals(bootstrap.apiBaseUrl, apiBaseUrl);
+  });
+
+  it("still rejects an arbitrary plain-HTTP API base URL for run-scoped inference credentials", () => {
+    assertThrows(
+      () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "http://evil.example.com", apiToken: "vf_scoped_token" },
+          () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+        ),
+      Error,
+      "HTTPS, a loopback, or an internal cluster API base URL",
+    );
+  });
+
+  it("still accepts HTTPS and loopback API base URLs for run-scoped inference credentials", () => {
+    for (
+      const apiBaseUrl of [
+        "https://api.veryfront.com",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
+      ]
+    ) {
+      const bootstrap = runWithVeryfrontCloudContext(
+        { apiBaseUrl, apiToken: "vf_scoped_token" },
+        () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+      );
+      assertEquals(bootstrap.apiBaseUrl, apiBaseUrl);
     }
   });
 
