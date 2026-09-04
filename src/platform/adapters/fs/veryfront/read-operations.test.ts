@@ -1247,17 +1247,21 @@ describe("ReadOperations", () => {
         false,
         createBranchContext(),
         (path: string) => path,
-        () => Promise.resolve([{ path: "globals.css", content: `${requestBranch} content` }]),
+        (_cacheKey, contentContext) =>
+          Promise.resolve([{
+            path: "globals.css",
+            content: `${contentContext?.branch ?? "main"} content`,
+          }]),
       );
 
-      const [mainContent, featureContent] = await runWithRequestContext(
-        { projectSlug: "test", token: "token-1", productionMode: false },
-        async () => {
-          const mainContent = await readOps.readOptionalTextFile("globals.css");
-          requestBranch = "feature";
-          const featureContent = await readOps.readOptionalTextFile("globals.css");
-          return [mainContent, featureContent];
-        },
+      const mainContent = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false, branch: "main" },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      requestBranch = "feature";
+      const featureContent = await runWithRequestContext(
+        { projectSlug: "test", token: "token-2", productionMode: false, branch: "feature" },
+        () => readOps.readOptionalTextFile("globals.css"),
       );
 
       assertEquals(mainContent, "main content");
@@ -1294,10 +1298,21 @@ describe("ReadOperations", () => {
           }),
       );
 
-      const mainRead = readOps.readOptionalTextFile("globals.css");
+      const mainRead = runWithRequestContext(
+        { projectSlug: "test", token: "main-token", productionMode: false, branch: "main" },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
       while (!pending.has("main")) await Promise.resolve();
       requestBranch = "feature";
-      const featureRead = readOps.readOptionalTextFile("globals.css");
+      const featureRead = runWithRequestContext(
+        {
+          projectSlug: "test",
+          token: "feature-token",
+          productionMode: false,
+          branch: "feature",
+        },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
       while (!pending.has("feature")) await Promise.resolve();
       pending.get("feature")?.();
       pending.get("main")?.();
@@ -1308,11 +1323,15 @@ describe("ReadOperations", () => {
       ]);
       assertEquals(observedReadBranches.sort(), ["feature", "main"]);
       assertEquals(
-        observedListScopes.some((scope) => scope.endsWith(":main:main")),
+        observedListScopes.some((scope) =>
+          scope.startsWith("files:branch:test:main|authority:") && scope.endsWith(":main")
+        ),
         true,
       );
       assertEquals(
-        observedListScopes.some((scope) => scope.endsWith(":feature:feature")),
+        observedListScopes.some((scope) =>
+          scope.startsWith("files:branch:test:feature|authority:") && scope.endsWith(":feature")
+        ),
         true,
       );
     });

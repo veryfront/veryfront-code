@@ -178,6 +178,30 @@ export class WebSocketManager {
     return this.deps.getEffectiveContentContext?.() ?? this.deps.getContentContext();
   }
 
+  private clearPersistentBranchCache(branch: string): void {
+    const context: ResolvedContentContext = {
+      sourceType: "branch",
+      projectSlug: this.deps.projectSlug,
+      branch,
+    };
+    const prefixes = [
+      buildFileCacheKeyPrefix(context),
+      buildStatCacheKeyPrefix(context),
+      buildDirCacheKeyPrefix(context),
+      buildFileListCacheKey(context),
+    ];
+    const pendingPrefix = buildFileCacheKeyPrefix(context);
+    addPendingInvalidation(pendingPrefix);
+    void Promise.all(prefixes.map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix))).then(
+      () => removePendingInvalidation(pendingPrefix),
+      (error) =>
+        logger.error("Branch poke cache invalidation failed", {
+          projectSlug: this.deps.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+    );
+  }
+
   private beginPreviewInvalidation(
     contentContext: ResolvedContentContext | null,
   ): PreviewInvalidationToken {
@@ -488,6 +512,7 @@ export class WebSocketManager {
 
       if (!isProductionMode) {
         if (normalizedBranchName && normalizedBranchName !== currentBranch) {
+          this.clearPersistentBranchCache(normalizedBranchName);
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
             { hasCurrentBranch: currentBranch !== null },

@@ -48,6 +48,7 @@ import {
 import { isNotFoundLikeError } from "./read-operations-helpers.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
+import { getCurrentRequestContext } from "./request-context.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -469,9 +470,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private getEffectiveContentContext(): ResolvedContentContext | null {
     const context = this.contentContext;
-    return context?.sourceType === "branch" && this.requestBranch
-      ? { ...context, branch: this.requestBranch }
-      : context;
+    if (context?.sourceType !== "branch") return context;
+    const requestContext = getCurrentRequestContext();
+    const branch = requestContext ? requestContext.branch : this.requestBranch;
+    return branch ? { ...context, branch } : context;
   }
 
   private getCurrentFileListCacheKey(): string | undefined {
@@ -662,6 +664,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       proxyMode: vf.proxyMode,
       retry: retryConfig,
     });
+    this.client.enableContextualToken();
 
     const cacheConfig = buildFileCacheOptions(vf.cache);
 
@@ -700,6 +703,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return Array.isArray(cached?.files);
       },
       getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
+      getSourceSnapshotIdentity: () => this.#getCurrentSourceSnapshotIdentity(),
       isPersistentCacheInvalidated: (prefix: string) => this.#isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
         this.#isPersistentCacheInvalidated(
@@ -1432,7 +1436,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(effectiveRefreshContext)),
           this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(effectiveRefreshContext)),
           this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(effectiveRefreshContext)),
-          this.cache.deleteAsync(cacheKey),
+          this.cache.deleteByPrefixAsync(cacheKey),
         ]]);
         if (isSnapshotSuperseded()) {
           return { applied: false, sourceChanged: false };

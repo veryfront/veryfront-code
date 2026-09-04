@@ -3,6 +3,7 @@ import { FileCache } from "../cache/file-cache.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { withRetryOnTransient } from "./retry.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -20,6 +21,7 @@ export interface ContentContextProvider {
   >;
   hasCachedFileList?: () => Promise<boolean>;
   getSourceSnapshotVersion?: () => number | undefined;
+  getSourceSnapshotIdentity?: () => string | undefined;
   isPersistentCacheInvalidated?: (prefix: string) => boolean;
   isReleaseBeingInvalidated?: (releaseId: string) => boolean;
 }
@@ -39,6 +41,8 @@ interface LoadAllProjectFilesOptions {
   snapshotRetryCount?: number;
 }
 
+const MAX_SNAPSHOT_RETRIES = 3;
+
 export async function loadAllProjectFiles({
   client,
   cache,
@@ -51,9 +55,16 @@ export async function loadAllProjectFiles({
   const snapshotVersion = contextProvider?.getSourceSnapshotVersion?.();
   const cacheStart = performance.now();
   const ctx = contentContext === undefined ? contextProvider?.getContentContext() : contentContext;
+  const snapshotIdentity = ctx
+    ? ctx.sourceType === "branch"
+      ? `branch:${ctx.projectSlug}:${ctx.branch ?? "main"}`
+      : ctx.sourceType === "environment"
+      ? `environment:${ctx.projectSlug}:${ctx.environmentName ?? ""}:${ctx.releaseId ?? ""}`
+      : `release:${ctx.projectSlug}:${ctx.releaseId ?? ""}`
+    : undefined;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
-  const skipPersistentCache = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ??
-    false;
+  const skipPersistentCache = !!currentRequestContext()?.token ||
+    (contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false);
 
   const adapterFiles = !skipPersistentCache ? await contextProvider?.getFileList?.(ctx) : undefined;
 
@@ -114,8 +125,11 @@ export async function loadAllProjectFiles({
   );
 
   const currentSnapshotVersion = contextProvider?.getSourceSnapshotVersion?.();
+  const currentSnapshotIdentity = contextProvider?.getSourceSnapshotIdentity?.();
   const snapshotChanged = snapshotVersion !== undefined && currentSnapshotVersion !== undefined &&
-    snapshotVersion !== currentSnapshotVersion;
+    snapshotVersion !== currentSnapshotVersion &&
+    (snapshotIdentity === undefined || currentSnapshotIdentity === undefined ||
+      snapshotIdentity === currentSnapshotIdentity);
   const invalidated = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
   const invalidatedDuringFetch = !skipPersistentCache && invalidated;
   if (snapshotChanged || invalidatedDuringFetch) {
@@ -125,7 +139,7 @@ export async function loadAllProjectFiles({
       currentSnapshotVersion,
       invalidated,
     });
-    if (snapshotRetryCount === 0) {
+    if (snapshotRetryCount < MAX_SNAPSHOT_RETRIES) {
       return await loadAllProjectFiles({
         client,
         cache,
@@ -133,10 +147,14 @@ export async function loadAllProjectFiles({
         logger,
         operationLabel,
         contentContext: ctx,
-        snapshotRetryCount: 1,
+        snapshotRetryCount: snapshotRetryCount + 1,
       });
     }
-    throw new Error("Project file snapshot changed while its file list was loading");
+    logger.warn("getAllFilesRaw - snapshot kept changing, returning uncached API result", {
+      cacheKey,
+      snapshotRetryCount,
+    });
+    return files;
   }
 
   if (!skipPersistentCache) cache.set(cacheKey, files);

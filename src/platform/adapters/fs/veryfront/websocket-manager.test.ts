@@ -129,10 +129,12 @@ function createWebSocketManager(options: {
     files: Array<{ path: string; content?: string }>,
     expectedSnapshotVersion?: number,
   ) => Promise<number | undefined>;
+  cache?: Partial<FileCache>;
 } = {}): WebSocketManager {
   const cache = {
     deleteByPrefixAsync: async () => 0,
     deleteByPrefixAndSuffixAsync: async () => 0,
+    ...options.cache,
   } as unknown as FileCache;
 
   const client = {
@@ -936,9 +938,10 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("ignores pokes scoped to a different branch", () => {
+  it("invalidates a poked branch without reloading a different active branch", async () => {
     let clearCalls = 0;
     let reloadCalls = 0;
+    const deletedPrefixes: string[] = [];
     const manager = createWebSocketManager({
       branch: "feature-x",
       clearMemoryCaches: () => {
@@ -947,6 +950,12 @@ describe("WebSocketManager", () => {
       invalidationCallbacks: {
         triggerReload: () => {
           reloadCalls++;
+        },
+      },
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          deletedPrefixes.push(prefix);
+          return Promise.resolve(0);
         },
       },
     });
@@ -959,6 +968,13 @@ describe("WebSocketManager", () => {
 
     assertEquals(clearCalls, 0, "a poke for another branch must not flush the preview caches");
     assertEquals(reloadCalls, 0, "a poke for another branch must not republish a reload");
+    await Promise.resolve();
+    assertEquals(deletedPrefixes, [
+      "file:branch:test-project:main",
+      "stat:branch:test-project:main",
+      "dir:branch:test-project:main",
+      "files:branch:test-project:main",
+    ]);
 
     manager.dispose();
   });
@@ -979,7 +995,7 @@ describe("WebSocketManager", () => {
       },
       invalidationCallbacks: {
         triggerReload: (_paths, context) => {
-          reloadBranch = context.branch;
+          reloadBranch = context?.branch;
         },
       },
     });
@@ -1008,7 +1024,7 @@ describe("WebSocketManager", () => {
         branch: effectiveBranch,
       }),
       invalidationCallbacks: {
-        triggerReload: (_paths, context) => reloadBranches.push(context.branch),
+        triggerReload: (_paths, context) => reloadBranches.push(context?.branch),
       },
     });
 
@@ -1039,8 +1055,8 @@ describe("WebSocketManager", () => {
       }),
       invalidationCallbacks: {
         triggerReload: (_paths, context) => {
-          if (context.branch === "feature-a") throw new Error("first branch reload failed");
-          reloadBranches.push(context.branch);
+          if (context?.branch === "feature-a") throw new Error("first branch reload failed");
+          reloadBranches.push(context?.branch);
         },
       },
     });
@@ -1072,7 +1088,7 @@ describe("WebSocketManager", () => {
       }),
       invalidationCallbacks: {
         triggerReload: (_paths, context) => {
-          reloadBranch = context.branch;
+          reloadBranch = context?.branch;
         },
       },
     });
@@ -1101,8 +1117,8 @@ describe("WebSocketManager", () => {
       }),
       invalidationCallbacks: {
         triggerReload: (_paths, context) => {
-          if (context.branch === "feature-a") throw new Error("first branch reload failed");
-          reloadBranches.push(context.branch);
+          if (context?.branch === "feature-a") throw new Error("first branch reload failed");
+          reloadBranches.push(context?.branch);
         },
       },
     });

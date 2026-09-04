@@ -115,7 +115,10 @@ export class ReadOperations {
   }
 
   private syncRequestBranchScope(): string | null | undefined {
-    const requestBranch = this.client.getRequestBranch();
+    const requestContext = currentRequestContext();
+    const requestBranch = requestContext?.branch !== undefined
+      ? requestContext.branch
+      : this.client.getRequestBranch();
     if (requestBranch !== this.requestBranchScope) {
       this.fileListIndex.clear();
       this.extensionResolutionCache.clear();
@@ -671,6 +674,11 @@ export class ReadOperations {
 
     const ctx = this.contextProvider?.getContentContext() ?? null;
     const requestBranch = this.syncRequestBranchScope();
+    const contextualToken = currentRequestContext()?.token;
+    const cacheVariant = [
+      optional ? "optional-exact" : undefined,
+      contextualToken ? `authority:${requestAuthorityFingerprint(contextualToken)}` : undefined,
+    ].filter((part): part is string => part !== undefined).join(":") || undefined;
     const {
       apiPath,
       cacheKeyPrefix,
@@ -689,11 +697,14 @@ export class ReadOperations {
       contextProvider: this.contextProvider,
       getOriginalApiPath: this.getOriginalApiPath,
       requestBranch,
-      cacheVariant: optional ? "optional-exact" : undefined,
+      cacheVariant,
     });
-    const fileListCacheKey = effectiveContentContext
+    const baseFileListCacheKey = effectiveContentContext
       ? buildFileListCacheKey(effectiveContentContext)
       : undefined;
+    const fileListCacheKey = baseFileListCacheKey && contextualToken
+      ? `${baseFileListCacheKey}|authority:${requestAuthorityFingerprint(contextualToken)}`
+      : baseFileListCacheKey;
 
     logger.debug("fetchContent context", {
       path: normalizedPath,

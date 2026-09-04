@@ -49,6 +49,7 @@ export class VeryfrontApiClient {
   private requestProjectSlug?: string;
   private requestContext?: FileContext;
   private requestBranch?: string | null;
+  private useContextualToken = false;
   private initialized = false;
   private initializingPromise?: Promise<void>;
   /** Cached project data from initialization - avoids redundant API calls */
@@ -64,7 +65,7 @@ export class VeryfrontApiClient {
     this.config = { ...config, retry: retryConfig };
 
     const tokenProvider: TokenProvider = () => {
-      const contextualToken = currentRequestContext()?.token;
+      const contextualToken = this.useContextualToken ? currentRequestContext()?.token : undefined;
       if (contextualToken) return contextualToken;
       if (this.requestToken) return this.requestToken;
       if (this.config.apiToken) return this.config.apiToken;
@@ -88,6 +89,10 @@ export class VeryfrontApiClient {
 
   setRequestToken(token: string): void {
     this.requestToken = token;
+  }
+
+  enableContextualToken(): void {
+    this.useContextualToken = true;
   }
 
   clearRequestToken(): void {

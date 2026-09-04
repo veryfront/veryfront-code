@@ -28,6 +28,7 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -98,6 +99,35 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(adapter);
       assertEquals(clearCalled, false);
     });
+  });
+
+  it("prefers the async-local request branch over the shared branch hint", async () => {
+    const adapter = createAdapter();
+    const internals = adapter as unknown as {
+      contentContext: ResolvedContentContext;
+    };
+    internals.contentContext = {
+      sourceType: "branch",
+      projectSlug: "test-project",
+      branch: "main",
+    };
+    adapter.setRequestBranch("shared-branch");
+
+    const identities = await Promise.all([
+      runWithRequestContext(
+        { projectSlug: "test-project", token: "token-a", branch: "branch-a" },
+        async () => adapter.getSourceSnapshotIdentity(),
+      ),
+      runWithRequestContext(
+        { projectSlug: "test-project", token: "token-b", branch: "branch-b" },
+        async () => adapter.getSourceSnapshotIdentity(),
+      ),
+    ]);
+
+    assertEquals(identities, [
+      "branch:test-project:branch-a",
+      "branch:test-project:branch-b",
+    ]);
   });
 
   describe("instance methods", () => {

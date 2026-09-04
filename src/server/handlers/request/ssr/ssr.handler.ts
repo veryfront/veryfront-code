@@ -212,7 +212,7 @@ export class SSRHandler extends BaseHandler {
 
         const requestProjectSlug = ctx.projectSlug ?? ctx.requestContext?.slug;
         const requestToken = ctx.proxyToken ?? ctx.requestContext?.token;
-        if (requestProjectSlug && requestToken) {
+        if (requestProjectSlug && requestToken !== undefined) {
           return runWithRequestContext(
             {
               projectSlug: requestProjectSlug,

@@ -4,6 +4,30 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileListIndex } from "./file-list-index.ts";
 
 describe("platform/adapters/fs/veryfront/file-list-index", () => {
+  it("rebuilds the index when request authority changes", async () => {
+    const requestedScopes: string[] = [];
+    const index = new FileListIndex((cacheKey) => {
+      requestedScopes.push(cacheKey ?? "");
+      return Promise.resolve([{
+        path: "styles.css",
+        content: cacheKey?.endsWith("authority-a") ? "authority a" : "authority b",
+      }]);
+    }, () => 1);
+
+    assertEquals(
+      await index.lookup("styles.css", "files:branch:test:main|authority-a"),
+      "authority a",
+    );
+    assertEquals(
+      await index.lookup("styles.css", "files:branch:test:main|authority-b"),
+      "authority b",
+    );
+    assertEquals(requestedScopes, [
+      "files:branch:test:main|authority-a",
+      "files:branch:test:main|authority-b",
+    ]);
+  });
+
   describe("lookup without getFileListCache", () => {
     it("should return undefined when no cache function provided", async () => {
       const index = new FileListIndex();

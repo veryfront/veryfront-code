@@ -5,7 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import type { VeryfrontAPIConfig } from "./types.ts";
-import { runWithRequestContext } from "../fs/veryfront/request-context.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 const baseConfig = {
   apiBaseUrl: "http://test.api",
@@ -59,11 +59,25 @@ describe("VeryfrontApiClient", () => {
     it("async-local request auth takes priority over a mutable client token", async () => {
       const client = createClient();
       client.setRequestToken("later-request-token");
+      client.enableContextualToken();
 
       await runWithRequestContext(
         { projectSlug: "request-project", token: "captured-request-token" },
         () => {
           assertEquals(client.getToken(), "captured-request-token");
+          return Promise.resolve();
+        },
+      );
+    });
+
+    it("preserves an explicit client token unless contextual auth is enabled", async () => {
+      const client = createClient();
+      client.setRequestToken("explicit-token");
+
+      await runWithRequestContext(
+        { projectSlug: "request-project", token: "ambient-token" },
+        () => {
+          assertEquals(client.getToken(), "explicit-token");
           return Promise.resolve();
         },
       );
