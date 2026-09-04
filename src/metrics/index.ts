@@ -408,18 +408,23 @@ function nonEmptyIdentity(value: string | undefined): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function capacityIdentity(kind: string, value: string | undefined): string | undefined {
+  const identity = nonEmptyIdentity(value);
+  return identity === undefined ? undefined : `${kind}:${identity}`;
+}
+
 function resolveDirectCapacityScope(): string {
   const trustedIdentity = getTrustedProjectEnvIdentity();
   if (trustedIdentity) {
-    return nonEmptyIdentity(trustedIdentity.projectId) ??
-      nonEmptyIdentity(trustedIdentity.projectSlug) ??
-      nonEmptyIdentity(trustedIdentity.environmentId) ??
+    return capacityIdentity("project-id", trustedIdentity.projectId) ??
+      capacityIdentity("project-slug", trustedIdentity.projectSlug) ??
+      capacityIdentity("environment-id", trustedIdentity.environmentId) ??
       "project:unattributed";
   }
 
   const requestContext = getCurrentRequestContext();
-  return nonEmptyIdentity(requestContext?.projectId) ??
-    nonEmptyIdentity(requestContext?.projectSlug) ??
+  return capacityIdentity("project-id", requestContext?.projectId) ??
+    capacityIdentity("project-slug", requestContext?.projectSlug) ??
     "project:unattributed";
 }
 

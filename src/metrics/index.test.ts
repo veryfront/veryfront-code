@@ -1468,6 +1468,57 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("keeps project ids and project slugs in separate quota namespaces", async () => {
+    const requestedUrls: string[] = [];
+    const stalled = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a,env-b",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request) => {
+          const requestedUrl = String(url);
+          requestedUrls[requestedUrls.length] = requestedUrl;
+          return requestedUrl === "https://tenant-id.example/v1/metrics"
+            ? stalled.promise
+            : Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          for (let index = 0; index < 200; index++) {
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant-id.example/v1/metrics",
+              },
+              { projectId: "shared-identity", projectSlug: "tenant-a", environmentId: "env-a" },
+              () => metrics.counter("vf_project_id_scope_total", 1),
+            );
+          }
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant-slug.example/v1/metrics",
+            },
+            { projectId: "", projectSlug: "shared-identity", environmentId: "env-b" },
+            () => metrics.counter("vf_project_slug_scope_total", 1),
+          );
+
+          stalled.resolve(new Response("{}", { status: 200 }));
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(
+      new Set(requestedUrls).has("https://tenant-slug.example/v1/metrics"),
+      true,
+      "an id and slug with equal text must not share a capacity scope",
+    );
+  });
+
   it("reserves queue capacity for platform metrics when tenants saturate the queue", async () => {
     const requestedUrls: string[] = [];
     const stalled = Promise.withResolvers<Response>();
