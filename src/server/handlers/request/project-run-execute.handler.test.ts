@@ -1084,6 +1084,68 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedBranchName, "main");
   });
 
+  it("parses the eval step ceiling with intrinsics captured before project discovery", async () => {
+    const definition = evalAgent({
+      id: "eval:deep-research",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+    const originalIsFinite = Number.isFinite;
+    const originalParseInt = Number.parseInt;
+    const originalTrim = String.prototype.trim;
+    const originalTrunc = Math.trunc;
+    let receivedMaxSteps: number | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async () => ({
+        id: "eval:deep-research",
+        name: "Deep research quality",
+        filePath: "evals/deep-research.eval.ts",
+        exportName: "default",
+        definition,
+      }),
+      ensureProjectDiscovery: async () => {
+        Number.isFinite = () => false;
+        Number.parseInt = () => 99;
+        String.prototype.trim = function (): string {
+          return String(this) === "2.9" ? "" : Reflect.apply(originalTrim, this, []);
+        };
+        Math.trunc = () => 99;
+        return createEmptyDiscoveryResult();
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedMaxSteps = config.maxSteps;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_intrinsic_step_limit",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      config: { max_steps: "2.9" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_intrinsic_step_limit/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+
+    let result;
+    try {
+      result = await handler.handle(request, createCtx(publicKeyPem));
+    } finally {
+      Number.isFinite = originalIsFinite;
+      Number.parseInt = originalParseInt;
+      String.prototype.trim = originalTrim;
+      Math.trunc = originalTrunc;
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(receivedMaxSteps, 2);
+  });
+
   it("runs a dataset eval without a runtime API token", async () => {
     let adapterCreated = false;
     const handler = new ProjectRunExecuteHandler(createDeps({

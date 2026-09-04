@@ -28,6 +28,11 @@ const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
 const intrinsicArrayPush = Array.prototype.push;
+const intrinsicArrayIncludes = Array.prototype.includes;
+
+function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
+  return intrinsicReflectApply(intrinsicArrayIncludes, values, [value]);
+}
 
 /**
  * Result of parsing tool arguments.
@@ -122,7 +127,8 @@ function isRemoteToolAllowed(
   toolName: string,
   allowedRemoteToolNames: readonly string[] | undefined,
 ): boolean {
-  return allowedRemoteToolNames === undefined || allowedRemoteToolNames.includes(toolName);
+  return allowedRemoteToolNames === undefined ||
+    intrinsicIncludes(allowedRemoteToolNames, toolName);
 }
 
 /**
@@ -189,7 +195,7 @@ async function getRemoteToolDefinitions(options?: {
     }
     if (
       options?.allowedRemoteToolNames &&
-      !options.allowedRemoteToolNames.includes(definition.name)
+      !intrinsicIncludes(options.allowedRemoteToolNames, definition.name)
     ) {
       return;
     }
@@ -253,7 +259,7 @@ async function executeRemoteToolFromSources(
       continue;
     }
 
-    if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
+    if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
 
@@ -373,7 +379,7 @@ export async function executeConfiguredTool(
 
   // Route canonical integration tools to the project-scoped API executor.
   if (isRemoteIntegrationTool(toolName)) {
-    if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
+    if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
     return await executeRemoteIntegrationTool(toolName, input, context);
@@ -415,7 +421,7 @@ function appendForwardedToolDefinitions(
   const existing = new Set(remoteDefs.map((def) => def.name));
   for (const def of forwarded) {
     if (existing.has(def.name)) continue;
-    if (allowedNames && !allowedNames.includes(def.name)) continue;
+    if (allowedNames && !intrinsicIncludes(allowedNames, def.name)) continue;
     intrinsicReflectApply(intrinsicArrayPush, remoteDefs, [def]);
     existing.add(def.name);
   }
@@ -562,9 +568,16 @@ export async function getAvailableTools(
   // Explicit-object configs should only expose remote definitions that were
   // explicitly requested, except for the internal runtime path that expands
   // `tools: true` into an explicit local-tool map and passes the remote allowlist.
-  const remoteDefsToAppend = explicitlyRequestedRemoteToolNames.size > 0
-    ? remoteDefs.filter((def) => explicitlyRequestedRemoteToolNames.has(def.name))
-    : remoteDefs.filter((def) => options?.allowedRemoteToolNames?.includes(def.name));
+  const remoteDefsToAppend: ToolDefinition[] = [];
+  for (let index = 0; index < remoteDefs.length; index++) {
+    const definition = remoteDefs[index];
+    if (definition === undefined) continue;
+    const allowed = explicitlyRequestedRemoteToolNames.size > 0
+      ? explicitlyRequestedRemoteToolNames.has(definition.name)
+      : options?.allowedRemoteToolNames !== undefined &&
+        intrinsicIncludes(options.allowedRemoteToolNames, definition.name);
+    if (allowed) remoteDefsToAppend[remoteDefsToAppend.length] = definition;
+  }
 
   for (const def of remoteDefsToAppend) {
     // Skip if already present (e.g., explicitly configured by name)

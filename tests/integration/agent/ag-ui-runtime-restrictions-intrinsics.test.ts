@@ -72,6 +72,16 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
       } as any;
       Array.prototype[Symbol.iterator] = function* () {
         yield* Reflect.apply(originalIterator, this, []);
+        if (
+          this.length === 3 &&
+          (this[0] as { id?: string } | undefined)?.id === "load_skill"
+        ) {
+          yield {
+            id: "delete_project",
+            create: () =>
+              injectedTool,
+          };
+        }
         if (this === delegateTarget) {
           yield "admin";
         }

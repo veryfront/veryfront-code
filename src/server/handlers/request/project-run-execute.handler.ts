@@ -71,8 +71,12 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
 });
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
+const NumberIsFinite = Number.isFinite;
+const NumberParseInt = Number.parseInt;
+const MathTrunc = Math.trunc;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeTrim = String.prototype.trim;
 const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
@@ -1318,10 +1322,13 @@ function getNumberConfig(
     const key = keys[keyIndex];
     if (key === undefined) continue;
     const value = config[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() !== "") {
-      const parsed = Number.parseInt(value, 10);
-      if (Number.isFinite(parsed)) return parsed;
+    if (typeof value === "number" && NumberIsFinite(value)) return value;
+    if (
+      typeof value === "string" &&
+      ReflectApply(StringPrototypeTrim, value, []) !== ""
+    ) {
+      const parsed = NumberParseInt(value, 10);
+      if (NumberIsFinite(parsed)) return parsed;
     }
   }
   return undefined;
@@ -1333,7 +1340,7 @@ function getPositiveIntConfig(
 ): number | undefined {
   const value = getNumberConfig(config, keys);
   if (value === undefined) return undefined;
-  const normalized = Math.trunc(value);
+  const normalized = MathTrunc(value);
   return normalized > 0 ? normalized : undefined;
 }
 

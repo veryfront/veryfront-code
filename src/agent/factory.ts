@@ -351,7 +351,8 @@ function resolveToolsConfiguration(input: {
   let merged = config.tools;
 
   ensureBuiltinSchemaValidator();
-  for (const registration of SKILL_TOOL_REGISTRATIONS) {
+  for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
+    const registration = SKILL_TOOL_REGISTRATIONS[index]!;
     if (!toolRegistry.has(registration.id)) {
       toolRegistryInternal.registerShared(registration.id, registration.create());
     }
@@ -364,7 +365,8 @@ function resolveToolsConfiguration(input: {
     } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
-    for (const registration of SKILL_TOOL_REGISTRATIONS) {
+    for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
+      const registration = SKILL_TOOL_REGISTRATIONS[index]!;
       if (skillTools === "disable" || skillTools === "omit") {
         if (configuredTools[registration.id] !== false) {
           delete configuredTools[registration.id];

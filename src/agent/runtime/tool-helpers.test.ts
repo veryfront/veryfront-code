@@ -1051,6 +1051,53 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("enforces remote tool allowlists through captured membership", async () => {
+      toolRegistryInternal.clearAll();
+      const calls: string[] = [];
+      const remoteSource: RemoteToolSource = {
+        id: "docs",
+        listTools: () =>
+          Promise.resolve([
+            { name: "search_docs", description: "Search", parameters: {} },
+            { name: "delete_docs", description: "Delete", parameters: {} },
+          ]),
+        executeTool: (name) => {
+          calls.push(name);
+          return Promise.resolve(name);
+        },
+      };
+      const originalIncludes = Array.prototype.includes;
+      let definitions: Awaited<ReturnType<typeof getAvailableTools>> = [];
+      let executionError: unknown;
+      try {
+        Array.prototype.includes = () => true;
+        definitions = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          allowedRemoteToolNames: ["search_docs"],
+          remoteToolSources: [remoteSource],
+        });
+        try {
+          await executeConfiguredTool(
+            "delete_docs",
+            {},
+            undefined,
+            undefined,
+            ["search_docs"],
+            [remoteSource],
+          );
+        } catch (error) {
+          executionError = error;
+        }
+      } finally {
+        Array.prototype.includes = originalIncludes;
+        toolRegistryInternal.clearAll();
+      }
+
+      assertEquals(definitions.map((definition) => definition.name), ["search_docs"]);
+      assertEquals((executionError as { slug?: string })?.slug, "permission-denied");
+      assertEquals(calls, []);
+    });
+
     it("merges generic remote MCP tool sources into available tools", async () => {
       toolRegistryInternal.clearAll();
 

@@ -141,6 +141,28 @@ describe("agent/mcp-tool-policy", () => {
     );
   });
 
+  it("enforces membership and filtering through captured array intrinsics", () => {
+    const gate = createMcpToolPolicyGate({ allow: ["search_docs"] });
+    const originalIncludes = Array.prototype.includes;
+    const originalFilter = Array.prototype.filter;
+    let allowedDeniedTool = false;
+    let filtered: ToolDefinition[] = [];
+    try {
+      Array.prototype.includes = () => true;
+      Array.prototype.filter = function <T>(this: T[]): T[] {
+        return [...this];
+      };
+      allowedDeniedTool = gate.allows("delete_docs");
+      filtered = gate.filterDefinitions([remoteTool("search_docs"), remoteTool("delete_docs")]);
+    } finally {
+      Array.prototype.includes = originalIncludes;
+      Array.prototype.filter = originalFilter;
+    }
+
+    assertEquals(allowedDeniedTool, false);
+    assertEquals(filtered.map((tool) => tool.name), ["search_docs"]);
+  });
+
   it('approval: "never" does not affect allow and deny behavior', () => {
     const gate = createMcpToolPolicyGate({
       allow: ["search_docs"],
