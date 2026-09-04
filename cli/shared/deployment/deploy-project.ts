@@ -521,10 +521,11 @@ export interface LocalSourceObservation {
 }
 
 export async function observeLocalSource(projectDir: string): Promise<LocalSourceObservation> {
-  const [gitSource, sourceDigest] = await Promise.all([
-    resolveGitSource(projectDir),
-    computeLocalSourceDigest(projectDir),
-  ]);
+  // Finish the Git probe before reading source bytes. If an editor writes
+  // while Git is still running, the digest must describe the later tree rather
+  // than the pre-write tree that the receipt already describes.
+  const gitSource = await resolveGitSource(projectDir);
+  const sourceDigest = await computeLocalSourceDigest(projectDir);
   return { gitSource, sourceDigest };
 }
 
