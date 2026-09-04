@@ -297,6 +297,24 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("stops an incomplete leading object at a non-scalar bare member value", () => {
+      const text = 'tools: [{"cost": some junk, "id":"bogus_tool", "description":"' +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("preserves an ID after valid nested and scalar members in an incomplete object", () => {
+      const text = 'tools: [{"schema":{"tags":["a"]},"strict":true,"cost":1.5,' +
+        '"id":"create_agent","description":"' + "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
+    });
+
     it("prioritizes declared tool arrays across windows over integration matches", () => {
       const integrations = Array.from(
         { length: 50 },

@@ -28,6 +28,8 @@ const TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s
 const PROVIDER_TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
+const CONTRACT_FACT_SCALAR_PATTERN =
+  /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -398,7 +400,10 @@ function addToolIdsFromIncompleteLeadingObject(target: string[], fieldBody: stri
       while (
         index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "}"
       ) index += 1;
-      if (index === valueStart || index >= fieldBody.length) return;
+      // A bare token that reaches the window edge may itself be truncated, and a
+      // token that is not a JSON scalar is invalid member syntax either way.
+      if (index >= fieldBody.length) return;
+      if (!CONTRACT_FACT_SCALAR_PATTERN.test(fieldBody.slice(valueStart, index).trim())) return;
     }
 
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
