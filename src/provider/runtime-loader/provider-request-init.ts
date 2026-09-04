@@ -4,6 +4,12 @@ const IntrinsicReflectApply = Reflect.apply;
 const StringPrototypeTrim = String.prototype.trim;
 const RegExpPrototypeTest = RegExp.prototype.test;
 const TextEncoderEncode = TextEncoder.prototype.encode;
+// The shared %TypedArray% prototype -- Uint8Array.prototype's own prototype --
+// carries the one `byteLength` getter every typed array subclass inherits.
+const TypedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype) as object,
+  "byteLength",
+)?.get;
 const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-11-20";
 const DEPRECATED_ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-04-04";
@@ -20,11 +26,19 @@ function matchesCredentialPattern(value: string): boolean {
   return IntrinsicReflectApply(RegExpPrototypeTest, CREDENTIAL_PATTERN, [value]) as boolean;
 }
 
+/**
+ * Reads the encoded credential's byte length through a getter captured at
+ * module load, not the live `.byteLength` accessor. Project code sharing this
+ * realm can redefine the configurable %TypedArray%.prototype.byteLength
+ * getter; a live read would hand it the encoded credential bytes as `this`,
+ * letting it decode and retain the run-scoped credential.
+ */
 function credentialByteLength(value: string): number {
-  return (IntrinsicReflectApply(TextEncoderEncode, PROVIDER_CREDENTIAL_ENCODER, [
+  const encoded = IntrinsicReflectApply(TextEncoderEncode, PROVIDER_CREDENTIAL_ENCODER, [
     value,
-  ]) as Uint8Array)
-    .byteLength;
+  ]) as Uint8Array;
+  if (!TypedArrayByteLengthGetter) return encoded.byteLength;
+  return IntrinsicReflectApply(TypedArrayByteLengthGetter, encoded, []) as number;
 }
 
 /**
