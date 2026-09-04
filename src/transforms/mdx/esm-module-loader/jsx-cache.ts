@@ -541,6 +541,41 @@ function isJsxLeaseTombstoneName(name: string): boolean {
   return JSX_LEASE_TOMBSTONE_PATTERN.test(name);
 }
 
+async function sweepJsxLeaseTombstones(
+  directory: string,
+  names: readonly string[],
+  nowMs: number,
+): Promise<number | undefined> {
+  let retryAtMs: number | undefined;
+  const noteRetry = (readyAtMs: number) => {
+    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
+  };
+
+  // A recovery rename can capture a fresh replacement owner after validating
+  // a stale predecessor. Both recovery and release tombstones therefore stay
+  // protected for one full lease-stale interval before maintenance removes an
+  // abandoned file.
+  for (const name of names) {
+    const path = join(directory, name);
+    const modifiedAtMs = await readArtifactModifiedAtMs(path);
+    const collectableAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
+    if (modifiedAtMs > 0 && collectableAtMs > nowMs) {
+      noteRetry(collectableAtMs);
+      continue;
+    }
+    try {
+      await getLocalFs().remove(path);
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      // Transient removal failures are exactly the case this sweep exists for,
+      // so come back rather than waiting for unrelated cache work.
+      noteRetry(nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
+    }
+  }
+
+  return retryAtMs;
+}
+
 async function recoverStaleFilesystemLease(
   lockPath: string,
   nowMs: number,
@@ -870,6 +905,53 @@ async function removePersistedJsxCachePruneRequest(path: string): Promise<void> 
   }
 }
 
+async function readPersistedJsxCachePruneRequest(
+  path: string,
+): Promise<PersistedJsxCachePruneRequest | undefined> {
+  const parseRequest = (source: string): PersistedJsxCachePruneRequest | undefined => {
+    let request: unknown;
+    try {
+      request = IntrinsicJSONParse(source);
+    } catch {
+      return undefined;
+    }
+    if (
+      typeof request !== "object" || request === null ||
+      typeof (request as { esmCacheDir?: unknown }).esmCacheDir !== "string" ||
+      typeof (request as { fireAtMs?: unknown }).fireAtMs !== "number" ||
+      typeof (request as { generation?: unknown }).generation !== "string"
+    ) return undefined;
+    return request as PersistedJsxCachePruneRequest;
+  };
+
+  let source: string;
+  try {
+    source = await getLocalFs().readTextFile(path);
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+  const request = parseRequest(source);
+  if (request !== undefined) return request;
+
+  // Invalid data may only be a partial non-atomic write from another process.
+  // Take the writer's lease, then re-read before deciding that deletion is
+  // safe. Valid requests stay on the lock-free scan path.
+  return await withJsxArtifactLock(path, async (assertLeaseOwned) => {
+    try {
+      source = await getLocalFs().readTextFile(path);
+    } catch (error) {
+      if (isNotFoundError(error)) return undefined;
+      throw error;
+    }
+    const lockedRequest = parseRequest(source);
+    if (lockedRequest !== undefined) return lockedRequest;
+    await assertLeaseOwned();
+    await removePersistedJsxCachePruneRequest(path);
+    return undefined;
+  });
+}
+
 async function retirePersistedJsxCachePruneRequest(
   esmCacheDir: string,
   expectedGeneration: string,
@@ -902,31 +984,23 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
     (left, right) => left[1] - right[1],
   );
   const persistedCandidates: PersistedJsxCachePruneRequest[] = [];
+  const requestLeaseTombstones: string[] = [];
   const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
+  let requestTombstoneRetryAtMs: number | undefined;
   try {
     for await (const entry of getLocalFs().readDir(requestDirectory)) {
+      if (entry.isFile && isJsxLeaseTombstoneName(entry.name)) {
+        requestLeaseTombstones.push(entry.name);
+        continue;
+      }
       if (
         !entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX) ||
         !entry.name.endsWith(".json")
       ) continue;
       const requestPath = join(requestDirectory, entry.name);
-      let request: unknown;
-      try {
-        request = IntrinsicJSONParse(await getLocalFs().readTextFile(requestPath));
-      } catch {
-        await removePersistedJsxCachePruneRequest(requestPath);
-        continue;
-      }
-      if (
-        typeof request !== "object" || request === null ||
-        typeof (request as { esmCacheDir?: unknown }).esmCacheDir !== "string" ||
-        typeof (request as { fireAtMs?: unknown }).fireAtMs !== "number" ||
-        typeof (request as { generation?: unknown }).generation !== "string"
-      ) {
-        await removePersistedJsxCachePruneRequest(requestPath);
-        continue;
-      }
-      const { esmCacheDir, fireAtMs, generation } = request as PersistedJsxCachePruneRequest;
+      const request = await readPersistedJsxCachePruneRequest(requestPath);
+      if (request === undefined) continue;
+      const { esmCacheDir, fireAtMs, generation } = request;
       if (
         scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir) ||
         inFlightJsxCachePrunes.has(esmCacheDir)
@@ -935,11 +1009,18 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
       }
       persistedCandidates.push({ esmCacheDir, fireAtMs, generation });
     }
+
+    requestTombstoneRetryAtMs = await sweepJsxLeaseTombstones(
+      requestDirectory,
+      requestLeaseTombstones,
+      Date.now(),
+    );
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read persisted JSX prune requests`, {
         error: error instanceof Error ? error.message : String(error),
       });
+      requestTombstoneRetryAtMs = Date.now() + JSX_CACHE_VARIANT_MIN_AGE_MS;
     }
   }
 
@@ -967,6 +1048,14 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
         Math.max(queued[1] - Date.now(), 0),
       );
     }
+  }
+  if (requestTombstoneRetryAtMs !== undefined) {
+    // Request cleanup has its own eventual slot, but must not take the only
+    // slot a persisted project request with an earlier deadline just freed.
+    scheduleJsxCachePruneRetry(
+      requestDirectory,
+      Math.max(requestTombstoneRetryAtMs - Date.now(), 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+    );
   }
 }
 
@@ -1383,26 +1472,12 @@ async function collectExcessJsxArtifacts(
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
 
-  // A recovery rename can capture a fresh replacement owner after validating
-  // a stale predecessor. Both recovery and release tombstones therefore stay
-  // protected for one full lease-stale interval before maintenance removes an
-  // abandoned file.
-  for (const name of leaseTombstones) {
-    const modifiedAtMs = await readArtifactModifiedAtMs(join(esmCacheDir, name));
-    const collectableAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
-    if (modifiedAtMs > 0 && collectableAtMs > nowMs) {
-      noteRetry(collectableAtMs);
-      continue;
-    }
-    try {
-      await localFs.remove(join(esmCacheDir, name));
-    } catch (error) {
-      if (isNotFoundError(error)) continue;
-      // Transient removal failures are exactly the case this sweep exists for,
-      // so come back rather than waiting for an unrelated future write.
-      noteRetry(nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
-    }
-  }
+  const tombstoneRetryAtMs = await sweepJsxLeaseTombstones(
+    esmCacheDir,
+    leaseTombstones,
+    nowMs,
+  );
+  if (tombstoneRetryAtMs !== undefined) noteRetry(tombstoneRetryAtMs);
 
   const artifactNames = new Set(allArtifactNames);
   for (const { artifactName, lockName } of possibleOrphanLeaseArtifacts) {
@@ -1522,6 +1597,7 @@ export const __jsxCacheInternals = {
   cancelScheduledJsxCachePrunes,
   clearPersistedJsxCachePruneRequestsForTests,
   collectExcessJsxArtifacts,
+  getPersistedJsxCachePruneRequestPath,
   hasScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
     scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir),
   hasPersistedJsxCachePrune,

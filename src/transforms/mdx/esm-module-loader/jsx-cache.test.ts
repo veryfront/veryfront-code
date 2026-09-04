@@ -19,7 +19,7 @@ import {
   stat,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
-import { join } from "#veryfront/compat/path";
+import { dirname, join } from "#veryfront/compat/path";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
@@ -2381,6 +2381,7 @@ describe("scheduled prune bound", () => {
   const {
     cancelScheduledJsxCachePrunes,
     clearPersistedJsxCachePruneRequestsForTests,
+    getPersistedJsxCachePruneRequestPath,
     hasScheduledJsxCachePrune,
     hasPersistedJsxCachePrune,
     MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
@@ -2458,16 +2459,82 @@ describe("scheduled prune bound", () => {
     }
   });
 
+  it("locks malformed persisted requests through validation and removal", async () => {
+    const directory = `${persistedTestPrefix}malformed`;
+    const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
+    const localFs = getLocalFs();
+    const originalReadTextFile = localFs.readTextFile.bind(localFs);
+    const originalRemove = localFs.remove.bind(localFs);
+    let readUnderLease = false;
+    let removedUnderLease = false;
+
+    try {
+      await mkdir(dirname(requestPath), { recursive: true });
+      await writeTextFile(requestPath, "{truncated");
+      localFs.readTextFile = async (path) => {
+        if (path === requestPath) {
+          readUnderLease = await localFs.exists(`${requestPath}.lock`);
+        }
+        return await originalReadTextFile(path);
+      };
+      localFs.remove = async (path, options) => {
+        if (path === requestPath) {
+          removedUnderLease = await localFs.exists(`${requestPath}.lock`);
+        }
+        await originalRemove(path, options);
+      };
+
+      await promotePersistedJsxCachePruneRequest();
+
+      assertEquals(readUnderLease, true);
+      assertEquals(removedUnderLease, true);
+      assertEquals(await localFs.exists(requestPath), false);
+    } finally {
+      localFs.readTextFile = originalReadTextFile;
+      localFs.remove = originalRemove;
+      await originalRemove(requestPath).catch(() => undefined);
+      await originalRemove(`${requestPath}.lock`).catch(() => undefined);
+    }
+  });
+
+  it("sweeps stale persisted-request lease tombstones", async () => {
+    const directory = `${persistedTestPrefix}request-tombstone`;
+    const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
+    const tombstonePath = `${requestPath}.lock.stale-11111111-1111-4111-8111-111111111111`;
+    const localFs = getLocalFs();
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+
+    try {
+      await mkdir(dirname(requestPath), { recursive: true });
+      await writeTextFile(tombstonePath, "abandoned-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(tombstonePath, staleAt, staleAt);
+
+      await promotePersistedJsxCachePruneRequest();
+
+      assertEquals(
+        await localFs.exists(tombstonePath),
+        false,
+        "central request-lock debris must not accumulate outside project cache sweeps",
+      );
+    } finally {
+      await localFs.remove(tombstonePath).catch(() => undefined);
+    }
+  });
+
   it("promotes an earlier persisted request while queued work remains", async () => {
     await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
+    const persisted = `${persistedTestPrefix}persisted-earlier`;
+    await persistJsxCachePruneRequest(persisted, Date.now() + 10_000);
     const trigger = `${persistedTestPrefix}trigger`;
     scheduleJsxCachePruneRetry(trigger, 0);
     for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES - 1; entry++) {
       ensureJsxCacheSweepArmed(`${persistedTestPrefix}scheduled-${entry}`);
     }
     ensureJsxCacheSweepArmed(`${persistedTestPrefix}queued`);
-    const persisted = `${persistedTestPrefix}persisted-earlier`;
-    await persistJsxCachePruneRequest(persisted, Date.now() + 10_000);
 
     for (let attempt = 0; attempt < 100; attempt++) {
       if (hasScheduledJsxCachePrune(persisted)) break;
