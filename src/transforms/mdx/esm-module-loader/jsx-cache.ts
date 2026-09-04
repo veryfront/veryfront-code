@@ -223,8 +223,10 @@ function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): b
  */
 const jsxArtifactActiveRefs = new Map<string, number>();
 const LAZY_JSX_ARTIFACT_RETENTION_MS = 10 * 60_000;
+const LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY = 8;
 const lazyJsxArtifactExpirations = new Map<string, number>();
 let lazyJsxArtifactHeartbeat: ReturnType<typeof setInterval> | undefined;
+let lazyJsxArtifactHeartbeatInFlight: Promise<void> | undefined;
 
 function retainJsxArtifact(artifactPath: string): void {
   jsxArtifactActiveRefs.set(artifactPath, (jsxArtifactActiveRefs.get(artifactPath) ?? 0) + 1);
@@ -237,24 +239,52 @@ function releaseJsxArtifact(artifactPath: string): void {
   else jsxArtifactActiveRefs.set(artifactPath, count - 1);
 }
 
-function ensureLazyJsxArtifactHeartbeat(): void {
-  if (lazyJsxArtifactHeartbeat !== undefined) return;
-  lazyJsxArtifactHeartbeat = setInterval(() => {
+function runLazyJsxArtifactHeartbeat(): Promise<void> {
+  if (lazyJsxArtifactHeartbeatInFlight) return lazyJsxArtifactHeartbeatInFlight;
+  const run = (async () => {
     const nowMs = Date.now();
+    const artifactPaths: string[] = [];
     for (const [artifactPath, expiresAtMs] of lazyJsxArtifactExpirations) {
       if (expiresAtMs <= nowMs) {
         lazyJsxArtifactExpirations.delete(artifactPath);
         continue;
       }
-      void withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-        await assertLeaseOwned();
-        await refreshJsxArtifactMtime(artifactPath, 0);
-      }).catch(() => undefined);
+      artifactPaths[artifactPaths.length] = artifactPath;
     }
+    let nextIndex = 0;
+    const workers: Array<Promise<void>> = [];
+    const workerCount = Math.min(
+      LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY,
+      artifactPaths.length,
+    );
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+      workers[workers.length] = (async () => {
+        while (nextIndex < artifactPaths.length) {
+          const artifactPath = artifactPaths[nextIndex++];
+          if (artifactPath === undefined) continue;
+          await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+            await assertLeaseOwned();
+            await refreshJsxArtifactMtime(artifactPath, 0);
+          }).catch(() => undefined);
+        }
+      })();
+    }
+    await Promise.all(workers);
+  })();
+  lazyJsxArtifactHeartbeatInFlight = run.finally(() => {
+    lazyJsxArtifactHeartbeatInFlight = undefined;
     if (lazyJsxArtifactExpirations.size === 0 && lazyJsxArtifactHeartbeat !== undefined) {
       clearInterval(lazyJsxArtifactHeartbeat);
       lazyJsxArtifactHeartbeat = undefined;
     }
+  });
+  return lazyJsxArtifactHeartbeatInFlight;
+}
+
+function ensureLazyJsxArtifactHeartbeat(): void {
+  if (lazyJsxArtifactHeartbeat !== undefined) return;
+  lazyJsxArtifactHeartbeat = setInterval(() => {
+    void runLazyJsxArtifactHeartbeat();
   }, JSX_CACHE_MTIME_REFRESH_INTERVAL_MS);
   unrefTimer(lazyJsxArtifactHeartbeat);
 }
@@ -873,12 +903,23 @@ async function collectExcessJsxArtifacts(
   const variantsByPrefix = new Map<string, string[]>();
   const strandedNamespaceArtifacts: string[] = [];
   const leaseTombstones: string[] = [];
+  const possibleOrphanLeaseArtifacts: Array<{ artifactName: string; lockName: string }> = [];
   const allArtifactNames: string[] = [];
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
       if (isJsxLeaseTombstoneName(entry.name)) {
         leaseTombstones.push(entry.name);
+        continue;
+      }
+      if (entry.name.endsWith(".mjs.lock")) {
+        const artifactName = entry.name.slice(0, -".lock".length);
+        if (isJsxArtifactName(artifactName)) {
+          possibleOrphanLeaseArtifacts[possibleOrphanLeaseArtifacts.length] = {
+            artifactName,
+            lockName: entry.name,
+          };
+        }
         continue;
       }
       if (!entry.name.endsWith(".mjs")) continue;
@@ -933,6 +974,20 @@ async function collectExcessJsxArtifacts(
       // so come back rather than waiting for an unrelated future write.
       noteRetry(nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
     }
+  }
+
+  const artifactNames = new Set(allArtifactNames);
+  for (const { artifactName, lockName } of possibleOrphanLeaseArtifacts) {
+    if (artifactNames.has(artifactName)) continue;
+    const lockPath = join(esmCacheDir, lockName);
+    const modifiedAtMs = await readArtifactModifiedAtMs(lockPath);
+    if (modifiedAtMs === 0) continue;
+    const recoverAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
+    if (recoverAtMs > nowMs) {
+      noteRetry(recoverAtMs);
+      continue;
+    }
+    await withJsxArtifactLock(join(esmCacheDir, artifactName), async () => undefined);
   }
 
   const quotaHandled = new Set<string>();
@@ -1043,6 +1098,7 @@ export const __jsxCacheInternals = {
   isLazyArtifactRetained: isLazyJsxArtifactRetained,
   JSX_ARTIFACT_LEASE_STALE_MS,
   LAZY_JSX_ARTIFACT_RETENTION_MS,
+  LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY,
   jsxArtifactActiveRefCount: (artifactPath: string): number =>
     jsxArtifactActiveRefs.get(artifactPath) ?? 0,
   MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
@@ -1050,11 +1106,13 @@ export const __jsxCacheInternals = {
   MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
   normalizedModuleMemoSize: (): number => normalizedModulePaths.size,
   readArtifactModifiedAtMs,
+  retainLazyJsxArtifact,
   releaseJsxArtifact,
   rememberNormalizedModule,
   removeJsxArtifactUnlessServed,
   retainJsxArtifact,
   scheduleJsxCachePruneRetry,
+  runLazyJsxArtifactHeartbeat,
   servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
   wasJsxArtifactRecentlyServed,
 };

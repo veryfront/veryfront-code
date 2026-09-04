@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/jsx-cache.test */
 
 import {
+  assert,
   assertEquals,
   assertExists,
   assertNotEquals,
@@ -1351,6 +1352,35 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("recovers stale orphan artifact lease files", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-orphan-lock-test-" });
+    const staleArtifact = "jsx-orphaned.mjs";
+    const freshArtifact = "jsx-active-create.mjs";
+    const localFs = getLocalFs();
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+
+    try {
+      await writeTextFile(join(tempDir, `${staleArtifact}.lock`), "stale-owner");
+      await writeTextFile(join(tempDir, `${freshArtifact}.lock`), "fresh-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(join(tempDir, `${staleArtifact}.lock`), staleAt, staleAt);
+
+      await __jsxCacheInternals.collectExcessJsxArtifacts(
+        tempDir,
+        new Map(),
+        Date.now(),
+      );
+
+      await assertRejects(() => Deno.lstat(join(tempDir, `${staleArtifact}.lock`)));
+      assertEquals((await Deno.lstat(join(tempDir, `${freshArtifact}.lock`))).isFile, true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("keeps a stranded artifact inside the grace period for a draining process", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-stranded-fresh-test-" });
     const sourcePath = "/tmp/source/MidRoll.tsx";
@@ -1698,6 +1728,8 @@ describe("jsx artifact references", () => {
     cancelScheduledJsxCachePrunes,
     isLazyArtifactRetained,
     LAZY_JSX_ARTIFACT_RETENTION_MS,
+    retainLazyJsxArtifact,
+    runLazyJsxArtifactHeartbeat,
     jsxArtifactActiveRefCount,
     removeJsxArtifactUnlessServed,
     wasJsxArtifactRecentlyServed,
@@ -1798,6 +1830,46 @@ describe("jsx artifact references", () => {
       assertEquals(removal.removed, true);
       await assertRejects(() => readTextFile(artifactPath));
     } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("shares one bounded lazy heartbeat batch while storage is slow", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-lazy-heartbeat-test-" });
+    const artifactPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/Heartbeat.tsx", "export const value = 1;"),
+    );
+    const localFs = getLocalFs();
+    const originalUtime = localFs.utime;
+    if (!originalUtime) throw new Error("the test runtime must support file timestamps");
+    let releaseUtime: (() => void) | undefined;
+    const utimeBlocked = new Promise<void>((resolve) => {
+      releaseUtime = resolve;
+    });
+    let markUtimeStarted: (() => void) | undefined;
+    const utimeStarted = new Promise<void>((resolve) => {
+      markUtimeStarted = resolve;
+    });
+
+    try {
+      await writeTextFile(artifactPath, "export const value = 1;");
+      retainLazyJsxArtifact(artifactPath);
+      localFs.utime = async (...args) => {
+        markUtimeStarted?.();
+        await utimeBlocked;
+        return await originalUtime(...args);
+      };
+
+      const first = runLazyJsxArtifactHeartbeat();
+      await utimeStarted;
+      const second = runLazyJsxArtifactHeartbeat();
+      assert(first === second, "overlapping timer ticks must share one heartbeat batch");
+      releaseUtime?.();
+      await first;
+    } finally {
+      releaseUtime?.();
+      localFs.utime = originalUtime;
       await remove(tempDir, { recursive: true });
     }
   });
