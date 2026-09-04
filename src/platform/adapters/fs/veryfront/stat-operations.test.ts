@@ -521,6 +521,52 @@ describe("StatOperations", () => {
       assertEquals(listAllFilesCallCount, 0);
     });
 
+    it("keeps API resolution on the context captured before an async lookup", async () => {
+      let currentBranch = "main";
+      let releaseLookup: (() => void) | undefined;
+      const lookupBlocked = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      let markLookupStarted: (() => void) | undefined;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      const searchedBranches: Array<string | undefined> = [];
+      const client = createMockClient({
+        searchFiles: (
+          pattern: string,
+          context?: { type: "branch"; name: string },
+        ) => {
+          searchedBranches.push(context?.name);
+          return Promise.resolve(pattern === "pages/about.*" ? [{ path: "pages/about.tsx" }] : []);
+        },
+      });
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch",
+          projectSlug: "test",
+          branch: currentBranch,
+        }),
+        hasCachedFileList: async () => {
+          markLookupStarted?.();
+          await lookupBlocked;
+          return false;
+        },
+        isPersistentCacheInvalidated: () => false,
+      };
+      const statOps = createStatOps(client, new PathNormalizer(), contextProvider);
+
+      const pending = statOps.resolveFile("pages/about");
+      await lookupStarted;
+      currentBranch = "draft";
+      releaseLookup?.();
+
+      assertEquals(await pending, "pages/about.tsx");
+      assertEquals(searchedBranches, ["main"]);
+    });
+
     it("should retry pages-prefixed API patterns after an incomplete index miss", async () => {
       const patterns: string[] = [];
 

@@ -18,6 +18,7 @@ import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { toClientContext } from "./adapter-content-context.ts";
 
 const logger = baseLogger.component("stat-operations");
 
@@ -413,6 +414,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private async tryResolveViaApiSearch(
     normalizedPath: string,
     options?: ResolveFileOptions,
+    contentContext?: ResolvedContentContext | null,
     knownExtensionFallback: "exact" | "wildcard" = "exact",
   ): Promise<string | null | undefined> {
     if (isFrameworkSourcePath(normalizedPath)) {
@@ -434,7 +436,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     for (const pattern of patterns) {
       try {
-        const matches = await this.client.searchFiles(pattern);
+        const matches = await this.client.searchFiles(
+          pattern,
+          contentContext ? toClientContext(contentContext) : undefined,
+        );
         sawSuccessfulSearch = true;
         this.apiSearchCircuitBreaker.recordSuccess();
 
@@ -606,7 +611,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const attemptedApiResolve = !hasCachedFileList;
 
     if (!hasCachedFileList) {
-      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options);
+      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, ctx);
       if (typeof apiResolved === "string") {
         this.cache.set(cacheKey, apiResolved);
         return apiResolved;
@@ -665,7 +670,12 @@ export class StatOperations extends VeryfrontOperationsBase {
     // NOTE: Keep the post-index API fallback aligned with the pre-index helper for extensionless
     // paths, while preserving the older wildcard sibling-extension lookup for known-extension
     // paths. Incomplete file-list snapshots otherwise hide valid files until the cache refreshes.
-    const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, "wildcard");
+    const apiResolved = await this.tryResolveViaApiSearch(
+      normalizedPath,
+      options,
+      ctx,
+      "wildcard",
+    );
     if (typeof apiResolved === "string") {
       this.cache.set(cacheKey, apiResolved);
       return apiResolved;
