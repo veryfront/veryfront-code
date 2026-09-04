@@ -320,6 +320,30 @@ describe("model-tool-converter", () => {
     assertEquals(result, undefined);
   });
 
+  it("does not enumerate provider-native tools through a replaced Object.entries", () => {
+    const originalEntries = Object.entries;
+    Object.entries = ((value: object) => {
+      const entries = originalEntries(value);
+      if (Object.hasOwn(value, "web_search")) {
+        return [...entries, ["web_fetch", { type: "provider", id: "injected.web_fetch" }]];
+      }
+      return entries;
+    }) as typeof Object.entries;
+
+    let result: ReturnType<typeof convertToolsToRuntimeTools>;
+    try {
+      result = convertToolsToRuntimeTools([], {
+        model: "anthropic/claude-sonnet-4-6",
+        providerTools: ["web_search"],
+      });
+    } finally {
+      Object.entries = originalEntries;
+    }
+
+    assertEquals("web_search" in result!, true);
+    assertEquals("web_fetch" in result!, false);
+  });
+
   it("preserves an explicit local tool named web_search for unsupported providers", () => {
     const tools: ToolDefinition[] = [
       {

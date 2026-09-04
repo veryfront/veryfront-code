@@ -1273,7 +1273,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { "x-token": "runtime-token" },
       "http://localhost:4311",
     );
-
     try {
       const result = await withEnvValue(
         "PORT",
@@ -1381,6 +1380,31 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { "x-token": "runtime-token" },
       "http://localhost:4311",
     );
+    const nativeRequest = globalThis.Request;
+    let replacementSawLocalEvalRequest = false;
+    const replacementRequest = function (
+      this: Request,
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Request {
+      const url = typeof input === "string" || input instanceof URL ? String(input) : input.url;
+      if (
+        url === "http://localhost:4311/api/ag-ui" &&
+        typeof init?.body === "string"
+      ) {
+        replacementSawLocalEvalRequest = true;
+        const payload = JSON.parse(init.body) as {
+          forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
+        };
+        if (payload.forwardedProps?.veryfront) {
+          delete payload.forwardedProps.veryfront.runtimeOverrides;
+        }
+        return new nativeRequest(input, { ...init, body: JSON.stringify(payload) });
+      }
+      return new nativeRequest(input, init);
+    } as unknown as typeof Request;
+    replacementRequest.prototype = nativeRequest.prototype;
+    globalThis.Request = replacementRequest;
 
     try {
       const result = await withEnvValue(
@@ -1398,7 +1422,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       // agent's own unrestricted surface never runs.
       assertEquals(observedToolNames, ["eval_allowed_lookup", "web_fetch"]);
       assertEquals(sourceAgentStreamCalls, 0);
+      assertEquals(replacementSawLocalEvalRequest, false);
     } finally {
+      globalThis.Request = nativeRequest;
       agentRegistry.delete("researcher");
     }
   });

@@ -40,6 +40,7 @@ const NativeSet = Set;
 const intrinsicSetAdd = Set.prototype.add;
 const intrinsicSetHas = Set.prototype.has;
 const intrinsicObjectAssign = Object.assign;
+const intrinsicObjectEntries = Object.entries;
 const intrinsicObjectKeys = Object.keys;
 
 function createStringSet(values: readonly string[]): Set<string> {
@@ -126,8 +127,10 @@ export function convertToolsToRuntimeTools(
   // the worst-case `$ref` expansion by the tool count.
   const moonshotExpansionBudget = createMoonshotSchemaExpansionBudget();
 
-  for (const def of compatibleTools) {
-    if (providerNativeToolNames.has(def.name)) {
+  for (let index = 0; index < compatibleTools.length; index++) {
+    const def = compatibleTools[index];
+    if (def === undefined) continue;
+    if (intrinsicReflectApply(intrinsicSetHas, providerNativeToolNames, [def.name])) {
       continue;
     }
     addRuntimeTool(
@@ -146,10 +149,21 @@ export function convertToolsToRuntimeTools(
   }
 
   if (providerNativeTools) {
-    for (const [name, providerTool] of Object.entries(providerNativeTools)) {
+    const providerToolEntries = intrinsicReflectApply(
+      intrinsicObjectEntries,
+      Object,
+      [providerNativeTools],
+    ) as Array<[string, RuntimeToolSet[string]]>;
+    for (let index = 0; index < providerToolEntries.length; index++) {
+      const entry = providerToolEntries[index];
+      if (entry === undefined) continue;
+      const name = entry[0];
+      const providerTool = entry[1];
       toolSet[name] = providerTool;
     }
   }
 
-  return Object.keys(toolSet).length > 0 ? toolSet : undefined;
+  return (intrinsicReflectApply(intrinsicObjectKeys, Object, [toolSet]) as string[]).length > 0
+    ? toolSet
+    : undefined;
 }

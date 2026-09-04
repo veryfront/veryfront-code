@@ -72,6 +72,7 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
 const ReflectApply = Reflect.apply;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
 
@@ -818,7 +819,7 @@ function createLocalEvalAgentFetch(input: {
   if (!agent) return undefined;
 
   return async (requestInput, init) => {
-    const request = new Request(requestInput, init);
+    const request = new NativeRequest(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
     const runtimeRestrictions = await readLocalEvalRuntimeRestrictions(request);
     const handler = createAgUiHandler({

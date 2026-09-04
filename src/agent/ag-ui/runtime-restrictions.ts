@@ -91,6 +91,39 @@ function restrictConfiguredMcpServers(
   return restricted;
 }
 
+function getConfiguredMcpToolNames(
+  servers: readonly AgentMcpServerConfig[] | undefined,
+  allowedToolNames: readonly string[],
+): ToolNameLookup {
+  const configured = createNullPrototypeObject(null) as ToolNameLookup;
+  if (servers === undefined) return configured;
+  for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+    const server = servers[serverIndex];
+    if (server === undefined) continue;
+    // A tools-true catalog can name a not-yet-connected custom HTTP source.
+    // Veryfront-owned sources remain explicit-map only so an unresolved name
+    // cannot turn the platform MCP fallback into a new capability.
+    if (!("transport" in server)) continue;
+    const allowedByServer = server.toolPolicy?.allow === undefined
+      ? undefined
+      : toToolNameLookup(server.toolPolicy.allow);
+    const deniedByServer = server.toolPolicy?.deny === undefined
+      ? undefined
+      : toToolNameLookup(server.toolPolicy.deny);
+    for (let toolIndex = 0; toolIndex < allowedToolNames.length; toolIndex++) {
+      const toolName = allowedToolNames[toolIndex];
+      if (
+        toolName !== undefined &&
+        (allowedByServer === undefined || allowedByServer[toolName] === true) &&
+        deniedByServer?.[toolName] !== true
+      ) {
+        configured[toolName] = true;
+      }
+    }
+  }
+  return configured;
+}
+
 /**
  * Ceiling a trusted server caller applies to one AG-UI run.
  *
@@ -119,6 +152,7 @@ function restrictConfiguredTools(
   allowedTools: ToolNameLookup,
   providerToolNames: ToolNameLookup,
   visibleLocalTools: ToolNameLookup,
+  configuredMcpTools: ToolNameLookup,
 ): AgentConfig["tools"] {
   if (tools === undefined) return undefined;
   if (tools === true) {
@@ -133,7 +167,10 @@ function restrictConfiguredTools(
     for (let index = 0; index < allowedToolNames.length; index++) {
       const toolName = allowedToolNames[index];
       if (toolName === undefined) continue;
-      if (providerToolNames[toolName] !== true && visibleLocalTools[toolName] === true) {
+      if (
+        providerToolNames[toolName] !== true &&
+        (visibleLocalTools[toolName] === true || configuredMcpTools[toolName] === true)
+      ) {
         selected[toolName] = true;
       }
     }
@@ -258,12 +295,14 @@ export function applyAgUiRuntimeRestrictionsForModel(
     : filterAllowedNames(config.providerTools, supportedProviderTools);
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
   const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
+  const configuredMcpTools = getConfiguredMcpToolNames(config.mcpServers, allowedToolNames);
   restricted.tools = restrictConfiguredTools(
     config.tools,
     allowedToolNames,
     allowedTools,
     providerToolNames,
     visibleLocalTools,
+    configuredMcpTools,
   );
   if (config.tools === true) {
     // Replacing the authored `tools: true` selector with an explicit map would
