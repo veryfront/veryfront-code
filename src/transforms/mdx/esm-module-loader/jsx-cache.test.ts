@@ -1537,6 +1537,30 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("removes a provisional lease when transition inspection fails", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-transition-read-failure-" });
+    const artifactPath = join(tempDir, "jsx-transition-failure.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir;
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      localFs.readDir = () => {
+        throw new Error("directory unavailable");
+      };
+
+      await assertRejects(
+        () => withJsxArtifactLock(artifactPath, async () => {}),
+        Error,
+        "directory unavailable",
+      );
+      assertEquals(await localFs.exists(leasePath), false);
+    } finally {
+      localFs.readDir = originalReadDir;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("does not remove a replacement lease during stale-owner release", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-release-owner-test-" });
     const artifactPath = join(tempDir, "jsx-release-owner.mjs");
@@ -2341,7 +2365,10 @@ describe("scheduled prune bound", () => {
     hasScheduledJsxCachePrune,
     hasPersistedJsxCachePrune,
     MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
+    persistJsxCachePruneRequest,
+    promotePersistedJsxCachePruneRequest,
     queuedJsxCachePruneCount,
+    retirePersistedJsxCachePruneRequest,
     scheduledJsxCachePruneCount,
   } = __jsxCacheInternals;
 
@@ -2386,6 +2413,29 @@ describe("scheduled prune bound", () => {
     assertEquals(await hasPersistedJsxCachePrune(overflow), true);
     assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
     assertEquals(queuedJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
+  });
+
+  it("retains a persisted request when its prune schedules a follow-up", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-persisted-follow-up-" });
+    const sourcePath = "/tmp/source/PersistedFollowUp.tsx";
+    const requestPrefix = `${tempDir}/`;
+    try {
+      await writeTextFile(
+        join(tempDir, buildMdxJsxCacheFileName(sourcePath, "export const v = 1;")),
+        "export const v = 1;",
+      );
+      await persistJsxCachePruneRequest(tempDir, Date.now());
+      await promotePersistedJsxCachePruneRequest();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      assertEquals(await hasPersistedJsxCachePrune(tempDir), true);
+      assertEquals(hasScheduledJsxCachePrune(tempDir), true);
+    } finally {
+      cancelScheduledJsxCachePrunes();
+      await retirePersistedJsxCachePruneRequest(tempDir);
+      await clearPersistedJsxCachePruneRequestsForTests(requestPrefix);
+      await remove(tempDir, { recursive: true });
+    }
   });
 });
 
