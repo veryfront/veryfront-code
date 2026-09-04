@@ -8,7 +8,7 @@
  */
 
 import { basename } from "#veryfront/compat/path/index.ts";
-import { BUILD_FAILED } from "#veryfront/errors";
+import { BUILD_FAILED, SECURITY_VIOLATION } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
@@ -16,6 +16,7 @@ import {
   appendSameOriginSSRDependencyPinningKey,
   normalizeExtension,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { isContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
@@ -117,10 +118,46 @@ function canonicalizeHttpSpecifier(
   return resolved.toString();
 }
 
+const MODULE_TRANSPORT_PREFIX = "/_vf_modules/";
+
 function isLocalMappedSpecifier(specifier: string): boolean {
-  return stringStartsWith(specifier, "/_vf_modules/") ||
+  return stringStartsWith(specifier, MODULE_TRANSPORT_PREFIX) ||
     stringStartsWith(specifier, "_vf_modules/") ||
     stringStartsWith(specifier, "file://");
+}
+
+/**
+ * Origin used to canonicalize module-transport paths when the caller has no
+ * module-server origin. `.invalid` is reserved (RFC 2606) and can never
+ * resolve, so it only ever supplies WHATWG path normalization, the same
+ * normalization the browser or importing runtime applies to the emitted
+ * specifier, and never a fetchable target.
+ */
+const CONTAINMENT_BASE = "https://module-transport.invalid/";
+
+/**
+ * True when `specifier` still lands inside `/_vf_modules/` after the URL
+ * parser has collapsed dot segments, mapped backslashes and stripped the
+ * characters (NUL/TAB/CR/LF) it removes before parsing.
+ *
+ * A prefix test alone is not containment: `/_vf_modules/../_veryfront/…`
+ * starts with the transport prefix yet normalizes out of it.
+ */
+function isContainedModuleTransportSpecifier(specifier: string): boolean {
+  // A `file://` target names an already-cached artifact on disk, not a
+  // same-origin transport URL, so it cannot be normalized onto an arbitrary
+  // application route and this containment rule does not apply to it.
+  if (stringStartsWith(specifier, "file://")) return true;
+
+  let resolved: URL;
+  try {
+    resolved = new URL(specifier, CONTAINMENT_BASE);
+  } catch {
+    return false;
+  }
+
+  return `${resolved.origin}/` === CONTAINMENT_BASE &&
+    stringStartsWith(resolved.pathname, MODULE_TRANSPORT_PREFIX);
 }
 
 /**
@@ -156,20 +193,65 @@ async function resolveSpecifier(
   // result already ends in a JS-like or CSS extension. A different shape here
   // would resolve one specifier to two different module URLs.
   if (stringStartsWith(specifier, "@/")) {
-    const mappedAlias = resolveImport(specifier, options.importMap);
-    if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) return mappedAlias;
-
     const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
+    // The alias path is tenant-authored and decides where the composed
+    // `/_vf_modules/` URL finally points, so it has to satisfy the shared
+    // containment rule before anything is composed from it. That rule lives in
+    // `transforms/shared/alias-containment.ts` and is enforced identically by
+    // `AliasStrategy.rewrite` and the SSR adapter, so the browser, SSR and
+    // module-cache paths cannot drift apart. It is a pure guard, so an
+    // accepted path keeps the exact `AliasStrategy.rewrite` byte shape
+    // composed below.
+    //
+    // The authored suffix is a query string or fragment and can carry tenant
+    // credentials (`@/module?token=…`), so the diagnostics below name the
+    // alias by its path alone. AGENTS.md, "Secret and internal-detail
+    // safety", forbids echoing such values into error messages.
+    const reportedAlias = suffix === "" ? `@/${pathOnly}` : `@/${pathOnly}<redacted suffix>`;
+    if (!isContainedProjectAliasPath(pathOnly)) {
+      throw SECURITY_VIOLATION.create({
+        detail:
+          `Refusing to resolve project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
+      });
+    }
+
+    const mappedAlias = resolveImport(specifier, options.importMap);
+    if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) {
+      // A configured "@/" mapping is not exempt from containment. A target
+      // like "/_vf_modules/../_veryfront/modules/" keeps the transport prefix
+      // that `isLocalMappedSpecifier` matches, yet the importing runtime
+      // normalizes the emitted specifier straight back out of the transport.
+      // Validate the resolved target, not its literal prefix.
+      if (!isContainedModuleTransportSpecifier(mappedAlias)) {
+        throw SECURITY_VIOLATION.create({
+          detail:
+            `Refusing to resolve project alias ${reportedAlias}: its import-map target resolves outside the /_vf_modules/ module transport`,
+        });
+      }
+      return mappedAlias;
+    }
+
     const normalizedPath = normalizeExtension(pathOnly);
     const jsPath = regexpTest(/\.(js|mjs|cjs|css)$/, normalizedPath)
       ? normalizedPath
       : `${normalizedPath}.js`;
-    const projectModulePath = `/_vf_modules/${jsPath}${suffix}`;
+    const projectModulePath = `${MODULE_TRANSPORT_PREFIX}${jsPath}${suffix}`;
+    // Canonicalize the composed path even when there is no module-server
+    // origin. That branch returns the path for the importing runtime to
+    // resolve itself, so it needs the same post-composition containment check
+    // rather than trusting the character guards above to have been exhaustive.
     const moduleServerOrigin = parseHttpBase(options.moduleServerOrigin);
+    const projectModuleUrl = new URL(projectModulePath, moduleServerOrigin ?? CONTAINMENT_BASE);
+    if (!stringStartsWith(projectModuleUrl.pathname, MODULE_TRANSPORT_PREFIX)) {
+      throw SECURITY_VIOLATION.create({
+        detail:
+          `Refusing to resolve project alias ${reportedAlias}: it resolved outside the /_vf_modules/ module transport`,
+      });
+    }
     if (!moduleServerOrigin) return projectModulePath;
 
     return resolveSpecifier(
-      new URL(projectModulePath, moduleServerOrigin).toString(),
+      projectModuleUrl.toString(),
       baseUrl,
       options,
       cacheHttpModule,

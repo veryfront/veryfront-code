@@ -13,6 +13,7 @@ import {
   resetApiHandlerForProject,
   withApiHandler,
 } from "./pages-api-handler.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 
 type MockHandler = { destroyed: boolean; destroy(): void };
 
@@ -201,6 +202,35 @@ describe("server/handlers/request/api/pages-api-handler", () => {
       );
       assertEquals(cache.store.size, 3);
       assertEquals(productionHandler === updatedProductionHandler, false);
+    });
+
+    it("does not cache config-less handlers across environment snapshots", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      __injectCacheForTests(cache as any);
+      __injectApiRouteDepsForTests({
+        getConfig: () => Promise.resolve({}),
+      });
+      const ctx = createHandlerContext({
+        adapter,
+        projectSlug: "hosted-project",
+        mode: "production",
+        releaseId: "shared-release",
+        environmentId: "production",
+        environmentName: "production",
+      });
+
+      const first = await runWithProjectEnv(
+        { TENANT_VALUE: "first" },
+        () => getApiHandler(ctx),
+      );
+      const second = await runWithProjectEnv(
+        { TENANT_VALUE: "second" },
+        () => getApiHandler(ctx),
+      );
+
+      assertEquals(first === second, false);
+      assertEquals(cache.store.size, 0);
     });
   });
 

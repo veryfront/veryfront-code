@@ -5,6 +5,7 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { assertContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 import { getConfiguredServerExternalRuntimeSpecifier } from "#veryfront/transforms/shared/server-only-packages.ts";
 import {
@@ -21,11 +22,41 @@ import {
   findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 
 type CacheBuster = number | string;
 const JsonStringify = JSON.stringify;
 const MAX_CONFIGURED_EXTERNAL_IMPORTS = 500;
+
+function rewriteMatchedImportSpans(
+  code: string,
+  fromSpans: readonly StaticImportSpan[],
+  dynamicSpans: readonly StaticImportSpan[],
+  sideEffectSpans: readonly StaticImportSpan[],
+): string {
+  const replacements: SourceSpanReplacement[] = [
+    ...fromSpans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `from ${JsonStringify(span.path)}`,
+    })),
+    ...dynamicSpans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: JsonStringify(span.path),
+    })),
+    ...sideEffectSpans.map((span) => ({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `import ${JsonStringify(span.path)}`,
+    })),
+  ];
+  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
+}
 
 export interface SSRImportRewriteTarget {
   specifier: string;
@@ -340,32 +371,7 @@ function rewriteConfiguredExternalImports(
     });
   }
 
-  const replacements: SourceSpanReplacement[] = [];
-  for (const span of fromSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: `from ${JsonStringify(span.path)}`,
-    });
-  }
-  for (const span of dynamicSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: JsonStringify(span.path),
-    });
-  }
-  for (const span of sideEffectSpans) {
-    replacements.push({
-      start: span.start,
-      end: span.end,
-      expected: span.original,
-      replacement: `import ${JsonStringify(span.path)}`,
-    });
-  }
-  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
+  return rewriteMatchedImportSpans(code, fromSpans, dynamicSpans, sideEffectSpans);
 }
 
 function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewriteOptions): string {
@@ -430,10 +436,23 @@ async function getCacheBusterAsync(
   return getDefaultCacheBuster(target, options);
 }
 
+/**
+ * Rewrite one authored `@/` alias into its SSR module-transport URL.
+ * `specifierPath` is the text after `@/`.
+ *
+ * The URL is composed by concatenating the authored path onto
+ * `/_vf_modules/`, so an alias carrying dot segments would be emitted as
+ * `/_vf_modules/../…` and normalized straight back out of the transport by the
+ * SSR importer, turning the import into a same-origin fetch of an arbitrary
+ * path that is then cached as an executable module. Containment is therefore
+ * checked before anything is composed, from the same shared rule
+ * `AliasStrategy.rewrite` and `transforms/esm/specifier-resolver.ts` apply.
+ */
 function buildAliasRewrite(
   specifierPath: string,
   options: SSRRewriteOptions,
 ): { target: SSRImportRewriteTarget; prefix: string } {
+  assertContainedProjectAliasPath(specifierPath);
   const { crossProjectRef } = options;
   const jsPath = specifierPath.endsWith(".js") ? specifierPath : `${specifierPath}.js`;
 
@@ -485,52 +504,24 @@ function buildScopedParams(options: SSRRewriteOptions): string {
   return `${projectParam}${branchParam}${dependencyPinningParam}`;
 }
 
-const ALIAS_IMPORT_PATTERNS = [
-  /(\bfrom\s+)["']@\/([^"']+)["']/g,
-  /(\bimport\s+)["']@\/([^"']+)["']/g,
-  /(\bimport\s*\(\s*)["']@\/([^"']+)["']/g,
-];
-
-const RELATIVE_IMPORT_PATTERNS = [
-  /(\bfrom\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-  /(\bimport\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-  /(\bimport\s*\(\s*)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-];
-
-function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
+function rewriteInternalModuleImportsSync(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
-  let result = code;
-
-  for (const pattern of ALIAS_IMPORT_PATTERNS) {
-    result = result.replace(
-      pattern,
-      (_match, prefix: string, path: string) => {
-        const { target, prefix: rewrittenPrefix } = buildAliasRewrite(path, options);
-        const cacheBuster = getCacheBusterSync(target, options);
-        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
-      },
-    );
-  }
-
-  return result;
-}
-
-function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
-  const scopedParams = buildScopedParams(options);
-  let result = code;
-
-  for (const pattern of RELATIVE_IMPORT_PATTERNS) {
-    result = result.replace(
-      pattern,
-      (_match, prefix: string, path: string) => {
-        const { target, prefix: rewrittenPrefix } = buildRelativeRewrite(path);
-        const cacheBuster = getCacheBusterSync(target, options);
-        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
-      },
-    );
-  }
-
-  return result;
+  const rewriteSpecifier = (specifier: string): string | null => {
+    let rewrite: { target: SSRImportRewriteTarget; prefix: string } | null = null;
+    if (specifier.startsWith("@/")) {
+      rewrite = buildAliasRewrite(specifier.slice(2), options);
+    } else if (/^(?:\.\.?\/|\/)[^?#]+\.js$/.test(specifier)) {
+      rewrite = buildRelativeRewrite(specifier);
+    }
+    if (!rewrite) return null;
+    const cacheBuster = getCacheBusterSync(rewrite.target, options);
+    return `${rewrite.prefix}${scopedParams}&v=${cacheBuster}`;
+  };
+  const scanLimit = code.length || 1;
+  const fromSpans = findStaticImportFromSpans(code, rewriteSpecifier, scanLimit);
+  const dynamicSpans = findDynamicImportSpans(code, rewriteSpecifier, scanLimit);
+  const sideEffectSpans = findStaticSideEffectImportSpans(code, rewriteSpecifier, scanLimit);
+  return rewriteMatchedImportSpans(code, fromSpans, dynamicSpans, sideEffectSpans);
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
@@ -546,8 +537,7 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
     options.onDependencyResolutionObserved,
     options.serverExternalPackages,
   );
-  result = rewritePathAliases(result, options);
-  result = rewriteRelativeImports(result, options);
+  result = rewriteInternalModuleImportsSync(result, options);
   return result;
 }
 

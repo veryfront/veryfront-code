@@ -14,6 +14,10 @@ import {
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import {
+  MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS,
+  MAX_HOSTED_CHAT_REQUEST_MESSAGES,
+} from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
@@ -1136,6 +1140,63 @@ describe("agent/hosted-chat-request", () => {
       ],
       "tool_result tool_name must match its preceding tool_call",
     );
+  });
+
+  it("rejects replay histories with more messages than the hosted bound", () => {
+    const messages = Array.from(
+      { length: MAX_HOSTED_CHAT_REQUEST_MESSAGES + 1 },
+      (_, index) => userMessage([{ type: "text", text: "hello" }], `user-message-${index}`),
+    );
+
+    const parsed = hostedChatRequestSchema.safeParse(createHostedChatRequestBody(messages));
+
+    assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      assertEquals((parsed.error as { issues?: unknown[] }).issues?.length, 1);
+    }
+  });
+
+  it("rejects replay messages with more parts than the hosted bound", () => {
+    const parts = Array.from(
+      { length: MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS + 1 },
+      () => ({ type: "text", text: "hello" }),
+    );
+
+    const parsed = hostedChatRequestSchema.safeParse(
+      createHostedChatRequestBody([userMessage(parts)]),
+    );
+
+    assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      assertEquals((parsed.error as { issues?: unknown[] }).issues?.length, 1);
+    }
+  });
+
+  it("rejects a part-capped replay message of unresolved completed tool calls", () => {
+    const parts = Array.from(
+      { length: MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS },
+      (_, index) => createRawReplayToolCallPart(`tool-call-${index}`, replayToolName),
+    );
+
+    assertHostedChatRequestError(
+      [assistantMessage(parts)],
+      "terminal tool_call requires a matching tool_result",
+    );
+  });
+
+  it("accepts a part-capped replay message of resolved tool call pairs", () => {
+    const parts = Array.from(
+      { length: MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS / 2 },
+      (_, index) => {
+        const toolCallPart = createRawReplayToolCallPart(`tool-call-${index}`, replayToolName);
+        return [toolCallPart, createRawReplayToolResultPart(toolCallPart, replayOutput)];
+      },
+    ).flat();
+
+    const parsed = parseHostedChatRequestMessages([assistantMessage(parts)]);
+
+    assertEquals(parsed.messages.length, 1);
+    assertEquals(parsed.messages[0]?.parts.length, MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS);
   });
 
   it("parses hosted chat requests with raw replay tool parts", async () => {

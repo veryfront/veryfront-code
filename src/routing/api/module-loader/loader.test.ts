@@ -10,6 +10,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
+  bundledModuleScopeDiscriminator,
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
   generateCompiledBinaryRequireShim,
@@ -18,6 +19,7 @@ import {
   isBareModuleSpecifier,
   isSpecifierResolutionError,
   loadHandlerModule as loadHandlerModuleRaw,
+  loadModuleFromCode,
   lookupImportMapEntry,
   prepareHandlerModule,
   readDenoImportMap,
@@ -44,10 +46,94 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 const fs = createFileSystem();
 const appRouteContext: AppRouteContext = { params: {}, identity: null, env: {} };
 const denoIt = isDeno ? it : it.skip;
+
+describe("bundledModuleScopeDiscriminator", () => {
+  const hostedScope = (environmentName: string, value: string, projectId = "project-one-id") =>
+    runWithRequestContext(
+      {
+        projectSlug: "project-one",
+        projectId,
+        token: "test-token",
+        productionMode: true,
+        releaseId: "release-one",
+        environmentName,
+      },
+      () => runWithProjectEnv({ TENANT_VALUE: value }, bundledModuleScopeDiscriminator),
+    );
+
+  it("includes the named environment when project and release match", async () => {
+    assertNotEquals(
+      await hostedScope("production", "same"),
+      await hostedScope("staging", "same"),
+    );
+  });
+
+  it("preserves raw UTF-16 identity in environment values", async () => {
+    assertNotEquals(
+      await hostedScope("production", "\uD800"),
+      await hostedScope("production", "\uFFFD"),
+    );
+  });
+
+  it("does not use project-controlled Object or Array helpers", async () => {
+    const originalKeys = Object.keys;
+    const originalJoin = Array.prototype.join;
+    const originalPush = Array.prototype.push;
+    const poison = () => {
+      throw new Error("ambient environment serialization method must not run");
+    };
+
+    let discriminator: string | undefined;
+    try {
+      Object.keys = poison as typeof Object.keys;
+      Array.prototype.join = poison as typeof Array.prototype.join;
+      Array.prototype.push = poison as typeof Array.prototype.push;
+      discriminator = await hostedScope("production", "safe");
+    } finally {
+      Object.keys = originalKeys;
+      Array.prototype.join = originalJoin;
+      Array.prototype.push = originalPush;
+    }
+
+    assertEquals(discriminator?.length, 64);
+  });
+
+  it("does not use a project-controlled registry-scope encoder", async () => {
+    const originalEncodeURIComponent = globalThis.encodeURIComponent;
+    const originalSlice = String.prototype.slice;
+    const originalNumberToString = Number.prototype.toString;
+    const originalToUpperCase = String.prototype.toUpperCase;
+    const originalPadStart = String.prototype.padStart;
+    try {
+      globalThis.encodeURIComponent = () => "shared";
+      String.prototype.slice = () => "";
+      Number.prototype.toString = () => "0";
+      String.prototype.toUpperCase = function () {
+        return String(this);
+      };
+      String.prototype.padStart = function () {
+        return String(this);
+      };
+      assertNotEquals(
+        await hostedScope("production", "safe", "project-\uD800"),
+        await hostedScope("production", "safe", "project-\uD801"),
+      );
+    } finally {
+      globalThis.encodeURIComponent = originalEncodeURIComponent;
+      String.prototype.slice = originalSlice;
+      Number.prototype.toString = originalNumberToString;
+      String.prototype.toUpperCase = originalToUpperCase;
+      String.prototype.padStart = originalPadStart;
+    }
+  });
+});
 
 describe("canDirectImportSpecifier", () => {
   it("routes import-map-eligible bare and scoped names through the bundler", () => {
@@ -874,6 +960,115 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(after),
       "after",
       "a bundled route must not keep serving a stale module after its source changes",
+    );
+  });
+
+  it("keeps one reusable module identity beyond the former lookup limit", async () => {
+    const owner = `retained-module-${crypto.randomUUID()}`;
+    const code = [
+      "let count = 0;",
+      "export function GET() { return new Response(String(++count)); }",
+    ].join("\n");
+
+    const first = await loadModuleFromCode(code, fs, owner);
+    assertEquals(await getText(first), "1");
+
+    for (let index = 0; index < 65; index += 1) {
+      await loadModuleFromCode(code, fs, `${owner}-${index}`);
+    }
+
+    const reused = await loadModuleFromCode(code, fs, owner);
+    assertEquals(
+      await getText(reused),
+      "2",
+      "returning to an older scope must reuse its retained ESM module",
+    );
+  });
+
+  // Hosted proxy execution resolves every project to the host runtime's shared
+  // project dir and applies per-request env isolation with runWithProjectEnv.
+  // Without a scope discriminator in the cache owner, a module whose top-level
+  // init captured one scope's env overlay would be served from cache to a later
+  // request in a different scope with matching path and generated source,
+  // leaking module-level clients, secrets, and mutable state across tenants.
+  it("does not reuse a bundled module across different project env overlays", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "counter.ts"),
+      `let count = 0;\nexport const bump = () => ++count;`,
+    );
+    const modulePath = join(projectDir, "pages", "api", "env-scoped.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { bump } from "@/lib/counter.ts";`,
+        `export function GET() { return new Response(String(bump())); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+    const load = () => loadHandlerModule({ projectDir, modulePath, adapter, config });
+
+    const tenantA = await runWithProjectEnv({ TENANT_SECRET: "a" }, load);
+    assertEquals(await getText(tenantA), "1");
+
+    const tenantB = await runWithProjectEnv({ TENANT_SECRET: "b" }, load);
+    assertEquals(
+      await getText(tenantB),
+      "1",
+      "a module initialized under one env overlay must not be reused under another",
+    );
+
+    const tenantAAgain = await runWithProjectEnv({ TENANT_SECRET: "a" }, load);
+    assertEquals(
+      await getText(tenantAAgain),
+      "2",
+      "the same env scope must keep reusing its own module",
+    );
+  });
+
+  it("does not reuse a bundled module across different hosted project scopes", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "counter.ts"),
+      `let count = 0;\nexport const bump = () => ++count;`,
+    );
+    const modulePath = join(projectDir, "pages", "api", "project-scoped.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { bump } from "@/lib/counter.ts";`,
+        `export function GET() { return new Response(String(bump())); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+    const load = () => loadHandlerModule({ projectDir, modulePath, adapter, config });
+
+    const projectOne = await runWithCacheKeyContext(
+      { projectId: "project-one", mode: "production", versionId: "rel_1" },
+      load,
+    );
+    assertEquals(await getText(projectOne), "1");
+
+    const projectTwo = await runWithCacheKeyContext(
+      { projectId: "project-two", mode: "production", versionId: "rel_1" },
+      load,
+    );
+    assertEquals(
+      await getText(projectTwo),
+      "1",
+      "two hosted projects sharing a path and byte-identical output must not share a module",
     );
   });
 

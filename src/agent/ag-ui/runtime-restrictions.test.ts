@@ -39,7 +39,7 @@ function registerVisibleTestTool(id: string): void {
     description: `${id} test tool`,
     inputSchema: { type: "object", properties: {} },
     execute: () => Promise.resolve({ ok: true }),
-  } as Tool);
+  } as unknown as Tool);
 }
 
 describe("agent/ag-ui/runtime-restrictions", () => {
@@ -83,7 +83,10 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       { allowedTools: ["gmail__search_emails"] },
     );
 
-    assertEquals(restricted.tools, { email_search: aliasedTool });
+    assertEquals(
+      restricted.tools,
+      { email_search: aliasedTool } as unknown as AgentConfig["tools"],
+    );
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["gmail__search_emails"]);
   });
 
@@ -114,7 +117,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       description: "Fetch a paper",
       inputSchema: { type: "object", properties: {} },
       execute: () => Promise.resolve({ ok: true }),
-    } as Tool);
+    } as unknown as Tool);
 
     const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
       allowedTools: ["fetch-paper"],
