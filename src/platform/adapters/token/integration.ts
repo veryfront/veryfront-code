@@ -3,6 +3,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 
 const logger = baseLogger.component("token-adapter-integration");
 // Captured before project code runs: this normalization decides between an
@@ -59,9 +60,12 @@ export function resetTokenStorageAdapter(): void {
 }
 
 function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
-  const apiToken = getApiToken();
+  const exportedApiToken = getExportedApiToken();
+  const apiToken = exportedApiToken ?? getHostEnv("VERYFRONT_API_TOKEN");
   const projectSlug = getEnvVar("VERYFRONT_PROJECT_SLUG");
-  const apiBaseUrl = getEnvVar("VERYFRONT_API_URL");
+  const apiBaseUrl = exportedApiToken
+    ? getEnvVar("VERYFRONT_API_URL")
+    : resolveHostOwnedApiBaseUrl();
 
   if (!apiToken || !projectSlug) {
     logger.debug("Using in-memory storage (development)");
@@ -92,9 +96,13 @@ function getEnvVar(name: string): string | undefined {
  * An exported token wins when it is a usable (non-blank) value.
  */
 function getApiToken(): string | undefined {
+  return getExportedApiToken() ?? getHostEnv("VERYFRONT_API_TOKEN");
+}
+
+function getExportedApiToken(): string | undefined {
   const exported = getEnvVar("VERYFRONT_API_TOKEN");
   if (exported !== undefined && (applyIntrinsic(stringTrim, exported, []) as string) !== "") {
     return exported;
   }
-  return getHostEnv("VERYFRONT_API_TOKEN");
+  return undefined;
 }

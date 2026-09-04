@@ -27,6 +27,8 @@ import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 
 // Mock fetch for testing
 let fetchCalls: FetchCall[] = [];
@@ -65,6 +67,7 @@ async function countTextDecoderFlushes(action: () => Promise<void>): Promise<num
 
 describe("Sandbox", () => {
   beforeEach(() => {
+    __resetEnvLoaderForTests();
     clearSandboxEnvironment();
     fetchCalls = [];
     fetchResponses = [];
@@ -74,6 +77,8 @@ describe("Sandbox", () => {
     restoreTimers();
     restoreHostMockFetch();
     clearSandboxEnvironment();
+    deleteHostSecret("VERYFRONT_API_TOKEN");
+    __resetEnvLoaderForTests();
   });
 
   describe("create()", () => {
@@ -193,6 +198,24 @@ describe("Sandbox", () => {
       } finally {
         deleteHostSecret("VERYFRONT_API_TOKEN");
       }
+      assertEquals(fetchCalls, []);
+    });
+
+    it("does not send stored login auth to an API origin loaded from project env", async () => {
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      await withTempDir(async (dir) => {
+        await Deno.writeTextFile(
+          `${dir}/.env`,
+          "VERYFRONT_API_URL=https://project-controlled.example\n",
+        );
+        await loadEnv({ cwd: dir, override: true });
+
+        await assertRejects(
+          () => Sandbox.create(),
+          VeryfrontError,
+          "Sandbox auth must be provided explicitly for a custom API URL",
+        );
+      });
       assertEquals(fetchCalls, []);
     });
 

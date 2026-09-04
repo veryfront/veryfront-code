@@ -51,7 +51,8 @@ export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
   // Caller-selected origins form a separate credential domain. Ambient
   // host login credentials can be reused only for the host API. A credential
   // already bound to the current request remains caller-owned.
-  if (options.apiUrl && !isHostApiOrigin(options.apiUrl)) {
+  const selectedApiUrl = resolveSandboxApiUrl(options);
+  if (!isHostApiOrigin(selectedApiUrl)) {
     const requestToken = trimString(getCurrentRequestContext()?.token);
     if (requestToken) return requestToken;
     throw CONFIG_INVALID.create({

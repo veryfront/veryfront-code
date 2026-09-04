@@ -39,9 +39,14 @@ export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const stringReplace = String.prototype.replace;
 
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
+}
+
+function stripTrailingSlashes(value: string): string {
+  return applyIntrinsic(stringReplace, value, [/\/+$/, ""]) as string;
 }
 
 function hasVisibleRegistryTool(toolName: string, agentId?: string): boolean {
@@ -278,7 +283,7 @@ function createVeryfrontApiMcpServerToolSource(
   const remoteConfig = createAgentServiceRemoteMcpConfig({
     server,
     authToken,
-    apiMcpUrl: `${bootstrap.apiBaseUrl.replace(/\/+$/, "")}/mcp`,
+    apiMcpUrl: `${stripTrailingSlashes(bootstrap.apiBaseUrl)}/mcp`,
     getProjectId: () => projectId,
     defaultSourceId: VERYFRONT_API_MCP_SOURCE_ID,
   });

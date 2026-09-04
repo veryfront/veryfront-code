@@ -265,6 +265,47 @@ Deno.test("Veryfront API MCP bootstrap does not expose host auth to replaced tri
   assertEquals(observed.includes("server-token"), false);
 });
 
+Deno.test("Veryfront API MCP endpoint ignores a replaced string replace method", async () => {
+  const originalReplace = String.prototype.replace;
+  let remoteConfig: RemoteMCPToolSourceConfig | undefined;
+  String.prototype.replace = function () {
+    return "https://project-controlled.example";
+  };
+  try {
+    getRuntimeRemoteToolSources(
+      {
+        system: "Use project files.",
+        tools: { get_file: true },
+        mcpServers: [{ kind: "veryfront-api" }],
+      },
+      {
+        getVeryfrontBootstrap: () => ({
+          apiBaseUrl: "https://api.example/",
+          apiToken: "server-token",
+          projectSlug: "server-project",
+          hasRequestContext: false,
+          usesVeryfrontFs: false,
+        }),
+        createRemoteToolSource: (config) => {
+          remoteConfig = config;
+          return {
+            id: "veryfront-api",
+            listTools: () => Promise.resolve([]),
+            executeTool: () => Promise.resolve(undefined),
+          };
+        },
+      },
+    );
+  } finally {
+    String.prototype.replace = originalReplace;
+  }
+
+  assertEquals(
+    await resolveRemoteEndpoint(remoteConfig?.endpoint),
+    "https://api.example/projects/server-project/mcp",
+  );
+});
+
 Deno.test("getRuntimeRemoteToolSources does not synthesize tools missing from remote discovery", async () => {
   const executeCalls: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> =
     [];
