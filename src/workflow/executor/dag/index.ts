@@ -750,6 +750,18 @@ function createCompositeNodeStateView(
   return visible;
 }
 
+function recordCompositeAttemptChildIds(
+  nodeStates: Record<string, NodeState>,
+  nodeId: string,
+  childIds: readonly string[],
+): void {
+  const current = nodeStates[nodeId];
+  if (!current) return;
+  current._activeCompositeChildIds = [
+    ...new Set([...(current._activeCompositeChildIds ?? []), ...childIds]),
+  ];
+}
+
 function collectCompositeLoopStateEvidence(
   nodes: readonly WorkflowNode[],
   context: WorkflowContext,
@@ -1972,6 +1984,7 @@ export class DAGExecutor {
     // completes or waits; a final failed state discards it in full.
     applyContextPatch(context, result.contextPatch);
     applyRecordPatch(nodeStates, createRecordPatch(parallelNodeStates, result.nodeStates));
+    recordCompositeAttemptChildIds(nodeStates, node.id, Object.keys(result.nodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined
@@ -2074,6 +2087,7 @@ export class DAGExecutor {
 
     applyContextPatch(context, result.contextPatch);
     applyRecordPatch(nodeStates, createRecordPatch(branchNodeStates, result.nodeStates));
+    recordCompositeAttemptChildIds(nodeStates, node.id, Object.keys(result.nodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined

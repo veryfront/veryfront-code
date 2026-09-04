@@ -161,6 +161,15 @@ export async function executeMapNodeStrategy(
   runtime.abortSignal?.throwIfAborted();
 
   applyRecordPatch(nodeStates, createRecordPatch(childNodeStates, result.nodeStates));
+  const currentNodeState = nodeStates[node.id];
+  if (currentNodeState) {
+    currentNodeState._activeCompositeChildIds = [
+      ...new Set([
+        ...(currentNodeState._activeCompositeChildIds ?? []),
+        ...Object.keys(result.nodeStates),
+      ]),
+    ];
+  }
 
   const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
 

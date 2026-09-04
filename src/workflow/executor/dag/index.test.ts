@@ -6301,6 +6301,56 @@ describe("DAGExecutor", () => {
       assertEquals(result.context["retrying-branch-child"], "recovered");
     });
 
+    it("does not rerun a retry-attempt child whose id was produced by an earlier composite", async () => {
+      let sharedRuns = 0;
+      let flakyRuns = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          if (node.id === "shared") {
+            sharedRuns += 1;
+            return { success: true, output: sharedRuns, executionTime: 1 };
+          }
+          flakyRuns += 1;
+          return flakyRuns === 1
+            ? { success: false, error: "retry", executionTime: 1 }
+            : { success: true, output: "done", executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "earlier",
+          config: {
+            type: "parallel",
+            nodes: [{ id: "shared", config: { type: "step" } as any }],
+          } as any,
+        },
+        {
+          id: "retrying",
+          dependsOn: ["earlier"],
+          config: {
+            type: "parallel",
+            nodes: [
+              { id: "shared", config: { type: "step" } as any },
+              { id: "flaky", config: { type: "step" } as any },
+            ],
+            retry: {
+              maxAttempts: 2,
+              backoff: "fixed",
+              initialDelay: 0,
+              maxDelay: 0,
+              retryIf: () => true,
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(sharedRuns, 2);
+      assertEquals(flakyRuns, 2);
+    });
+
     it("keeps the selected branch stable across a parent retry", async () => {
       let conditionCalls = 0;
       let stableChildRuns = 0;
