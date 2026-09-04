@@ -856,6 +856,7 @@ function isSelectedGitDeletion(
   previousLocalPaths: ReadonlySet<string> | undefined,
 ): boolean {
   for (const deletedPath of headDeletedGitPaths) {
+    if (previousLocalPaths === undefined && path === deletedPath) return true;
     if (
       previousLocalPaths?.has(path) &&
       (path === deletedPath || path.startsWith(`${deletedPath}/`))
@@ -1372,6 +1373,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           applied.map((path) => ({ path })),
         );
       };
+      const verifyExpectedRepositoryAvailability = async (): Promise<void> => {
+        if (!pruneRemoteMissing || options.expectedRepositoryAvailable === undefined) return;
+        const currentGitSource = await resolveGitSource(projectDir);
+        if (currentGitSource.indeterminate) throw gitProvenanceError();
+        if (currentGitSource.repositoryAvailable !== options.expectedRepositoryAvailable) {
+          throw sourceChangedError();
+        }
+      };
 
       if (!dryRun && !force) {
         spinner = quiet || jsonOutput
@@ -1426,6 +1435,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 ignoreChecker,
                 plan.nextFiles,
               );
+              await verifyExpectedRepositoryAvailability();
               if (latePruneFiles.length > 0) await clearPushReceipt(projectDir);
               const lateDeleteResult = await deleteFiles(
                 client,
@@ -1592,13 +1602,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         return;
       }
 
-      if (pruneRemoteMissing && options.expectedRepositoryAvailable !== undefined) {
-        const currentGitSource = await resolveGitSource(projectDir);
-        if (currentGitSource.indeterminate) throw gitProvenanceError();
-        if (currentGitSource.repositoryAvailable !== options.expectedRepositoryAvailable) {
-          throw sourceChangedError();
-        }
-      }
+      await verifyExpectedRepositoryAvailability();
 
       await clearPushReceipt(projectDir);
 

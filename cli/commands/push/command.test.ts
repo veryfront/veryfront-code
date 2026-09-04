@@ -14,6 +14,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   buildPushUrls,
@@ -4768,7 +4769,7 @@ describe("push deletion ownership", () => {
     }
   });
 
-  it("preserves a Studio-only path when a legacy receipt lacks path ownership", async () => {
+  it("deletes an exact HEAD path but preserves other paths for a legacy receipt", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -4807,6 +4808,7 @@ describe("push deletion ownership", () => {
         await Deno.writeTextFile(`${projectDir}/foo.ts`, "export const local = true;\n");
         await runGit("add", "foo.ts");
         await Deno.remove(`${projectDir}/foo.ts`);
+        await Deno.remove(`${projectDir}/app.ts`);
 
         const deleted: string[] = [];
         const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
@@ -4815,13 +4817,17 @@ describe("push deletion ownership", () => {
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
             return Response.json({
               data: [
-                { path: "app.ts", content: "export const value = 1;\n" },
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000003",
+                },
                 {
                   path: "foo.ts",
                   content: "export const studio = true;\n",
                   version_id: "00000000-0000-4000-8000-000000000004",
                 },
-              ],
+              ].filter((file) => !deleted.includes(file.path)),
               page_info: {},
             });
           }
@@ -4843,7 +4849,7 @@ describe("push deletion ownership", () => {
             quiet: true,
           }));
 
-        assertEquals(deleted, []);
+        assertEquals(deleted, ["app.ts"]);
       });
     } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
@@ -5271,7 +5277,7 @@ describe("push deletion ownership", () => {
   it("records applied late targeted deletions before a later deletion fails", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
-    const projectDir = await Deno.makeTempDir();
+    const projectDir = await makeTempDir();
     try {
       Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
       Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
@@ -5382,7 +5388,7 @@ describe("push deletion ownership", () => {
   it("records applied late deletions before rejecting a new verification match", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
-    const projectDir = await Deno.makeTempDir();
+    const projectDir = await makeTempDir();
     const firstPath = "generated/first.ts";
     const secondPath = "generated/second.ts";
     const firstContent = "export const first = true;\n";
@@ -5481,7 +5487,7 @@ describe("push deletion ownership", () => {
   it("records applied late deletions before a verification read fails", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
-    const projectDir = await Deno.makeTempDir();
+    const projectDir = await makeTempDir();
     const path = "generated/late.ts";
     const content = "export const late = true;\n";
     try {
@@ -5563,7 +5569,7 @@ describe("push deletion ownership", () => {
   it("keeps the receipt when no-op full-prune discovery fails before mutation", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
-    const projectDir = await Deno.makeTempDir();
+    const projectDir = await makeTempDir();
     try {
       Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
       Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
@@ -6294,6 +6300,68 @@ describe("push deletion ownership", () => {
       });
     } finally {
       globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("rechecks non-Git authority before no-op forced-prune deletion", async () => {
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.remove(`${projectDir}/.git`, { recursive: true });
+        await Deno.remove(`${projectDir}/app.ts`);
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const deleted: string[] = [];
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            if (fileListCalls === 2) await runGit("init", "--quiet");
+            return Response.json({
+              data: fileListCalls > 1
+                ? [{ path: "late-remote.ts", content: "late remote source" }]
+                : [],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(fetchHandler, () =>
+          assertRejects(
+            () =>
+              pushCommand({
+                projectDir,
+                branch: "main",
+                prune: true,
+                force: true,
+                quiet: true,
+                expectedRepositoryAvailable: false,
+              }),
+            Error,
+            "Local source changed during push",
+          ));
+
+        assertEquals(fileListCalls, 2);
+        assertEquals(deleted, []);
+      });
+    } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
