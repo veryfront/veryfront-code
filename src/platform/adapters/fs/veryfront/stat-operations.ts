@@ -17,6 +17,7 @@ import {
 import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
+import type { ResolvedContentContext } from "./types.ts";
 
 const logger = baseLogger.component("stat-operations");
 
@@ -33,6 +34,13 @@ const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
  */
 const INDEX_AUTHORITY_LIMIT_MS = 5 * 60 * 1000;
 
+interface StatIndexSnapshot {
+  fileIndex: Map<string, ProjectFile>;
+  directoryIndex: Set<string>;
+  pathMapping: Map<string, string>;
+  builtAt: number;
+}
+
 function isFileNotFoundError(error: unknown): boolean {
   if (error instanceof VeryfrontError && error.slug === "file-not-found") {
     return true;
@@ -45,12 +53,11 @@ function isFileNotFoundError(error: unknown): boolean {
 export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
-  private buildingIndex: Promise<void> | null = null;
+  private buildingIndex: Promise<StatIndexSnapshot> | null = null;
+  private buildingIndexScopeKey: string | null = null;
+  private indexScopeKey: string | null = null;
   private indexGeneration = 0;
   private indexBuiltAt = 0;
-
-  private indexBuildLockResolver: (() => void) | null = null;
-  private indexBuildLockPromise: Promise<void> | null = null;
 
   private pathMapping: Map<string, string> = new Map();
 
@@ -70,10 +77,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     logger.debug("stat called", { path, normalizedPath, cacheKey });
 
-    await this.ensureIndexBuilt();
+    const snapshot = await this.ensureIndexBuilt(ctx);
 
-    const fileIdx = this.fileIndex;
-    const dirIdx = this.directoryIndex;
+    const fileIdx = snapshot.fileIndex;
+    const dirIdx = snapshot.directoryIndex;
 
     if (!fileIdx || !dirIdx) {
       logger.debug("stat - no index available", { normalizedPath });
@@ -174,61 +181,57 @@ export class StatOperations extends VeryfrontOperationsBase {
     });
   }
 
-  private async ensureIndexBuilt(): Promise<void> {
-    if (this.fileIndex && this.directoryIndex) {
+  private async ensureIndexBuilt(
+    contentContext: ResolvedContentContext | null | undefined,
+  ): Promise<StatIndexSnapshot> {
+    const scopeKey = buildStatCacheKeyPrefix(contentContext);
+    if (this.fileIndex && this.directoryIndex && this.indexScopeKey === scopeKey) {
       logger.debug("ensureIndexBuilt - index already built");
-      return;
+      return {
+        fileIndex: this.fileIndex,
+        directoryIndex: this.directoryIndex,
+        pathMapping: this.pathMapping,
+        builtAt: this.indexBuiltAt,
+      };
     }
 
     if (this.buildingIndex) {
       logger.debug("ensureIndexBuilt - waiting for concurrent build");
       const waitStart = performance.now();
       const building = this.buildingIndex;
-      await building;
+      const buildingScopeKey = this.buildingIndexScopeKey;
+      const snapshot = await building;
       logger.debug("ensureIndexBuilt - concurrent build done", {
         waitMs: Math.round(performance.now() - waitStart),
       });
-      if (this.fileIndex && this.directoryIndex) return;
-      if (this.buildingIndex === building) this.buildingIndex = null;
-      return await this.ensureIndexBuilt();
+      if (buildingScopeKey === scopeKey) return snapshot;
+      return await this.ensureIndexBuilt(contentContext);
     }
 
-    if (this.indexBuildLockPromise) {
-      logger.debug("ensureIndexBuilt - waiting for lock");
-      await this.indexBuildLockPromise;
-      if (this.buildingIndex) await this.buildingIndex;
-      if (this.fileIndex && this.directoryIndex) return;
-      return await this.ensureIndexBuilt();
-    }
-
-    this.indexBuildLockPromise = new Promise((resolve) => {
-      this.indexBuildLockResolver = resolve;
-    });
-
-    let superseded = false;
+    const generation = this.indexGeneration;
+    const building = this.buildIndex(generation, contentContext, scopeKey);
+    this.buildingIndex = building;
+    this.buildingIndexScopeKey = scopeKey;
     try {
-      if (this.fileIndex && this.directoryIndex) return;
-
-      const generation = this.indexGeneration;
-      const building = this.buildIndex(generation);
-      this.buildingIndex = building;
-      await building;
-      superseded = !this.fileIndex || !this.directoryIndex;
+      return await building;
     } finally {
-      this.buildingIndex = null;
-      this.indexBuildLockResolver?.();
-      this.indexBuildLockResolver = null;
-      this.indexBuildLockPromise = null;
+      if (this.buildingIndex === building) {
+        this.buildingIndex = null;
+        this.buildingIndexScopeKey = null;
+      }
     }
-    if (superseded) await this.ensureIndexBuilt();
   }
 
-  private async buildIndex(generation: number): Promise<void> {
+  private async buildIndex(
+    generation: number,
+    contentContext: ResolvedContentContext | null | undefined,
+    scopeKey: string,
+  ): Promise<StatIndexSnapshot> {
     const buildStart = performance.now();
     logger.debug("buildIndex START");
 
     const fetchStart = performance.now();
-    const allFiles = await this.getAllFilesRaw();
+    const allFiles = await this.getAllFilesRaw(contentContext);
     const fetchMs = Math.round(performance.now() - fetchStart);
     logger.debug("buildIndex - getAllFilesRaw done", {
       fetchMs,
@@ -257,11 +260,15 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
-    if (generation !== this.indexGeneration) return;
-    this.fileIndex = fileIdx;
-    this.directoryIndex = dirIdx;
-    this.pathMapping = pathMap;
-    this.indexBuiltAt = Date.now();
+    const builtAt = Date.now();
+    const currentScopeKey = buildStatCacheKeyPrefix(this.contextProvider?.getContentContext());
+    if (generation === this.indexGeneration && currentScopeKey === scopeKey) {
+      this.fileIndex = fileIdx;
+      this.directoryIndex = dirIdx;
+      this.pathMapping = pathMap;
+      this.indexBuiltAt = builtAt;
+      this.indexScopeKey = scopeKey;
+    }
 
     const indexMs = Math.round(performance.now() - indexStart);
     const totalMs = Math.round(performance.now() - buildStart);
@@ -273,6 +280,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       indexMs,
       totalMs,
     });
+    return { fileIndex: fileIdx, directoryIndex: dirIdx, pathMapping: pathMap, builtAt };
   }
 
   clearIndex(): void {
@@ -281,6 +289,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     this.directoryIndex = null;
     this.pathMapping.clear();
     this.indexBuiltAt = 0;
+    this.indexScopeKey = null;
   }
 
   /**
@@ -335,13 +344,16 @@ export class StatOperations extends VeryfrontOperationsBase {
     return this.pathMapping.get(normalizedPath) ?? normalizedPath;
   }
 
-  private async getAllFilesRaw(): Promise<ProjectFile[]> {
+  private async getAllFilesRaw(
+    contentContext: ResolvedContentContext | null | undefined,
+  ): Promise<ProjectFile[]> {
     return await loadAllProjectFiles({
       client: this.client,
       cache: this.cache,
       contextProvider: this.contextProvider,
       logger,
       operationLabel: "stat",
+      contentContext,
     });
   }
 
@@ -594,10 +606,10 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     const indexStart = performance.now();
-    await this.ensureIndexBuilt();
+    const snapshot = await this.ensureIndexBuilt(ctx);
     const indexMs = Math.round(performance.now() - indexStart);
 
-    const fileIdx = this.fileIndex;
+    const fileIdx = snapshot.fileIndex;
     if (!fileIdx) {
       logger.debug("resolveFile - no file index", { indexMs });
       return null;

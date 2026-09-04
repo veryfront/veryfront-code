@@ -666,7 +666,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       isProductionMode: () => this.contentContext?.sourceType !== "branch",
       getReleaseId: () => this.contentContext?.releaseId ?? null,
       getContentContext: () => this.getEffectiveContentContext(),
-      getFileList: async () => {
+      getFileList: async (requestedContext?: ResolvedContentContext | null) => {
         const cached = await this.getCachedFileListAsync<{
           id?: string;
           path: string;
@@ -676,6 +676,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
           updated_at?: string;
         }>("getFileList: no contentContext", "getFileList", "getFileList miss", {
           waitForWarmup: true,
+          cacheKey: requestedContext ? buildFileListCacheKey(requestedContext) : undefined,
+          contentContext: requestedContext,
         });
         return cached?.files;
       },
@@ -1178,7 +1180,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
           // A successful warmup is a newly observed source snapshot even when
           // no poke advanced the generation. Publish that generation before
           // retaining the list so in-memory indexes rebuild from these bytes.
+          const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
           this.markSourceSnapshotChanged(files, warmupIdentity);
+          if (sourceChanged) {
+            this.statOps.clearIndex();
+            this.dirOps.clearTree();
+          }
           this.retainFileList(effectiveCacheKey, files);
           return true;
         });

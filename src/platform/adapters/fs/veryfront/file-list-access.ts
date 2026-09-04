@@ -8,7 +8,7 @@ export interface ContentContextProvider {
   isProductionMode: () => boolean;
   getReleaseId: () => string | null;
   getContentContext: () => ResolvedContentContext | null;
-  getFileList?: () => Promise<
+  getFileList?: (contentContext?: ResolvedContentContext | null) => Promise<
     Array<{
       id?: string;
       path: string;
@@ -34,6 +34,7 @@ interface LoadAllProjectFilesOptions {
   contextProvider?: ContentContextProvider;
   logger: FileListLogger;
   operationLabel: string;
+  contentContext?: ResolvedContentContext | null;
 }
 
 export async function loadAllProjectFiles({
@@ -42,14 +43,15 @@ export async function loadAllProjectFiles({
   contextProvider,
   logger,
   operationLabel,
+  contentContext,
 }: LoadAllProjectFilesOptions): Promise<ProjectFile[]> {
   const cacheStart = performance.now();
-  const ctx = contextProvider?.getContentContext();
+  const ctx = contentContext === undefined ? contextProvider?.getContentContext() : contentContext;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
   const skipPersistentCache = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ??
     false;
 
-  const adapterFiles = !skipPersistentCache ? await contextProvider?.getFileList?.() : undefined;
+  const adapterFiles = !skipPersistentCache ? await contextProvider?.getFileList?.(ctx) : undefined;
 
   if (adapterFiles) {
     const cacheMs = Math.round(performance.now() - cacheStart);
@@ -100,7 +102,10 @@ export async function loadAllProjectFiles({
           ctx?.releaseId ?? undefined,
           ctx?.environmentName ?? undefined,
         )
-        : client.listAllFiles(),
+        : client.listAllFiles({}, {
+          type: "branch",
+          name: ctx?.branch ?? "main",
+        }),
     `getAllFilesRaw (${operationLabel})`,
   );
 
