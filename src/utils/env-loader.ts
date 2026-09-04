@@ -101,19 +101,29 @@ function parseEnvFile(
   priorTaintedVars: ReadonlySet<string> = new Set(),
 ): Record<string, ParsedEnvEntry> {
   const entries: Record<string, ParsedEnvEntry> = {};
+  const caseInsensitive = getOsType() === "windows";
+  const normalizeKey = (key: string) => caseInsensitive ? key.toLowerCase() : key;
   // Plain values for `$NAME` references to entries loaded from earlier project
   // env files or declared earlier in this file.
-  const vars: Record<string, string> = { ...priorVars };
+  const vars: Record<string, string> = {};
+  for (const [key, value] of Object.entries(priorVars)) vars[normalizeKey(key)] = value;
   // Keys whose value already carries something from the process environment.
   // Referencing one of them taints the referring value in turn.
-  const tainted = new Set<string>(priorTaintedVars);
+  const tainted = new Set<string>();
+  for (const key of priorTaintedVars) tainted.add(normalizeKey(key));
 
   const record = (key: string, raw: string): void => {
-    const { value, expandedFromProcessEnv } = expandVariables(raw, vars, tainted);
+    const { value, expandedFromProcessEnv } = expandVariables(
+      raw,
+      vars,
+      tainted,
+      caseInsensitive,
+    );
+    const normalizedKey = normalizeKey(key);
     entries[key] = { value, expandedFromProcessEnv };
-    vars[key] = value;
-    if (expandedFromProcessEnv) tainted.add(key);
-    else tainted.delete(key);
+    vars[normalizedKey] = value;
+    if (expandedFromProcessEnv) tainted.add(normalizedKey);
+    else tainted.delete(normalizedKey);
   };
 
   const lines = content.split("\n");
@@ -192,13 +202,15 @@ function expandVariables(
   value: string,
   vars: Record<string, string>,
   taintedVars: ReadonlySet<string>,
+  caseInsensitive = false,
 ): { value: string; expandedFromProcessEnv: boolean } {
   let expandedFromProcessEnv = false;
 
   const substitute = (varName: string): string => {
-    const fromFile = vars[varName];
+    const lookupName = caseInsensitive ? varName.toLowerCase() : varName;
+    const fromFile = vars[lookupName];
     if (fromFile !== undefined) {
-      if (taintedVars.has(varName)) expandedFromProcessEnv = true;
+      if (taintedVars.has(lookupName)) expandedFromProcessEnv = true;
       return fromFile;
     }
     const fromProcess = getEnv(varName);

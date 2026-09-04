@@ -80,6 +80,25 @@ describe("env-loader", () => {
     }
   }
 
+  async function withOsTypeAsync<T>(os: string, fn: () => Promise<T>): Promise<T> {
+    const original = Deno.build;
+    const replace = (value: typeof Deno.build): void => {
+      Object.defineProperty(Deno, "build", {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    };
+
+    replace({ ...original, os } as typeof Deno.build);
+    try {
+      return await fn();
+    } finally {
+      replace(original);
+    }
+  }
+
   describe("supportsEnvFiles", () => {
     it("should return true in Deno environment", () => {
       assertEquals(supportsEnvFiles(), true);
@@ -546,6 +565,25 @@ describe("env-loader", () => {
       );
 
       cleanupKeys(key, baseKey);
+    });
+
+    it("case-folds prior file references on Windows", async () => {
+      const baseKey = createKey("SOURCE_WINDOWS_PRIOR");
+      const lowerBaseKey = baseKey.toLowerCase();
+      const key = createKey("SOURCE_WINDOWS_LEAF");
+      setEnv(baseKey, "repository-value");
+      await writeEnvFile(".env", `${lowerBaseKey}=repository-value`);
+      await writeEnvFile(".env.local", `${key}=\${${baseKey}}`);
+
+      await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir, override: true }));
+
+      assertEquals(getEnv(key), "repository-value");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env.local`, expandedFromProcessEnv: false },
+      );
+
+      cleanupKeys(key, baseKey, lowerBaseKey);
     });
 
     it("should attribute a differently-cased env-file entry to the file", async () => {

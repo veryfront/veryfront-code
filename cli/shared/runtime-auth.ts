@@ -66,7 +66,7 @@ export async function applyRuntimeAuthContext(
 ): Promise<RuntimeAuthContext> {
   const context = await resolveRuntimeAuthContext(options);
 
-  if (context.apiToken && !normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN"))) {
+  if (context.apiToken) {
     setEnv("VERYFRONT_API_TOKEN", context.apiToken);
   }
 

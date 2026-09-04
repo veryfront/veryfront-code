@@ -6,6 +6,7 @@ import { join } from "veryfront/platform/path";
 import { saveToken } from "../auth/token-store.ts";
 import {
   applyQualifiedRuntimeAuth,
+  applyRuntimeAuthContext,
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
 } from "./runtime-auth.ts";
@@ -86,6 +87,18 @@ describe("cli/shared/runtime-auth", () => {
     await saveToken("stored-token");
 
     assertEquals(await resolveRuntimeAuthContext({ apiToken: null }), {});
+  });
+
+  it("applies a qualified token and endpoint atomically", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "unqualified-token");
+
+    await applyRuntimeAuthContext({
+      apiToken: "qualified-token",
+      apiBaseUrl: "https://runtime.example",
+    });
+
+    assertEquals(getEnv("VERYFRONT_API_TOKEN"), "qualified-token");
+    assertEquals(getEnv("VERYFRONT_API_BASE_URL"), "https://runtime.example");
   });
 
   it("uses stored login auth without claiming an unlinked project", async () => {
