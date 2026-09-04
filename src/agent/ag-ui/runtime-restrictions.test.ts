@@ -5,6 +5,7 @@ import type { AgentConfig } from "../types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import { clearMCPRegistry, registerTool } from "#veryfront/mcp";
 import { createEphemeralAgent } from "../factory.ts";
+import { getAvailableTools } from "../runtime/tool-helpers.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
 import {
   getRuntimeAllowedRemoteTools,
@@ -244,7 +245,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       { allowedTools: ["search_docs"] },
     );
 
-    assertEquals(restricted.tools, { search_docs: true });
+    assertEquals(restricted.tools, {});
     assertEquals(restricted.mcpServers, [{
       ...mcpServer,
       toolPolicy: { allow: ["search_docs"] },
@@ -265,7 +266,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       { allowedTools: ["get_file"] },
     );
 
-    assertEquals(restricted.tools, { get_file: true });
+    assertEquals(restricted.tools, {});
     assertEquals(restricted.mcpServers, [{
       kind: "veryfront-api",
       toolPolicy: { allow: ["get_file"] },
@@ -273,7 +274,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["get_file"]);
   });
 
-  it("preserves a run-allowlisted candidate from a policy-free first-party MCP source", () => {
+  it("keeps a policy-free MCP candidate optional until discovery", () => {
     const restricted = applyAgUiRuntimeRestrictions(
       createConfig({
         tools: true,
@@ -283,12 +284,38 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       { allowedTools: ["get_file"] },
     );
 
-    assertEquals(restricted.tools, { get_file: true });
+    assertEquals(restricted.tools, {});
     assertEquals(restricted.mcpServers, [{
       kind: "veryfront-api",
       toolPolicy: { allow: ["get_file"] },
     }]);
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["get_file"]);
+  });
+
+  it("produces an empty intersection when an optional MCP candidate is unavailable", async () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: true,
+        providerTools: undefined,
+        mcpServers: [{
+          id: "docs",
+          transport: { type: "http", url: "https://docs.example.test/mcp" },
+        }],
+      }),
+      { allowedTools: ["missing_docs_tool"] },
+    );
+
+    const definitions = await getAvailableTools(restricted.tools, {
+      includeIntegrationTools: false,
+      allowedRemoteToolNames: getRuntimeAllowedRemoteTools(restricted),
+      remoteToolSources: [{
+        id: "docs",
+        listTools: () => Promise.resolve([]),
+        executeTool: () => Promise.reject(new Error("unavailable")),
+      }],
+    });
+
+    assertEquals(definitions, []);
   });
 
   it("does not treat reserved delegation as a policy-free MCP candidate", () => {

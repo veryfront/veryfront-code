@@ -154,7 +154,6 @@ function restrictConfiguredTools(
   allowedTools: ToolNameLookup,
   providerToolNames: ToolNameLookup,
   visibleLocalTools: ToolNameLookup,
-  configuredMcpTools: ToolNameLookup,
   sourceAgentId: string | undefined,
 ): AgentConfig["tools"] {
   if (tools === undefined) return undefined;
@@ -172,7 +171,7 @@ function restrictConfiguredTools(
       if (toolName === undefined) continue;
       if (
         providerToolNames[toolName] !== true &&
-        (visibleLocalTools[toolName] === true || configuredMcpTools[toolName] === true)
+        visibleLocalTools[toolName] === true
       ) {
         if (toolName === INVOKE_AGENT_TOOL_ID && visibleLocalTools[toolName] === true) {
           const localTool = resolveVisibleLocalTool(toolName, sourceAgentId);
@@ -317,6 +316,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
   const configuredProviderToolNames = config.providerTools === undefined
     ? []
     : filterAllowedNames(config.providerTools, supportedProviderTools);
+  const configuredProviderTools = toToolNameLookup(config.providerTools ?? []);
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
   const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
   const configuredMcpTools = getConfiguredMcpToolNames(config.mcpServers, allowedToolNames);
@@ -326,7 +326,6 @@ export function applyAgUiRuntimeRestrictionsForModel(
     allowedTools,
     providerToolNames,
     visibleLocalTools,
-    configuredMcpTools,
     sourceAgentId,
   );
   if (config.tools === true) {
@@ -359,6 +358,25 @@ export function applyAgUiRuntimeRestrictionsForModel(
     visibleLocalTools,
     providerToolNames,
   );
+  const retainedRemoteToolLookup = toToolNameLookup(retainedRemoteToolNames);
+  for (let index = 0; index < allowedToolNames.length; index++) {
+    const toolName = allowedToolNames[index];
+    const configuredTool = config.tools === true || config.tools === undefined ||
+        toolName === undefined
+      ? undefined
+      : config.tools[toolName];
+    const configuredConcreteLocalTool = typeof configuredTool === "object" &&
+      configuredTool !== null && getRemoteToolProvenance(configuredTool) === undefined;
+    if (
+      toolName !== undefined && configuredMcpTools[toolName] === true &&
+      visibleLocalTools[toolName] !== true && configuredProviderTools[toolName] !== true &&
+      !configuredConcreteLocalTool &&
+      retainedRemoteToolLookup[toolName] !== true
+    ) {
+      retainedRemoteToolLookup[toolName] = true;
+      retainedRemoteToolNames[retainedRemoteToolNames.length] = toolName;
+    }
+  }
   restricted.mcpServers = retainedRemoteToolNames.length === 0
     ? []
     : restrictConfiguredMcpServers(config.mcpServers, retainedRemoteToolNames);

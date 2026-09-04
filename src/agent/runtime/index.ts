@@ -120,9 +120,14 @@ import {
 } from "./runtime-tool-config.ts";
 
 const IntrinsicArrayFilter = Array.prototype.filter;
+const IntrinsicArraySome = Array.prototype.some;
 const IntrinsicSet = Set;
 const IntrinsicSetAdd = Set.prototype.add;
 const IntrinsicSetHas = Set.prototype.has;
+
+function intrinsicArraySome<T>(values: readonly T[], predicate: (value: T) => unknown): boolean {
+  return IntrinsicReflectApply(IntrinsicArraySome, values, [predicate]) as boolean;
+}
 
 function collectVisibleToolNames(tools: readonly { name: string }[]): Set<string> {
   const names = new IntrinsicSet<string>();
@@ -809,13 +814,13 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
-  return plan.visible.some((tool) => tool.name === toolName);
+  return intrinsicArraySome(plan.visible, (tool) => tool.name === toolName);
 }
 
 function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolean {
   return toolName === TOOL_SEARCH_TOOL_NAME &&
     isToolVisibleForStep(toolName, plan) &&
-    !plan.authorized.some((tool) => tool.name === toolName);
+    !intrinsicArraySome(plan.authorized, (tool) => tool.name === toolName);
 }
 
 function toolNotVisibleError(toolName: string): string {

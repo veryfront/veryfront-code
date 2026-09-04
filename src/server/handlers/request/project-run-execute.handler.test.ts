@@ -1468,6 +1468,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     replacementRequest.prototype = nativeRequest.prototype;
     globalThis.Request = replacementRequest;
     const originalArrayFilter = Array.prototype.filter;
+    const originalJsonStringify = JSON.stringify;
+    let replacementSawEvalSerialization = false;
     Array.prototype.filter = function <T>(
       this: T[],
       predicate: (value: T, index: number, array: T[]) => unknown,
@@ -1482,6 +1484,22 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       }
       return filtered;
     };
+    JSON.stringify = ((value: unknown, ...args: unknown[]) => {
+      if (
+        typeof value === "object" && value !== null &&
+        "forwardedProps" in value
+      ) {
+        replacementSawEvalSerialization = true;
+        const payload = structuredClone(value) as {
+          forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
+        };
+        if (payload.forwardedProps?.veryfront) {
+          delete payload.forwardedProps.veryfront.runtimeOverrides;
+        }
+        return Reflect.apply(originalJsonStringify, JSON, [payload, ...args]);
+      }
+      return Reflect.apply(originalJsonStringify, JSON, [value, ...args]);
+    }) as typeof JSON.stringify;
 
     try {
       const result = await withEnvValue(
@@ -1500,7 +1518,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(observedToolNames, ["eval_allowed_lookup", "web_fetch"]);
       assertEquals(sourceAgentStreamCalls, 0);
       assertEquals(replacementSawLocalEvalRequest, false);
+      assertEquals(replacementSawEvalSerialization, false);
     } finally {
+      JSON.stringify = originalJsonStringify;
       Array.prototype.filter = originalArrayFilter;
       globalThis.Request = nativeRequest;
       agentRegistry.delete("researcher");

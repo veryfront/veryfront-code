@@ -339,3 +339,48 @@ it("deferred generate rejects a guessed tool that was not exposed", async () => 
     'Tool "get_release" is not available in the current model step',
   );
 });
+
+it("uses captured membership checks when rejecting an unexposed tool", async () => {
+  let executionCount = 0;
+  const model = scriptedModel([
+    { toolCalls: [{ id: "guessed-1", name: "get_release", input: {} }] },
+    { text: "done" },
+  ], { modelId: "hosted/deferred-captured-membership", only: "generate" });
+  const assistant = agent(
+    {
+      id: "deferred-captured-membership",
+      model: "hosted/deferred-captured-membership",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: {
+        get_release: tool({
+          id: "get_release",
+          description: "Get the current release",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount += 1;
+            return { id: "rel-1" };
+          },
+        }),
+      },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+  const originalSome = Array.prototype.some;
+  Array.prototype.some = () => true;
+
+  try {
+    const response = await assistant.generate({ input: "Find the current release" });
+
+    assertEquals(executionCount, 0);
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertEquals(
+      response.toolCalls[0]?.error,
+      'Tool "get_release" is not available in the current model step',
+    );
+  } finally {
+    Array.prototype.some = originalSome;
+  }
+});
