@@ -35,7 +35,6 @@ import { extractRequest } from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   type AgUiRuntimeRestrictions,
-  applyAgUiRuntimeRestrictions,
   applyAgUiRuntimeRestrictionsForModel,
   hasAgUiRuntimeRestrictions,
 } from "./runtime-restrictions.ts";
