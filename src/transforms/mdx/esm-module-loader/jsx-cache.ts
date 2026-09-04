@@ -429,12 +429,20 @@ const JSX_ARTIFACT_LEASE_STALE_MS = 60_000;
 const JSX_ARTIFACT_LEASE_HEARTBEAT_MS = JSX_ARTIFACT_LEASE_STALE_MS / 3;
 const leaseEncoder = new TextEncoder();
 
-async function recoverStaleFilesystemLease(lockPath: string, nowMs: number): Promise<boolean> {
+async function recoverStaleFilesystemLease(
+  lockPath: string,
+  nowMs: number,
+  createExclusive: (path: string, data: Uint8Array) => Promise<void>,
+): Promise<boolean> {
   const localFs = getLocalFs();
   if (!localFs.rename) return false;
   let modifiedAtMs: number;
+  let observedOwner: string;
   try {
     modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+    observedOwner = await localFs.readTextFile(lockPath);
+    const confirmedModifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+    if (confirmedModifiedAtMs !== modifiedAtMs) return false;
   } catch (error) {
     return isNotFoundError(error);
   }
@@ -445,6 +453,27 @@ async function recoverStaleFilesystemLease(lockPath: string, nowMs: number): Pro
     await localFs.rename(lockPath, stalePath);
   } catch (error) {
     if (isNotFoundError(error)) return true;
+    return false;
+  }
+  let renamedOwner: string;
+  try {
+    renamedOwner = await localFs.readTextFile(stalePath);
+  } catch {
+    return false;
+  }
+  if (renamedOwner !== observedOwner) {
+    // A fresh owner replaced the stale file between validation and rename.
+    // Restore that unique owner token with an exclusive create when the path
+    // is still empty. The fresh operation's ownership fence then either keeps
+    // working or observes the newer waiter that won this restoration race.
+    try {
+      await createExclusive(lockPath, leaseEncoder.encode(renamedOwner));
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+    }
+    try {
+      await localFs.remove(stalePath);
+    } catch (_) { /* best effort */ }
     return false;
   }
   try {
@@ -473,7 +502,7 @@ async function withFilesystemLease<T>(
       break;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
-      if (await recoverStaleFilesystemLease(lockPath, Date.now())) continue;
+      if (await recoverStaleFilesystemLease(lockPath, Date.now(), createExclusive)) continue;
       await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
