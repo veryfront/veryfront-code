@@ -5198,6 +5198,51 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["group/review"]?.status, "running");
     });
 
+    it("does not seed a completed branch child into a later parallel", async () => {
+      const completedBranch: WorkflowNode = {
+        id: "choose",
+        config: {
+          type: "branch",
+          condition: () => true,
+          then: [waitForApproval("choose/then/review", { message: "Branch review" })],
+          else: [],
+        },
+      };
+      const laterParallel = {
+        ...parallel("choose/then", [
+          waitForApproval("review", { message: "Parallel review" }),
+        ]),
+        dependsOn: ["choose"],
+      };
+
+      const result = await executor.execute(
+        [completedBranch, laterParallel],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            choose: {
+              nodeId: "choose",
+              status: "completed",
+              output: { branch: "then" },
+              attempt: 1,
+            },
+            "choose/then/review": {
+              nodeId: "choose/then/review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "choose/then/review");
+      assertEquals(result.nodeStates["choose/then"]?.status, "running");
+      assertEquals(result.nodeStates["choose/then/review"]?.status, "running");
+    });
+
     it("does not claim descendants of a skipped nested sub-workflow", async () => {
       const producer = subWorkflow("producer", {
         workflow: {

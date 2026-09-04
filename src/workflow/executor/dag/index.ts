@@ -672,7 +672,7 @@ function createCompositeNodeStateView(
     declaredIds,
     allowedOwnerPaths,
   );
-  const claimedLegacyIds = new Set<string>();
+  const claimedLegacyIds = new Set<string>(scope.completedCompositeChildIds);
   for (const [ownerPath, ownerNodeId] of scope.subWorkflowReservationOwners) {
     if (
       ownerPath === parentPath ||
