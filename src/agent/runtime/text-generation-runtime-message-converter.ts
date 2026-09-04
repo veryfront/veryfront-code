@@ -392,7 +392,10 @@ export function convertToTextGenerationRuntimeMessage(
  * can mirror the drop: a dropped message leaves the messages on either side of
  * it adjacent, and the provider then merges those into one turn.
  */
-export function hasProviderSendableAssistantContent(message: Message): boolean {
+export function hasProviderSendableAssistantContent(
+  message: Message,
+  priorProviderExecutedToolCallIds: ReadonlySet<string> = new Set(),
+): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
 
@@ -400,7 +403,7 @@ export function hasProviderSendableAssistantContent(message: Message): boolean {
   // ordinary call in the same assistant message. Mirror that state here so a
   // duplicate ID cannot make the predicate claim content that conversion will
   // remove.
-  const providerExecutedToolCallIds = new Set<string>();
+  const providerExecutedToolCallIds = new Set(priorProviderExecutedToolCallIds);
   for (const part of message.parts) {
     const toolCallId = getProviderExecutedToolCallId(part);
     if (toolCallId) providerExecutedToolCallIds.add(toolCallId);
@@ -414,6 +417,28 @@ export function hasProviderSendableAssistantContent(message: Message): boolean {
 
     return getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null;
   });
+}
+
+/** Assistant messages retained after applying conversation-level provider call identity. */
+export function getProviderSendableAssistantMessages(
+  messages: readonly Message[],
+): ReadonlySet<Message> {
+  const sendable = new Set<Message>();
+  const providerExecutedToolCallIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+    if (hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
+      sendable.add(message);
+    }
+  }
+  return sendable;
 }
 
 function splitAnthropicProviderMetadata(
@@ -592,7 +617,7 @@ export function convertToTextGenerationRuntimeMessages(
       }
     }
 
-    if (!hasProviderSendableAssistantContent(message)) {
+    if (!hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
       continue;
     }
 

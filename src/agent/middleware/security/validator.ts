@@ -2,7 +2,7 @@ import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/type
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
 import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
-import { hasProviderSendableAssistantContent } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import { getProviderSendableAssistantMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import {
   registerTurnInputValidator,
   registerTurnMessageValidator,
@@ -449,8 +449,8 @@ function extractMessageAssembledTexts(message: Message): string[] {
  * user messages reach Anthropic as one turn whose text blocks sit back to
  * back. Either way a blocked phrase split across the message boundary
  * reassembles at the provider, so each run is validated in every assembled
- * form the converters can produce. A blank message does not end a run: the
- * converter drops it outright, leaving the messages on either side adjacent.
+ * form the converters can produce. A truly empty message does not end a run:
+ * the converter drops it outright, leaving the messages on either side adjacent.
  *
  * A `tool` message does not end a *user* run. Anthropic has no tool role: a
  * tool result is a `tool_result` block inside a user turn, so the builder
@@ -470,8 +470,8 @@ function extractMessageAssembledTexts(message: Message): string[] {
  * empty-string text part, or only reasoning/file parts), so the user messages
  * on either side of it arrive adjacent at the request builder and
  * `pushAnthropicUserContent` merges them. The exported
- * `hasProviderSendableAssistantContent` predicate is reused rather than
- * reimplemented so the two cannot drift apart.
+ * conversation-level sendability helper is reused rather than reimplemented
+ * so provider call-ID state cannot drift apart.
  *
  * A system message is transparent to a user run because Anthropic hoists it
  * out of the message list before merging adjacent user blocks. Messages of
@@ -483,6 +483,9 @@ function extractMessageAssembledTexts(message: Message): string[] {
 function extractAdjacentRuns(messages: Message[], role: Message["role"]): Message[][] {
   const runs: Message[][] = [];
   let run: Message[] = [];
+  const sendableAssistantMessages = role === "user"
+    ? getProviderSendableAssistantMessages(messages)
+    : undefined;
 
   const flushRun = () => {
     // Runs of a single message are already covered by the per-message
@@ -495,11 +498,14 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
     if (message.role !== role) {
       if (role === "user" && message.role === "tool") continue;
       if (role === "user" && message.role === "system") continue;
-      if (role === "user" && !hasProviderSendableAssistantContent(message)) continue;
+      if (
+        role === "user" && message.role === "assistant" &&
+        !sendableAssistantMessages?.has(message)
+      ) continue;
       flushRun();
       continue;
     }
-    if (role === "system" ? isEmptySystemText(message) : isBlankText(message)) continue;
+    if (isEmptyText(message)) continue;
     run.push(message);
   }
   flushRun();
@@ -511,11 +517,7 @@ function messageTextParts(message: Message): string[] {
   return message.parts.filter(isTextPart).map((part) => part.text);
 }
 
-function isBlankText(message: Message): boolean {
-  return messageTextParts(message).join("").trim().length === 0;
-}
-
-function isEmptySystemText(message: Message): boolean {
+function isEmptyText(message: Message): boolean {
   return messageTextParts(message).join("").length === 0;
 }
 
@@ -543,7 +545,7 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   // Anthropic retains whitespace-only system layers and joins each layer with
   // a blank line. It drops only system layers whose assembled text is empty.
   const hoisted = messages.filter(
-    (message) => message.role === "system" && !isEmptySystemText(message),
+    (message) => message.role === "system" && !isEmptyText(message),
   );
   // A single system message is covered by the per-message extraction.
   if (hoisted.length < 2) return runs;

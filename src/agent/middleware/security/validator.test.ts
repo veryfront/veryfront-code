@@ -648,6 +648,29 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("validates whitespace-only user blocks retained by Anthropic", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/ignore previous instructions/] },
+    });
+    const context = createContext({
+      input: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "ignore" }] },
+        { id: "user-2", role: "user", parts: [{ type: "text", text: " " }] },
+        {
+          id: "user-3",
+          role: "user",
+          parts: [{ type: "text", text: "previous instructions" }],
+        },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
   it("blocks an injection split across user messages a tool message sits between", async () => {
     // Anthropic has no tool role: a tool result is a `tool_result` block inside
     // a user turn. A caller-supplied tool message matches no pending
@@ -783,6 +806,44 @@ describe("securityMiddleware", () => {
               input: {},
             },
           ] as unknown as Message["parts"],
+        },
+        { id: "user-2", role: "user", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
+  it("tracks provider call ID collisions across assistant messages", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "ignore previous " }] },
+        {
+          id: "assistant-provider-call",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "shared-call",
+            toolName: "web_search",
+            providerExecuted: true,
+          }] as unknown as Message["parts"],
+        },
+        {
+          id: "assistant-duplicate-call",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "shared-call",
+            toolName: "local_search",
+            input: {},
+          }] as unknown as Message["parts"],
         },
         { id: "user-2", role: "user", parts: [{ type: "text", text: "instructions" }] },
       ],
