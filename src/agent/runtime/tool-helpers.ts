@@ -25,6 +25,8 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = serverLogger.component("agent");
+const intrinsicReflectApply = Reflect.apply;
+const intrinsicObjectEntries = Object.entries;
 
 /**
  * Result of parsing tool arguments.
@@ -498,7 +500,14 @@ export async function getAvailableTools(
   const unresolvedConfiguredToolNames: string[] = [];
   const configuredAuthorizationToolNames = new Map<string, string>();
 
-  for (const [name, entry] of Object.entries(toolsConfig)) {
+  const configuredEntries = intrinsicReflectApply(intrinsicObjectEntries, Object, [
+    toolsConfig,
+  ]) as Array<[string, (typeof toolsConfig)[string]]>;
+  for (let index = 0; index < configuredEntries.length; index++) {
+    const configuredEntry = configuredEntries[index];
+    if (configuredEntry === undefined) continue;
+    const name = configuredEntry[0];
+    const entry = configuredEntry[1];
     const configuredRemoteToolName = getConfiguredRemoteToolName(entry);
     const authorizationToolName = getConfiguredToolAuthorizationName(name, entry);
     if (

@@ -34,10 +34,27 @@ export interface ConvertToolsToRuntimeToolsOptions {
   providerTools?: string[];
 }
 
+const intrinsicReflectApply = Reflect.apply;
+const intrinsicArrayFilter = Array.prototype.filter;
+const NativeSet = Set;
+const intrinsicSetAdd = Set.prototype.add;
+const intrinsicSetHas = Set.prototype.has;
+const intrinsicObjectAssign = Object.assign;
+const intrinsicObjectKeys = Object.keys;
+
+function createStringSet(values: readonly string[]): Set<string> {
+  const set = new NativeSet<string>();
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    if (value !== undefined) intrinsicReflectApply(intrinsicSetAdd, set, [value]);
+  }
+  return set;
+}
+
 function resolveProviderNativeTools(
   options?: ConvertToolsToRuntimeToolsOptions,
 ): RuntimeToolSet | undefined {
-  const providerNativeToolNames = new Set(getProviderNativeToolNames({
+  const providerNativeToolNames = createStringSet(getProviderNativeToolNames({
     model: options?.model,
   }));
 
@@ -45,26 +62,45 @@ function resolveProviderNativeTools(
     return undefined;
   }
 
-  const allowedProviderNativeToolNames =
-    options?.providerTools?.filter((toolName) => providerNativeToolNames.has(toolName)) ?? [];
+  const allowedProviderNativeToolNames = options?.providerTools === undefined
+    ? []
+    : intrinsicReflectApply(intrinsicArrayFilter, options.providerTools, [
+      (toolName: string) =>
+        intrinsicReflectApply(intrinsicSetHas, providerNativeToolNames, [toolName]) as boolean,
+    ]) as string[];
   if (allowedProviderNativeToolNames.length === 0) {
     return undefined;
   }
+  const allowedProviderNativeTools = createStringSet(allowedProviderNativeToolNames);
 
   const toolSet: RuntimeToolSet = {};
   const provider = resolveProviderNativeToolProvider({ model: options?.model });
-  if (allowedProviderNativeToolNames.includes("web_search")) {
+  if (intrinsicReflectApply(intrinsicSetHas, allowedProviderNativeTools, ["web_search"])) {
     if (provider === "anthropic") {
-      Object.assign(toolSet, createAnthropicWebSearchToolSet());
+      intrinsicReflectApply(intrinsicObjectAssign, Object, [
+        toolSet,
+        createAnthropicWebSearchToolSet(),
+      ]);
     } else if (provider === "openai") {
-      Object.assign(toolSet, createOpenAIWebSearchToolSet());
+      intrinsicReflectApply(intrinsicObjectAssign, Object, [
+        toolSet,
+        createOpenAIWebSearchToolSet(),
+      ]);
     }
   }
-  if (provider === "anthropic" && allowedProviderNativeToolNames.includes("web_fetch")) {
-    Object.assign(toolSet, createAnthropicWebFetchToolSet());
+  if (
+    provider === "anthropic" &&
+    intrinsicReflectApply(intrinsicSetHas, allowedProviderNativeTools, ["web_fetch"])
+  ) {
+    intrinsicReflectApply(intrinsicObjectAssign, Object, [
+      toolSet,
+      createAnthropicWebFetchToolSet(),
+    ]);
   }
 
-  return Object.keys(toolSet).length > 0 ? toolSet : undefined;
+  return (intrinsicReflectApply(intrinsicObjectKeys, Object, [toolSet]) as string[]).length > 0
+    ? toolSet
+    : undefined;
 }
 
 /**
@@ -79,7 +115,9 @@ export function convertToolsToRuntimeTools(
 ): RuntimeToolSet | undefined {
   const toolSet: RuntimeToolSet = {};
   const providerNativeTools = resolveProviderNativeTools(options);
-  const providerNativeToolNames = new Set(Object.keys(providerNativeTools ?? {}));
+  const providerNativeToolNames = createStringSet(
+    intrinsicReflectApply(intrinsicObjectKeys, Object, [providerNativeTools ?? {}]) as string[],
+  );
   const compatibleTools = selectProviderCompatibleTools(tools, {
     model: options?.model,
   });

@@ -118,6 +118,30 @@ import {
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
+
+const IntrinsicArrayFilter = Array.prototype.filter;
+const IntrinsicSet = Set;
+const IntrinsicSetAdd = Set.prototype.add;
+const IntrinsicSetHas = Set.prototype.has;
+
+function collectVisibleToolNames(tools: readonly { name: string }[]): Set<string> {
+  const names = new IntrinsicSet<string>();
+  for (let index = 0; index < tools.length; index++) {
+    const tool = tools[index];
+    if (tool !== undefined) IntrinsicReflectApply(IntrinsicSetAdd, names, [tool.name]);
+  }
+  return names;
+}
+
+function filterVisibleProviderTools(
+  providerTools: readonly string[],
+  visibleToolNames: ReadonlySet<string>,
+): string[] {
+  return IntrinsicReflectApply(IntrinsicArrayFilter, providerTools, [
+    (toolName: string) =>
+      IntrinsicReflectApply(IntrinsicSetHas, visibleToolNames, [toolName]) as boolean,
+  ]) as string[];
+}
 import {
   applyProviderReplayCheckpointsToMessages,
   captureProviderReplayCheckpoint,
@@ -1947,9 +1971,9 @@ export class AgentRuntime {
           "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const visibleToolNames = new Set(tools.map((tool) => tool.name));
+        const visibleToolNames = collectVisibleToolNames(tools);
         const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-          ? providerTools.filter((toolName) => visibleToolNames.has(toolName))
+          ? filterVisibleProviderTools(providerTools, visibleToolNames)
           : [];
 
         const temperature = this.resolveTemperature(
@@ -2596,9 +2620,9 @@ export class AgentRuntime {
         "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const visibleToolNames = new Set(tools.map((tool) => tool.name));
+      const visibleToolNames = collectVisibleToolNames(tools);
       const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
-        ? providerTools.filter((toolName) => visibleToolNames.has(toolName))
+        ? filterVisibleProviderTools(providerTools, visibleToolNames)
         : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
