@@ -205,6 +205,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       this.indexBuildLockResolver = resolve;
     });
 
+    let superseded = false;
     try {
       if (this.fileIndex && this.directoryIndex) return;
 
@@ -212,12 +213,14 @@ export class StatOperations extends VeryfrontOperationsBase {
       const building = this.buildIndex(generation);
       this.buildingIndex = building;
       await building;
+      superseded = !this.fileIndex || !this.directoryIndex;
     } finally {
       this.buildingIndex = null;
       this.indexBuildLockResolver?.();
       this.indexBuildLockResolver = null;
       this.indexBuildLockPromise = null;
     }
+    if (superseded) await this.ensureIndexBuilt();
   }
 
   private async buildIndex(generation: number): Promise<void> {

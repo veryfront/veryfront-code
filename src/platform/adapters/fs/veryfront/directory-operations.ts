@@ -91,6 +91,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     } finally {
       if (this.buildingTree === building) this.buildingTree = null;
     }
+    if (!this.dirTree) await this.ensureTreeBuilt();
   }
 
   private buildTree(generation: number): Promise<void> {
