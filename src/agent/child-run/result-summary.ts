@@ -28,7 +28,6 @@ const TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s
 const PROVIDER_TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
-const OBJECT_TOOL_ID_FIELD_PATTERN = /["'](?:id|name)["']\s*:\s*["']([^"']+)["']/g;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -147,12 +146,6 @@ function addPatternMatches(
   }
 }
 
-function extractQuotedValues(text: string): string[] {
-  const values: string[] = [];
-  addPatternMatches(values, text, QUOTED_VALUE_PATTERN, 1);
-  return values;
-}
-
 function parseJsonArrayFieldBody(fieldBody: string): unknown[] | undefined {
   try {
     const parsed = JSON.parse(`[${fieldBody}]`);
@@ -160,6 +153,75 @@ function parseJsonArrayFieldBody(fieldBody: string): unknown[] | undefined {
   } catch {
     return undefined;
   }
+}
+
+function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
+  const values: unknown[] = [];
+  let index = 0;
+
+  while (index < fieldBody.length) {
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (index >= fieldBody.length) break;
+
+    const valueStart = index;
+    const opening = fieldBody[index];
+    let valueEnd = index;
+    if (opening === '"') {
+      index += 1;
+      let escaped = false;
+      while (index < fieldBody.length) {
+        const character = fieldBody[index];
+        index += 1;
+        if (escaped) {
+          escaped = false;
+        } else if (character === "\\") {
+          escaped = true;
+        } else if (character === '"') {
+          valueEnd = index;
+          break;
+        }
+      }
+      if (valueEnd === valueStart) break;
+    } else if (opening === "{" || opening === "[") {
+      const closings = [opening === "{" ? "}" : "]"];
+      index += 1;
+      let inString = false;
+      let escaped = false;
+      while (index < fieldBody.length && closings.length > 0) {
+        const character = fieldBody[index];
+        index += 1;
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (character === "\\") escaped = true;
+          else if (character === '"') inString = false;
+          continue;
+        }
+        if (character === '"') inString = true;
+        else if (character === "{") closings.push("}");
+        else if (character === "[") closings.push("]");
+        else if (character === closings[closings.length - 1]) closings.pop();
+      }
+      if (closings.length > 0) break;
+      valueEnd = index;
+    } else {
+      while (index < fieldBody.length && fieldBody[index] !== ",") index += 1;
+      valueEnd = index;
+    }
+
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (index < fieldBody.length && fieldBody[index] !== ",") break;
+
+    try {
+      values.push(JSON.parse(fieldBody.slice(valueStart, valueEnd)));
+    } catch {
+      break;
+    }
+
+    if (index >= fieldBody.length) break;
+    index += 1;
+  }
+
+  return values;
 }
 
 function addToolIdsFromParsedArray(
@@ -197,20 +259,11 @@ function addToolIdsFromFieldBody(
     return;
   }
 
-  if (includeObjectFields && fieldBody.includes("{")) {
-    OBJECT_TOOL_ID_FIELD_PATTERN.lastIndex = 0;
-    for (const match of fieldBody.matchAll(OBJECT_TOOL_ID_FIELD_PATTERN)) {
-      const value = match[1];
-      if (typeof value === "string") {
-        addToolIdFact(target, value);
-      }
-    }
-    return;
-  }
-
-  for (const value of extractQuotedValues(fieldBody)) {
-    addToolIdFact(target, value);
-  }
+  addToolIdsFromParsedArray(
+    target,
+    parseCompleteLeadingArrayValues(fieldBody),
+    includeObjectFields,
+  );
 }
 
 function addToolArrayFieldValues(
@@ -247,9 +300,7 @@ function addProviderToolArrayFieldValues(
     );
     const closingBracket = boundedBody.indexOf("]");
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
-    for (const value of extractQuotedValues(fieldBody)) {
-      addToolIdFact(target, value);
-    }
+    addToolIdsFromParsedArray(target, parseCompleteLeadingArrayValues(fieldBody), false);
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
 }

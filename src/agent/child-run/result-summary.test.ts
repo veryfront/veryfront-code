@@ -202,6 +202,25 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("preserves scalar and object tool ids from an oversized mixed array", () => {
+      const text = '"tools": ["create_agent", {"id":"other_tool"}, "' +
+        "a".repeat(2_500) + '"]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, {
+        toolIds: ["create_agent", "other_tool"],
+      });
+    });
+
+    it("does not treat fields after an unclosed provider tool array as array values", () => {
+      const text = '"provider_tool_ids": [\n"fallback": "web_fetch"';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("extracts current Veryfront Cloud model prefixes from text beyond the summary cutoff", () => {
       const text = [
         "The delegated docs page starts here.",
