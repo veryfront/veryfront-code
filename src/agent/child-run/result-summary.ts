@@ -31,7 +31,6 @@ const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-const PSEUDO_OBJECT_TOOL_FIELD_PATTERN = /["'](id|name)["']\s*:\s*["']([^"']+)["']/g;
 
 /** Result return modes supported by delegated child runs. */
 export type ChildRunResultMode = "summary" | "full" | "structured";
@@ -194,28 +193,50 @@ function parseCompleteArrayValue(
   end: number,
   quote: string | undefined,
 ): { ok: true; value: unknown } | { ok: false } {
+  const candidate = text.slice(start, end);
+  try {
+    return { ok: true, value: JSON.parse(candidate) };
+  } catch {
+    // Continue with the bounded pseudo-JSON compatibility path below.
+  }
   if (quote === "'") {
-    const value = text.slice(start + 1, end - 1);
+    const value = candidate.slice(1, -1);
     return value.includes("\\") ? { ok: false } : { ok: true, value };
   }
   if (text[start] === "{") {
-    const value = Object.create(null) as Record<string, string>;
-    const candidate = text.slice(start, end);
-    PSEUDO_OBJECT_TOOL_FIELD_PATTERN.lastIndex = 0;
-    for (const match of candidate.matchAll(PSEUDO_OBJECT_TOOL_FIELD_PATTERN)) {
-      const key = match[1];
-      const fieldValue = match[2];
-      if ((key === "id" || key === "name") && fieldValue !== undefined) {
-        value[key] = fieldValue;
-      }
+    const normalized = normalizeSingleQuotedJson(candidate);
+    try {
+      return { ok: true, value: JSON.parse(normalized) };
+    } catch {
+      return { ok: false };
     }
-    if (Object.keys(value).length > 0) return { ok: true, value };
   }
-  try {
-    return { ok: true, value: JSON.parse(text.slice(start, end)) };
-  } catch {
-    return { ok: false };
+  return { ok: false };
+}
+
+function normalizeSingleQuotedJson(text: string): string {
+  let normalized = "";
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index]!;
+    if (character === '"') {
+      const end = scanQuotedValueEnd(text, index, '"');
+      if (end === undefined) return text;
+      normalized += text.slice(index, end);
+      index = end - 1;
+      continue;
+    }
+    if (character !== "'") {
+      normalized += character;
+      continue;
+    }
+    const end = scanQuotedValueEnd(text, index, "'");
+    if (end === undefined) return text;
+    const value = text.slice(index + 1, end - 1);
+    if (value.includes("\\")) return text;
+    normalized += JSON.stringify(value);
+    index = end - 1;
   }
+  return normalized;
 }
 
 function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
@@ -237,19 +258,16 @@ function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
     } else if (opening === "{" || opening === "[") {
       const closings = [opening === "{" ? "}" : "]"];
       index += 1;
-      let inString = false;
-      let escaped = false;
       while (index < fieldBody.length && closings.length > 0) {
         const character = fieldBody[index];
-        index += 1;
-        if (inString) {
-          if (escaped) escaped = false;
-          else if (character === "\\") escaped = true;
-          else if (character === '"') inString = false;
+        if (character === '"' || character === "'") {
+          const end = scanQuotedValueEnd(fieldBody, index, character);
+          if (end === undefined) break;
+          index = end;
           continue;
         }
-        if (character === '"') inString = true;
-        else if (character === "{") closings.push("}");
+        index += 1;
+        if (character === "{") closings.push("}");
         else if (character === "[") closings.push("]");
         else if (character === closings[closings.length - 1]) closings.pop();
       }

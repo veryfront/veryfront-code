@@ -136,8 +136,17 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("does not promote pseudo-fields embedded in valid JSON descriptions", () => {
+      const text = '"tools": [{"description":"\'id\': \'bogus_tool\'"}]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("extracts tool IDs from single-quoted pseudo-JSON arrays", () => {
-      const text = "tools: ['create_agent', {'id': 'other_tool'}]\n" +
+      const text = "tools: ['create_agent', " +
+        "{'id': 'other_tool', 'description': 'return } safely'}]\n" +
         "provider_tool_ids: ['web_fetch']";
 
       const result = buildChildRunResultSummary(text, { mode: "structured" });
