@@ -1915,6 +1915,33 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(exposed, false);
   });
 
+  it("ignores a default-chat inference header without a verified run-event token", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Inference-Token": "unverified-inference-token",
+        },
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+        verifyRunEventAppendToken: () => {
+          throw new Error("run-event verification must not run without its token");
+        },
+      },
+    );
+
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(createHostedInferenceModelResolver(parsed), undefined);
+  });
+
   it("does not trust runtime environment targets from public hosted chat requests", async () => {
     const parsed = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
@@ -2295,12 +2322,13 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.success, false);
   });
 
-  it("rejects a run-event append header that is not cryptographically verified", async () => {
+  it("rejects an inference header when the run-event token is not verified", async () => {
     const response = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
         method: "POST",
         headers: {
           "X-Veryfront-Run-Event-Token": "forged-run-event-token",
+          "X-Veryfront-Inference-Token": "unverified-inference-token",
         },
         body: JSON.stringify({
           messages: [],
