@@ -4889,6 +4889,55 @@ describe("DAGExecutor", () => {
       assertEquals(started.includes("shared-review"), false);
     });
 
+    it("does not use an ambiguous ownerless branch selection across siblings", async () => {
+      const release = (id: string, condition: boolean): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-workflow`,
+            steps: [{
+              id: "gate",
+              config: {
+                type: "branch",
+                condition: () => condition,
+                then: [{ id: "publish", config: { type: "step" } as any }],
+                else: [waitForApproval("shared-review", { message: `Approve ${id}` })],
+              } as any,
+            }],
+          },
+        }),
+        dependsOn: id === "release-2" ? ["release-1"] : [],
+      });
+      const originalStartedAt = new Date("2026-01-01T00:00:00.000Z");
+
+      const result = await executor.execute(
+        [release("release-1", true), release("release-2", false)],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "release-1": { nodeId: "release-1", status: "completed", attempt: 1 },
+            "release-2": { nodeId: "release-2", status: "running", attempt: 1 },
+            gate: {
+              nodeId: "gate",
+              status: "completed",
+              output: { branch: "else", result: {} },
+              attempt: 1,
+            },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "completed",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["release-2"]?.status, "completed");
+      assertEquals(result.nodeStates["shared-review"]?.startedAt, originalStartedAt);
+    });
+
     it("does not attribute an active nested legacy wait to a future outer sibling", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({

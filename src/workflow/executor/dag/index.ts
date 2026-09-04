@@ -104,24 +104,103 @@ function mergeSubWorkflowReservation(
   for (const childId of childIds) existing.add(childId);
 }
 
+function collectBranchOwnerPaths(
+  nodes: readonly WorkflowNode[],
+  parentPath: string,
+  target: Map<string, Set<string>>,
+): void {
+  for (const node of nodes) {
+    switch (node.config.type) {
+      case "subWorkflow": {
+        if (
+          typeof node.config.workflow === "string" ||
+          !Array.isArray(node.config.workflow.steps)
+        ) break;
+        collectBranchOwnerPaths(
+          node.config.workflow.steps,
+          subWorkflowOwnerPath(parentPath, node.id),
+          target,
+        );
+        break;
+      }
+      case "branch": {
+        if (parentPath) {
+          const owners = target.get(node.id) ?? new Set<string>();
+          owners.add(parentPath);
+          target.set(node.id, owners);
+        }
+        collectBranchOwnerPaths(node.config.then, parentPath, target);
+        collectBranchOwnerPaths(node.config.else ?? [], parentPath, target);
+        break;
+      }
+      case "parallel":
+        collectBranchOwnerPaths(node.config.nodes, parentPath, target);
+        break;
+      case "loop":
+        if (Array.isArray(node.config.steps)) {
+          collectBranchOwnerPaths(node.config.steps, parentPath, target);
+        }
+        break;
+    }
+  }
+}
+
 function narrowReservationsToSelectedBranches(
   nodes: WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
   reservations: Set<string>,
+  ownerPath: string,
+  branchOwnerPaths: ReadonlyMap<string, ReadonlySet<string>>,
 ): void {
   for (const node of nodes) {
     switch (node.config.type) {
       case "parallel":
-        narrowReservationsToSelectedBranches(node.config.nodes, nodeStates, reservations);
+        narrowReservationsToSelectedBranches(
+          node.config.nodes,
+          nodeStates,
+          reservations,
+          ownerPath,
+          branchOwnerPaths,
+        );
         break;
       case "branch": {
-        const output = nodeStates[node.id]?.output;
+        const branchState = nodeStates[node.id];
+        const persistedOwner = branchState?._subWorkflowOwnerPath;
+        const ambiguousOwnerlessState = persistedOwner === undefined &&
+          (branchOwnerPaths.get(node.id)?.size ?? 0) > 1;
+        if (ambiguousOwnerlessState) {
+          for (
+            const childId of collectWorkflowNodeIds([
+              ...node.config.then,
+              ...(node.config.else ?? []),
+            ])
+          ) {
+            reservations.delete(childId);
+          }
+          break;
+        }
+        const stateBelongsToOwner = persistedOwner === undefined
+          ? true
+          : isSubWorkflowDescendant(persistedOwner, ownerPath);
+        const output = stateBelongsToOwner ? branchState?.output : undefined;
         const selected = typeof output === "object" && output !== null && "branch" in output
           ? (output as { branch?: unknown }).branch
           : undefined;
         if (selected !== "then" && selected !== "else") {
-          narrowReservationsToSelectedBranches(node.config.then, nodeStates, reservations);
-          narrowReservationsToSelectedBranches(node.config.else ?? [], nodeStates, reservations);
+          narrowReservationsToSelectedBranches(
+            node.config.then,
+            nodeStates,
+            reservations,
+            ownerPath,
+            branchOwnerPaths,
+          );
+          narrowReservationsToSelectedBranches(
+            node.config.else ?? [],
+            nodeStates,
+            reservations,
+            ownerPath,
+            branchOwnerPaths,
+          );
           break;
         }
         const selectedNodes = selected === "then" ? node.config.then : (node.config.else ?? []);
@@ -130,12 +209,24 @@ function narrowReservationsToSelectedBranches(
         for (const childId of collectWorkflowNodeIds(unselectedNodes)) {
           if (!selectedIds.has(childId)) reservations.delete(childId);
         }
-        narrowReservationsToSelectedBranches(selectedNodes, nodeStates, reservations);
+        narrowReservationsToSelectedBranches(
+          selectedNodes,
+          nodeStates,
+          reservations,
+          ownerPath,
+          branchOwnerPaths,
+        );
         break;
       }
       case "loop":
         if (Array.isArray(node.config.steps)) {
-          narrowReservationsToSelectedBranches(node.config.steps, nodeStates, reservations);
+          narrowReservationsToSelectedBranches(
+            node.config.steps,
+            nodeStates,
+            reservations,
+            ownerPath,
+            branchOwnerPaths,
+          );
         }
         break;
       case "subWorkflow":
@@ -147,6 +238,8 @@ function narrowReservationsToSelectedBranches(
             node.config.workflow.steps,
             nodeStates,
             reservations,
+            ownerPath,
+            branchOwnerPaths,
           );
         }
         break;
@@ -160,6 +253,7 @@ function collectStaticSubWorkflowReservation(
   reservations: Map<string, Set<string>>,
   owners: Map<string, string>,
   nodeStates: Readonly<Record<string, NodeState>>,
+  branchOwnerPaths: ReadonlyMap<string, ReadonlySet<string>>,
 ): void {
   switch (node.config.type) {
     case "parallel":
@@ -169,6 +263,7 @@ function collectStaticSubWorkflowReservation(
         reservations,
         owners,
         nodeStates,
+        branchOwnerPaths,
       );
       return;
     case "branch":
@@ -178,6 +273,7 @@ function collectStaticSubWorkflowReservation(
         reservations,
         owners,
         nodeStates,
+        branchOwnerPaths,
       );
       if (node.config.else) {
         collectStaticSubWorkflowReservations(
@@ -186,6 +282,7 @@ function collectStaticSubWorkflowReservation(
           reservations,
           owners,
           nodeStates,
+          branchOwnerPaths,
         );
       }
       return;
@@ -197,6 +294,7 @@ function collectStaticSubWorkflowReservation(
           reservations,
           owners,
           nodeStates,
+          branchOwnerPaths,
         );
       }
       return;
@@ -215,6 +313,8 @@ function collectStaticSubWorkflowReservation(
           node.config.workflow.steps,
           nodeStates,
           childIds,
+          ownerPath,
+          branchOwnerPaths,
         );
       }
       mergeSubWorkflowReservation(
@@ -228,6 +328,7 @@ function collectStaticSubWorkflowReservation(
         reservations,
         owners,
         nodeStates,
+        branchOwnerPaths,
       );
     }
   }
@@ -239,9 +340,17 @@ function collectStaticSubWorkflowReservations(
   reservations = new Map<string, Set<string>>(),
   owners = new Map<string, string>(),
   nodeStates: Readonly<Record<string, NodeState>> = {},
+  branchOwnerPaths: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): Map<string, Set<string>> {
   for (const node of nodes) {
-    collectStaticSubWorkflowReservation(node, parentPath, reservations, owners, nodeStates);
+    collectStaticSubWorkflowReservation(
+      node,
+      parentPath,
+      reservations,
+      owners,
+      nodeStates,
+      branchOwnerPaths,
+    );
   }
   return reservations;
 }
@@ -744,12 +853,15 @@ export class DAGExecutor {
     // per-item namespaces, and a loop's generated steps all produce their
     // graph only at execution time, so a collector that ran once over the root
     // nodes would leave those graphs' batches unprotected.
+    const branchOwnerPaths = new Map<string, Set<string>>();
+    collectBranchOwnerPaths(nodes, scope.subWorkflowPath, branchOwnerPaths);
     collectStaticSubWorkflowReservations(
       nodes,
       scope.subWorkflowPath,
       scope.subWorkflowNodeReservations,
       scope.subWorkflowReservationOwners,
       nodeStates,
+      branchOwnerPaths,
     );
     collectCompletedCompositeChildIds(nodes, nodeStates, scope.completedCompositeChildIds);
 
@@ -888,37 +1000,6 @@ export class DAGExecutor {
       const candidateBatch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
-      // Child states are persisted in the shared root node-state map. Two
-      // sub-workflows in the same concurrent batch therefore cannot safely
-      // produce the same child ID: one result would overwrite the other before
-      // either approval can be reconciled. Reject the batch before any sibling
-      // starts, while sequential siblings can continue to reuse IDs through
-      // the ownership filter below.
-      const childCollision = findConcurrentChildStateCollision(
-        candidateBatch,
-        nodeMap,
-        scope,
-      );
-      if (childCollision) {
-        // Reported through the graph result rather than thrown, like every
-        // other refusal this loop raises: the states and context patch earlier
-        // batches already produced must survive, or their side effects run
-        // twice on the next attempt. `errorCause` carries the registry slug the
-        // ancestor-collision throw uses, so both refusals classify alike.
-        const detail = `Concurrent nodes "${childCollision.firstNodeId}" and ` +
-          `"${childCollision.secondNodeId}" both declare child id ` +
-          `"${childCollision.childId}"`;
-        return {
-          completed: false,
-          waiting: false,
-          context,
-          nodeStates,
-          contextPatch,
-          error: detail,
-          errorCause: INVALID_ARGUMENT.create({ detail }),
-        };
-      }
-
       // Runtime-defined composite children cannot be reserved without invoking
       // project callbacks or selecting branches before their dependency
       // context exists. Statically visible child ids were proven distinct
@@ -942,6 +1023,26 @@ export class DAGExecutor {
         const deferred = new Set([...unresolvedNodeIds.slice(1), ...resolvedProducerIds]);
         batch = candidateBatch.filter((nodeId) => !deferred.has(nodeId));
         ready = [...candidateBatch.filter((nodeId) => deferred.has(nodeId)), ...ready];
+      }
+
+      // Child states are persisted in the shared root node-state map. Compare
+      // only the nodes actually admitted together: an unresolved producer was
+      // serialized above precisely because its final reservation set cannot be
+      // known until it runs.
+      const childCollision = findConcurrentChildStateCollision(batch, nodeMap, scope);
+      if (childCollision) {
+        const detail = `Concurrent nodes "${childCollision.firstNodeId}" and ` +
+          `"${childCollision.secondNodeId}" both declare child id ` +
+          `"${childCollision.childId}"`;
+        return {
+          completed: false,
+          waiting: false,
+          context,
+          nodeStates,
+          contextPatch,
+          error: detail,
+          errorCause: INVALID_ARGUMENT.create({ detail }),
+        };
       }
 
       const batchStartedAt = new Date();
