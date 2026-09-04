@@ -322,6 +322,7 @@ function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string):
   // protected directory, even when none of its literal segments are present
   // in the directory path itself.
   if (!rule.anchored) return true;
+  if (rule.regex.test(`${normalizedPath}/__veryfront_probe__.json`)) return true;
   return anchoredGlobCanMatchDescendant(rule.globTokens, normalizedPath);
 }
 
