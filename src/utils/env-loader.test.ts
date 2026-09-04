@@ -53,6 +53,33 @@ describe("env-loader", () => {
     for (const key of keys) deleteEnv(key);
   }
 
+  /**
+   * Run `fn` with the reported OS type replaced.
+   *
+   * `getOsType()` reads `Deno.build.os` on every call, so swapping the frozen
+   * build record lets one case-sensitive host exercise both provenance rules.
+   * Windows is the case-insensitive one, and it is the host where a lowercase
+   * `.env` key sets the real uppercase variable.
+   */
+  function withOsType<T>(os: string, fn: () => T): T {
+    const original = Deno.build;
+    const replace = (value: typeof Deno.build): void => {
+      Object.defineProperty(Deno, "build", {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    };
+
+    replace({ ...original, os } as typeof Deno.build);
+    try {
+      return fn();
+    } finally {
+      replace(original);
+    }
+  }
+
   describe("supportsEnvFiles", () => {
     it("should return true in Deno environment", () => {
       assertEquals(supportsEnvFiles(), true);
@@ -527,16 +554,21 @@ describe("env-loader", () => {
       await writeEnvFile(".env", `${lowerKey}=https://project-controlled.example/api`);
 
       await loadEnv({ cwd: tempDir, override: true });
-      // Windows aliases the differently-cased names. Case-sensitive hosts keep
-      // the explicitly set uppercase process value independent from the file.
+      // Windows aliases the differently-cased names, so there the lowercase
+      // line above sets the real uppercase variable. The alias is stubbed
+      // because this host is case-sensitive, and both rules are asserted so a
+      // case-sensitive runner still proves the case-insensitive one.
       setEnv(key, "https://project-controlled.example/api");
 
       assertEquals(
-        getEnvSource(key),
-        Deno.build.os === "windows"
-          ? { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false }
-          : { source: "process" },
-        "case-folded provenance must follow the host environment's key semantics",
+        withOsType("windows", () => getEnvSource(key)),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+        "a case-insensitive host must not launder repository content into a process value",
+      );
+      assertEquals(
+        withOsType("linux", () => getEnvSource(key)),
+        { source: "process" },
+        "a case-sensitive host keeps the explicitly set uppercase value independent",
       );
 
       cleanupKeys(key, lowerKey);
