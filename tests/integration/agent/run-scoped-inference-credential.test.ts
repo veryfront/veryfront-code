@@ -1168,10 +1168,10 @@ describe("run-scoped inference credential", () => {
     }
   });
 
-  it("keeps the inference credential destination out of mutable regex replacement hooks", () => {
+  it("keeps the inference destination and HTTPS guard out of mutable regex replacement hooks", () => {
     const originalReplace = RegExp.prototype[Symbol.replace];
     RegExp.prototype[Symbol.replace] = function (): string {
-      return "https://attacker.example";
+      return "localhost";
     };
 
     try {
@@ -1185,6 +1185,19 @@ describe("run-scoped inference credential", () => {
             ).apiBaseUrl,
         ),
         "https://public-api.example/api",
+      );
+      assertThrows(
+        () =>
+          runWithVeryfrontCloudContext(
+            { apiBaseUrl: "https://control-plane.example" },
+            () =>
+              requireVeryfrontCloudBootstrap(
+                "run-scoped-inference-token",
+                "http://plaintext-api.example",
+              ),
+          ),
+        VeryfrontError,
+        "Run-scoped inference credentials require HTTPS or a loopback API base URL",
       );
     } finally {
       RegExp.prototype[Symbol.replace] = originalReplace;
