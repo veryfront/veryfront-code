@@ -225,7 +225,7 @@ describe("SummaryMemory", () => {
 
     await memory.add(userMessage("4", "fourth topic"));
     await memory.add(userMessage("5", "fifth topic"));
-    await rollback();
+    await rollback.rollback();
 
     const after = await memory.getMessages();
     assertEquals(
@@ -237,6 +237,27 @@ describe("SummaryMemory", () => {
       (await memory.getMessages()).filter((message) => message.id === "summary").length,
       1,
       "the restored projection must remain private summary state",
+    );
+  });
+
+  it("preserves a concurrent model write while rolling back rejected input", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
+    await memory.add(userMessage("history", "accepted history"));
+    const before = await memory.getMessages();
+    const transaction = captureMemoryRollback(memory, before);
+    const rejected = userMessage("rejected", "rejected input");
+    const concurrent = {
+      ...userMessage("assistant", "concurrent model output"),
+      role: "assistant" as const,
+    };
+
+    await memory.add(rejected);
+    await memory.add(concurrent);
+    await transaction.rollback(new Set([rejected]));
+
+    assertEquals(
+      (await memory.getMessages()).map((message) => message.id),
+      ["history", "assistant"],
     );
   });
 });

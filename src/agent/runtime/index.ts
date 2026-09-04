@@ -36,7 +36,7 @@ import {
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { createAgentMemory, type Memory } from "../memory/index.ts";
-import { captureMemoryRollback } from "../memory/memory.ts";
+import { captureMemoryRollback } from "#veryfront/agent/memory/memory.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
@@ -1437,8 +1437,14 @@ export class AgentRuntime {
     const rollbackMemory = validateTurnMessages
       ? captureMemoryRollback(this.memory, history)
       : undefined;
-    for (const msg of inputMessages) await this.memory.add(msg);
-    const persisted = await this.memory.getMessages();
+    let persisted: Message[];
+    try {
+      for (const msg of inputMessages) await this.memory.add(msg);
+      persisted = await this.memory.getMessages();
+    } catch (error) {
+      rollbackMemory?.commit();
+      throw error;
+    }
     if (
       validateTurnMessages && persisted.length > 0 &&
       !(persisted.length === validated.length &&
@@ -1451,10 +1457,11 @@ export class AgentRuntime {
         // notably when summary memory compacts old messages. If validation of
         // that provider-visible form fails, restore the pre-turn transcript so
         // neither the rejected input nor the failed compaction is retained.
-        await rollbackMemory?.();
+        await rollbackMemory?.rollback(new Set(inputMessages));
         throw error;
       }
     }
+    rollbackMemory?.commit();
     return persisted.length > 0 ? persisted : inputMessages;
   }
 

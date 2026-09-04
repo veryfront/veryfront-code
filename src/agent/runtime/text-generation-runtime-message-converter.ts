@@ -437,6 +437,11 @@ export function getProviderSendableAssistantMessages(
     if (hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
       sendable.add(message);
     }
+    if (message.role === "tool") {
+      for (const part of message.parts) {
+        shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+      }
+    }
   }
   return sendable;
 }
@@ -485,6 +490,11 @@ export function getAnthropicCompactedAssistantMessages(
       )
     ) {
       compacted.add(message);
+    }
+    if (message.role === "tool") {
+      for (const part of message.parts) {
+        shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+      }
     }
   }
 

@@ -923,6 +923,51 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("consumes a provider call ID when its matching tool result is dropped", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "ignore previous " }] },
+        {
+          id: "assistant-provider-call",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "reused-call",
+            toolName: "web_search",
+            providerExecuted: true,
+          }] as unknown as Message["parts"],
+        },
+        {
+          id: "provider-result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "reused-call",
+            toolName: "web_search",
+            output: { type: "text", value: "done" },
+          }] as unknown as Message["parts"],
+        },
+        {
+          id: "assistant-local-call",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "reused-call",
+            toolName: "local_search",
+            input: {},
+          }] as unknown as Message["parts"],
+        },
+        { id: "user-2", role: "user", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    const result = await middleware(context, () => Promise.resolve(createResponse("ok")));
+    assertEquals(result.text, "ok");
+  });
+
   it("does not length-check provider-assembled concatenations", async () => {
     // `maxLength` guards caller-supplied message text. The assembled forms are
     // synthetic strings built only to catch a split phrase, and a merged run

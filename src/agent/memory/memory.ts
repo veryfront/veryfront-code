@@ -9,7 +9,10 @@ import {
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 type BasicMemoryType = "conversation" | "buffer";
-type MemoryRollback = () => Promise<void>;
+interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
+  commit(): void;
+  rollback(rejectedMessages?: ReadonlySet<M>): Promise<void>;
+}
 const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
 
 function registerMemoryRollbackFactory(
@@ -30,9 +33,20 @@ export function captureMemoryRollback<M extends MinimalMessage>(
   // Preserve compatibility with custom Memory implementations. Built-in
   // stores use exact private-state snapshots registered in their constructors.
   const snapshot = [...fallbackMessages];
-  return async () => {
-    await memory.clear();
-    for (const message of snapshot) await memory.add(message);
+  return {
+    commit() {},
+    async rollback(rejectedMessages) {
+      const current = await memory.getMessages();
+      const snapshotMessages = new Set(snapshot);
+      const laterMessages = rejectedMessages === undefined
+        ? []
+        : current.filter((message) =>
+          !snapshotMessages.has(message) && !rejectedMessages.has(message)
+        );
+      await memory.clear();
+      for (const message of snapshot) await memory.add(message);
+      for (const message of laterMessages) await memory.add(message);
+    },
   };
 }
 
@@ -84,20 +98,41 @@ function getBasicStatsWithTrace<M extends MinimalMessage>(
 
 abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   protected messages: M[] = [];
+  private rollbackObservers = new Set<(message: M) => void>();
   protected abstract readonly memoryType: BasicMemoryType;
   protected abstract readonly spanPrefix: string;
 
   constructor() {
     registerMemoryRollbackFactory(this, () => {
       const messages = [...this.messages];
-      return () => {
-        this.messages = [...messages];
-        return Promise.resolve();
+      const additions: M[] = [];
+      const observe = (message: M) => additions.push(message);
+      this.rollbackObservers.add(observe);
+      let active = true;
+      const close = () => {
+        if (!active) return;
+        active = false;
+        this.rollbackObservers.delete(observe);
+      };
+      return {
+        commit: close,
+        rollback: async (rejectedMessages) => {
+          close();
+          const laterAdditions = rejectedMessages === undefined
+            ? []
+            : additions.filter((message) => !rejectedMessages.has(message));
+          this.messages = [...messages];
+          for (const message of laterAdditions) await this.add(message);
+        },
       };
     });
   }
 
   abstract add(message: M): Promise<void>;
+
+  protected recordAddition(message: M): void {
+    for (const observe of this.rollbackObservers) observe(message);
+  }
 
   getMessages(): Promise<M[]> {
     return getMessagesWithTrace(this.messages, `${this.spanPrefix}.getMessages`, this.memoryType);
@@ -140,6 +175,7 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
         if (this.config.maxTokens) {
           await this.trimToTokenLimit();
         }
+        this.recordAddition(message);
       },
       { "memory.type": "conversation", "memory.message_count": this.messages.length },
     );
@@ -181,6 +217,7 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends Bas
           if (this.messages.length > this.bufferSize) {
             this.messages = this.messages.slice(-this.bufferSize);
           }
+          this.recordAddition(message);
         },
         { "memory.type": "buffer", "memory.buffer_size": this.bufferSize },
       ),
@@ -195,6 +232,7 @@ const SUMMARY_MESSAGE_PREFIX = "Previous conversation summary:\n";
 /** Implement summary memory. */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
+  private rollbackObservers = new Set<(message: M) => void>();
   private summary = "";
   private summaryThreshold: number;
   private summaryMaxChars: number;
@@ -210,10 +248,26 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     registerMemoryRollbackFactory(this, () => {
       const messages = [...this.messages];
       const summary = this.summary;
-      return () => {
-        this.messages = [...messages];
-        this.summary = summary;
-        return Promise.resolve();
+      const additions: M[] = [];
+      const observe = (message: M) => additions.push(message);
+      this.rollbackObservers.add(observe);
+      let active = true;
+      const close = () => {
+        if (!active) return;
+        active = false;
+        this.rollbackObservers.delete(observe);
+      };
+      return {
+        commit: close,
+        rollback: async (rejectedMessages) => {
+          close();
+          const laterAdditions = rejectedMessages === undefined
+            ? []
+            : additions.filter((message) => !rejectedMessages.has(message));
+          this.messages = [...messages];
+          this.summary = summary;
+          for (const message of laterAdditions) await this.add(message);
+        },
       };
     });
   }
@@ -229,6 +283,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         }
 
         this.enforceTokenLimit();
+        for (const observe of this.rollbackObservers) observe(message);
       },
       { "memory.type": "summary", "memory.threshold": this.summaryThreshold },
     );
