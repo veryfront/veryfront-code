@@ -323,6 +323,14 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("keeps boundary trimming from hiding invalid syntax after an ID", () => {
+      const text = 'tools: [{"id":"bogus_tool" garbage' + "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {
       const text = 'tools: [{"id":"first_tool"},{"id":"critical_tool","description":"' +
         "y ".repeat(70_000);

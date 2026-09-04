@@ -634,16 +634,22 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
   const importPaths: string[] = [];
 
   const windows = boundedContractFactWindows(text);
+  // Structured array parsing validates its own token boundaries. Preserve the
+  // exact head cutoff so generic token-boundary trimming cannot hide malformed
+  // syntax that follows an otherwise valid id member.
+  const toolWindows = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
+    ? [text.slice(0, CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2), windows[1]!]
+    : windows;
   for (const boundedText of windows) {
     addPatternMatches(modelIds, boundedText, MODEL_FIELD_PATTERN, 1);
   }
   for (const boundedText of windows) {
     addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
   }
-  for (let index = 0; index < windows.length; index++) {
+  for (let index = 0; index < toolWindows.length; index++) {
     addToolArrayFieldValues(
       toolIds,
-      windows[index]!,
+      toolWindows[index]!,
       TOOL_IDS_FIELD_PATTERN,
       text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT && index === 0,
     );
