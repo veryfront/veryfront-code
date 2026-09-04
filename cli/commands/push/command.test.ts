@@ -3112,6 +3112,7 @@ describe("push divergence guard", () => {
         });
 
         let fileListCalls = 0;
+        let protectedDeleted = false;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -3125,27 +3126,45 @@ describe("push divergence guard", () => {
               await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 3;\n");
             }
             return Response.json({
-              data: [{
-                path: "app.ts",
-                content: applied ? "export const value = 2;\n" : "export const value = 1;\n",
-                version_id: applied
-                  ? "00000000-0000-4000-8000-000000000011"
-                  : "00000000-0000-4000-8000-000000000010",
-              }],
+              data: [
+                {
+                  path: "app.ts",
+                  content: applied ? "export const value = 2;\n" : "export const value = 1;\n",
+                  version_id: applied
+                    ? "00000000-0000-4000-8000-000000000011"
+                    : "00000000-0000-4000-8000-000000000010",
+                },
+                ...(!protectedDeleted
+                  ? [{
+                    path: ".env.production",
+                    content: "SECRET=<REDACTED>\n",
+                    version_id: "00000000-0000-4000-8000-000000000012",
+                  }]
+                  : []),
+              ],
               page_info: {},
             });
           }
           if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") {
+            protectedDeleted = true;
+            return Response.json({});
+          }
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await assertRejects(
-          () => pushCommand({ projectDir, quiet: true }),
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, quiet: true, prune: true }),
           Error,
           "Local source changed during push",
         );
 
         assertEquals(fileListCalls, 3);
+        assertEquals(protectedDeleted, true);
+        assertEquals(
+          (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
+          [".env.production"],
+        );
         assertEquals(await readPushReceipt(projectDir), null);
         assertEquals(
           await readSyncTarget(projectDir, {
@@ -5181,7 +5200,7 @@ describe("push deletion ownership", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({ projectDir, branch: "main", prune: true, force: true });
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(fileListCalls, 3);
         assertEquals([...deleted].sort(), [".env.production", "late-remote.ts"]);

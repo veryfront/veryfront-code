@@ -69,6 +69,7 @@ import {
   writeSyncTarget,
 } from "../../sync/state.ts";
 
+const defineOwnProperty = Object.defineProperty;
 const PREVIEW_BRANCH_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const BRANCH_SUFFIX_LENGTH = 6;
 const PREVIEW_BRANCH_ERROR =
@@ -732,6 +733,31 @@ function pushVerificationReadError(protectedDeleted: readonly string[]): Error {
   });
 }
 
+function attachProtectedDeleteContext(
+  error: unknown,
+  protectedDeleted: readonly string[],
+): Error {
+  if (protectedDeleted.length === 0) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  const normalized = [...protectedDeleted];
+  if (error instanceof Error) {
+    try {
+      defineOwnProperty(error, "context", {
+        value: { protectedDeleted: normalized },
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+      return error;
+    } catch { /* fall through to a typed push error */ }
+  }
+  return pushMutationError(
+    error instanceof Error ? error.message : "Push finalization failed",
+    normalized,
+  );
+}
+
 function requireRemoteContent(file: RemoteFile): string {
   if (typeof file.content === "string") return file.content;
   throw new Error(
@@ -1291,15 +1317,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             }
             await clearPushReceipt(projectDir);
             spinner.update("Verifying push target...");
-            await recordPushReceipt(
-              client,
-              config,
-              projectDir,
-              branchName,
-              sourceSnapshot,
-              ignoreChecker,
-              pushedSourceDigest,
-            );
+            try {
+              await recordPushReceipt(
+                client,
+                config,
+                projectDir,
+                branchName,
+                sourceSnapshot,
+                ignoreChecker,
+                pushedSourceDigest,
+              );
+            } catch (error) {
+              throw attachProtectedDeleteContext(error, protectedDeleteContext());
+            }
             if (project) {
               await writeSyncTarget(projectDir, {
                 controlPlane: config.apiUrl,
@@ -1313,7 +1343,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         } finally {
           spinner.stop();
         }
-        if (!quiet) {
+        if (!quiet || jsonOutput) {
           if (dryRun && jsonOutput) {
             outputPushDryRunResult(
               config.projectSlug,
@@ -1361,7 +1391,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           await deleteFiles(client, projectApiReference(config), target.branchId, deleteOps, true);
         }
 
-        if (jsonOutput && !quiet) {
+        if (jsonOutput) {
           outputPushDryRunResult(
             config.projectSlug,
             branchName,
@@ -1745,15 +1775,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             pushedSourceDigest,
           );
         } catch (error) {
-          await writePlannedSyncTarget();
-          throw error;
+          try {
+            await writePlannedSyncTarget();
+          } catch (writeError) {
+            throw attachProtectedDeleteContext(writeError, protectedDeleteContext());
+          }
+          throw attachProtectedDeleteContext(error, protectedDeleteContext());
         }
         await writePlannedSyncTarget();
       } finally {
         spinner.stop();
       }
 
-      if (quiet) return;
+      if (quiet && !jsonOutput) return;
 
       outputPushResult(
         config.projectSlug,

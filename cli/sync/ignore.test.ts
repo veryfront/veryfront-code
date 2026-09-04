@@ -244,9 +244,28 @@ describe("cli/sync/ignore", () => {
         assertEquals(unanchoredNestedChecker.isIgnored(".env"), true);
         assertEquals(warnings.length, 6, "an unanchored nested rule must retain its warning");
 
+        const anchoredOtherPrefixChecker = createIgnoreChecker([".env*", "!/foo**.json"]);
+        assertEquals(anchoredOtherPrefixChecker.isIgnored(".env"), true);
+        assertEquals(warnings.length, 6, "an unrelated anchored prefix must not warn");
+
+        const embeddedDoubleStarChecker = createIgnoreChecker([
+          ".env*",
+          "!/foo**/bar.json",
+        ]);
+        assertEquals(embeddedDoubleStarChecker.isIgnored("foo/.env"), true);
+        assertEquals(warnings.length, 7, "an embedded double-star must retain its warning");
+
+        const canceledNegationChecker = createIgnoreChecker([
+          ".env*",
+          "!.env/**",
+          ".env/**",
+        ]);
+        assertEquals(canceledNegationChecker.isIgnored(".env"), true);
+        assertEquals(warnings.length, 7, "a later matching ignore rule cancels the warning");
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 6, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 7, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

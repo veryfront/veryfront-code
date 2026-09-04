@@ -101,9 +101,14 @@ interface IgnoreRule {
   negated: boolean;
   regex: RegExp;
   anchored: boolean;
-  crossDirectorySinglePattern: boolean;
-  descendantSegments: Array<RegExp | null>;
+  globTokens: GlobToken[];
 }
+
+type GlobToken =
+  | { type: "literal"; value: string }
+  | { type: "single" }
+  | { type: "star" }
+  | { type: "double-star" };
 
 const MAX_IGNORE_PATTERN_LENGTH = 4_096;
 const MAX_IGNORE_PATTERN_SEGMENTS = 128;
@@ -189,6 +194,26 @@ function globToRegex(pattern: string): string {
   return source;
 }
 
+function tokenizeGlob(pattern: string): GlobToken[] {
+  const tokens: GlobToken[] = [];
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index]!;
+    if (character === "*") {
+      if (pattern[index + 1] === "*") {
+        tokens.push({ type: "double-star" });
+        index++;
+      } else {
+        tokens.push({ type: "star" });
+      }
+    } else if (character === "?") {
+      tokens.push({ type: "single" });
+    } else {
+      tokens.push({ type: "literal", value: character });
+    }
+  }
+  return tokens;
+}
+
 function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule | null {
   let pattern = rawPattern.trim();
   if (!pattern || pattern.startsWith("#")) return null;
@@ -220,16 +245,11 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
   const body = globToRegex(pattern);
   const prefix = anchored ? "^" : "(^|/)";
   const suffix = directoryOnly || (!hasSlash && !hasGlob) ? "(/|$)" : "$";
-  const descendantSegments = pathSegments.map((segment) =>
-    segment === "**" ? null : new RegExp(`^${globToRegex(segment)}$`, caseInsensitive ? "i" : "")
-  );
-
   return {
     negated,
     regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
     anchored,
-    crossDirectorySinglePattern: !hasSlash && pattern.includes("**"),
-    descendantSegments,
+    globTokens: tokenizeGlob(pattern),
   };
 }
 
@@ -254,36 +274,71 @@ function isProtected(relativePath: string): boolean {
   return isProtectedPath(normalizeIgnorePath(relativePath));
 }
 
+function epsilonClosure(tokens: readonly GlobToken[], states: ReadonlySet<number>): Set<number> {
+  const closure = new Set(states);
+  const pending = [...states];
+  while (pending.length > 0) {
+    const state = pending.pop()!;
+    const token = tokens[state];
+    if (token?.type !== "star" && token?.type !== "double-star") continue;
+    const next = state + 1;
+    if (closure.has(next)) continue;
+    closure.add(next);
+    pending.push(next);
+  }
+  return closure;
+}
+
+function anchoredGlobCanMatchDescendant(
+  tokens: readonly GlobToken[],
+  normalizedPath: string,
+): boolean {
+  let states = epsilonClosure(tokens, new Set([0]));
+  const prefix = `${normalizedPath}/`;
+  for (let pathIndex = 0; pathIndex < prefix.length; pathIndex++) {
+    const character = prefix[pathIndex]!;
+    const nextStates = new Set<number>();
+    for (const state of states) {
+      const token = tokens[state];
+      if (token?.type === "literal" && token.value === character) {
+        nextStates.add(state + 1);
+      } else if (token?.type === "single" && character !== "/") {
+        nextStates.add(state + 1);
+      } else if (token?.type === "star" && character !== "/") {
+        nextStates.add(state);
+      } else if (token?.type === "double-star") {
+        nextStates.add(state);
+      }
+    }
+    states = epsilonClosure(tokens, nextStates);
+    if (states.size === 0) return false;
+  }
+  return states.size > 0;
+}
+
 function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
   if (!rule.negated || rule.regex.test(normalizedPath)) return false;
-  if (rule.crossDirectorySinglePattern) return true;
   // An unanchored rule can begin at any descendant segment below this
   // protected directory, even when none of its literal segments are present
   // in the directory path itself.
   if (!rule.anchored) return true;
+  return anchoredGlobCanMatchDescendant(rule.globTokens, normalizedPath);
+}
 
-  const pathSegments = normalizedPath.split("/");
-  const matchesFrom = (start: number): boolean => {
-    const memo = new Map<string, boolean>();
-    const visit = (patternIndex: number, pathIndex: number): boolean => {
-      const key = `${patternIndex}:${pathIndex}`;
-      const cached = memo.get(key);
-      if (cached !== undefined) return cached;
-      if (pathIndex === pathSegments.length) return patternIndex < rule.descendantSegments.length;
-      if (patternIndex === rule.descendantSegments.length) return false;
-
-      const matcher = rule.descendantSegments[patternIndex];
-      const matches = matcher === null
-        ? visit(patternIndex + 1, pathIndex) || visit(patternIndex, pathIndex + 1)
-        : matcher?.test(pathSegments[pathIndex]!) === true &&
-          visit(patternIndex + 1, pathIndex + 1);
-      memo.set(key, matches);
-      return matches;
-    };
-    return visit(0, start);
-  };
-
-  return matchesFrom(0);
+function hasEffectiveDescendantNegation(
+  rules: readonly IgnoreRule[],
+  normalizedPath: string,
+): boolean {
+  for (let index = 0; index < rules.length; index++) {
+    const rule = rules[index]!;
+    if (!negatedRuleTargetsDescendant(rule, normalizedPath)) continue;
+    const canceled = rules.slice(index + 1).some((later) =>
+      !later.negated && later.regex.source === rule.regex.source &&
+      later.regex.flags === rule.regex.flags
+    );
+    if (!canceled) return true;
+  }
+  return false;
 }
 
 /**
@@ -309,7 +364,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
 
     if (isProtectedPath(normalizedPath)) {
       const droppedNegation = lastMatchedRule?.negated ||
-        rules.some((rule) => negatedRuleTargetsDescendant(rule, normalizedPath));
+        hasEffectiveDescendantNegation(rules, normalizedPath);
       if (droppedNegation && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
         warnedOverrides.add(normalizedPath);
         logWarning(
