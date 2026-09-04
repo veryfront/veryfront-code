@@ -197,7 +197,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     // registry resolves, which would hand the run a same-named platform tool it
     // was never configured with.
     const restricted = applyAgUiRuntimeRestrictions(
-      createConfig({ tools: true, providerTools: undefined }),
+      createConfig({ tools: true, providerTools: undefined, mcpServers: undefined }),
       { allowedTools: ["not_in_any_registry"] },
     );
 
@@ -273,9 +273,27 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["get_file"]);
   });
 
+  it("preserves a run-allowlisted candidate from a policy-free first-party MCP source", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: true,
+        providerTools: undefined,
+        mcpServers: [{ kind: "veryfront-api" }],
+      }),
+      { allowedTools: ["get_file"] },
+    );
+
+    assertEquals(restricted.tools, { get_file: true });
+    assertEquals(restricted.mcpServers, [{
+      kind: "veryfront-api",
+      toolPolicy: { allow: ["get_file"] },
+    }]);
+    assertEquals(getRuntimeAllowedRemoteTools(restricted), ["get_file"]);
+  });
+
   it("does not add generic delegation to a tools-true source agent", () => {
     const restricted = applyAgUiRuntimeRestrictions(
-      createConfig({ tools: true, delegates: undefined }),
+      createConfig({ tools: true, delegates: undefined, mcpServers: undefined }),
       { allowedTools: ["invoke_agent"] },
     );
 

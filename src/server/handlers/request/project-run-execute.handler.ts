@@ -80,6 +80,7 @@ const StringPrototypeTrim = String.prototype.trim;
 const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
+const ParseHostedChatRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse;
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -190,7 +191,7 @@ export interface ProjectRunExecuteHandlerDeps {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {
@@ -799,7 +800,7 @@ async function readLocalEvalRuntimeRestrictions(
   const runtimeOverrides = veryfront.runtimeOverrides;
   if (runtimeOverrides === undefined) return undefined;
 
-  const parsed = hostedChatRuntimeOverridesSchema.safeParse(runtimeOverrides);
+  const parsed = ParseHostedChatRuntimeOverrides(runtimeOverrides);
   if (!parsed.success) {
     // Fail closed: forwarded restrictions that cannot be read must not degrade
     // into an unrestricted eval run.

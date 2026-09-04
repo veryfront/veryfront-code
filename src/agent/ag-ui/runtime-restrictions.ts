@@ -100,10 +100,9 @@ function getConfiguredMcpToolNames(
   for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
     const server = servers[serverIndex];
     if (server === undefined) continue;
-    // A tools-true catalog can name a not-yet-connected custom HTTP source.
-    // Veryfront-owned sources remain explicit-map only so an unresolved name
-    // cannot turn the platform MCP fallback into a new capability.
-    if (!("transport" in server) && server.toolPolicy?.allow === undefined) continue;
+    // Every entry here is an explicitly configured source. Its discovered
+    // catalog remains a candidate and the run allowlist is stamped into the
+    // retained policy below, including policy-free first-party sources.
     const allowedByServer = server.toolPolicy?.allow === undefined
       ? undefined
       : toToolNameLookup(server.toolPolicy.allow);
