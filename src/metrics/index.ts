@@ -23,7 +23,10 @@ import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.t
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
-import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
+import {
+  getTrustedProjectEnvIdentity,
+  isProjectEnvActive,
+} from "#veryfront/server/project-env/storage.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
@@ -41,6 +44,16 @@ interface GaugeSample {
 
 type DirectMetricKind = "counter" | "histogram" | "gauge";
 
+interface DirectMetricsTarget {
+  url: string;
+  headers: Record<string, string>;
+  serviceName: string;
+  serviceVersion: string;
+  capacityScope: string;
+  internal: boolean;
+  tenantScoped: boolean;
+}
+
 interface DirectMetricSample {
   kind: DirectMetricKind;
   name: string;
@@ -49,9 +62,10 @@ interface DirectMetricSample {
   timestampUnixNano: string;
 }
 
-interface DirectMetricsTarget {
-  url: string;
-  headers: Record<string, string>;
+interface DirectExportGroup {
+  key: string;
+  target: DirectMetricsTarget;
+  samples: DirectMetricSample[];
 }
 
 const counters = new Map<string, Counter>();
@@ -61,6 +75,8 @@ const gauges = new Map<
   { instrument: ObservableGauge; samples: Map<string, GaugeSample> }
 >();
 const directQueue: DirectMetricSample[] = [];
+const directSampleTargets = new WeakMap<DirectMetricSample, string>();
+const directTargetExportTails = new Map<string, Promise<void>>();
 const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
 const directHistogramTotals = new Map<
   string,
@@ -74,20 +90,55 @@ const directHistogramTotals = new Map<
 let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DIRECT_FLUSH_DELAY_MS = 1_000;
+const DIRECT_EXPORT_TIMEOUT_MS = 10_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
+const DIRECT_MAX_INTERNED_TARGETS = DIRECT_MAX_BATCH_SIZE;
+const DIRECT_MAX_PROJECT_TARGETS = 90;
+const DIRECT_MAX_TARGETS_PER_SCOPE = 16;
+const DIRECT_MAX_QUEUED_SAMPLES = 1_000;
+const DIRECT_MAX_PROJECT_PENDING_SAMPLES = 900;
+const DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE;
+const DIRECT_MAX_INFLIGHT_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE * 2;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
+const NativeAbortController = AbortController;
+const AbortControllerPrototypeAbort = AbortController.prototype.abort;
+const AbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)?.get;
+const objectKeys = Object.keys;
+const objectEntries = Object.entries;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectSetPrototypeOf = Object.setPrototypeOf;
+const arrayIsArray = Array.isArray;
+const arrayFindIndex = Array.prototype.findIndex;
+const arraySort = Array.prototype.sort;
+const mapDelete = Map.prototype.delete;
+const mapForEach = Map.prototype.forEach;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
+const stringStartsWith = String.prototype.startsWith;
+const weakMapDelete = WeakMap.prototype.delete;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
 const hostBtoa = typeof globalThis.btoa === "function" ? globalThis.btoa : undefined;
 const mathMin = Math.min;
 const NativeTextEncoder = TextEncoder;
 const textEncoderEncode = NativeTextEncoder.prototype.encode;
 const stringFromCharCode = String.fromCharCode;
+const NativeString = String;
+const jsonStringify = JSON.stringify;
 const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const typedArrayByteLength = Object.getOwnPropertyDescriptor(
   typedArrayPrototype,
   "byteLength",
 )?.get;
 const utf8Encoder = new NativeTextEncoder();
+const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
 // Capture the runtime transport before project code can replace the ambient fetch.
 // Host-authenticated telemetry must never cross a project-controlled function.
 const hostFetch = globalThis.fetch.bind(globalThis);
@@ -100,6 +151,54 @@ const useAmbientFetchForTests = (() => {
     return false;
   }
 })();
+
+function dataPropertyDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = apply(objectCreate, Object, [null]) as PropertyDescriptor;
+  descriptor.value = value;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.writable = true;
+  return descriptor;
+}
+
+function appendArrayValue<T>(target: T[], value: T): void {
+  apply(objectDefineProperty, Object, [
+    target,
+    NativeString(target.length),
+    dataPropertyDescriptor(value),
+  ]);
+}
+
+function mapArrayValues<T, U>(
+  target: readonly T[],
+  mapper: (value: T, index: number) => U,
+): U[] {
+  const mapped: U[] = [];
+  apply(objectSetPrototypeOf, Object, [mapped, null]);
+  for (let index = 0; index < target.length; index++) {
+    appendArrayValue(mapped, mapper(target[index]!, index));
+  }
+  return mapped;
+}
+
+function removeArrayRange<T>(target: T[], start: number, count: number): T[] {
+  const removed: T[] = [];
+  apply(objectSetPrototypeOf, Object, [removed, null]);
+  const end = apply(mathMin, undefined, [start + count, target.length]) as number;
+  for (let index = start; index < end; index++) {
+    appendArrayValue(removed, target[index]!);
+  }
+  const remaining = target.length - end;
+  for (let index = 0; index < remaining; index++) {
+    apply(objectDefineProperty, Object, [
+      target,
+      NativeString(start + index),
+      dataPropertyDescriptor(target[end + index]),
+    ]);
+  }
+  target.length -= end - start;
+  return removed;
+}
 
 function encodeHostBase64(value: string): string {
   if (!hostBtoa || !typedArrayByteLength) {
@@ -130,31 +229,52 @@ function getMeter() {
 }
 
 function normalizeAttributes(attributes?: MetricAttributes): Record<string, AttributeValue> {
-  const normalized: Record<string, AttributeValue> = {};
-  for (const [key, value] of Object.entries(attributes ?? {})) {
+  const normalized = apply(objectCreate, Object, [null]) as Record<string, AttributeValue>;
+  const entries = apply(objectEntries, Object, [attributes ?? {}]) as Array<
+    [string, MetricAttributeValue]
+  >;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    const key = entry[0];
+    const value = entry[1];
     if (value === null || value === undefined) continue;
-    normalized[key] = value;
+    apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   }
 
   const context = getCurrentRequestContext();
-  if (context?.projectId) normalized.project_id = context.projectId;
-  if (context?.projectSlug) normalized.project_slug = context.projectSlug;
+  const addAttribute = (key: string, value: AttributeValue): void => {
+    apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
+  };
+  if (context?.projectId) addAttribute("project_id", context.projectId);
+  if (context?.projectSlug) addAttribute("project_slug", context.projectSlug);
   if (context) {
     const environmentName = context.environmentName ??
       (!context.productionMode ? "preview" : undefined);
-    if (environmentName) normalized.environment = environmentName;
-    if (!context.productionMode) normalized.branch = context.branch ?? "main";
+    if (environmentName) addAttribute("environment", environmentName);
+    if (!context.productionMode) addAttribute("branch", context.branch ?? "main");
   }
 
   return normalized;
 }
 
 function attributesKey(attributes: Record<string, AttributeValue>): string {
-  return JSON.stringify(
-    Object.entries(attributes)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, value]) => [key, value]),
-  );
+  const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
+  const sorted = apply(arraySort, entries, [
+    (left: [string, AttributeValue], right: [string, AttributeValue]) =>
+      left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+  ]) as Array<[string, AttributeValue]>;
+  let serialized = "[";
+  for (let index = 0; index < sorted.length; index++) {
+    const entry = sorted[index];
+    if (entry === undefined) continue;
+    if (index > 0) serialized += ",";
+    // Keys and values are validated primitives. Serialize them directly so
+    // native JSON never looks up an inherited Array.prototype.toJSON hook on
+    // ordinary Object.entries tuple arrays.
+    serialized += `[${jsonStringify(entry[0])},${jsonStringify(entry[1])}]`;
+  }
+  return serialized + "]";
 }
 
 function getCounter(name: string, options?: MetricInstrumentOptions): Counter | null {
@@ -266,6 +386,49 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
   return result;
 }
 
+function resolveDirectServiceIdentity(): Pick<
+  DirectMetricsTarget,
+  "serviceName" | "serviceVersion"
+> {
+  return {
+    serviceName: readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
+    serviceVersion: readEnv("VERYFRONT_VERSION") ??
+      readEnv("RELEASE_VERSION") ??
+      "unknown",
+  };
+}
+
+// An identity field that is present but empty carries no tenant, so it must
+// never become a capacity scope: every tenant whose runtime supplied an empty
+// id would otherwise share one quota bucket.
+function nonEmptyIdentity(value: string | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function capacityIdentity(kind: string, value: string | undefined): string | undefined {
+  const identity = nonEmptyIdentity(value);
+  return identity === undefined ? undefined : `${kind}:${identity}`;
+}
+
+function resolveDirectCapacityScope(): string {
+  const trustedIdentity = getTrustedProjectEnvIdentity();
+  if (trustedIdentity) {
+    return capacityIdentity("project-id", trustedIdentity.projectId) ??
+      capacityIdentity("project-slug", trustedIdentity.projectSlug) ??
+      capacityIdentity("environment-id", trustedIdentity.environmentId) ??
+      "project:unattributed";
+  }
+
+  const requestContext = getCurrentRequestContext();
+  return capacityIdentity("project-id", requestContext?.projectId) ??
+    capacityIdentity("project-slug", requestContext?.projectSlug) ??
+    "project:unattributed";
+}
+
+function hasTenantMetricsScope(): boolean {
+  return getTrustedProjectEnvIdentity() !== undefined || isProjectEnvActive();
+}
+
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
   const projectOtlpUrl = resolveProjectOtlpMetricsUrl();
   if (isDedicatedRuntime() && projectOtlpUrl) {
@@ -275,11 +438,16 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
           readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
+      ...resolveDirectServiceIdentity(),
+      capacityScope: resolveDirectCapacityScope(),
+      internal: false,
+      tenantScoped: true,
     };
   }
 
   const internalUrl = resolveInternalMetricsUrl();
   if (internalUrl) {
+    const tenantScoped = hasTenantMetricsScope();
     return {
       url: internalUrl,
       headers: {
@@ -288,54 +456,306 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
           readHostEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
         ),
       },
+      ...resolveDirectServiceIdentity(),
+      capacityScope: tenantScoped ? resolveDirectCapacityScope() : "internal",
+      internal: true,
+      tenantScoped,
     };
   }
 
   const otlpUrl = resolveOtlpMetricsUrl();
   if (!otlpUrl) return null;
+  const tenantScoped = hasTenantMetricsScope();
   return {
     url: otlpUrl,
     headers: parseHeaders(
       readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
         readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
     ),
+    ...resolveDirectServiceIdentity(),
+    capacityScope: tenantScoped ? resolveDirectCapacityScope() : "host",
+    internal: false,
+    tenantScoped,
   };
+}
+
+function sortHeaderNames(names: string[]): string[] {
+  return apply(arraySort, names, [
+    (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0),
+  ]) as string[];
+}
+
+function headersEqual(
+  left: Record<string, string>,
+  right: Record<string, string>,
+): boolean {
+  const leftNames = sortHeaderNames(apply(objectKeys, Object, [left]) as string[]);
+  const rightNames = sortHeaderNames(apply(objectKeys, Object, [right]) as string[]);
+  if (leftNames.length !== rightNames.length) return false;
+  for (let index = 0; index < leftNames.length; index++) {
+    const name = leftNames[index];
+    if (name === undefined || name !== rightNames[index]) return false;
+    if (left[name] !== right[name]) return false;
+  }
+  return true;
+}
+
+// Target identities are interned so the key is an opaque counter rather than a
+// rendering of the target itself. `headers` can carry the host-generated
+// internal-proxy Basic credential, and the key ends up in long-lived map keys
+// and in the flush grouping, so it must never contain that secret. Comparison
+// runs on captured intrinsics and primitive operators only: in a dedicated
+// runtime, project code can replace `Object.entries`, `Array.prototype.sort`,
+// `String.prototype.localeCompare` and `JSON.stringify`, and any of those would
+// otherwise be handed the credential. A fixed LRU bound prevents mutable
+// project telemetry settings from retaining an unbounded number of targets.
+interface InternedDirectMetricsTarget {
+  target: DirectMetricsTarget;
+  key: string;
+  // Samples still waiting in `directQueue`. Only these consume the per-scope
+  // pending quota: a sample that already left the queue can never be replaced
+  // by a newer one, so holding its slot would drop everything a tenant emits
+  // while its export is on the wire.
+  queuedSamples: number;
+  // Samples handed to an export and not yet released. They keep the target
+  // interned and are bounded separately.
+  inFlightSamples: number;
+  lastUsed: number;
+}
+
+const internedTargets: InternedDirectMetricsTarget[] = [];
+let nextInternedTargetId = 0;
+let nextInternedTargetUse = 0;
+let directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
+let droppedDirectSamples = 0;
+
+function deleteDirectTotalsForTarget(targetKey: string): void {
+  const prefix = `${targetKey}:`;
+  const deleteMatching = (_value: unknown, key: string, totals: Map<string, unknown>): void => {
+    if (apply(stringStartsWith, key, [prefix])) {
+      apply(mapDelete, totals, [key]);
+    }
+  };
+  apply(mapForEach, directCounterTotals, [deleteMatching]);
+  apply(mapForEach, directHistogramTotals, [deleteMatching]);
+}
+
+function evictUnusedDirectTarget(
+  predicate: (target: DirectMetricsTarget) => boolean = () => true,
+): boolean {
+  let candidateIndex = -1;
+  let candidateUse = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (
+      interned !== undefined && predicate(interned.target) && interned.queuedSamples === 0 &&
+      interned.inFlightSamples === 0 && interned.lastUsed < candidateUse
+    ) {
+      candidateIndex = index;
+      candidateUse = interned.lastUsed;
+    }
+  }
+  if (candidateIndex === -1) return false;
+  const evicted = removeArrayRange(internedTargets, candidateIndex, 1);
+  if (evicted[0]) deleteDirectTotalsForTarget(evicted[0].key);
+  return true;
+}
+
+function countDirectTargets(predicate: (target: DirectMetricsTarget) => boolean): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) count++;
+  }
+  return count;
+}
+
+function countRetainedDirectSamples(
+  predicate: (target: DirectMetricsTarget) => boolean = () => true,
+): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) {
+      count += interned.queuedSamples + interned.inFlightSamples;
+    }
+  }
+  return count;
+}
+
+function countQueuedDirectSamples(
+  predicate: (target: DirectMetricsTarget) => boolean,
+): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) {
+      count += interned.queuedSamples;
+    }
+  }
+  return count;
+}
+
+function countInFlightDirectSamples(
+  predicate: (target: DirectMetricsTarget) => boolean,
+): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) {
+      count += interned.inFlightSamples;
+    }
+  }
+  return count;
+}
+
+function hasDirectSampleCapacity(target: DirectMetricsTarget): boolean {
+  // Retained totals bound memory, so they include samples already on the wire.
+  if (countRetainedDirectSamples() >= DIRECT_MAX_QUEUED_SAMPLES) return false;
+  if (!target.tenantScoped) return true;
+  if (
+    countRetainedDirectSamples((candidate) => candidate.tenantScoped) >=
+      DIRECT_MAX_PROJECT_PENDING_SAMPLES
+  ) return false;
+  const inScope = (candidate: DirectMetricsTarget) =>
+    candidate.tenantScoped && candidate.capacityScope === target.capacityScope;
+  // The queue slot quota governs only what is still queued. A slow or stalled
+  // tenant endpoint holds its batch for the whole export deadline, and that
+  // must not silently discard everything the tenant emits meanwhile.
+  if (countQueuedDirectSamples(inScope) >= DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE) return false;
+  return countInFlightDirectSamples(inScope) < DIRECT_MAX_INFLIGHT_SAMPLES_PER_SCOPE;
+}
+
+function retainDirectTarget(target: DirectMetricsTarget): string | null {
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (
+      interned !== undefined &&
+      interned.target.url === target.url &&
+      interned.target.serviceName === target.serviceName &&
+      interned.target.serviceVersion === target.serviceVersion &&
+      interned.target.capacityScope === target.capacityScope &&
+      interned.target.internal === target.internal &&
+      interned.target.tenantScoped === target.tenantScoped &&
+      headersEqual(interned.target.headers, target.headers)
+    ) {
+      interned.queuedSamples++;
+      interned.lastUsed = nextInternedTargetUse++;
+      return interned.key;
+    }
+  }
+  if (target.tenantScoped) {
+    const scopeTargets = countDirectTargets((candidate) =>
+      candidate.tenantScoped && candidate.capacityScope === target.capacityScope
+    );
+    if (
+      scopeTargets >= DIRECT_MAX_TARGETS_PER_SCOPE &&
+      !evictUnusedDirectTarget((candidate) =>
+        candidate.tenantScoped && candidate.capacityScope === target.capacityScope
+      )
+    ) return null;
+
+    const projectTargets = countDirectTargets((candidate) => candidate.tenantScoped);
+    if (
+      projectTargets >= DIRECT_MAX_PROJECT_TARGETS &&
+      !evictUnusedDirectTarget((candidate) => candidate.tenantScoped)
+    ) return null;
+  }
+  if (
+    internedTargets.length >= DIRECT_MAX_INTERNED_TARGETS &&
+    !evictUnusedDirectTarget()
+  ) {
+    return null;
+  }
+  const key = `t${nextInternedTargetId++}`;
+  appendArrayValue(internedTargets, {
+    target,
+    key,
+    queuedSamples: 1,
+    inFlightSamples: 0,
+    lastUsed: nextInternedTargetUse++,
+  });
+  return key;
+}
+
+function takeDirectTargetForSample(
+  sample: DirectMetricSample,
+): { key: string; target: DirectMetricsTarget } | undefined {
+  const key = apply(weakMapGet, directSampleTargets, [sample]) as string | undefined;
+  apply(weakMapDelete, directSampleTargets, [sample]);
+  if (key === undefined) return undefined;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned?.key === key) {
+      return { key, target: interned.target };
+    }
+  }
+  return undefined;
+}
+
+// Move a dispatched batch off the queue quota and onto the in-flight count.
+// Runs synchronously at dispatch so a batch waiting behind another export for
+// the same target never keeps holding queue slots.
+function beginDirectTargetExport(targetKey: string, count: number): void {
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned?.key !== targetKey) continue;
+    const remaining = interned.queuedSamples - count;
+    interned.queuedSamples = remaining > 0 ? remaining : 0;
+    interned.inFlightSamples += count;
+    return;
+  }
+}
+
+function releaseDirectTargetSamples(targetKey: string, count: number): void {
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned?.key !== targetKey) continue;
+    const remaining = interned.inFlightSamples - count;
+    interned.inFlightSamples = remaining > 0 ? remaining : 0;
+    return;
+  }
 }
 
 function toOtlpValue(value: AttributeValue) {
   if (typeof value === "boolean") return { boolValue: value };
   if (typeof value === "number") return { doubleValue: value };
-  return { stringValue: String(value) };
+  return { stringValue: NativeString(value) };
 }
 
 function toOtlpAttributes(attributes: Record<string, AttributeValue>) {
-  return Object.entries(attributes).map(([key, value]) => ({
-    key,
-    value: toOtlpValue(value),
+  const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
+  return mapArrayValues(entries, (entry) => ({
+    key: entry[0],
+    value: toOtlpValue(entry[1]),
   }));
 }
 
 function getUnixNanoTimestamp(): string {
-  return String(BigInt(Date.now()) * 1_000_000n);
+  return NativeString(BigInt(Date.now()) * 1_000_000n);
 }
 
 function buildHistogramBuckets(value: number): number[] {
   const counts = new Array(HISTOGRAM_BOUNDS.length + 1).fill(0);
-  const bucketIndex = HISTOGRAM_BOUNDS.findIndex((bound) => value <= bound);
+  const bucketIndex = apply(arrayFindIndex, HISTOGRAM_BOUNDS, [
+    (bound: number) => value <= bound,
+  ]) as number;
   counts[bucketIndex === -1 ? counts.length - 1 : bucketIndex] = 1;
   return counts;
 }
 
-function buildDirectMetric(sample: DirectMetricSample) {
+function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
   const attributes = toOtlpAttributes(sample.attributes);
   if (sample.kind === "counter") {
-    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = directCounterTotals.get(key) ?? {
+    const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
+    const total = (apply(mapGet, directCounterTotals, [key]) as
+      | { value: number; startTimeUnixNano: string }
+      | undefined) ?? {
       value: 0,
       startTimeUnixNano: sample.timestampUnixNano,
     };
     total.value += sample.value;
-    directCounterTotals.set(key, total);
+    apply(mapSet, directCounterTotals, [key, total]);
 
     return {
       name: sample.name,
@@ -353,8 +773,15 @@ function buildDirectMetric(sample: DirectMetricSample) {
   }
 
   if (sample.kind === "histogram") {
-    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = directHistogramTotals.get(key) ?? {
+    const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
+    const total = (apply(mapGet, directHistogramTotals, [key]) as
+      | {
+        count: number;
+        sum: number;
+        bucketCounts: number[];
+        startTimeUnixNano: string;
+      }
+      | undefined) ?? {
       count: 0,
       sum: 0,
       bucketCounts: new Array(HISTOGRAM_BOUNDS.length + 1).fill(0),
@@ -363,8 +790,11 @@ function buildDirectMetric(sample: DirectMetricSample) {
     const sampleBuckets = buildHistogramBuckets(sample.value);
     total.count += 1;
     total.sum += sample.value;
-    total.bucketCounts = total.bucketCounts.map((count, index) => count + sampleBuckets[index]);
-    directHistogramTotals.set(key, total);
+    total.bucketCounts = mapArrayValues(
+      total.bucketCounts,
+      (count, index) => count + (sampleBuckets[index] ?? 0),
+    );
+    apply(mapSet, directHistogramTotals, [key, total]);
 
     return {
       name: sample.name,
@@ -395,25 +825,71 @@ function buildDirectMetric(sample: DirectMetricSample) {
   };
 }
 
-function buildDirectOtlpBody(samples: DirectMetricSample[]) {
+function buildDirectOtlpBody(
+  samples: DirectMetricSample[],
+  target: DirectMetricsTarget,
+  targetKey: string,
+) {
   return {
     resourceMetrics: [{
       resource: {
+        // Resolved at enqueue time alongside the target — never from the
+        // ambient context of whichever environment happens to run the flush.
         attributes: toOtlpAttributes({
-          "service.name": readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
-          "service.version": readEnv("VERYFRONT_VERSION") ??
-            readEnv("RELEASE_VERSION") ??
-            "unknown",
+          "service.name": target.serviceName,
+          "service.version": target.serviceVersion,
         }),
       },
       scopeMetrics: [{
         scope: {
           name: "veryfront.project.metrics",
         },
-        metrics: samples.map(buildDirectMetric),
+        metrics: mapArrayValues(samples, (sample) => buildDirectMetric(sample, targetKey)),
       }],
     }],
   };
+}
+
+function toHookFreeJsonValue(value: unknown): unknown {
+  if (arrayIsArray(value)) {
+    const result: unknown[] = [];
+    apply(objectSetPrototypeOf, Object, [result, null]);
+    for (let index = 0; index < value.length; index++) {
+      apply(objectDefineProperty, Object, [
+        result,
+        NativeString(index),
+        dataPropertyDescriptor(toHookFreeJsonValue(value[index])),
+      ]);
+    }
+    return result;
+  }
+  if (typeof value !== "object" || value === null) return value;
+
+  const result = apply(objectCreate, Object, [null]) as Record<string, unknown>;
+  const entries = apply(objectEntries, Object, [value]) as Array<[string, unknown]>;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    apply(objectDefineProperty, Object, [
+      result,
+      entry[0],
+      dataPropertyDescriptor(toHookFreeJsonValue(entry[1])),
+    ]);
+  }
+  return result;
+}
+
+function recordDirectSampleDrop(reason: string): void {
+  droppedDirectSamples++;
+  // Log the first drop, then at most one line per 1000 further drops so a
+  // stalled tenant endpoint cannot flood the log.
+  if (droppedDirectSamples === 1 || droppedDirectSamples % 1_000 === 0) {
+    // debug level - suppressed at default INFO threshold, visible with --debug.
+    serverLogger.debug("metrics: direct OTLP sample dropped", {
+      reason,
+      dropped: droppedDirectSamples,
+    });
+  }
 }
 
 function logDirectExportFailure(error: unknown): void {
@@ -424,45 +900,151 @@ function logDirectExportFailure(error: unknown): void {
   );
 }
 
-async function flushDirectMetrics(): Promise<void> {
+function createDirectExportDeadline(): {
+  signal: AbortSignal;
+  clear(): void;
+} {
+  if (!AbortControllerSignalGetter) {
+    throw new TypeError("AbortController signal intrinsic is unavailable");
+  }
+  const controller = new NativeAbortController();
+  const signal = apply(AbortControllerSignalGetter, controller, []) as AbortSignal;
+  const timeout = hostSetTimeout(() => {
+    apply(AbortControllerPrototypeAbort, controller, []);
+  }, directExportTimeoutMs);
+  return {
+    signal,
+    clear: () => hostClearTimeout(timeout),
+  };
+}
+
+async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
+  const deadline = createDirectExportDeadline();
+  try {
+    const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
+      group.target.url,
+      {
+        method: "POST",
+        headers: {
+          ...group.target.headers,
+          "Content-Type": "application/json",
+        },
+        body: jsonStringify(
+          toHookFreeJsonValue(buildDirectOtlpBody(group.samples, group.target, group.key)),
+        ),
+        signal: deadline.signal,
+      },
+    );
+    if (!response.ok) logDirectExportFailure(`HTTP ${response.status}`);
+  } catch (error) {
+    logDirectExportFailure(error);
+  } finally {
+    deadline.clear();
+  }
+}
+
+async function exportAndReleaseDirectGroup(group: DirectExportGroup): Promise<void> {
+  try {
+    await exportDirectGroup(group);
+  } finally {
+    releaseDirectTargetSamples(group.key, group.samples.length);
+  }
+}
+
+function dispatchDirectMetricsBatch(): void {
+  if (directQueue.length === 0) return;
+
+  // Group by the target each sample was bound to when it was enqueued. The
+  // queue is shared across concurrent project environments, so a single
+  // ambient-context target resolution here would misroute other tenants'
+  // samples.
+  const batch = removeArrayRange(directQueue, 0, DIRECT_MAX_BATCH_SIZE);
+  // Plain arrays and index loops rather than a Map or iterator protocol: a
+  // group holds the target, and `target.headers` can carry the internal-proxy
+  // credential, so it must not be handed to `Map.prototype.set` or to
+  // `Array.prototype[Symbol.iterator]`, both replaceable by project code.
+  const groups: DirectExportGroup[] = [];
+  for (let index = 0; index < batch.length; index++) {
+    const sample = batch[index];
+    if (sample === undefined) continue;
+    const binding = takeDirectTargetForSample(sample);
+    if (!binding) continue;
+    const { key, target } = binding;
+    let group: DirectExportGroup | undefined;
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      const candidate = groups[groupIndex];
+      if (candidate !== undefined && candidate.key === key) {
+        group = candidate;
+        break;
+      }
+    }
+    if (!group) {
+      group = { key, target, samples: [] };
+      appendArrayValue(groups, group);
+    }
+    appendArrayValue(group.samples, sample);
+  }
+
+  // Start every target request before awaiting any of them. Each request owns
+  // a deadline, so one tenant endpoint cannot block another target or retain a
+  // removed batch indefinitely.
+  for (let index = 0; index < groups.length; index++) {
+    const group = groups[index]!;
+    beginDirectTargetExport(group.key, group.samples.length);
+    const previous = apply(mapGet, directTargetExportTails, [group.key]) as
+      | Promise<void>
+      | undefined;
+    const pending = (async () => {
+      if (previous) {
+        try {
+          await previous;
+        } catch { /* a failed prior export does not block this target */ }
+      }
+      await exportAndReleaseDirectGroup(group);
+    })();
+    apply(mapSet, directTargetExportTails, [group.key, pending]);
+    void (async () => {
+      try {
+        await pending;
+      } finally {
+        if (apply(mapGet, directTargetExportTails, [group.key]) === pending) {
+          apply(mapDelete, directTargetExportTails, [group.key]);
+        }
+      }
+    })();
+  }
+}
+
+function dispatchQueuedDirectMetrics(): void {
   if (directFlushTimer) {
     clearTimeout(directFlushTimer);
     directFlushTimer = null;
   }
+  while (directQueue.length > 0) dispatchDirectMetricsBatch();
+}
 
-  const target = resolveDirectMetricsTarget();
-  if (!target || directQueue.length === 0) {
-    directQueue.length = 0;
-    return;
-  }
+function snapshotDirectTargetExports(): Promise<void>[] {
+  const exports: Promise<void>[] = [];
+  const collect = (pending: Promise<void>): void => {
+    appendArrayValue(exports, pending);
+  };
+  apply(mapForEach, directTargetExportTails, [collect]);
+  return exports;
+}
 
-  const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
-  try {
-    const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
-      target.url,
-      {
-        method: "POST",
-        headers: {
-          ...target.headers,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(buildDirectOtlpBody(batch)),
-      },
-    );
-    if (!response.ok) {
-      logDirectExportFailure(`HTTP ${response.status}`);
+async function flushDirectMetrics(): Promise<void> {
+  while (true) {
+    dispatchQueuedDirectMetrics();
+    const exports = snapshotDirectTargetExports();
+    if (exports.length === 0) return;
+    for (let index = 0; index < exports.length; index++) {
+      await exports[index];
     }
-  } catch (error) {
-    logDirectExportFailure(error);
-  }
-
-  if (directQueue.length > 0) {
-    scheduleDirectFlush();
   }
 }
 
 function scheduleDirectFlush(): void {
-  if (directFlushTimer || resolveDirectMetricsTarget() === null) return;
+  if (directFlushTimer) return;
   directFlushTimer = setTimeout(() => {
     void flushDirectMetrics();
   }, DIRECT_FLUSH_DELAY_MS);
@@ -483,14 +1065,30 @@ function enqueueDirectMetric(
   value: number,
   attributes: Record<string, AttributeValue>,
 ): void {
-  if (resolveDirectMetricsTarget() === null) return;
-  directQueue.push({
+  const target = resolveDirectMetricsTarget();
+  if (target === null) return;
+  if (!hasDirectSampleCapacity(target)) {
+    recordDirectSampleDrop("sample-quota");
+    return;
+  }
+  // Complete every fallible field before incrementing the target's retained
+  // sample count. A failed clock/BigInt conversion must not consume quota for
+  // a sample that can never enter the queue.
+  const timestampUnixNano = getUnixNanoTimestamp();
+  const targetKey = retainDirectTarget(target);
+  if (targetKey === null) {
+    recordDirectSampleDrop("target-quota");
+    return;
+  }
+  const sample: DirectMetricSample = {
     kind,
     name,
     value,
     attributes,
-    timestampUnixNano: getUnixNanoTimestamp(),
-  });
+    timestampUnixNano,
+  };
+  apply(weakMapSet, directSampleTargets, [sample, targetKey]);
+  appendArrayValue(directQueue, sample);
   if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
     void flushDirectMetrics();
     return;
@@ -553,6 +1151,15 @@ export const metrics = {
   async __flushForTests(): Promise<void> {
     await flushDirectMetrics();
   },
+  __setDirectExportTimeoutForTests(timeoutMs: number): void {
+    directExportTimeoutMs = timeoutMs;
+  },
+  __getDirectTargetCountForTests(): number {
+    return internedTargets.length;
+  },
+  __getDroppedDirectSampleCountForTests(): number {
+    return droppedDirectSamples;
+  },
   __resetForTests(): void {
     counters.clear();
     histograms.clear();
@@ -560,6 +1167,12 @@ export const metrics = {
     directQueue.length = 0;
     directCounterTotals.clear();
     directHistogramTotals.clear();
+    apply(mapClear, directTargetExportTails, []);
+    internedTargets.length = 0;
+    nextInternedTargetId = 0;
+    nextInternedTargetUse = 0;
+    droppedDirectSamples = 0;
+    directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
     if (directFlushTimer) {
       clearTimeout(directFlushTimer);
       directFlushTimer = null;
