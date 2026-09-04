@@ -201,11 +201,12 @@ function collectStaticSubWorkflowReservation(
       }
       return;
     case "subWorkflow": {
+      const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
+      owners.set(ownerPath, node.id);
       if (
         typeof node.config.workflow === "string" ||
         !Array.isArray(node.config.workflow.steps)
       ) return;
-      const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
       const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
       const ownerStatus = nodeStates[node.id]?.status;
       if (ownerStatus === "skipped") childIds.clear();
@@ -221,7 +222,6 @@ function collectStaticSubWorkflowReservation(
         childIds,
         reservations,
       );
-      owners.set(ownerPath, node.id);
       collectStaticSubWorkflowReservations(
         node.config.workflow.steps,
         ownerPath,
@@ -563,6 +563,22 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
   for (const [owner, ids] of scope.subWorkflowNodeIds) {
     if (isSubWorkflowDescendant(owner, ownerPath)) continue;
     for (const id of ids) producedNodeIds.add(id);
+  }
+  for (const [owner, ownerNodeId] of scope.subWorkflowReservationOwners) {
+    if (
+      scope.subWorkflowNodeReservations.has(owner) ||
+      isSubWorkflowDescendant(owner, ownerPath) ||
+      isSubWorkflowDescendant(ownerPath, owner)
+    ) continue;
+    const ownerStatus = reservationOwnerStatus(owner, ownerNodeId, nodeStates, scope);
+    if (ownerStatus === undefined || ownerStatus === "pending") continue;
+    // A callback-defined sibling from a pre-ownership checkpoint exposes no
+    // static child reservation. Once that sibling has started, any ownerless
+    // legacy child could be its output; treating it as previously produced is
+    // conservative and prevents a later sibling from bypassing its own wait.
+    for (const [nodeId, state] of Object.entries(nodeStates)) {
+      if (state._subWorkflowOwnerPath === undefined) producedNodeIds.add(nodeId);
+    }
   }
   for (const [owner, ids] of scope.subWorkflowNodeReservations) {
     // Ancestor reservations recursively include this owner's ids, so only

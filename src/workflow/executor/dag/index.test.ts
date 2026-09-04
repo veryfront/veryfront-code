@@ -3603,6 +3603,36 @@ describe("DAGExecutor", () => {
       assertEquals(third.nodeStates["release-2"]?.status, "completed");
     });
 
+    it("does not seed legacy state from a completed callback-defined sibling", async () => {
+      const release = (id: string): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-workflow`,
+            steps: () => [waitForApproval("review", { message: `Approve ${id}` })],
+          },
+        }),
+        dependsOn: id === "release-2" ? ["release-1"] : [],
+      });
+      const nodes = [release("release-1"), release("release-2")];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "release-1": { nodeId: "release-1", status: "completed", attempt: 1 },
+            "release-2": { nodeId: "release-2", status: "running", attempt: 1 },
+            review: { nodeId: "review", status: "completed", attempt: 1 },
+          },
+        }),
+      );
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "review");
+      assertEquals(result.nodeStates["release-2"]?.status, "running");
+      assertEquals(result.nodeStates.review?.status, "running");
+    });
+
     it("rejects collisions from a sub-workflow nested in a concurrent composite", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
