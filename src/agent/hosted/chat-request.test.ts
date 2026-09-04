@@ -19,7 +19,7 @@ import {
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
 } from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
-import { createHostedInferenceModelResolver } from "./inference-credential.ts";
+import { createHostedInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
