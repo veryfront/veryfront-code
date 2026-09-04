@@ -498,7 +498,7 @@ export function resolveBootstrapPush(
  * immediately before accepting the receipt, so edits made while the deploy is
  * resolving its target cannot promote a stale upload.
  *
- * Each observation scans every source file twice around Git probes, so it is
+ * Each observation scans every source file three times around Git probes, so it is
  * O(project size). A deploy that pushes pays for it more than once: here,
  * inside `pushCommand`, when that push records its receipt, and in the final gate.
  * The reads are what make the proof a proof, and a push already uploads the
@@ -527,15 +527,20 @@ export async function observeLocalSource(projectDir: string): Promise<LocalSourc
   const firstGit = await resolveGitSource(projectDir);
   const firstDigest = await computeLocalSourceDigest(projectDir);
   const middleGit = await resolveGitSource(projectDir);
-  const sourceDigest = await computeLocalSourceDigest(projectDir);
+  const middleDigest = await computeLocalSourceDigest(projectDir);
   const finalGit = await resolveGitSource(projectDir);
+  // Git does not report supported files hidden by .gitignore. Re-read the
+  // managed source after the final Git probe so a hidden-file write during
+  // that probe cannot leave an earlier digest looking stable.
+  const sourceDigest = await computeLocalSourceDigest(projectDir);
   const gitStable = (left: GitSource, right: GitSource) =>
     left.commitSha === right.commitSha &&
     left.clean === right.clean &&
     left.repositoryAvailable === right.repositoryAvailable &&
     left.indeterminate === right.indeterminate;
   const gitSource = gitStable(firstGit, middleGit) &&
-      gitStable(middleGit, finalGit) && firstDigest === sourceDigest
+      gitStable(middleGit, finalGit) && firstDigest === middleDigest &&
+      middleDigest === sourceDigest
     ? finalGit
     : {
       ...finalGit,
