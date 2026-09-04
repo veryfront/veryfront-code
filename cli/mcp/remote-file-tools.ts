@@ -17,7 +17,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
 import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
-import { resolveApiCredentialCandidatesForAuth } from "#cli/shared/config";
+import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import {
   buildProjectApiPath,
@@ -43,6 +43,14 @@ async function apiRequest<T>(
     ? candidates.find((entry) => entry.apiToken === options.token)
     : candidates[0];
   if (!candidate) {
+    if (resolveApiUrlTrust(requestEnv, null).repositorySteered) {
+      return {
+        ok: false,
+        error:
+          "The project configures an untrusted API endpoint. Set VERYFRONT_API_URL or VERYFRONT_API_BASE_URL in your shell to confirm the endpoint before using remote file tools.",
+        status: 403,
+      };
+    }
     return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
   }
 
