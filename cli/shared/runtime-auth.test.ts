@@ -138,6 +138,7 @@ describe("cli/shared/runtime-auth", () => {
 
   it("applies a project credential together with its configured API base", async () => {
     await useTempConfigHome();
+    setEnv("VERYFRONT_API_TOKEN", "shell-token");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-runtime-auth-config-" });
     tempDirs.push(projectDir);
     await Deno.writeTextFile(

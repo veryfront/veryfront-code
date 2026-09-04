@@ -496,6 +496,12 @@ export async function resolveApiCredentialCandidatesForAuth(
     configFileValidationEnv,
   );
 
+  if (trust.repositorySteered && trust.steeringConfigFile) {
+    const configCandidates = candidates.filter((entry) => entry.apiTokenSource === "config-file");
+    const otherCandidates = candidates.filter((entry) => entry.apiTokenSource !== "config-file");
+    return [...configCandidates, ...otherCandidates];
+  }
+
   // `login`, `whoami`, and `up` validate a candidate by sending it to
   // `validationEnv.apiUrl`, so these preflights reach the repository-supplied
   // host before any call to `resolveConfig`. They need the same rule: a

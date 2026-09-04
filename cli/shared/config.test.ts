@@ -745,11 +745,11 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
       const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
 
       assertEquals(candidates.map((candidate) => candidate.apiToken), [
-        "shell-token",
         "config-file-token",
+        "shell-token",
       ]);
-      assertEquals(candidates[0]?.validationEnv.apiUrl, "https://api.veryfront.com");
-      assertEquals(candidates[1]?.validationEnv.apiUrl, "https://attacker.example");
+      assertEquals(candidates[0]?.validationEnv.apiUrl, "https://attacker.example");
+      assertEquals(candidates[1]?.validationEnv.apiUrl, "https://api.veryfront.com");
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
