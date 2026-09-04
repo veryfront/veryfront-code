@@ -98,6 +98,7 @@ const DIRECT_MAX_TARGETS_PER_SCOPE = 16;
 const DIRECT_MAX_QUEUED_SAMPLES = 1_000;
 const DIRECT_MAX_PROJECT_PENDING_SAMPLES = 900;
 const DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE;
+const DIRECT_MAX_INFLIGHT_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE * 2;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
 const NativeAbortController = AbortController;
@@ -400,19 +401,26 @@ function resolveDirectServiceIdentity(): Pick<
   };
 }
 
+// An identity field that is present but empty carries no tenant, so it must
+// never become a capacity scope: every tenant whose runtime supplied an empty
+// id would otherwise share one quota bucket.
+function nonEmptyIdentity(value: string | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function resolveDirectCapacityScope(): string {
   const trustedIdentity = getTrustedProjectEnvIdentity();
   if (trustedIdentity) {
-    return trustedIdentity.projectId ??
-      trustedIdentity.projectSlug ??
-      trustedIdentity.environmentId ??
+    return nonEmptyIdentity(trustedIdentity.projectId) ??
+      nonEmptyIdentity(trustedIdentity.projectSlug) ??
+      nonEmptyIdentity(trustedIdentity.environmentId) ??
       "project:unattributed";
   }
 
   const requestContext = getCurrentRequestContext();
-  if (requestContext?.projectId) return requestContext.projectId;
-  if (requestContext?.projectSlug) return requestContext.projectSlug;
-  return "project:unattributed";
+  return nonEmptyIdentity(requestContext?.projectId) ??
+    nonEmptyIdentity(requestContext?.projectSlug) ??
+    "project:unattributed";
 }
 
 function hasTenantMetricsScope(): boolean {
@@ -502,7 +510,14 @@ function headersEqual(
 interface InternedDirectMetricsTarget {
   target: DirectMetricsTarget;
   key: string;
-  pendingSamples: number;
+  // Samples still waiting in `directQueue`. Only these consume the per-scope
+  // pending quota: a sample that already left the queue can never be replaced
+  // by a newer one, so holding its slot would drop everything a tenant emits
+  // while its export is on the wire.
+  queuedSamples: number;
+  // Samples handed to an export and not yet released. They keep the target
+  // interned and are bounded separately.
+  inFlightSamples: number;
   lastUsed: number;
 }
 
@@ -510,6 +525,7 @@ const internedTargets: InternedDirectMetricsTarget[] = [];
 let nextInternedTargetId = 0;
 let nextInternedTargetUse = 0;
 let directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
+let droppedDirectSamples = 0;
 
 function deleteDirectTotalsForTarget(targetKey: string): void {
   const prefix = `${targetKey}:`;
@@ -530,8 +546,8 @@ function evictUnusedDirectTarget(
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
     if (
-      interned !== undefined && predicate(interned.target) && interned.pendingSamples === 0 &&
-      interned.lastUsed < candidateUse
+      interned !== undefined && predicate(interned.target) && interned.queuedSamples === 0 &&
+      interned.inFlightSamples === 0 && interned.lastUsed < candidateUse
     ) {
       candidateIndex = index;
       candidateUse = interned.lastUsed;
@@ -552,29 +568,60 @@ function countDirectTargets(predicate: (target: DirectMetricsTarget) => boolean)
   return count;
 }
 
-function countPendingDirectSamples(
+function countRetainedDirectSamples(
   predicate: (target: DirectMetricsTarget) => boolean = () => true,
 ): number {
   let count = 0;
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
     if (interned !== undefined && predicate(interned.target)) {
-      count += interned.pendingSamples;
+      count += interned.queuedSamples + interned.inFlightSamples;
+    }
+  }
+  return count;
+}
+
+function countQueuedDirectSamples(
+  predicate: (target: DirectMetricsTarget) => boolean,
+): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) {
+      count += interned.queuedSamples;
+    }
+  }
+  return count;
+}
+
+function countInFlightDirectSamples(
+  predicate: (target: DirectMetricsTarget) => boolean,
+): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) {
+      count += interned.inFlightSamples;
     }
   }
   return count;
 }
 
 function hasDirectSampleCapacity(target: DirectMetricsTarget): boolean {
-  if (countPendingDirectSamples() >= DIRECT_MAX_QUEUED_SAMPLES) return false;
+  // Retained totals bound memory, so they include samples already on the wire.
+  if (countRetainedDirectSamples() >= DIRECT_MAX_QUEUED_SAMPLES) return false;
   if (!target.tenantScoped) return true;
   if (
-    countPendingDirectSamples((candidate) => candidate.tenantScoped) >=
+    countRetainedDirectSamples((candidate) => candidate.tenantScoped) >=
       DIRECT_MAX_PROJECT_PENDING_SAMPLES
   ) return false;
-  return countPendingDirectSamples((candidate) =>
-    candidate.tenantScoped && candidate.capacityScope === target.capacityScope
-  ) < DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE;
+  const inScope = (candidate: DirectMetricsTarget) =>
+    candidate.tenantScoped && candidate.capacityScope === target.capacityScope;
+  // The queue slot quota governs only what is still queued. A slow or stalled
+  // tenant endpoint holds its batch for the whole export deadline, and that
+  // must not silently discard everything the tenant emits meanwhile.
+  if (countQueuedDirectSamples(inScope) >= DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE) return false;
+  return countInFlightDirectSamples(inScope) < DIRECT_MAX_INFLIGHT_SAMPLES_PER_SCOPE;
 }
 
 function retainDirectTarget(target: DirectMetricsTarget): string | null {
@@ -590,7 +637,7 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
       interned.target.tenantScoped === target.tenantScoped &&
       headersEqual(interned.target.headers, target.headers)
     ) {
-      interned.pendingSamples++;
+      interned.queuedSamples++;
       interned.lastUsed = nextInternedTargetUse++;
       return interned.key;
     }
@@ -622,7 +669,8 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
   appendArrayValue(internedTargets, {
     target,
     key,
-    pendingSamples: 1,
+    queuedSamples: 1,
+    inFlightSamples: 0,
     lastUsed: nextInternedTargetUse++,
   });
   return key;
@@ -643,12 +691,26 @@ function takeDirectTargetForSample(
   return undefined;
 }
 
+// Move a dispatched batch off the queue quota and onto the in-flight count.
+// Runs synchronously at dispatch so a batch waiting behind another export for
+// the same target never keeps holding queue slots.
+function beginDirectTargetExport(targetKey: string, count: number): void {
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned?.key !== targetKey) continue;
+    const remaining = interned.queuedSamples - count;
+    interned.queuedSamples = remaining > 0 ? remaining : 0;
+    interned.inFlightSamples += count;
+    return;
+  }
+}
+
 function releaseDirectTargetSamples(targetKey: string, count: number): void {
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
     if (interned?.key !== targetKey) continue;
-    const remaining = interned.pendingSamples - count;
-    interned.pendingSamples = remaining > 0 ? remaining : 0;
+    const remaining = interned.inFlightSamples - count;
+    interned.inFlightSamples = remaining > 0 ? remaining : 0;
     return;
   }
 }
@@ -817,6 +879,20 @@ function toHookFreeJsonValue(value: unknown): unknown {
   return result;
 }
 
+function recordDirectSampleDrop(reason: string, capacityScope: string): void {
+  droppedDirectSamples++;
+  // Log the first drop, then at most one line per 1000 further drops so a
+  // stalled tenant endpoint cannot flood the log.
+  if (droppedDirectSamples === 1 || droppedDirectSamples % 1_000 === 0) {
+    // debug level - suppressed at default INFO threshold, visible with --debug.
+    serverLogger.debug("metrics: direct OTLP sample dropped", {
+      reason,
+      capacityScope,
+      dropped: droppedDirectSamples,
+    });
+  }
+}
+
 function logDirectExportFailure(error: unknown): void {
   // debug level — suppressed at default INFO threshold, visible with --debug / LOG_LEVEL=DEBUG.
   serverLogger.debug(
@@ -915,6 +991,7 @@ function dispatchDirectMetricsBatch(): void {
   // removed batch indefinitely.
   for (let index = 0; index < groups.length; index++) {
     const group = groups[index]!;
+    beginDirectTargetExport(group.key, group.samples.length);
     const previous = apply(mapGet, directTargetExportTails, [group.key]) as
       | Promise<void>
       | undefined;
@@ -991,13 +1068,19 @@ function enqueueDirectMetric(
 ): void {
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
-  if (!hasDirectSampleCapacity(target)) return;
+  if (!hasDirectSampleCapacity(target)) {
+    recordDirectSampleDrop("sample-quota", target.capacityScope);
+    return;
+  }
   // Complete every fallible field before incrementing the target's retained
   // sample count. A failed clock/BigInt conversion must not consume quota for
   // a sample that can never enter the queue.
   const timestampUnixNano = getUnixNanoTimestamp();
   const targetKey = retainDirectTarget(target);
-  if (targetKey === null) return;
+  if (targetKey === null) {
+    recordDirectSampleDrop("target-quota", target.capacityScope);
+    return;
+  }
   const sample: DirectMetricSample = {
     kind,
     name,
@@ -1075,6 +1158,9 @@ export const metrics = {
   __getDirectTargetCountForTests(): number {
     return internedTargets.length;
   },
+  __getDroppedDirectSampleCountForTests(): number {
+    return droppedDirectSamples;
+  },
   __resetForTests(): void {
     counters.clear();
     histograms.clear();
@@ -1086,6 +1172,7 @@ export const metrics = {
     internedTargets.length = 0;
     nextInternedTargetId = 0;
     nextInternedTargetUse = 0;
+    droppedDirectSamples = 0;
     directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
     if (directFlushTimer) {
       clearTimeout(directFlushTimer);

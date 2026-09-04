@@ -12,6 +12,11 @@ import {
   runWithProjectEnv,
   runWithTrustedProjectEnv,
 } from "#veryfront/server/project-env/storage.ts";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { metrics } from "./index.ts";
@@ -1256,5 +1261,330 @@ describe("metrics public SDK", () => {
     const metric = body.resourceMetrics[0].scopeMetrics[0].metrics[0];
     assertEquals(metric.name, "vf_queue_depth");
     assertEquals(metric.gauge.dataPoints[0].asDouble, 3);
+  });
+
+  it("keeps accepting a tenant's samples while its own export is in flight", async () => {
+    const bodies: string[] = [];
+    const stalled = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          bodies[bodies.length] = String(init?.body);
+          return bodies.length === 1
+            ? stalled.promise
+            : Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          const emit = (name: string) =>
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+              },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.counter(name, 1),
+            );
+
+          // One full batch leaves the queue immediately and sits on the wire.
+          for (let index = 0; index < 100; index++) emit("vf_batched_metric_total");
+          assertEquals(bodies.length, 1, "the full batch must already be exporting");
+
+          emit("vf_late_metric_total");
+          stalled.resolve(new Response("{}", { status: 200 }));
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(
+      bodies.length,
+      2,
+      "samples emitted while an export is in flight must not consume the pending quota",
+    );
+    assertEquals(
+      JSON.parse(String(bodies[1])).resourceMetrics[0].scopeMetrics[0].metrics.map((
+        entry: { name: string },
+      ) => entry.name),
+      ["vf_late_metric_total"],
+    );
+  });
+
+  it("keeps cumulative direct totals separate per export target", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a,env-b",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request, init?: RequestInit) => {
+          requests[requests.length] = { url: String(url), body: String(init?.body) };
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          const emitTo = (endpoint: string) =>
+            runWithProjectEnv({
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: endpoint,
+            }, () => {
+              metrics.counter("vf_shared_metric_total", 1, { outcome: "pass" });
+              metrics.histogram("vf_shared_latency_ms", 42, { outcome: "pass" });
+            });
+
+          emitTo("https://first.example/v1/metrics");
+          await metrics.__flushForTests();
+          emitTo("https://second.example/v1/metrics");
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(requests.length, 2);
+    assertEquals(requests[1]?.url, "https://second.example/v1/metrics");
+    const exported = JSON.parse(String(requests[1]?.body))
+      .resourceMetrics[0].scopeMetrics[0].metrics;
+    assertEquals(
+      exported[0].sum.dataPoints[0].asDouble,
+      1,
+      "a counter total must not carry another target's accumulated value",
+    );
+    assertEquals(
+      exported[1].histogram.dataPoints[0].count,
+      1,
+      "a histogram total must not carry another target's accumulated count",
+    );
+  });
+
+  it("takes resource attributes from the enqueue-time target, not the flushing context", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a,env-b",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request, init?: RequestInit) => {
+          requests[requests.length] = { url: String(url), body: String(init?.body) };
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://enqueued.example/v1/metrics",
+            OTEL_SERVICE_NAME: "enqueue-time-service",
+          }, () => metrics.counter("vf_enqueued_total", 1));
+
+          // The flush runs under a different environment's context, exactly as
+          // the shared flush timer does in a dedicated runtime.
+          await runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://flusher.example/v1/metrics",
+            OTEL_SERVICE_NAME: "flush-time-service",
+          }, async () => {
+            metrics.counter("vf_flusher_total", 1);
+            await metrics.__flushForTests();
+          });
+        },
+      );
+    });
+
+    const serviceNameOf = (url: string): string =>
+      JSON.parse(
+        String(requests.find((request) => request.url === url)?.body),
+      ).resourceMetrics[0].resource.attributes.find(
+        (attribute: { key: string }) => attribute.key === "service.name",
+      ).value.stringValue;
+
+    assertEquals(requests.length, 2);
+    assertEquals(
+      serviceNameOf("https://enqueued.example/v1/metrics"),
+      "enqueue-time-service",
+      "resource attributes must describe the environment that enqueued the sample",
+    );
+    assertEquals(
+      serviceNameOf("https://flusher.example/v1/metrics"),
+      "flush-time-service",
+    );
+  });
+
+  it("keeps tenants with an empty trusted project id in separate quota buckets", async () => {
+    const requestedUrls: string[] = [];
+    const stalled = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a,env-b",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request) => {
+          const requestedUrl = String(url);
+          requestedUrls[requestedUrls.length] = requestedUrl;
+          return requestedUrl === "https://tenant-a.example/v1/metrics"
+            ? stalled.promise
+            : Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          // Both runtimes report an empty project id, so only the slug tells
+          // the two tenants apart.
+          for (let index = 0; index < 200; index++) {
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant-a.example/v1/metrics",
+              },
+              { projectId: "", projectSlug: "tenant-a", environmentId: "env-a" },
+              () => metrics.counter("vf_tenant_a_total", 1),
+            );
+          }
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant-b.example/v1/metrics",
+            },
+            { projectId: "", projectSlug: "tenant-b", environmentId: "env-b" },
+            () => metrics.counter("vf_tenant_b_total", 1),
+          );
+
+          stalled.resolve(new Response("{}", { status: 200 }));
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(
+      requestedUrls.includes("https://tenant-b.example/v1/metrics"),
+      true,
+      "one tenant saturating its quota must not silence a different tenant",
+    );
+  });
+
+  it("reserves queue capacity for platform metrics when tenants saturate the queue", async () => {
+    const requestedUrls: string[] = [];
+    const stalled = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-1,env-2,env-3,env-4,env-5,env-6",
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request) => {
+          const requestedUrl = String(url);
+          requestedUrls[requestedUrls.length] = requestedUrl;
+          return requestedUrl.startsWith("https://tenant-")
+            ? stalled.promise
+            : Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          const emitTenantSamples = (tenant: number, count: number) => {
+            for (let index = 0; index < count; index++) {
+              runWithTrustedProjectEnv(
+                {
+                  OTEL_METRICS_ENABLED: "true",
+                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:
+                    `https://tenant-${tenant}.example/v1/metrics`,
+                },
+                { projectId: `project-${tenant}`, environmentId: `env-${tenant}` },
+                () => metrics.counter("vf_tenant_metric_total", 1),
+              );
+            }
+          };
+
+          // Every tenant endpoint stalls, so tenant samples pile up against the
+          // shared queue bound.
+          for (let tenant = 1; tenant <= 5; tenant++) emitTenantSamples(tenant, 300);
+          const droppedBeforeOverflow = metrics.__getDroppedDirectSampleCountForTests();
+          emitTenantSamples(6, 1);
+          assertEquals(
+            metrics.__getDroppedDirectSampleCountForTests() > droppedBeforeOverflow,
+            true,
+            "tenant traffic must stop at the tenant share of the queue",
+          );
+
+          // A platform metric carries no tenant scope and must still be queued.
+          metrics.counter("vf_platform_metric_total", 1);
+
+          stalled.resolve(new Response("{}", { status: 200 }));
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(
+      requestedUrls.includes("http://veryfront-api:80/internal/metrics/otlp/v1/metrics"),
+      true,
+      "the platform reserve must keep internal metrics exportable under tenant load",
+    );
+  });
+
+  it("reports dropped direct samples instead of discarding them silently", async () => {
+    const records: LogEntry[] = [];
+    const stalled = Promise.withResolvers<Response>();
+    let unsubscribe = () => {};
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+      LOG_LEVEL: "DEBUG",
+    }, async () => {
+      __resetLoggerConfigForTests();
+      unsubscribe = __subscribeLogRecordEmitter((record) => {
+        records[records.length] = record;
+      });
+      try {
+        await withMockFetch(
+          ((url: string | URL | Request) => {
+            return String(url) === "https://tenant.example/v1/metrics"
+              ? stalled.promise
+              : Promise.resolve(new Response("{}", { status: 200 }));
+          }) as typeof fetch,
+          async () => {
+            metrics.__setDirectExportTimeoutForTests(5_000);
+            for (let index = 0; index < 301; index++) {
+              runWithTrustedProjectEnv(
+                {
+                  OTEL_METRICS_ENABLED: "true",
+                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+                },
+                { projectId: "project-a", environmentId: "env-a" },
+                () => metrics.counter("vf_tenant_metric_total", 1),
+              );
+            }
+
+            stalled.resolve(new Response("{}", { status: 200 }));
+            await metrics.__flushForTests();
+          },
+        );
+      } finally {
+        unsubscribe();
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    assertEquals(
+      metrics.__getDroppedDirectSampleCountForTests() > 0,
+      true,
+      "an over-quota sample must be counted",
+    );
+    assertEquals(
+      records.some((record) => record.message === "metrics: direct OTLP sample dropped"),
+      true,
+      "an over-quota drop must be observable in the logs",
+    );
   });
 });
