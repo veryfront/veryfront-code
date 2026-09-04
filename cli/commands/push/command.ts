@@ -1406,6 +1406,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         return;
       }
 
+      if (pruneRemoteMissing && options.expectedRepositoryAvailable !== undefined) {
+        const currentGitSource = await resolveGitSource(projectDir);
+        if (currentGitSource.indeterminate) throw gitProvenanceError();
+        if (currentGitSource.repositoryAvailable !== options.expectedRepositoryAvailable) {
+          throw sourceChangedError();
+        }
+      }
+
       await clearPushReceipt(projectDir);
 
       const uploadMsg = isMainBranch
