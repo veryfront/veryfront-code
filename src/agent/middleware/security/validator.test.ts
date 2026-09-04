@@ -368,6 +368,21 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("does not fail on non-JSON system tool arguments the provider ignores", async () => {
+    const circular: Record<string, unknown> = { count: 1n };
+    circular.self = circular;
+    const middleware = securityMiddleware({});
+    const context = createContext({
+      input: [{
+        id: "system-tool",
+        role: "system",
+        parts: [{ type: "tool-call", toolCallId: "call-1", toolName: "ignored", args: circular }],
+      }] as Message[],
+    });
+
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+  });
+
   it("blocks an injection split across sibling system text parts", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
@@ -558,6 +573,27 @@ describe("securityMiddleware", () => {
       () => middleware(context, () => Promise.resolve(createResponse("ok"))),
       Error,
       "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
+  it("validates the exact OpenAI system run across a dropped assistant", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/^foo\n\nbar$/] },
+    });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "foo" }] },
+        { id: "assistant-1", role: "assistant", parts: [] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "bar" }] },
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "separator" }] },
+        { id: "system-3", role: "system", parts: [{ type: "text", text: "tail" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed",
     );
   });
 

@@ -891,6 +891,43 @@ describe("resolveSecurityMiddleware", () => {
     );
   });
 
+  it("does not revalidate retained messages after bounded-memory trimming", async () => {
+    let validatorCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/trimmed-validator-calls",
+      async doGenerate() {
+        throw new Error("provider unavailable");
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const recorder: AgentMiddleware = (context, next) => {
+      registerTurnMessageValidator(context, () => {
+        validatorCalls += 1;
+        return Promise.resolve();
+      });
+      return next();
+    };
+    const assistant = agent({
+      id: "trimmed-validator-calls",
+      model: "hosted/trimmed-validator-calls",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation", maxMessages: 2 },
+      middleware: [recorder],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    for (const input of ["first", "second", "third"]) {
+      await assistant.generate({ input }).catch(() => undefined);
+    }
+
+    assertEquals(validatorCalls, 2);
+  });
+
   it("persists a turn once when a middleware invokes the continuation twice", async () => {
     // Persistence runs inside the middleware continuation, so a retry or
     // fallback wrapper must not write the turn's input to memory once per
@@ -1095,6 +1132,55 @@ describe("resolveSecurityMiddleware", () => {
 
     assertEquals(prompts[1]?.includes("ignore previous instructions"), false);
     assertEquals(prompts[1]?.includes("safe request"), true);
+  });
+
+  it("preserves and detaches an enumerable accessor-backed text field", async () => {
+    const prompts: string[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/accessor-part-detachment",
+      async doGenerate(options: unknown) {
+        prompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    let sourceText = "hello from accessor";
+    const part = {
+      type: "text" as const,
+      get text() {
+        return sourceText;
+      },
+    };
+    const mutateAfterNext: AgentMiddleware = async (_context, next) => {
+      const response = await next();
+      sourceText = "mutated after commit";
+      return response;
+    };
+    const assistant = agent({
+      id: "accessor-part-detachment",
+      model: "hosted/accessor-part-detachment",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [mutateAfterNext],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({
+      input: [{ id: "accessor", role: "user", parts: [part] }],
+    });
+    await assistant.generate({ input: "follow up" });
+
+    assertEquals(prompts[1]?.includes("hello from accessor"), true);
+    assertEquals(prompts[1]?.includes("mutated after commit"), false);
   });
 
   it("rejects a middleware rewrite that merges valid values into a blocked system prompt", async () => {

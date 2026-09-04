@@ -375,8 +375,13 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
   const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
   for (const key of ObjectKeys(descriptors)) {
     const descriptor = descriptors[key];
-    if (!descriptor?.enumerable || !("value" in descriptor)) continue;
-    detached[key] = cloneStructuredValuePreservingOpaque(descriptor.value);
+    if (!descriptor?.enumerable) continue;
+    const value = "value" in descriptor
+      ? descriptor.value
+      : descriptor.get
+      ? IntrinsicReflectApply(descriptor.get, part, [])
+      : undefined;
+    detached[key] = cloneStructuredValuePreservingOpaque(value);
   }
   return detached as MessagePart;
 }
@@ -455,6 +460,29 @@ function providerTranscriptsEqual(left: readonly Message[], right: readonly Mess
       leftMessage.role !== rightMessage.role ||
       !providerValuesEqual(leftMessage.parts, rightMessage.parts, new IntrinsicWeakMap())
     ) return false;
+  }
+  return true;
+}
+
+function providerTranscriptIsOrderedSubset(
+  subset: readonly Message[],
+  full: readonly Message[],
+): boolean {
+  let fullIndex = 0;
+  for (let subsetIndex = 0; subsetIndex < subset.length; subsetIndex++) {
+    const candidate = subset[subsetIndex]!;
+    let matched = false;
+    while (fullIndex < full.length) {
+      const current = full[fullIndex++]!;
+      if (
+        candidate.role === current.role &&
+        providerValuesEqual(candidate.parts, current.parts, new IntrinsicWeakMap())
+      ) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return false;
   }
   return true;
 }
@@ -1556,30 +1584,6 @@ export class AgentRuntime {
     inputMessages: Message[],
     context?: AgentContext,
   ): Promise<Message[]> {
-    // The security middleware validated `context.input` when it ran, but a
-    // later middleware can replace the array or mutate a message in place, and
-    // the resolved value is exactly what gets persisted and dispatched below.
-    // The registered hook re-validates the resolved input (skipping texts the
-    // middleware already approved), including on a first turn where the
-    // cross-turn validator has no history to check.
-    const validateTurnInput = context && getTurnInputValidator(context);
-    if (validateTurnInput) await validateTurnInput(inputMessages);
-
-    const validateTurnMessages = context && getTurnMessageValidator(context);
-    let validated = inputMessages;
-    let history: Message[] = [];
-    if (validateTurnMessages) {
-      history = await this.memory.getMessages();
-      // With no history the assembled conversation is exactly this turn's
-      // input, which the middleware already validated.
-      if (history.length > 0) {
-        validated = [...history, ...inputMessages];
-        await validateTurnMessages(history, inputMessages);
-      }
-    }
-    const rollbackMemory = validateTurnMessages
-      ? captureMemoryRollback(this.memory, history)
-      : undefined;
     const committedInputMessages = inputMessages.map((message) => {
       const cloned = cloneMessageForCommit(message);
       propagateSyntheticMessageMarks(message, cloned);
@@ -1587,11 +1591,30 @@ export class AgentRuntime {
         ? markRuntimeGeneratedUserMessage(cloned)
         : cloned;
     });
+    // The security middleware validated `context.input` when it ran, but a
+    // later middleware can replace the array or mutate a message in place, and
+    // the resolved value is exactly what gets persisted and dispatched below.
+    // The registered hook re-validates the resolved input (skipping texts the
+    // middleware already approved), including on a first turn where the
+    // cross-turn validator has no history to check.
+    const validateTurnInput = context && getTurnInputValidator(context);
+    if (validateTurnInput) await validateTurnInput(committedInputMessages);
+
+    const validateTurnMessages = context && getTurnMessageValidator(context);
+    let validated = committedInputMessages;
+    let history: Message[] = [];
     if (validateTurnMessages) {
-      validated = history.length > 0
-        ? [...history, ...committedInputMessages]
-        : committedInputMessages;
+      history = await this.memory.getMessages();
+      // With no history the assembled conversation is exactly this turn's
+      // input, which the middleware already validated.
+      if (history.length > 0) {
+        validated = [...history, ...committedInputMessages];
+        await validateTurnMessages(history, committedInputMessages);
+      }
     }
+    const rollbackMemory = validateTurnMessages
+      ? captureMemoryRollback(this.memory, history)
+      : undefined;
     let persisted: Message[];
     try {
       for (const msg of committedInputMessages) await this.memory.add(msg);
@@ -1602,7 +1625,8 @@ export class AgentRuntime {
     }
     if (
       validateTurnMessages && persisted.length > 0 &&
-      !providerTranscriptsEqual(persisted, validated)
+      !providerTranscriptsEqual(persisted, validated) &&
+      !providerTranscriptIsOrderedSubset(persisted, validated)
     ) {
       try {
         await validateTurnMessages([], persisted);
@@ -1616,7 +1640,7 @@ export class AgentRuntime {
       }
     }
     rollbackMemory?.commit();
-    return persisted.length > 0 ? persisted : inputMessages;
+    return persisted.length > 0 ? persisted : committedInputMessages;
   }
 
   async #resolveModelTransport(

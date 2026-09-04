@@ -376,8 +376,18 @@ function extractPartInputText(part: unknown): string[] {
 
   const values: string[] = [];
   if (typeof part.inputText === "string") values.push(part.inputText);
-  if (isRecord(part.args)) values.push(JSON.stringify(part.args));
-  if (isRecord(part.input)) values.push(JSON.stringify(part.input));
+  const appendSerialized = (value: unknown) => {
+    if (!isRecord(value)) return;
+    try {
+      const serialized = JSON.stringify(value);
+      if (typeof serialized === "string") values.push(serialized);
+    } catch {
+      // Provider converters ignore non-text input on caller-authored user and
+      // system messages. Unsupported JSON values must not fail the turn here.
+    }
+  };
+  appendSerialized(part.args);
+  appendSerialized(part.input);
   return values;
 }
 
@@ -490,7 +500,7 @@ function extractAdjacentRuns(
 ): Message[][] {
   const runs: Message[][] = [];
   let run: Message[] = [];
-  const sendableAssistantMessages = role === "user"
+  const sendableAssistantMessages = role === "user" || role === "system"
     ? getProviderSendableAssistantMessages(messages)
     : undefined;
   const anthropicCompactedAssistantMessages = role === "user"
@@ -509,9 +519,9 @@ function extractAdjacentRuns(
       if (role === "user" && message.role === "tool") continue;
       if (role === "user" && message.role === "system") continue;
       if (
-        role === "user" && message.role === "assistant" &&
+        message.role === "assistant" &&
         (!sendableAssistantMessages?.has(message) ||
-          anthropicCompactedAssistantMessages?.has(message))
+          role === "user" && anthropicCompactedAssistantMessages?.has(message))
       ) continue;
       flushRun();
       continue;
