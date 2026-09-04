@@ -1320,7 +1320,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 [],
               );
             }
-            await clearPushReceipt(projectDir);
+            try {
+              await clearPushReceipt(projectDir);
+            } catch (error) {
+              throw attachProtectedDeleteContext(error, protectedDeleteContext());
+            }
             spinner.update("Verifying push target...");
             try {
               await recordPushReceipt(
