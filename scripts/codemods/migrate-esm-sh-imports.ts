@@ -151,6 +151,8 @@ export interface PackageJsonReadResult {
   fileIdentity?: StableFileIdentity;
   /** Exact manifest text parsed during analysis. */
   sourceText?: string;
+  /** True only when the guarded analysis observed no manifest at this path. */
+  missingAtRead?: true;
 }
 
 export interface StableFileIdentity {
@@ -616,6 +618,7 @@ async function writeTextFileInsideProjectOnWindows(
   expectedIdentity?: StableFileIdentity,
   expectedContent?: string,
   allowMissing = false,
+  requireMissing = false,
 ): Promise<void> {
   // Open the destination before trusting its path, but do not mutate it until
   // the opened identity and current in-project path agree. A parent swapped to
@@ -623,9 +626,10 @@ async function writeTextFileInsideProjectOnWindows(
   let file: Awaited<ReturnType<typeof openNativeFile>>;
   let created = false;
   try {
-    file = await openNativeFile(path, "r+");
+    file = requireMissing ? await openNativeFile(path, "wx+") : await openNativeFile(path, "r+");
+    created = requireMissing;
   } catch (error) {
-    if (!allowMissing || !isNotFoundError(error)) throw error;
+    if (requireMissing || !allowMissing || !isNotFoundError(error)) throw error;
     // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
     // planted at the path, so creating an absent manifest stays contained.
     file = await openNativeFile(path, "wx+");
@@ -688,10 +692,11 @@ export async function writeTextFileInsideProject(
   path: string,
   projectRoot: string,
   content: string,
-  { allowMissing = false, expectedIdentity, expectedContent }: {
+  { allowMissing = false, expectedIdentity, expectedContent, requireMissing = false }: {
     allowMissing?: boolean;
     expectedIdentity?: StableFileIdentity;
     expectedContent?: string;
+    requireMissing?: boolean;
   } = {},
 ): Promise<void> {
   await assertPathInsideProject(path, projectRoot, { allowMissing });
@@ -703,6 +708,7 @@ export async function writeTextFileInsideProject(
       expectedIdentity,
       expectedContent,
       allowMissing,
+      requireMissing,
     );
     return;
   }
@@ -710,9 +716,12 @@ export async function writeTextFileInsideProject(
   let file: Deno.FsFile;
   let created = false;
   try {
-    file = await Deno.open(path, { read: true, write: true });
+    file = requireMissing
+      ? await Deno.open(path, { read: true, write: true, createNew: true })
+      : await Deno.open(path, { read: true, write: true });
+    created = requireMissing;
   } catch (error) {
-    if (!allowMissing || !(error instanceof Deno.errors.NotFound)) {
+    if (requireMissing || !allowMissing || !(error instanceof Deno.errors.NotFound)) {
       throw error;
     }
     // `createNew` opens with O_CREAT|O_EXCL, which fails instead of following
@@ -851,7 +860,13 @@ export async function readProjectPackageJson(
   } catch (e) {
     if (isNotFoundError(e)) {
       // File does not exist, treat as absent and start with empty deps.
-      return { data: {}, existingDeps: {}, otherFieldDeps: {}, parseError: null };
+      return {
+        data: {},
+        existingDeps: {},
+        otherFieldDeps: {},
+        parseError: null,
+        missingAtRead: true,
+      };
     }
     // Any other error (permission denied, I/O failure, etc.) must not be
     // silently treated as "absent", which would risk overwriting a file we
@@ -1187,6 +1202,7 @@ async function main(args: string[]): Promise<void> {
     parseError: pkgJsonParseError,
     fileIdentity: pkgJsonFileIdentity,
     sourceText: pkgJsonSource,
+    missingAtRead: pkgJsonMissingAtRead,
   } = await readProjectPackageJson(pkgJsonPath, projectRoot);
 
   const candidatePins = Object.fromEntries(
@@ -1299,6 +1315,7 @@ async function main(args: string[]): Promise<void> {
             allowMissing: true,
             expectedIdentity: pkgJsonFileIdentity,
             expectedContent: pkgJsonSource,
+            requireMissing: pkgJsonMissingAtRead,
           },
         );
       } catch (error) {

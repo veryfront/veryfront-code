@@ -1237,6 +1237,29 @@ Deno.test("project writes create a missing manifest", async () => {
   }
 });
 
+Deno.test("a manifest that appears after analysis is not overwritten", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/package.json`;
+  try {
+    const projectRoot = await Deno.realPath(project);
+    const read = await readProjectPackageJson(target, projectRoot);
+    assertEquals(read.missingAtRead, true);
+    await Deno.writeTextFile(target, '{"name":"created-concurrently"}\n');
+
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "{}\n", {
+          allowMissing: true,
+          requireMissing: read.missingAtRead,
+        }),
+      Error,
+    );
+    assertEquals(await Deno.readTextFile(target), '{"name":"created-concurrently"}\n');
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 Deno.test("creating a missing manifest never follows a planted symlink", async () => {
   const project = await makeTempDir();
   const outside = await makeTempDir();
