@@ -4,10 +4,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
 import { createEphemeralAgent } from "../factory.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
-import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
+import {
+  getRuntimeAllowedRemoteTools,
+  resolveRuntimeToolLoading,
+} from "../runtime/runtime-tool-config.ts";
 import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   applyAgUiRuntimeRestrictions,
+  applyAgUiRuntimeRestrictionsForModel,
   hasAgUiRuntimeRestrictions,
 } from "./runtime-restrictions.ts";
 
@@ -59,6 +63,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     );
 
     assertEquals(restricted.tools, { email_search: aliasedTool });
+    assertEquals(getRuntimeAllowedRemoteTools(restricted), ["gmail__search_emails"]);
   });
 
   it("authorizes no tools for an empty allowlist", () => {
@@ -127,6 +132,21 @@ describe("agent/ag-ui/runtime-restrictions", () => {
 
     assertEquals(restricted.tools, { web_search: true });
     assertEquals(restricted.providerTools, ["web_search"]);
+  });
+
+  it("computes provider collisions from the request model override", () => {
+    const restricted = applyAgUiRuntimeRestrictionsForModel(
+      createConfig({
+        model: "anthropic/claude-sonnet-4-6",
+        tools: true,
+        providerTools: ["web_fetch"],
+      }),
+      { allowedTools: ["web_fetch"] },
+      "google/gemini-3.5-flash",
+    );
+
+    assertEquals(restricted.tools, { web_fetch: true });
+    assertEquals(restricted.providerTools, ["web_fetch"]);
   });
 
   it("leaves no remote tool source reachable for an allowlisted unresolved tool", () => {

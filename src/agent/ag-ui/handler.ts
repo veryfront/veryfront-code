@@ -36,6 +36,7 @@ import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   type AgUiRuntimeRestrictions,
   applyAgUiRuntimeRestrictions,
+  applyAgUiRuntimeRestrictionsForModel,
   hasAgUiRuntimeRestrictions,
 } from "./runtime-restrictions.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
@@ -366,8 +367,6 @@ async function createAgUiDirectStreamResponse(
     runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
   };
 
-  await agent.clearMemory();
-
   const toolDataEvents = createToolDataEventBridge();
   let completedResponse: AgentResponse | null = null;
   const streamContext = {
@@ -388,7 +387,7 @@ async function createAgUiDirectStreamResponse(
   // middleware, resolved skill-selector context, and private runtime dispatch.
   const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
     ? createEphemeralAgent({
-      ...applyAgUiRuntimeRestrictions(agent.config, restrictions),
+      ...applyAgUiRuntimeRestrictionsForModel(agent.config, restrictions, request.model),
       // A factory-assigned id lives on `agent.id` while `agent.config.id`
       // stays undefined. Rebuilding without it would mint a fresh id, hiding
       // owner-scoped registry tools and skills from the restricted run and
@@ -396,6 +395,11 @@ async function createAgUiDirectStreamResponse(
       id: agent.id,
     })
     : agent;
+
+  // A restricted run uses a fresh ephemeral agent, so it has no prior memory
+  // to clear. Do not call mutable methods on the source agent before the
+  // capability ceiling is in place.
+  if (streamAgent === agent) await agent.clearMemory();
 
   const result = await streamAgent.stream({
     messages,
@@ -480,7 +484,7 @@ async function createAgUiInjectedToolsStreamResponse(
   // injected-tools path outright, so this narrows the step budget without
   // touching the merged client tool surface.
   const restrictedConfig = hasAgUiRuntimeRestrictions(restrictions)
-    ? applyAgUiRuntimeRestrictions(agent.config, restrictions)
+    ? applyAgUiRuntimeRestrictionsForModel(agent.config, restrictions, request.model)
     : agent.config;
   const runtime = new AgentRuntime(agent.id, {
     ...restrictedConfig,

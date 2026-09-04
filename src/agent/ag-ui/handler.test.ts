@@ -557,6 +557,9 @@ describe("agent/ag-ui-handler", () => {
         maxSteps: 20,
         resolveModelTransport: () => Promise.resolve({ model }),
       });
+      restrictedAgent.clearMemory = () => {
+        throw new Error("a restricted run must not call mutable source-agent methods");
+      };
 
       // Unrestricted, this agent does advertise the skill catalog, so the
       // assertion below is about the ceiling and not about an empty registry.

@@ -124,6 +124,23 @@ function restrictConfiguredTools(
   return intersected;
 }
 
+function getRetainedRemoteToolNames(tools: AgentConfig["tools"]): string[] {
+  if (tools === undefined || tools === true) return [];
+  const names: string[] = [];
+  const seen = createNullPrototypeObject(null) as ToolNameLookup;
+  const toolNames = ObjectKeys(tools);
+  for (let index = 0; index < toolNames.length; index++) {
+    const toolName = toolNames[index];
+    if (toolName === undefined) continue;
+    const canonicalName = getRemoteToolProvenance(tools[toolName]);
+    if (canonicalName !== undefined && seen[canonicalName] !== true) {
+      seen[canonicalName] = true;
+      names[names.length] = canonicalName;
+    }
+  }
+  return names;
+}
+
 /**
  * Narrow an agent configuration to a restriction ceiling.
  *
@@ -135,6 +152,15 @@ function restrictConfiguredTools(
 export function applyAgUiRuntimeRestrictions(
   config: AgentConfig,
   restrictions: AgUiRuntimeRestrictions,
+): AgentConfig {
+  return applyAgUiRuntimeRestrictionsForModel(config, restrictions);
+}
+
+/** @internal Apply a ceiling using the effective request model for provider collisions. */
+export function applyAgUiRuntimeRestrictionsForModel(
+  config: AgentConfig,
+  restrictions: AgUiRuntimeRestrictions,
+  modelOverride?: string,
 ): AgentConfig {
   const restricted: AgentConfig = { ...config };
 
@@ -166,7 +192,7 @@ export function applyAgUiRuntimeRestrictions(
   const allowedToolNames = restrictions.allowedTools;
   const allowedTools = toToolNameLookup(allowedToolNames);
   const supportedProviderTools = toToolNameLookup(getProviderNativeToolNames({
-    model: config.model,
+    model: modelOverride ?? config.model,
   }));
   const configuredProviderToolNames = config.providerTools === undefined
     ? []
@@ -206,7 +232,7 @@ export function applyAgUiRuntimeRestrictions(
   restricted.mcpServers = [];
   const remoteToolConfig = restricted as AgentConfig & RuntimeRemoteToolConfig;
   remoteToolConfig.__vfRemoteToolSources = [];
-  remoteToolConfig.__vfAllowedRemoteTools = [];
+  remoteToolConfig.__vfAllowedRemoteTools = getRetainedRemoteToolNames(restricted.tools);
   // Skills reach further instructions and tools through the skill loader, so
   // they stay out unless the loader itself is allowlisted.
   let skillLoaderAllowed = false;
