@@ -220,4 +220,47 @@ describe("veryfront/file-list-access", () => {
 
     assertEquals(apiCalls, 1, "the written-back entry must answer the next load");
   });
+
+  it("retries a fallback fetch that spans a source snapshot change", async () => {
+    let apiCalls = 0;
+    let snapshotVersion = 1;
+    const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => false,
+      getReleaseId: () => null,
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: "main",
+      }),
+      getSourceSnapshotVersion: () => snapshotVersion,
+      isPersistentCacheInvalidated: () => false,
+    };
+    const client = {
+      listAllFiles: () => {
+        apiCalls += 1;
+        if (apiCalls === 1) {
+          snapshotVersion += 1;
+          return Promise.resolve([makeFile("stale.tsx")]);
+        }
+        return Promise.resolve([makeFile("fresh.tsx")]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await loadAllProjectFiles({
+      client,
+      cache,
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+    });
+
+    assertEquals(apiCalls, 2);
+    assertEquals(loaded.map((file) => file.path), ["fresh.tsx"]);
+    assertEquals(
+      (await cache.getAsync<ProjectFile[]>("files:branch:test:main"))?.map((file) => file.path),
+      ["fresh.tsx"],
+    );
+  });
 });

@@ -19,6 +19,7 @@ export interface ContentContextProvider {
     }> | undefined
   >;
   hasCachedFileList?: () => Promise<boolean>;
+  getSourceSnapshotVersion?: () => number | undefined;
   isPersistentCacheInvalidated?: (prefix: string) => boolean;
   isReleaseBeingInvalidated?: (releaseId: string) => boolean;
 }
@@ -35,6 +36,7 @@ interface LoadAllProjectFilesOptions {
   logger: FileListLogger;
   operationLabel: string;
   contentContext?: ResolvedContentContext | null;
+  snapshotRetryCount?: number;
 }
 
 export async function loadAllProjectFiles({
@@ -44,7 +46,9 @@ export async function loadAllProjectFiles({
   logger,
   operationLabel,
   contentContext,
+  snapshotRetryCount = 0,
 }: LoadAllProjectFilesOptions): Promise<ProjectFile[]> {
+  const snapshotVersion = contextProvider?.getSourceSnapshotVersion?.();
   const cacheStart = performance.now();
   const ctx = contentContext === undefined ? contextProvider?.getContentContext() : contentContext;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
@@ -109,6 +113,31 @@ export async function loadAllProjectFiles({
     `getAllFilesRaw (${operationLabel})`,
   );
 
-  cache.set(cacheKey, files);
+  const currentSnapshotVersion = contextProvider?.getSourceSnapshotVersion?.();
+  const snapshotChanged = snapshotVersion !== undefined && currentSnapshotVersion !== undefined &&
+    snapshotVersion !== currentSnapshotVersion;
+  const invalidated = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
+  const invalidatedDuringFetch = !skipPersistentCache && invalidated;
+  if (snapshotChanged || invalidatedDuringFetch) {
+    logger.debug("getAllFilesRaw - discarding fallback fetch across snapshot change", {
+      cacheKey,
+      snapshotVersion,
+      currentSnapshotVersion,
+      invalidated,
+    });
+    if (snapshotRetryCount === 0) {
+      return await loadAllProjectFiles({
+        client,
+        cache,
+        contextProvider,
+        logger,
+        operationLabel,
+        snapshotRetryCount: 1,
+      });
+    }
+    throw new Error("Project file snapshot changed while its file list was loading");
+  }
+
+  if (!skipPersistentCache) cache.set(cacheKey, files);
   return files;
 }

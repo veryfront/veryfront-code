@@ -699,6 +699,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         );
         return Array.isArray(cached?.files);
       },
+      getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
       isPersistentCacheInvalidated: (prefix: string) => this.#isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
         this.#isPersistentCacheInvalidated(
