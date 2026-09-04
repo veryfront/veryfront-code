@@ -126,6 +126,29 @@ function getConfiguredMcpToolNames(
   return configured;
 }
 
+function getPolicyFreeMcpToolNames(
+  servers: readonly AgentMcpServerConfig[] | undefined,
+  allowedToolNames: readonly string[],
+): ToolNameLookup {
+  const configured = createNullPrototypeObject(null) as ToolNameLookup;
+  if (servers === undefined) return configured;
+  for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+    const server = servers[serverIndex];
+    if (server?.toolPolicy?.allow !== undefined) continue;
+    const deniedByServer = server?.toolPolicy?.deny === undefined
+      ? undefined
+      : toToolNameLookup(server.toolPolicy.deny);
+    for (let toolIndex = 0; toolIndex < allowedToolNames.length; toolIndex++) {
+      const toolName = allowedToolNames[toolIndex];
+      if (
+        toolName !== undefined && toolName !== INVOKE_AGENT_TOOL_ID &&
+        deniedByServer?.[toolName] !== true
+      ) configured[toolName] = true;
+    }
+  }
+  return configured;
+}
+
 /**
  * Ceiling a trusted server caller applies to one AG-UI run.
  *
@@ -320,6 +343,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
   const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
   const configuredMcpTools = getConfiguredMcpToolNames(config.mcpServers, allowedToolNames);
+  const policyFreeMcpTools = getPolicyFreeMcpToolNames(config.mcpServers, allowedToolNames);
   restricted.tools = restrictConfiguredTools(
     config.tools,
     allowedToolNames,
@@ -369,7 +393,8 @@ export function applyAgUiRuntimeRestrictionsForModel(
       configuredTool !== null && getRemoteToolProvenance(configuredTool) === undefined;
     if (
       toolName !== undefined && configuredMcpTools[toolName] === true &&
-      visibleLocalTools[toolName] !== true && configuredProviderTools[toolName] !== true &&
+      visibleLocalTools[toolName] !== true && providerToolNames[toolName] !== true &&
+      !(configuredProviderTools[toolName] === true && policyFreeMcpTools[toolName] === true) &&
       !configuredConcreteLocalTool &&
       retainedRemoteToolLookup[toolName] !== true
     ) {

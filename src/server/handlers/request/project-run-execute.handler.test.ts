@@ -1469,7 +1469,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     globalThis.Request = replacementRequest;
     const originalArrayFilter = Array.prototype.filter;
     const originalJsonStringify = JSON.stringify;
+    const originalObjectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
     let replacementSawEvalSerialization = false;
+    let objectToJsonSawEvalBody = false;
     Array.prototype.filter = function <T>(
       this: T[],
       predicate: (value: T, index: number, array: T[]) => unknown,
@@ -1500,6 +1502,24 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       }
       return Reflect.apply(originalJsonStringify, JSON, [value, ...args]);
     }) as typeof JSON.stringify;
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value(this: Record<string, unknown>) {
+        if (!("forwardedProps" in this)) return this;
+        objectToJsonSawEvalBody = true;
+        const payload = { ...this } as {
+          forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
+        };
+        if (payload.forwardedProps?.veryfront) {
+          payload.forwardedProps = {
+            ...payload.forwardedProps,
+            veryfront: { ...payload.forwardedProps.veryfront },
+          };
+          delete payload.forwardedProps.veryfront.runtimeOverrides;
+        }
+        return payload;
+      },
+    });
 
     try {
       const result = await withEnvValue(
@@ -1519,7 +1539,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(sourceAgentStreamCalls, 0);
       assertEquals(replacementSawLocalEvalRequest, false);
       assertEquals(replacementSawEvalSerialization, false);
+      assertEquals(objectToJsonSawEvalBody, true);
     } finally {
+      if (originalObjectToJson) {
+        Object.defineProperty(Object.prototype, "toJSON", originalObjectToJson);
+      } else {
+        delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      }
       JSON.stringify = originalJsonStringify;
       Array.prototype.filter = originalArrayFilter;
       globalThis.Request = nativeRequest;

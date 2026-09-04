@@ -818,6 +818,7 @@ async function readLocalEvalRuntimeRestrictions(
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
+  runtimeRestrictions?: AgUiRuntimeRestrictions;
 }): AgentServiceEvalAdapterConfig["fetch"] | undefined {
   if (!input.agentId || !isLocalAgUiEndpoint(input.endpoint)) return undefined;
 
@@ -827,7 +828,8 @@ function createLocalEvalAgentFetch(input: {
   return async (requestInput, init) => {
     const request = new NativeRequest(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
-    const runtimeRestrictions = await readLocalEvalRuntimeRestrictions(request);
+    const runtimeRestrictions = input.runtimeRestrictions ??
+      await readLocalEvalRuntimeRestrictions(request);
     const handler = createAgUiHandler({
       agent,
       context: { runIdBindsToolAuthorization: false },
@@ -1404,7 +1406,13 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
-  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId });
+  const allowedTools = getStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
+  const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
+  const runtimeRestrictions = allowedTools === undefined && maxSteps === undefined ? undefined : {
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  };
+  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
 
   return {
     endpoint,
@@ -1428,8 +1436,8 @@ function createEvalAdapterConfig(input: {
       getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
-    allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
-    maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
+    allowedTools,
+    maxSteps,
     fetch: managedEndpointContext && agentId
       ? bindTrustedLocalEvalFetch(
         createDurableEvalAgentFetch({
