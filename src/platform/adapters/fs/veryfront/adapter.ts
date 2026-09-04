@@ -1168,11 +1168,6 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const applied = await this.#runSourceSnapshotMutation(async () => {
           const isSnapshotSuperseded = () =>
             this.contentContext !== warmupBaseContext ||
-            // The warmup fetched `warmupContext`, which the caller paired with
-            // `effectiveCacheKey`. A request-branch switch moves the current
-            // key without touching the base context, so publish only while
-            // this pair is still the one a read would ask for.
-            this.getCurrentFileListCacheKey() !== effectiveCacheKey ||
             this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
             this.sourceSnapshotVersion !== warmupSnapshotVersion;
           if (isSnapshotSuperseded()) {
@@ -1766,7 +1761,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         waitForWarmup: options.waitForWarmup,
       },
     );
-    let files = cached?.files;
+    const files = cached?.files;
 
     if (!cacheKey || !files?.length) {
       logger.debug("getAllSourceFiles cache miss or empty", {

@@ -3356,7 +3356,11 @@ describe("VeryfrontFSAdapter", () => {
       );
     });
 
-    it("warms the branch the cache key was derived from, not a later request branch", async () => {
+    it("binds a warmup to the branch its key came from when the caller supplies neither", async () => {
+      // `hasCachedFileList` (and any caller that passes no explicit pair)
+      // reaches `getCachedFileListAsync` with only `waitForWarmup`, so the
+      // context/key pair has to be captured there rather than re-read by the
+      // warmup after the awaited cache lookup.
       const adapter = createAdapter({
         veryfront: {
           apiBaseUrl: "https://api.example.com",
@@ -3384,11 +3388,17 @@ describe("VeryfrontFSAdapter", () => {
         };
         clearRetainedFileList: () => void;
         wsManager: { connect: (_projectId: string) => void };
+        getCachedFileListAsync: (
+          noContextMessage: string,
+          lookupLabel: string,
+          missReason: string,
+          options: { waitForWarmup?: boolean },
+        ) => Promise<unknown>;
       };
 
       const branchListings: Record<string, Array<{ path: string; content: string }>> = {
         main: [{ path: "main.css", content: "main" }],
-        feature: [{ path: "feature.css", content: "feature" }],
+        draft: [{ path: "draft.css", content: "draft" }],
       };
       const warmedBranches: string[] = [];
       internals.client.initialize = () => Promise.resolve();
@@ -3404,8 +3414,7 @@ describe("VeryfrontFSAdapter", () => {
 
       await adapter.initialize();
 
-      const mainContext = adapter.getContentContext();
-      const mainCacheKey = buildFileListCacheKey(mainContext);
+      const mainCacheKey = buildFileListCacheKey(adapter.getContentContext());
       internals.cache.delete(mainCacheKey);
       internals.clearRetainedFileList();
       warmedBranches.length = 0;
@@ -3418,12 +3427,17 @@ describe("VeryfrontFSAdapter", () => {
         const result = await getAsync<T>(key);
         if (!switched && key === mainCacheKey) {
           switched = true;
-          adapter.setRequestBranch("feature");
+          adapter.setRequestBranch("draft");
         }
         return result;
       };
 
-      await adapter.getAllSourceFiles({ waitForWarmup: true });
+      await internals.getCachedFileListAsync(
+        "no contentContext",
+        "lookup",
+        "miss",
+        { waitForWarmup: true },
+      );
 
       assertEquals(
         warmedBranches,
@@ -3431,7 +3445,7 @@ describe("VeryfrontFSAdapter", () => {
         "the warmup must fetch the branch its cache key was derived from",
       );
       assertEquals(
-        await internals.cache.getAsync<Array<{ path: string }>>(mainCacheKey),
+        await getAsync<Array<{ path: string }>>(mainCacheKey),
         undefined,
         "a listing must never be published under another branch's file-list key",
       );
