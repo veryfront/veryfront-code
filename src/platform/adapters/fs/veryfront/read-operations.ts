@@ -58,8 +58,12 @@ export class ReadOperations {
       cacheKey?: string,
       contentContext?: ResolvedContentContext | null,
     ) => Promise<Array<{ path: string; content?: string }> | undefined>,
+    getFileListSnapshotVersion?: () => number,
   ) {
-    this.fileListIndex = new FileListIndex(this.getFileListCache);
+    this.fileListIndex = new FileListIndex(
+      this.getFileListCache,
+      getFileListSnapshotVersion,
+    );
   }
 
   setFileListReadyPromise(promise: Promise<void>): void {

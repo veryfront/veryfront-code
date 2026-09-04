@@ -143,6 +143,30 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
   });
 
   describe("index reuse", () => {
+    it("reuses an index until the source snapshot version changes", async () => {
+      const files = [{ path: "a.ts", content: "v1" }];
+      let snapshotVersion = 1;
+      const index = new FileListIndex(
+        () => Promise.resolve(files),
+        () => snapshotVersion,
+      );
+
+      assertEquals(await index.lookup("a.ts"), "v1");
+      files[0]!.content = "v2";
+      assertEquals(
+        await index.lookup("a.ts"),
+        "v1",
+        "an unchanged source snapshot must reuse its existing map",
+      );
+
+      snapshotVersion += 1;
+      assertEquals(
+        await index.lookup("a.ts"),
+        "v2",
+        "a new source snapshot must rebuild the map",
+      );
+    });
+
     it("rebuilds when a refreshed listing changes inline content", async () => {
       let callCount = 0;
       const entry = { path: "a.ts", content: "v1" };

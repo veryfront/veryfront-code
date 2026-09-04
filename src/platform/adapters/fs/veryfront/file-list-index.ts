@@ -21,6 +21,7 @@ export class FileListIndex {
   private index: Map<string, string> | null = null;
   private pathSet: Set<string> | null = null;
   private indexScopeKey: string | null = null;
+  private indexSnapshotVersion: number | undefined;
   private indexBuiltAt = 0;
   private indexFresh = false;
   private readyPromise: Promise<void> | null = null;
@@ -30,6 +31,7 @@ export class FileListIndex {
       cacheKey?: string,
       contentContext?: ResolvedContentContext | null,
     ) => Promise<Array<FileListCacheEntry> | undefined>,
+    private readonly getSnapshotVersion?: () => number,
   ) {}
 
   setReadyPromise(promise: Promise<void>): void {
@@ -43,6 +45,7 @@ export class FileListIndex {
     this.index = null;
     this.pathSet = null;
     this.indexScopeKey = null;
+    this.indexSnapshotVersion = undefined;
     this.indexBuiltAt = 0;
     this.indexFresh = false;
     logger.debug("Cleared file list index", { indexedWithContent });
@@ -174,7 +177,12 @@ export class FileListIndex {
       return null;
     }
 
+    const versionBeforeRead = this.getSnapshotVersion?.();
     const fileList = await this.getFileListCache(cacheKey, contentContext);
+    const versionAfterRead = this.getSnapshotVersion?.();
+    const stableSnapshotVersion = versionBeforeRead === versionAfterRead
+      ? versionAfterRead
+      : undefined;
     if (!fileList) {
       // Cache entry expired or unavailable. If we already have a built index from a
       // previous successful cache read, keep using it rather than forcing network fetches.
@@ -210,6 +218,16 @@ export class FileListIndex {
       return null;
     }
 
+    if (
+      this.index && this.pathSet &&
+      this.indexScopeKey === (cacheKey ?? null) &&
+      stableSnapshotVersion !== undefined &&
+      this.indexSnapshotVersion === stableSnapshotVersion
+    ) {
+      this.indexFresh = true;
+      return { content: this.index, paths: this.pathSet, fresh: true };
+    }
+
     const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
@@ -228,6 +246,7 @@ export class FileListIndex {
     this.index = index;
     this.pathSet = pathSet;
     this.indexScopeKey = cacheKey ?? null;
+    this.indexSnapshotVersion = stableSnapshotVersion;
     this.indexBuiltAt = Date.now();
     this.indexFresh = true;
 

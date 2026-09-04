@@ -721,6 +721,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         );
         return cached?.files;
       },
+      () => this.sourceSnapshotVersion,
     );
 
     this.dirOps = new DirectoryOperations(
