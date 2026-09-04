@@ -1936,7 +1936,7 @@ export class DAGExecutor {
         _activeCompositeChildIds: [
           ...new Set([
             ...(nodeStates[node.id]?._activeCompositeChildIds ?? []),
-            ...waitingNodes.map(({ nodeId }) => nodeId),
+            ...Object.keys(result.nodeStates),
           ]),
         ],
       }),
@@ -2041,7 +2041,7 @@ export class DAGExecutor {
         _activeCompositeChildIds: [
           ...new Set([
             ...(nodeStates[node.id]?._activeCompositeChildIds ?? []),
-            ...waitingNodes.map(({ nodeId }) => nodeId),
+            ...Object.keys(result.nodeStates),
           ]),
         ],
       }),

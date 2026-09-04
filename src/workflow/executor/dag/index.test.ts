@@ -3662,9 +3662,17 @@ describe("DAGExecutor", () => {
     });
 
     it("does not import an unstarted historical sibling into a resumed parallel", async () => {
-      const priorApprovals = ["group/a", "group/b"].map((id) =>
-        waitForApproval(id, { message: `Prior ${id}` })
-      );
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const priorChildren = [
+        { id: "group/work", config: { type: "step" } as any },
+        ...["group/a", "group/b"].map((id) => waitForApproval(id, { message: `Prior ${id}` })),
+      ];
       const nodes: WorkflowNode[] = [
         {
           id: "prior",
@@ -3672,13 +3680,14 @@ describe("DAGExecutor", () => {
           config: {
             type: "branch",
             condition: () => true,
-            then: priorApprovals,
+            then: priorChildren,
             else: [],
           } as any,
         },
         {
           ...parallel("group", [
-            waitForApproval("a", { message: "Current A" }),
+            { id: "work", config: { type: "step" } as any },
+            { ...waitForApproval("a", { message: "Current A" }), dependsOn: ["group/work"] },
             { ...waitForApproval("b", { message: "Current B" }), dependsOn: ["group/a"] },
           ]),
           dependsOn: ["prior"],
@@ -3690,7 +3699,7 @@ describe("DAGExecutor", () => {
         attempt: 1,
         completedAt: new Date(),
       });
-      const first = await executor.execute(
+      const first = await exec.execute(
         nodes,
         createTestRun({
           status: "waiting",
@@ -3701,12 +3710,13 @@ describe("DAGExecutor", () => {
             },
             "group/a": completed("group/a"),
             "group/b": completed("group/b"),
+            "group/work": completed("group/work"),
           },
         }),
       );
       assertEquals(first.waitingNode, "group/a");
 
-      const resumed = await executor.execute(
+      const resumed = await exec.execute(
         nodes,
         createTestRun({
           status: "waiting",
@@ -3725,7 +3735,7 @@ describe("DAGExecutor", () => {
       assertEquals(resumed.waitingNode, "group/b");
       assertEquals(resumed.nodeStates["group/b"]?.status, "running");
 
-      const completedResult = await executor.execute(
+      const completedResult = await exec.execute(
         nodes,
         createTestRun({
           status: "waiting",
@@ -3741,6 +3751,7 @@ describe("DAGExecutor", () => {
       );
       assertEquals(completedResult.completed, true);
       assertEquals(completedResult.nodeStates["group/a"]?.status, "completed");
+      assertEquals(executed.filter((nodeId) => nodeId === "group/work"), ["group/work"]);
     });
 
     it("resumes an active static producer before a newly ready callback sibling", async () => {
