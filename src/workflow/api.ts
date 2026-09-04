@@ -82,7 +82,7 @@ function getTenant() {
  * Create a VeryfrontApiClient configured for the current tenant.
  * Each call creates a new client instance configured with the current tenant's credentials.
  */
-function getClient(): VeryfrontApiClient {
+function getClient(options: { includeCredential?: boolean } = {}): VeryfrontApiClient {
   const tenant = getTenant();
 
   const client = new VeryfrontApiClient({
@@ -92,7 +92,7 @@ function getClient(): VeryfrontApiClient {
     projectSlug: tenant.projectSlug,
   });
 
-  client.setRequestToken(tenant.token);
+  if (options.includeCredential !== false) client.setRequestToken(tenant.token);
   client.setProjectSlug(tenant.projectSlug);
 
   if (tenant.productionMode && tenant.releaseId) {
@@ -104,6 +104,11 @@ function getClient(): VeryfrontApiClient {
   }
 
   return client;
+}
+
+function getCredentialFreeTenant() {
+  const { token: _token, ...tenant } = getTenant();
+  return tenant;
 }
 
 /**
@@ -193,11 +198,11 @@ export const api = {
    * Get the raw tenant context (for advanced use cases)
    * @internal
    */
-  _getTenant: getTenant,
+  _getTenant: getCredentialFreeTenant,
 
   /**
    * Get a configured API client (for advanced use cases)
    * @internal
    */
-  _getClient: getClient,
+  _getClient: () => getClient({ includeCredential: false }),
 };

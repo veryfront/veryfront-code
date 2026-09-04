@@ -72,6 +72,15 @@ const envFileValueKeys: Set<string> = new SetConstructor();
 const hostApiEnvSnapshot: Map<string, string | undefined> = new MapConstructor();
 const HOST_API_ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
 
+/** Capture operator-owned API routing before project modules can mutate the process. */
+export function captureHostApiEnvironment(): void {
+  for (const apiKey of HOST_API_ENV_KEYS) {
+    if (apply(mapHas, hostApiEnvSnapshot, [apiKey])) continue;
+    const trustedValue = hasEnvFileValueSource(apiKey) ? undefined : readHostProcessEnv(apiKey);
+    apply(mapSet, hostApiEnvSnapshot, [apiKey, trustedValue]);
+  }
+}
+
 /** @internal Record that an environment value came from a project env file. */
 export function markEnvFileValue(key: string): void {
   apply(setAdd, envFileValueKeys, [key]);
@@ -160,10 +169,7 @@ export function env(): Record<string, string> {
  */
 export function setHostSecret(key: string, value: string): void {
   if (key === "VERYFRONT_API_TOKEN") {
-    for (const apiKey of HOST_API_ENV_KEYS) {
-      const trustedValue = hasEnvFileValueSource(apiKey) ? undefined : readHostProcessEnv(apiKey);
-      apply(mapSet, hostApiEnvSnapshot, [apiKey, trustedValue]);
-    }
+    captureHostApiEnvironment();
   }
   apply(mapSet, hostSecrets, [key, value]);
 }

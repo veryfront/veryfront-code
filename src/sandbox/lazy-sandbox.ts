@@ -260,7 +260,7 @@ export class LazySandbox {
 
   async readFile(path: string): Promise<string> {
     await this.touchSession();
-    const route = this.resolveDataPlaneRoute();
+    const route = this.#resolveDataPlaneRoute();
 
     const res = await this.#fetchControl(
       `${route.baseUrl}/file?path=${encodeURIComponent(path)}`,
@@ -279,7 +279,7 @@ export class LazySandbox {
 
   async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
     await this.touchSession();
-    const route = this.resolveDataPlaneRoute();
+    const route = this.#resolveDataPlaneRoute();
 
     const res = await this.#fetchControl(
       `${route.baseUrl}/files`,
@@ -300,7 +300,7 @@ export class LazySandbox {
 
   async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
     await this.touchSession();
-    const route = this.resolveDataPlaneRoute();
+    const route = this.#resolveDataPlaneRoute();
 
     const commandsUrl = backgroundCommandsUrl(route);
     const res = await this.#fetchControl(
@@ -380,7 +380,7 @@ export class LazySandbox {
 
   async listBackgroundCommands(): Promise<BackgroundCommand[]> {
     await this.ensure();
-    const route = this.resolveDataPlaneRoute();
+    const route = this.#resolveDataPlaneRoute();
 
     const res = await this.#fetchControl(
       backgroundCommandsUrl(route),
@@ -593,7 +593,7 @@ export class LazySandbox {
       ? session
       : await this.waitForReadySession(session.id);
 
-    if (this.shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
+    if (this.#shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
       await this.waitForRuntimeDataPlaneReady(readySession);
     }
     return readySession.endpoint;
@@ -674,7 +674,7 @@ export class LazySandbox {
       return;
     }
 
-    const runtimeEndpoint = this.resolveRuntimeEndpointFor(session.endpoint, session.id);
+    const runtimeEndpoint = this.#resolveRuntimeEndpointFor(session.endpoint, session.id);
     const start = Date.now();
     let lastFailure = `sandbox status is ${session.status}`;
 
@@ -758,7 +758,7 @@ export class LazySandbox {
     );
   }
 
-  private requireEndpoint(): string {
+  #requireEndpoint(): string {
     if (!this.endpoint) {
       throw new Error("Sandbox endpoint unavailable");
     }
@@ -795,7 +795,7 @@ export class LazySandbox {
     }
 
     await this.ensure();
-    const route = this.resolveDataPlaneRoute();
+    const route = this.#resolveDataPlaneRoute();
     return {
       commandsUrl: backgroundCommandsUrl(route),
       routeKind: route.kind,
@@ -833,12 +833,12 @@ export class LazySandbox {
   }
 
   private async startExec(command: string, options?: ExecOptions): Promise<Response> {
-    const route = this.resolveDataPlaneRoute();
+    const route = this.#resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveExecOptions(options) });
 
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
       try {
-        const res = await this.fetchExecStart(
+        const res = await this.#fetchExecStart(
           commandStreamUrl(route),
           {
             method: "POST",
@@ -870,7 +870,7 @@ export class LazySandbox {
     throw new Error("Sandbox exec failed before a request was made");
   }
 
-  private async fetchExecStart(
+  async #fetchExecStart(
     url: string,
     init: RequestInit,
     routeKind: DataPlaneRoute["kind"],
@@ -900,7 +900,7 @@ export class LazySandbox {
     this.resetSessionState(sessionId);
   }
 
-  private resolveRuntimeEndpointFor(endpoint: string, sessionId: string): string {
+  #resolveRuntimeEndpointFor(endpoint: string, sessionId: string): string {
     const defaultEndpoint = resolveDefaultSandboxRuntimeEndpoint({ endpoint });
     const resolved = this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
       defaultEndpoint;
@@ -915,18 +915,18 @@ export class LazySandbox {
     return resolved;
   }
 
-  private shouldUseInternalDataPlane(endpoint: string, sessionId: string): boolean {
+  #shouldUseInternalDataPlane(endpoint: string, sessionId: string): boolean {
     if (!this.resolveRuntimeEndpointOption) {
       return false;
     }
 
-    const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
+    const runtimeEndpoint = this.#resolveRuntimeEndpointFor(endpoint, sessionId);
     return normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint);
   }
 
-  private resolveDataPlaneRoute(): DataPlaneRoute {
-    const endpoint = this.requireEndpoint();
-    const sessionId = this.requireSessionId();
+  #resolveDataPlaneRoute(): DataPlaneRoute {
+    const endpoint = this.#requireEndpoint();
+    const sessionId = this.#requireSessionId();
     if (!this.resolveRuntimeEndpointOption) {
       return {
         baseUrl: sandboxSessionRoute(getLazySandboxPrivateState(this).apiUrl, sessionId),
@@ -934,7 +934,7 @@ export class LazySandbox {
       };
     }
 
-    const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
+    const runtimeEndpoint = this.#resolveRuntimeEndpointFor(endpoint, sessionId);
     if (normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint)) {
       return {
         baseUrl: normalizeDataPlaneBaseUrl(runtimeEndpoint),
@@ -948,7 +948,7 @@ export class LazySandbox {
     };
   }
 
-  private requireSessionId(): string {
+  #requireSessionId(): string {
     if (!this.sessionId) {
       throw new Error("Sandbox session unavailable");
     }

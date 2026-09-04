@@ -36,6 +36,7 @@ import { advertisesCloudGateway, listInferenceOptions } from "./inference-status
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { guardedOutboundFetch } from "#cli/outbound-fetch";
 import { getApiUrl } from "#cli/shared/constants";
+import { captureHostApiEnvironment } from "#cli/process-env";
 
 export interface DevOptions {
   port: number;
@@ -190,6 +191,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         clearLocalCaches = false,
       } = options;
       const startTime = Date.now();
+
+      captureHostApiEnvironment();
 
       let doneResolve: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {

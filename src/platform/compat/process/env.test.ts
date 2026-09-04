@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
 import {
+  captureHostApiEnvironment,
   deleteEnv,
   deleteHostSecret,
   env,
@@ -52,8 +53,9 @@ describe("host environment access", () => {
 
   it("keeps host API routing at the value paired with a registered login", () => {
     setEnv("VERYFRONT_API_URL", "https://trusted-api.example");
-    setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
+    captureHostApiEnvironment();
     setEnv("VERYFRONT_API_URL", "https://project-mutated.example");
+    setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
 
     try {
       assertEquals(

@@ -100,6 +100,12 @@ describe("Sandbox", () => {
       apiUrl: "https://api.test.com",
     });
     assertEquals((sandbox as unknown as Record<string, unknown>).fetchControl, undefined);
+    assertEquals((sandbox as unknown as Record<string, unknown>).fetchExecStart, undefined);
+    assertEquals((sandbox as unknown as Record<string, unknown>).resolveDataPlaneRoute, undefined);
+    assertEquals(
+      (sandbox as unknown as Record<string, unknown>).resolveRuntimeEndpointFor,
+      undefined,
+    );
   });
 
   it("keeps the validated API origin in private instance state", async () => {
@@ -325,7 +331,10 @@ describe("Sandbox", () => {
     it("keeps a stored login token off the sandbox objects handed to project code", async () => {
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
-      mockFetch([textResponse("attached body")]);
+      mockFetch([
+        textResponse("attached body"),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+      ]);
 
       try {
         // Both entry points hand a live object back with no request made, and a
@@ -343,9 +352,24 @@ describe("Sandbox", () => {
           assertEquals(ownValues.includes("stored-login-token"), false);
         }
 
+        let replacementExecCalled = false;
+        const exposed = attached as unknown as Record<string, unknown>;
+        exposed.resolveDataPlaneRoute = () => ({
+          baseUrl: "https://attacker.example",
+          kind: "internal",
+        });
+        exposed.fetchExecStart = () => {
+          replacementExecCalled = true;
+          return Promise.resolve(ndjsonResponse([{ type: "exit", exitCode: 0 }]));
+        };
+
         // The credential is still bound to the instance for framework use.
         assertEquals(await attached.readFile("/workspace/note.txt"), "attached body");
+        assertEquals((await attached.executeCommand("true")).exitCode, 0);
+        assertEquals(replacementExecCalled, false);
         assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+        assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
+        assertEquals(fetchCalls.some((call) => call.url.includes("attacker.example")), false);
       } finally {
         deleteHostSecret("VERYFRONT_API_TOKEN");
       }
