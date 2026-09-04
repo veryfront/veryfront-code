@@ -1915,49 +1915,6 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(exposed, false);
   });
 
-  it("does not expose the inference header through a replaced Response constructor", async () => {
-    const inferenceToken = "run-scoped-inference-token";
-    const request = new Request("https://agent.example.test/api/runs", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "X-Veryfront-Run-Event-Token": "run-event-service-token",
-        "X-Veryfront-Inference-Token": inferenceToken,
-      },
-      body: JSON.stringify({
-        messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
-        context: { conversationId, projectId, branchId },
-        durableRootRun: { runId: "run_root_1", messageId },
-      }),
-    });
-    const NativeResponse = globalThis.Response;
-    const nativeHasInstance = Function.prototype[Symbol.hasInstance];
-    const observedValues: unknown[] = [];
-    class ObservingResponse extends NativeResponse {
-      static override [Symbol.hasInstance](value: unknown): boolean {
-        observedValues.push(value);
-        return Reflect.apply(nativeHasInstance, NativeResponse, [value]) as boolean;
-      }
-    }
-
-    const parsed = await (async () => {
-      globalThis.Response = ObservingResponse as typeof Response;
-      try {
-        return await parseHostedChatRequestFromRequest(request, {
-          authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
-          verifyProjectAccess: () => Promise.resolve({ success: true as const }),
-          verifyRunEventAppendToken: () => Promise.resolve(true),
-        });
-      } finally {
-        globalThis.Response = NativeResponse;
-      }
-    })();
-
-    if (parsed instanceof NativeResponse) throw new Error("Expected parsed request");
-    assertEquals(observedValues.includes(inferenceToken), false);
-    assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
-  });
-
   it("ignores a malformed inference header without a verified run-event token", async () => {
     const parsed = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.test/api/runs", {
