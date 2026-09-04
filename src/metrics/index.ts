@@ -119,7 +119,6 @@ const mapForEach = Map.prototype.forEach;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
-const promiseThen = Promise.prototype.then;
 const stringStartsWith = String.prototype.startsWith;
 const weakMapDelete = WeakMap.prototype.delete;
 const weakMapGet = WeakMap.prototype.get;
@@ -909,17 +908,24 @@ function dispatchDirectMetricsBatch(): void {
     const previous = apply(mapGet, directTargetExportTails, [group.key]) as
       | Promise<void>
       | undefined;
-    const start = () => exportAndReleaseDirectGroup(group);
-    const pending = previous
-      ? apply(promiseThen, previous, [start, start]) as Promise<void>
-      : start();
-    apply(mapSet, directTargetExportTails, [group.key, pending]);
-    const removeIfCurrent = () => {
-      if (apply(mapGet, directTargetExportTails, [group.key]) === pending) {
-        apply(mapDelete, directTargetExportTails, [group.key]);
+    const pending = (async () => {
+      if (previous) {
+        try {
+          await previous;
+        } catch { /* a failed prior export does not block this target */ }
       }
-    };
-    void apply(promiseThen, pending, [removeIfCurrent, removeIfCurrent]);
+      await exportAndReleaseDirectGroup(group);
+    })();
+    apply(mapSet, directTargetExportTails, [group.key, pending]);
+    void (async () => {
+      try {
+        await pending;
+      } finally {
+        if (apply(mapGet, directTargetExportTails, [group.key]) === pending) {
+          apply(mapDelete, directTargetExportTails, [group.key]);
+        }
+      }
+    })();
   }
 }
 

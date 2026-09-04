@@ -1015,6 +1015,48 @@ describe("metrics public SDK", () => {
     assertEquals(speciesCalls, 0);
   });
 
+  it("dispatches every target without consulting Promise species", async () => {
+    const requestedUrls: string[] = [];
+    const originalSpecies = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+    await withEnv({ OTEL_METRICS_ENABLED: "true" }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request) => {
+          requestedUrls.push(String(url));
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          await runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://first.example/v1/metrics",
+          }, () => metrics.counter("vf_first_total", 1));
+          await runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://second.example/v1/metrics",
+          }, () => metrics.counter("vf_second_total", 1));
+
+          Object.defineProperty(Promise, Symbol.species, {
+            get() {
+              throw new Error("Promise species must not run");
+            },
+            configurable: true,
+          });
+          let flush: Promise<void>;
+          try {
+            flush = metrics.__flushForTests();
+          } finally {
+            if (originalSpecies) Object.defineProperty(Promise, Symbol.species, originalSpecies);
+          }
+          await flush;
+        },
+      );
+    });
+
+    assertEquals(requestedUrls.sort(), [
+      "https://first.example/v1/metrics",
+      "https://second.example/v1/metrics",
+    ]);
+  });
+
   it("keeps in-flight direct targets inside the global bound", async () => {
     let activeRequests = 0;
     let maxActiveRequests = 0;
