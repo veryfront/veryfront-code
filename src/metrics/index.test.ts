@@ -1462,7 +1462,7 @@ describe("metrics public SDK", () => {
     });
 
     assertEquals(
-      requestedUrls.includes("https://tenant-b.example/v1/metrics"),
+      requestedUrls.some((requested) => requested === "https://tenant-b.example/v1/metrics"),
       true,
       "one tenant saturating its quota must not silence a different tenant",
     );
@@ -1471,6 +1471,8 @@ describe("metrics public SDK", () => {
   it("reserves queue capacity for platform metrics when tenants saturate the queue", async () => {
     const requestedUrls: string[] = [];
     const stalled = Promise.withResolvers<Response>();
+    const tenantUrl = (tenant: number) => `https://tenant-${tenant}.example/v1/metrics`;
+    const stalledTenantUrls = new Set([1, 2, 3, 4, 5, 6].map(tenantUrl));
 
     await withEnv({
       SERVER_ID: "server-1",
@@ -1484,7 +1486,7 @@ describe("metrics public SDK", () => {
         ((url: string | URL | Request) => {
           const requestedUrl = String(url);
           requestedUrls[requestedUrls.length] = requestedUrl;
-          return requestedUrl.startsWith("https://tenant-")
+          return stalledTenantUrls.has(requestedUrl)
             ? stalled.promise
             : Promise.resolve(new Response("{}", { status: 200 }));
         }) as typeof fetch,
@@ -1495,8 +1497,7 @@ describe("metrics public SDK", () => {
               runWithTrustedProjectEnv(
                 {
                   OTEL_METRICS_ENABLED: "true",
-                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:
-                    `https://tenant-${tenant}.example/v1/metrics`,
+                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: tenantUrl(tenant),
                 },
                 { projectId: `project-${tenant}`, environmentId: `env-${tenant}` },
                 () => metrics.counter("vf_tenant_metric_total", 1),
@@ -1525,7 +1526,9 @@ describe("metrics public SDK", () => {
     });
 
     assertEquals(
-      requestedUrls.includes("http://veryfront-api:80/internal/metrics/otlp/v1/metrics"),
+      requestedUrls.some((requested) =>
+        requested === "http://veryfront-api:80/internal/metrics/otlp/v1/metrics"
+      ),
       true,
       "the platform reserve must keep internal metrics exportable under tenant load",
     );
