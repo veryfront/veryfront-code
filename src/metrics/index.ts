@@ -112,10 +112,8 @@ const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const arrayIsArray = Array.isArray;
-const arrayMap = Array.prototype.map;
 const arrayFindIndex = Array.prototype.findIndex;
 const arraySort = Array.prototype.sort;
-const arraySplice = Array.prototype.splice;
 const mapDelete = Map.prototype.delete;
 const mapForEach = Map.prototype.forEach;
 const mapGet = Map.prototype.get;
@@ -161,6 +159,38 @@ function appendArrayValue<T>(target: T[], value: T): void {
     enumerable: true,
     writable: true,
   }]);
+}
+
+function mapArrayValues<T, U>(
+  target: readonly T[],
+  mapper: (value: T, index: number) => U,
+): U[] {
+  const mapped: U[] = [];
+  apply(objectSetPrototypeOf, Object, [mapped, null]);
+  for (let index = 0; index < target.length; index++) {
+    appendArrayValue(mapped, mapper(target[index]!, index));
+  }
+  return mapped;
+}
+
+function removeArrayRange<T>(target: T[], start: number, count: number): T[] {
+  const removed: T[] = [];
+  apply(objectSetPrototypeOf, Object, [removed, null]);
+  const end = apply(mathMin, undefined, [start + count, target.length]) as number;
+  for (let index = start; index < end; index++) {
+    appendArrayValue(removed, target[index]!);
+  }
+  const remaining = target.length - end;
+  for (let index = 0; index < remaining; index++) {
+    apply(objectDefineProperty, Object, [target, NativeString(start + index), {
+      value: target[end + index],
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    }]);
+  }
+  target.length -= end - start;
+  return removed;
 }
 
 function encodeHostBase64(value: string): string {
@@ -236,9 +266,7 @@ function attributesKey(attributes: Record<string, AttributeValue>): string {
     ([left]: [string, AttributeValue], [right]: [string, AttributeValue]) =>
       left < right ? -1 : left > right ? 1 : 0,
   ]) as Array<[string, AttributeValue]>;
-  const values = apply(arrayMap, sorted, [
-    ([key, value]: [string, AttributeValue]) => [key, value],
-  ]);
+  const values = mapArrayValues(sorted, ([key, value]) => [key, value]);
   return jsonStringify(values);
 }
 
@@ -501,10 +529,7 @@ function evictUnusedDirectTarget(
     }
   }
   if (candidateIndex === -1) return false;
-  const evicted = apply(arraySplice, internedTargets, [
-    candidateIndex,
-    1,
-  ]) as InternedDirectMetricsTarget[];
+  const evicted = removeArrayRange(internedTargets, candidateIndex, 1);
   if (evicted[0]) deleteDirectTotalsForTarget(evicted[0].key);
   return true;
 }
@@ -627,10 +652,10 @@ function toOtlpValue(value: AttributeValue) {
 
 function toOtlpAttributes(attributes: Record<string, AttributeValue>) {
   const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
-  return apply(arrayMap, entries, [([key, value]: [string, AttributeValue]) => ({
+  return mapArrayValues(entries, ([key, value]) => ({
     key,
     value: toOtlpValue(value),
-  })]);
+  }));
 }
 
 function getUnixNanoTimestamp(): string {
@@ -692,9 +717,10 @@ function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
     const sampleBuckets = buildHistogramBuckets(sample.value);
     total.count += 1;
     total.sum += sample.value;
-    total.bucketCounts = apply(arrayMap, total.bucketCounts, [
-      (count: number, index: number) => count + (sampleBuckets[index] ?? 0),
-    ]) as number[];
+    total.bucketCounts = mapArrayValues(
+      total.bucketCounts,
+      (count, index) => count + (sampleBuckets[index] ?? 0),
+    );
     apply(mapSet, directHistogramTotals, [key, total]);
 
     return {
@@ -745,9 +771,7 @@ function buildDirectOtlpBody(
         scope: {
           name: "veryfront.project.metrics",
         },
-        metrics: apply(arrayMap, samples, [
-          (sample: DirectMetricSample) => buildDirectMetric(sample, targetKey),
-        ]),
+        metrics: mapArrayValues(samples, (sample) => buildDirectMetric(sample, targetKey)),
       }],
     }],
   };
@@ -850,7 +874,7 @@ function dispatchDirectMetricsBatch(): void {
   // queue is shared across concurrent project environments, so a single
   // ambient-context target resolution here would misroute other tenants'
   // samples.
-  const batch = apply(arraySplice, directQueue, [0, DIRECT_MAX_BATCH_SIZE]) as DirectMetricSample[];
+  const batch = removeArrayRange(directQueue, 0, DIRECT_MAX_BATCH_SIZE);
   // Plain arrays and index loops rather than a Map or iterator protocol: a
   // group holds the target, and `target.headers` can carry the internal-proxy
   // credential, so it must not be handed to `Map.prototype.set` or to

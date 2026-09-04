@@ -969,6 +969,52 @@ describe("metrics public SDK", () => {
     assertEquals(metrics.__getDirectTargetCountForTests(), 17);
   });
 
+  it("evicts credential-bearing targets without consulting Array species", async () => {
+    let speciesCalls = 0;
+    const originalSpecies = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-project",
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
+        async () => {
+          for (let index = 0; index < 16; index++) {
+            runWithTrustedProjectEnv(
+              { OTEL_METRICS_ENABLED: "true", OTEL_SERVICE_NAME: `project-${index}` },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.counter("vf_project_metric_total", 1),
+            );
+          }
+          await metrics.__flushForTests();
+
+          Object.defineProperty(Array, Symbol.species, {
+            get() {
+              speciesCalls++;
+              return Array;
+            },
+            configurable: true,
+          });
+          try {
+            runWithTrustedProjectEnv(
+              { OTEL_METRICS_ENABLED: "true", OTEL_SERVICE_NAME: "project-new" },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.counter("vf_project_metric_total", 1),
+            );
+          } finally {
+            if (originalSpecies) Object.defineProperty(Array, Symbol.species, originalSpecies);
+          }
+        },
+      );
+    });
+
+    assertEquals(speciesCalls, 0);
+  });
+
   it("keeps in-flight direct targets inside the global bound", async () => {
     let activeRequests = 0;
     let maxActiveRequests = 0;
