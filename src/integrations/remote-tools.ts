@@ -13,6 +13,7 @@
 
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { defineError, retryWithBackoff, VeryfrontError } from "#veryfront/errors";
 import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -219,8 +220,6 @@ function snapshotToolExecutionContext(
 // the method receiver.
 const applyIntrinsic = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
-const stringReplace = String.prototype.replace;
-const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
 
 function isValidApiToken(token: unknown): token is string {
   if (
@@ -242,15 +241,6 @@ function isValidApiToken(token: unknown): token is string {
  * Proxy mode requires a valid request-scoped project token. Single-project
  * runtimes may use their process-wide environment token.
  */
-function resolveHostOwnedApiBaseUrl(): string {
-  const hostBase = getHostEnv("VERYFRONT_API_BASE_URL");
-  if (hostBase) return hostBase;
-  const hostApiUrl = getHostEnv("VERYFRONT_API_URL");
-  return hostApiUrl
-    ? applyIntrinsic(stringReplace, hostApiUrl, ["/graphql", "/api"]) as string
-    : DEFAULT_HOST_API_BASE_URL;
-}
-
 function resolveRequestAuth(
   context: RemoteIntegrationExecutionContext,
 ): { baseUrl: string; token: string | undefined } {

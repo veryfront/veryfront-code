@@ -9,6 +9,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import type { DependencyWritebackTarget } from "./package-registry.ts";
@@ -21,7 +22,6 @@ const logger = rendererLogger.component("npm-registry-client");
 // receive the developer's credential, nor flip a blank/non-blank
 // classification through a replaced `String.prototype.trim`.
 const applyIntrinsic = Reflect.apply;
-const stringReplace = String.prototype.replace;
 const stringTrim = String.prototype.trim;
 
 function isBlank(value: string | undefined): boolean {
@@ -381,25 +381,6 @@ export function _setDependencyResolutionPosterForTest(
   poster?: DependencyResolutionPoster,
 ): void {
   postDependencyResolutionImpl = poster ?? postDependencyResolution;
-}
-
-const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
-
-/**
- * Resolve the API base for a request that authenticates with the host-private
- * stored login token. Mirrors the environment snapshot's derivation, but reads
- * only host-scoped values through `getHostEnv`, so a project-scoped
- * `VERYFRONT_API_BASE_URL` cannot steer the developer's credential to a
- * project-chosen origin.
- */
-function resolveHostOwnedApiBaseUrl(): string {
-  const hostBase = getHostEnv("VERYFRONT_API_BASE_URL");
-  if (!isBlank(hostBase)) return hostBase as string;
-  const hostApiUrl = getHostEnv("VERYFRONT_API_URL");
-  if (!isBlank(hostApiUrl)) {
-    return applyIntrinsic(stringReplace, hostApiUrl, ["/graphql", "/api"]) as string;
-  }
-  return DEFAULT_HOST_API_BASE_URL;
 }
 
 /**

@@ -13,6 +13,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { getHostEnv } from "#cli/process-env";
 import { guardedOutboundFetch } from "#cli/outbound-fetch";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -43,7 +44,7 @@ function normalizeToken(value: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function getApiToken(): string | undefined {
+function getApiAuth(): { baseUrl: string; token: string | undefined } {
   // The environment snapshot only carries an explicitly exported token; a
   // stored CLI login token is held host-privately so project code served by
   // `veryfront dev` cannot read it out of the process environment.
@@ -53,8 +54,13 @@ function getApiToken(): string | undefined {
   // `VERYFRONT_API_TOKEN` as unset when it registers the stored login token.
   // Normalizing here keeps an unusable blank export from shadowing that
   // credential and being sent as a `Bearer   ` header.
-  return normalizeToken(getEnvironmentConfig().apiToken) ??
-    normalizeToken(getHostEnv("VERYFRONT_API_TOKEN"));
+  const config = getEnvironmentConfig();
+  const environmentToken = normalizeToken(config.apiToken);
+  if (environmentToken) return { baseUrl: config.apiBaseUrl, token: environmentToken };
+  return {
+    baseUrl: resolveHostOwnedApiBaseUrl(),
+    token: normalizeToken(getHostEnv("VERYFRONT_API_TOKEN")),
+  };
 }
 
 async function apiRequest<T>(
@@ -62,12 +68,13 @@ async function apiRequest<T>(
   path: string,
   options: { body?: unknown; token?: string } = {},
 ): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
-  const token = options.token ?? getApiToken();
+  const auth = getApiAuth();
+  const token = options.token ?? auth.token;
   if (!token) {
     return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
   }
 
-  const url = `${getApiBaseUrl()}/api${path}`;
+  const url = `${options.token ? getApiBaseUrl() : auth.baseUrl}/api${path}`;
 
   try {
     // The credential may be the host-private stored login token, so the

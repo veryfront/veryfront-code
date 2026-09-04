@@ -475,9 +475,11 @@ describe("cli/mcp/remote-file-tools", () => {
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
 
       let requestAuth = "";
+      let requestUrl = "";
       try {
         await withMockFetch(async (input, init) => {
           const request = new Request(input, init);
+          requestUrl = request.url;
           requestAuth = request.headers.get("Authorization") ?? "";
           return new Response(
             JSON.stringify({
@@ -501,6 +503,10 @@ describe("cli/mcp/remote-file-tools", () => {
       }
 
       assertEquals(requestAuth, "Bearer stored-login-token");
+      assertEquals(
+        requestUrl,
+        "https://api.veryfront.com/api/my-project/files/pages/index.tsx",
+      );
     });
 
     it("returns error response when API responds with unauthorized JSON error", async () => {
