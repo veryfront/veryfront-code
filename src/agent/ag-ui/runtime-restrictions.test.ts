@@ -291,6 +291,21 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["get_file"]);
   });
 
+  it("does not treat reserved delegation as a policy-free MCP candidate", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: true,
+        delegates: undefined,
+        providerTools: undefined,
+        mcpServers: [{ kind: "veryfront-api" }],
+      }),
+      { allowedTools: ["invoke_agent"] },
+    );
+
+    assertEquals(restricted.tools, {});
+    assertEquals(restricted.mcpServers, []);
+  });
+
   it("does not add generic delegation to a tools-true source agent", () => {
     const restricted = applyAgUiRuntimeRestrictions(
       createConfig({ tools: true, delegates: undefined, mcpServers: undefined }),

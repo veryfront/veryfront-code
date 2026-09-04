@@ -579,7 +579,9 @@ export async function getAvailableTools(
     if (allowed) remoteDefsToAppend[remoteDefsToAppend.length] = definition;
   }
 
-  for (const def of remoteDefsToAppend) {
+  for (let index = 0; index < remoteDefsToAppend.length; index++) {
+    const def = remoteDefsToAppend[index];
+    if (def === undefined) continue;
     // Skip if already present (e.g., explicitly configured by name)
     if (!tools.some((t) => t.name === def.name)) {
       logToolDefinition(def.name, def);

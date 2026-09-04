@@ -2,6 +2,7 @@ import type { AgentConfig, AgentMcpServerConfig, AgentMcpToolPolicy } from "../t
 import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import { INVOKE_AGENT_TOOL_ID } from "../runtime/agent-delegation.ts";
 import { DEFAULT_MAX_STEPS } from "../runtime/constants.ts";
 import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
@@ -79,6 +80,7 @@ function restrictConfiguredMcpServers(
       const toolName = allowedToolNames[toolIndex];
       if (
         toolName !== undefined &&
+        toolName !== INVOKE_AGENT_TOOL_ID &&
         (allowedByServer === undefined || allowedByServer[toolName] === true) &&
         deniedByServer?.[toolName] !== true
       ) {
@@ -113,6 +115,7 @@ function getConfiguredMcpToolNames(
       const toolName = allowedToolNames[toolIndex];
       if (
         toolName !== undefined &&
+        toolName !== INVOKE_AGENT_TOOL_ID &&
         (allowedByServer === undefined || allowedByServer[toolName] === true) &&
         deniedByServer?.[toolName] !== true
       ) {
