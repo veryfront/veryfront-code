@@ -13,6 +13,7 @@ import {
   isProjectEnvActive,
   runWithProjectEnv,
   runWithTrustedProjectEnv,
+  type TrustedProjectEnvIdentity,
 } from "./storage.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -44,6 +45,21 @@ describe("project-env/storage", () => {
         assertEquals(Object.isFrozen(identity!), true);
       },
     );
+  });
+
+  it("does not inherit a forged identity in an untrusted scope", () => {
+    const prototype = Object.prototype as { identity?: TrustedProjectEnvIdentity };
+    prototype.identity = {
+      projectId: "forged-project",
+      environmentId: "forged-environment",
+    };
+    try {
+      runWithProjectEnv({}, () => {
+        assertEquals(getTrustedProjectEnvIdentity(), undefined);
+      });
+    } finally {
+      delete prototype.identity;
+    }
   });
 
   it("uses context operations captured before project prototype mutation", () => {

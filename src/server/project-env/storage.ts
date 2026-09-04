@@ -24,6 +24,7 @@ interface ProjectEnvStore {
 
 const projectEnvStorage = new AsyncLocalStorage<ProjectEnvStore>();
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectCreate = Object.create;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectFreeze = Object.freeze;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
@@ -68,7 +69,10 @@ export function runWithProjectEnv<T>(
   fn: () => T,
 ): T {
   return IntrinsicReflectApply(AsyncLocalStorageRun, projectEnvStorage, [
-    { snapshot: createProjectEnvSnapshot(vars) },
+    IntrinsicObjectCreate(null, {
+      snapshot: { value: createProjectEnvSnapshot(vars), enumerable: true },
+      identity: { value: undefined, enumerable: true },
+    }) as ProjectEnvStore,
     fn,
   ]) as T;
 }
@@ -80,10 +84,10 @@ export function runWithTrustedProjectEnv<T>(
   fn: () => T,
 ): T {
   return IntrinsicReflectApply(AsyncLocalStorageRun, projectEnvStorage, [
-    {
-      snapshot: createProjectEnvSnapshot(vars),
-      identity: IntrinsicObjectFreeze({ ...identity }),
-    },
+    IntrinsicObjectCreate(null, {
+      snapshot: { value: createProjectEnvSnapshot(vars), enumerable: true },
+      identity: { value: IntrinsicObjectFreeze({ ...identity }), enumerable: true },
+    }) as ProjectEnvStore,
     fn,
   ]) as T;
 }
