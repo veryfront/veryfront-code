@@ -144,6 +144,8 @@ export interface PushOptions {
   quiet?: boolean;
   /** Reject when HEAD no longer matches the commit that selected this push. */
   expectedCommitSha?: string | null;
+  /** Reject when Git repository availability changed after push selection. */
+  expectedRepositoryAvailable?: boolean;
   /** Discover tracked deletions inside the same snapshot used for this push. */
   discoverDeletedGitPaths?: boolean;
 }
@@ -322,10 +324,17 @@ export async function capturePushSourceSnapshot(
   ignoreChecker: IgnoreChecker,
   expectedCommitSha?: string | null,
   discoverDeletedGitPaths = false,
+  expectedRepositoryAvailable?: boolean,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
   if (gitSourceBefore.indeterminate) throw gitProvenanceError();
   if (expectedCommitSha !== undefined && gitSourceBefore.commitSha !== expectedCommitSha) {
+    throw sourceChangedError();
+  }
+  if (
+    expectedRepositoryAvailable !== undefined &&
+    gitSourceBefore.repositoryAvailable !== expectedRepositoryAvailable
+  ) {
     throw sourceChangedError();
   }
   const { files, sourceDigest } = await capturePushSourceDigest(projectDir, ignoreChecker);
@@ -1081,6 +1090,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           ignoreChecker,
           options.expectedCommitSha,
           options.discoverDeletedGitPaths ?? false,
+          options.expectedRepositoryAvailable,
         );
       } catch (error) {
         spinner.stop();

@@ -1780,6 +1780,9 @@ export function createDeployProject(options: {
             expectedCommitSha: bootstrapPushKind === "refresh"
               ? localSource?.gitSource.commitSha
               : undefined,
+            expectedRepositoryAvailable: bootstrapPushKind === "refresh"
+              ? localSource?.gitSource.repositoryAvailable
+              : undefined,
             dryRun: request.mode === "dry-run",
             quiet: true,
           });

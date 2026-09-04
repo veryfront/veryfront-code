@@ -945,6 +945,26 @@ describe("push receipt source snapshot", () => {
     });
   });
 
+  it("rejects when a selected non-Git source becomes an unborn repository", async () => {
+    await withGitProject(async ({ projectDir, runGit }) => {
+      await Deno.remove(`${projectDir}/.git`, { recursive: true });
+      await runGit("init", "--quiet");
+
+      await assertRejects(
+        () =>
+          capturePushSourceSnapshot(
+            projectDir,
+            createDefaultIgnoreChecker(),
+            null,
+            false,
+            false,
+          ),
+        Error,
+        "Local source changed during push",
+      );
+    });
+  });
+
   it("rejects a clean tracked symlink whose target bytes are outside the commit", async () => {
     if (Deno.build.os === "windows") return;
 
