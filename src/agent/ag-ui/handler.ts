@@ -386,7 +386,12 @@ async function createAgUiDirectStreamResponse(
   // middleware, resolved skill-selector context, and private runtime dispatch.
   const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
     ? createEphemeralAgent({
-      ...applyAgUiRuntimeRestrictionsForModel(agent.config, restrictions, request.model),
+      ...applyAgUiRuntimeRestrictionsForModel(
+        agent.config,
+        restrictions,
+        request.model,
+        agent.id,
+      ),
       // A factory-assigned id lives on `agent.id` while `agent.config.id`
       // stays undefined. Rebuilding without it would mint a fresh id, hiding
       // owner-scoped registry tools and skills from the restricted run and
@@ -483,7 +488,7 @@ async function createAgUiInjectedToolsStreamResponse(
   // injected-tools path outright, so this narrows the step budget without
   // touching the merged client tool surface.
   const restrictedConfig = hasAgUiRuntimeRestrictions(restrictions)
-    ? applyAgUiRuntimeRestrictionsForModel(agent.config, restrictions, request.model)
+    ? applyAgUiRuntimeRestrictionsForModel(agent.config, restrictions, request.model, agent.id)
     : agent.config;
   const runtime = new AgentRuntime(agent.id, {
     ...restrictedConfig,

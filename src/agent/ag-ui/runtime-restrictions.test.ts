@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
+import type { Tool } from "#veryfront/tool";
+import { clearMCPRegistry, registerTool } from "#veryfront/mcp";
 import { createEphemeralAgent } from "../factory.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
 import {
@@ -30,7 +32,26 @@ function createConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   } as AgentConfig;
 }
 
+function registerVisibleTestTool(id: string): void {
+  registerTool(id, {
+    id,
+    type: "function",
+    description: `${id} test tool`,
+    inputSchema: { type: "object", properties: {} },
+    execute: () => Promise.resolve({ ok: true }),
+  } as Tool);
+}
+
 describe("agent/ag-ui/runtime-restrictions", () => {
+  beforeEach(() => {
+    clearMCPRegistry();
+    for (const id of ["web_search", "web_fetch", "read_file", "load_skill"]) {
+      registerVisibleTestTool(id);
+    }
+  });
+
+  afterEach(() => clearMCPRegistry());
+
   it("reports whether a restriction set narrows anything", () => {
     assertEquals(hasAgUiRuntimeRestrictions(undefined), false);
     assertEquals(hasAgUiRuntimeRestrictions({}), false);
@@ -159,8 +180,17 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       { allowedTools: ["not_in_any_registry"] },
     );
 
-    assertEquals(restricted.tools, { not_in_any_registry: true });
+    assertEquals(restricted.tools, {});
     assertEquals(getRuntimeRemoteToolSources(restricted), []);
+  });
+
+  it("does not add generic delegation to a tools-true source agent", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({ tools: true, delegates: undefined }),
+      { allowedTools: ["invoke_agent"] },
+    );
+
+    assertEquals(restricted.tools, {});
   });
 
   it("keeps allowlisted provider tools, delegates, and skills", () => {

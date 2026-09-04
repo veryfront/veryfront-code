@@ -1,4 +1,5 @@
 import type { AgentConfig } from "../types.ts";
+import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { DEFAULT_MAX_STEPS } from "../runtime/constants.ts";
@@ -29,6 +30,8 @@ const SKILL_INFRASTRUCTURE_TOOL_NAMES = [
 // iteration protocol cannot preserve or inject a denied tool.
 const ObjectKeys = Object.keys;
 const createNullPrototypeObject = Object.create;
+const reflectApply = Reflect.apply;
+const mapForEach = Map.prototype.forEach;
 
 /** Name allowlist as a null-prototype lookup so `Object.prototype` names never read as allowlisted. */
 type ToolNameLookup = Record<string, true>;
@@ -86,6 +89,7 @@ function restrictConfiguredTools(
   allowedToolNames: readonly string[],
   allowedTools: ToolNameLookup,
   providerToolNames: ToolNameLookup,
+  visibleLocalTools: ToolNameLookup,
 ): AgentConfig["tools"] {
   if (tools === undefined) return undefined;
   if (tools === true) {
@@ -100,7 +104,7 @@ function restrictConfiguredTools(
     for (let index = 0; index < allowedToolNames.length; index++) {
       const toolName = allowedToolNames[index];
       if (toolName === undefined) continue;
-      if (providerToolNames[toolName] !== true) {
+      if (providerToolNames[toolName] !== true && visibleLocalTools[toolName] === true) {
         selected[toolName] = true;
       }
     }
@@ -122,6 +126,15 @@ function restrictConfiguredTools(
     }
   }
   return intersected;
+}
+
+function getVisibleLocalToolNames(agentId: string | undefined): ToolNameLookup {
+  const visible = createNullPrototypeObject(null) as ToolNameLookup;
+  const addVisible = (tool: ReturnType<typeof toolRegistry.get>, name: string): void => {
+    if (tool && isToolVisibleTo(tool, { agentId })) visible[name] = true;
+  };
+  reflectApply(mapForEach, toolRegistry.getAll(), [addVisible]);
+  return visible;
 }
 
 function getRetainedRemoteToolNames(tools: AgentConfig["tools"]): string[] {
@@ -161,6 +174,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
   config: AgentConfig,
   restrictions: AgUiRuntimeRestrictions,
   modelOverride?: string,
+  sourceAgentId: string | undefined = config.id,
 ): AgentConfig {
   const restricted: AgentConfig = { ...config };
 
@@ -198,11 +212,15 @@ export function applyAgUiRuntimeRestrictionsForModel(
     ? []
     : filterAllowedNames(config.providerTools, supportedProviderTools);
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
+  const visibleLocalTools = config.tools === true
+    ? getVisibleLocalToolNames(sourceAgentId)
+    : toToolNameLookup([]);
   restricted.tools = restrictConfiguredTools(
     config.tools,
     allowedToolNames,
     allowedTools,
     providerToolNames,
+    visibleLocalTools,
   );
   if (config.tools === true) {
     // Replacing the authored `tools: true` selector with an explicit map would
