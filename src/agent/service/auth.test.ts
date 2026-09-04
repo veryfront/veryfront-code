@@ -234,21 +234,16 @@ describe("agent/agent-service-auth", () => {
         "x-veryfront-inference-token": "private-inference-token",
       },
     });
-    const originalHeaders = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!;
     let replacementCalled = false;
-    Object.defineProperty(Request.prototype, "headers", {
+    Object.defineProperty(request, "headers", {
       configurable: true,
       get() {
         replacementCalled = true;
         throw new Error("project getter must not receive the request");
       },
     });
-    try {
-      assertEquals(getHostedServiceTokenFromRequest(request), "bearer-token");
-      assertEquals(replacementCalled, false);
-    } finally {
-      Object.defineProperty(Request.prototype, "headers", originalHeaders);
-    }
+    assertEquals(getHostedServiceTokenFromRequest(request), "bearer-token");
+    assertEquals(replacementCalled, false);
   });
 
   it("returns null when no auth token exists", () => {

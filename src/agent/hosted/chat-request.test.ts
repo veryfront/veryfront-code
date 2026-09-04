@@ -1883,43 +1883,34 @@ describe("agent/hosted-chat-request", () => {
         durableRootRun: { runId: "run_root_1", messageId },
       }),
     });
-    const requestHeadersDescriptor = Object.getOwnPropertyDescriptor(
-      Request.prototype,
-      "headers",
-    )!;
-    const headersGetDescriptor = Object.getOwnPropertyDescriptor(Headers.prototype, "get")!;
-    const requestHeaders = Reflect.apply(requestHeadersDescriptor.get!, request, []) as Headers;
+    const requestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!
+      .get!;
+    const headersGet = Object.getOwnPropertyDescriptor(Headers.prototype, "get")!.value!;
+    const requestHeaders = Reflect.apply(requestHeadersGetter, request, []) as Headers;
     let exposed = false;
 
-    Object.defineProperty(Request.prototype, "headers", {
-      ...requestHeadersDescriptor,
+    Object.defineProperty(request, "headers", {
+      configurable: true,
       get() {
-        if (this === request) exposed = true;
-        return Reflect.apply(requestHeadersDescriptor.get!, this, []);
+        exposed = true;
+        return requestHeaders;
       },
     });
-    Object.defineProperty(Headers.prototype, "get", {
-      ...headersGetDescriptor,
-      value(this: Headers, name: string) {
-        if (this === requestHeaders && name.toLowerCase() === "x-veryfront-inference-token") {
-          exposed = true;
-        }
-        return Reflect.apply(headersGetDescriptor.value!, this, [name]);
+    Object.defineProperty(requestHeaders, "get", {
+      configurable: true,
+      value(name: string) {
+        exposed = true;
+        return Reflect.apply(headersGet, requestHeaders, [name]);
       },
     });
 
-    try {
-      const parsed = await parseHostedChatRequestFromRequest(request, {
-        authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
-        verifyProjectAccess: () => Promise.resolve({ success: true as const }),
-        verifyRunEventAppendToken: () => Promise.resolve(true),
-      });
-      if (parsed instanceof Response) throw new Error("Expected parsed request");
-      assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
-    } finally {
-      Object.defineProperty(Request.prototype, "headers", requestHeadersDescriptor);
-      Object.defineProperty(Headers.prototype, "get", headersGetDescriptor);
-    }
+    const parsed = await parseHostedChatRequestFromRequest(request, {
+      authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+      verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+      verifyRunEventAppendToken: () => Promise.resolve(true),
+    });
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
 
     assertEquals(exposed, false);
   });
