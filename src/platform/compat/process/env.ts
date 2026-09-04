@@ -69,6 +69,8 @@ const stringTrim = String.prototype.trim;
  */
 const hostSecrets: Map<string, string> = new MapConstructor();
 const envFileValueKeys: Set<string> = new SetConstructor();
+const hostApiEnvSnapshot: Map<string, string | undefined> = new MapConstructor();
+const HOST_API_ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
 
 /** @internal Record that an environment value came from a project env file. */
 export function markEnvFileValue(key: string): void {
@@ -157,6 +159,12 @@ export function env(): Record<string, string> {
  * export to win must not use this store.
  */
 export function setHostSecret(key: string, value: string): void {
+  if (key === "VERYFRONT_API_TOKEN") {
+    for (const apiKey of HOST_API_ENV_KEYS) {
+      const trustedValue = hasEnvFileValueSource(apiKey) ? undefined : readHostProcessEnv(apiKey);
+      apply(mapSet, hostApiEnvSnapshot, [apiKey, trustedValue]);
+    }
+  }
   apply(mapSet, hostSecrets, [key, value]);
 }
 
@@ -168,6 +176,9 @@ export function getHostSecret(key: string): string | undefined {
 /** Forget a host-private credential registered by {@link setHostSecret}. */
 export function deleteHostSecret(key: string): void {
   apply(mapDelete, hostSecrets, [key]);
+  if (key === "VERYFRONT_API_TOKEN") {
+    for (const apiKey of HOST_API_ENV_KEYS) apply(mapDelete, hostApiEnvSnapshot, [apiKey]);
+  }
 }
 
 /**
@@ -195,6 +206,11 @@ export function getHostEnv(key: string): string | undefined {
 
 /** Read host environment while excluding values copied from project env files. */
 export function getHostEnvExcludingEnvFile(key: string): string | undefined {
+  if (
+    getHostSecret("VERYFRONT_API_TOKEN") !== undefined && apply(mapHas, hostApiEnvSnapshot, [key])
+  ) {
+    return apply(mapGet, hostApiEnvSnapshot, [key]);
+  }
   if (hasEnvFileValueSource(key)) return getHostSecret(key);
   return getHostEnv(key);
 }

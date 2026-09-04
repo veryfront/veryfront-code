@@ -8,6 +8,7 @@ import {
   env,
   getEnv,
   getHostEnv,
+  getHostEnvExcludingEnvFile,
   registerTrustedProjectEnvSnapshot,
   setEnv,
   setHostSecret,
@@ -46,6 +47,22 @@ describe("host environment access", () => {
     } finally {
       deleteHostSecret(key);
       deleteEnv(key);
+    }
+  });
+
+  it("keeps host API routing at the value paired with a registered login", () => {
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example");
+    setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
+    setEnv("VERYFRONT_API_URL", "https://project-mutated.example");
+
+    try {
+      assertEquals(
+        getHostEnvExcludingEnvFile("VERYFRONT_API_URL"),
+        "https://trusted-api.example",
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_API_URL");
     }
   });
 
