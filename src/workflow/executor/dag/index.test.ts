@@ -4248,6 +4248,41 @@ describe("DAGExecutor", () => {
       assertEquals(resumed.waiting, false);
     });
 
+    it("retains composite map processor approval state when an enclosing parallel resumes", async () => {
+      const nodes = [parallel("group", [
+        map("orders", {
+          items: [{}],
+          processor: parallel("review-group", [
+            waitForApproval("review", { message: "Review the order" }),
+          ]),
+        }),
+      ])];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "group/orders_0/review");
+      const waitingState = first.nodeStates["group/orders_0/review"];
+      assertExists(waitingState);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "group/orders_0/review": {
+              ...waitingState,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, false);
+      assertEquals(resumed.completed, true);
+      assertEquals(resumed.nodeStates["group/orders_0/review"]?.status, "completed");
+    });
+
     it("retains directly owned approval state in a nested composite resume", async () => {
       const nodes = [subWorkflow("outer", {
         workflow: {

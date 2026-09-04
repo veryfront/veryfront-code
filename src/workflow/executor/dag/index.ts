@@ -13,6 +13,7 @@ import type {
   SubWorkflowNodeConfig,
   WaitNodeConfig,
   WorkflowContext,
+  WorkflowDefinition,
   WorkflowNode,
   WorkflowNodeConfig,
   WorkflowRun,
@@ -670,6 +671,31 @@ function collectCompositeLoopStateEvidence(
   }
 }
 
+/**
+ * Rebuilds the node a map generates for one item, so a rebased processor's
+ * descendant ids match the ids its children actually execute under.
+ */
+function rebaseMapProcessorNode(
+  wrapperId: string,
+  processor: WorkflowNode | WorkflowDefinition,
+): WorkflowNode | undefined {
+  if (typeof processor !== "object" || processor === null) return undefined;
+  if ("steps" in processor) {
+    return {
+      id: wrapperId,
+      config: {
+        type: "subWorkflow",
+        workflow: namespaceWorkflowDefinition(`${wrapperId}/`, processor),
+      },
+    };
+  }
+  if (!("config" in processor)) return undefined;
+  return {
+    id: wrapperId,
+    config: rebaseCompositeDescendants(processor.config, processor.id, wrapperId),
+  };
+}
+
 function collectCompositeMapStateEvidence(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -681,11 +707,29 @@ function collectCompositeMapStateEvidence(
     if (node.config.type === "map") {
       const output = nodeStates[node.id]?.output;
       if (!Array.isArray(output)) continue;
+      const processor = node.config.processor;
       for (let index = 0; index < output.length; index++) {
         const wrapperId = `${node.id}_${index}`;
         if (nodeStates[wrapperId] === undefined) continue;
         declaredIds.add(wrapperId);
         allowedOwnerPaths.add(subWorkflowOwnerPath(parentPath, wrapperId));
+        // A map processor executes under ids rebased onto the generated
+        // wrapper, so its descendants are only reachable from the rebased
+        // definition. Without them the enclosing composite withholds an
+        // approved wait state and the map raises that approval again.
+        const wrapper = rebaseMapProcessorNode(wrapperId, processor);
+        if (wrapper === undefined) continue;
+        for (const descendantId of collectWorkflowNodeIds([wrapper])) {
+          declaredIds.add(descendantId);
+        }
+        collectCompositeSubWorkflowOwnerPaths([wrapper], parentPath, allowedOwnerPaths);
+        collectCompositeMapStateEvidence(
+          [wrapper],
+          nodeStates,
+          parentPath,
+          declaredIds,
+          allowedOwnerPaths,
+        );
       }
       continue;
     }
