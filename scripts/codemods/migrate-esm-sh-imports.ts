@@ -920,6 +920,24 @@ function pickSpecifier(
   );
 }
 
+/** Join a caller-spelled project root to a normalized report path. */
+export function joinReportPath(
+  displayRoot: string,
+  normalizedRelative: string,
+  windows = Deno.build.os === "windows",
+): string {
+  if (!normalizedRelative) return displayRoot;
+  // `C:` is drive-relative on Windows. Inserting a slash changes it into the
+  // drive root (`C:/`) and reports a different file from the one traversed.
+  if (windows && /^[A-Za-z]:$/.test(displayRoot)) {
+    return `${displayRoot}${normalizedRelative}`;
+  }
+  const endsWithSeparator = windows ? /[/\\]$/ : /\/$/;
+  return endsWithSeparator.test(displayRoot)
+    ? `${displayRoot}${normalizedRelative}`
+    : `${displayRoot}/${normalizedRelative}`;
+}
+
 async function main(args: string[]): Promise<void> {
   const { projectDir, dryRun, failOnConflict } = parseCliOptions(args);
 
@@ -930,7 +948,6 @@ async function main(args: string[]): Promise<void> {
   // spelling the caller passed: a relative project directory stays relative,
   // and no machine-specific filesystem layout leaks into the JSON output.
   const trailingSeparators = Deno.build.os === "windows" ? /[/\\]+$/ : /\/+$/;
-  const endsWithSeparator = Deno.build.os === "windows" ? /[/\\]$/ : /\/$/;
   const displayRoot = projectDir === parsePath(projectDir).root
     ? projectDir
     : projectDir.replace(trailingSeparators, "") || projectDir;
@@ -945,10 +962,7 @@ async function main(args: string[]): Promise<void> {
     const normalizedRelative = Deno.build.os === "windows"
       ? projectRelative.replaceAll("\\", "/")
       : projectRelative;
-    if (!normalizedRelative) return displayRoot;
-    return endsWithSeparator.test(displayRoot)
-      ? `${displayRoot}${normalizedRelative}`
-      : `${displayRoot}/${normalizedRelative}`;
+    return joinReportPath(displayRoot, normalizedRelative);
   };
 
   const sourceFiles: string[] = [];

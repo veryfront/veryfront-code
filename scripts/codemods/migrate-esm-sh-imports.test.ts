@@ -5,6 +5,7 @@ import { stat as statNativeFile } from "node:fs/promises";
 import {
   assertPathInsideProject,
   filterNeedsResolution,
+  joinReportPath,
   main,
   mergeEsmShPins,
   migrateEsmShImports,
@@ -33,6 +34,12 @@ Deno.test("esm-sh codemod rejects multiple positional arguments", () => {
     threw = true;
   }
   assert(threw);
+});
+
+Deno.test("esm-sh codemod preserves a drive-relative report root", () => {
+  assertEquals(joinReportPath("C:", "app.ts", true), "C:app.ts");
+  assertEquals(joinReportPath("C:\\project", "app.ts", true), "C:\\project/app.ts");
+  assertEquals(joinReportPath("C:\\", "app.ts", true), "C:\\app.ts");
 });
 
 // ---------------------------------------------------------------------------
