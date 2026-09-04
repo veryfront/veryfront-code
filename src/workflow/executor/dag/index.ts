@@ -49,8 +49,11 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
-import { collectWorkflowNodeIds } from "#veryfront/workflow/dsl/validation.ts";
-import { namespaceWorkflowDefinition } from "#veryfront/workflow/dsl/validation.ts";
+import {
+  collectWorkflowNodeIds,
+  namespaceWorkflowDefinition,
+  rebaseCompositeDescendants,
+} from "#veryfront/workflow/dsl/validation.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import {
   executeCompositeNodeWithPolicy,
@@ -517,6 +520,19 @@ function collectCompletedCompositeChildIds(
             const namespaced = namespaceWorkflowDefinition(`${wrapperId}/`, processor);
             collectExecutedCompositeNodeIds(
               namespaced.steps as WorkflowNode[],
+              nodeStates,
+              target,
+            );
+          } else if (typeof processor === "object" && processor !== null && "config" in processor) {
+            collectCompletedCompositeChildIds(
+              [{
+                id: wrapperId,
+                config: rebaseCompositeDescendants(
+                  processor.config,
+                  processor.id,
+                  wrapperId,
+                ),
+              }],
               nodeStates,
               target,
             );
