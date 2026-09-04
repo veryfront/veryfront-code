@@ -992,6 +992,10 @@ function enqueueDirectMetric(
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
   if (!hasDirectSampleCapacity(target)) return;
+  // Complete every fallible field before incrementing the target's retained
+  // sample count. A failed clock/BigInt conversion must not consume quota for
+  // a sample that can never enter the queue.
+  const timestampUnixNano = getUnixNanoTimestamp();
   const targetKey = retainDirectTarget(target);
   if (targetKey === null) return;
   const sample: DirectMetricSample = {
@@ -999,7 +1003,7 @@ function enqueueDirectMetric(
     name,
     value,
     attributes,
-    timestampUnixNano: getUnixNanoTimestamp(),
+    timestampUnixNano,
   };
   apply(weakMapSet, directSampleTargets, [sample, targetKey]);
   appendArrayValue(directQueue, sample);
