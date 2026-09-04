@@ -363,7 +363,7 @@ async function ensureProjectLinkedForDeploy(
  * - `"none"`: nothing to push, either because the receipt still describes
  *   the checkout or because deploy must refuse rather than upload.
  */
-export type BootstrapPushKind = "none" | "bootstrap" | "refresh";
+export type BootstrapPushKind = "none" | "bootstrap" | "refresh" | "refresh-preserving-remote";
 
 /** The deploy target a receipt has to match before it may be refreshed. */
 export interface BootstrapPushTarget {
@@ -432,7 +432,7 @@ function resolveDigestOnlySourceRefresh(
   // existing policy: an unclean legacy receipt refreshes, while a clean one
   // reaches validatePushReceipt as a commit mismatch.
   if (local.gitSource.commitSha !== null) return receipt.clean ? "none" : "refresh";
-  if (receipt.localSourceDigest === undefined) return "refresh";
+  if (receipt.localSourceDigest === undefined) return "refresh-preserving-remote";
   if (local.sourceDigest === null) return "refresh";
   return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
 }
@@ -505,9 +505,9 @@ export function resolveBootstrapPush(
  * O(project size). A deploy that pushes pays for it more than once: here,
  * inside `pushCommand`, when that push records its receipt, and in the final gate.
  * The reads are what make the proof a proof, and a push already uploads the
- * same bytes, so the scans are not the cost that dominates a deploy. An
- * ensure-pushed deploy that skips the push pays for this decision read and the
- * final gate read. An already-pushed deploy pays only for the final gate.
+ * same bytes, so the scans are not the cost that dominates a deploy. A
+ * refresh-enabled deploy pays for this decision read and the final gate read.
+ * A normal apply and an already-pushed deploy pay only for the final gate.
  */
 export interface LocalSourceObservation {
   gitSource: GitSource;
@@ -606,6 +606,8 @@ export async function resolvePushedSource(input: {
    * it. Apply flows omit it at the final gate to detect intervening edits.
    */
   local?: LocalSourceObservation | null;
+  /** Testable source observer used when {@link local} is omitted. */
+  observeSource?: typeof observeLocalSource;
 }): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
@@ -615,17 +617,19 @@ export async function resolvePushedSource(input: {
   }
 
   const enforceClean = input.enforceWorkingTreeClean !== false;
+  const observeSource = input.observeSource ?? observeLocalSource;
   // Promoting a project named by slug never uploads this directory, so its
   // digest would be scanned only to be discarded. Read Git alone there: the
   // commit comparison still runs, and the O(project size) read does not.
   const local = input.local ??
     (enforceClean
-      ? await observeLocalSource(input.projectDir)
+      ? await observeSource(input.projectDir)
       : { gitSource: await resolveGitSource(input.projectDir), sourceDigest: null });
   if (local.gitSource.indeterminate) {
     throw DEPLOYMENT_ERROR.create({
       detail:
-        "Git provenance could not be verified. Ensure GITHUB_SHA matches the checked-out HEAD, then retry the deploy.",
+        "Git provenance could not be verified. Ensure Git can inspect the project checkout. " +
+        "In GitHub Actions, ensure GITHUB_SHA matches the checked-out HEAD, then retry the deploy.",
     });
   }
   const commitSha = validatePushReceipt(receipt, {
@@ -1694,9 +1698,11 @@ function dryRunPlan(input: {
 export function createDeployProject(options: {
   polling?: DeployPollingPolicy;
   controlPlaneFactory?: (config: ResolvedConfig) => DeployControlPlane;
+  observeSource?: typeof observeLocalSource;
 } = {}): DeployProject {
   const polling = options.polling ?? {};
   const createControlPlane = options.controlPlaneFactory ?? createHttpDeployControlPlane;
+  const observeSource = options.observeSource ?? observeLocalSource;
 
   return {
     async execute(unresolvedRequest, observer) {
@@ -1738,12 +1744,11 @@ export function createDeployProject(options: {
       // Every caller it is true for verifies it, whether or not it also pushes.
       const verifyLocalSource = request.source.kind === "ensure-pushed" ||
         request.source.verifyLocalSource === true;
-      // One read of the working tree serves both the refresh decision and the
-      // gate that enforces it. Naming a project promotes what that project
-      // already has, so this directory is not its source and is not read.
-      const localSource = request.source.kind === "ensure-pushed"
-        ? await observeLocalSource(request.projectDir)
-        : null;
+      // Refresh decisions and dry runs need source evidence before target
+      // resolution. A normal apply reads it only at the final source gate.
+      const observeBeforeTarget = request.source.kind === "ensure-pushed" &&
+        (request.source.refreshStaleSource === true || request.mode === "dry-run");
+      const localSource = observeBeforeTarget ? await observeSource(request.projectDir) : null;
       const bootstrapPushKind = resolveBootstrapPush(
         receipt,
         request.source,
@@ -1774,9 +1779,11 @@ export function createDeployProject(options: {
 
       if (bootstrapPush) {
         await step(observer, "push-source", async () => {
+          const isRefresh = bootstrapPushKind === "refresh" ||
+            bootstrapPushKind === "refresh-preserving-remote";
           const refreshWithoutGit = bootstrapPushKind === "refresh" &&
             localSource?.gitSource.repositoryAvailable === false;
-          const refreshWithCommit = bootstrapPushKind === "refresh" &&
+          const refreshWithCommit = isRefresh &&
             localSource?.gitSource.commitSha !== null;
           await pushCommand({
             projectDir: request.projectDir,
@@ -1791,10 +1798,8 @@ export function createDeployProject(options: {
             force: bootstrapPushKind === "bootstrap",
             prune: refreshWithoutGit,
             discoverDeletedGitPaths: refreshWithCommit,
-            expectedCommitSha: bootstrapPushKind === "refresh"
-              ? localSource?.gitSource.commitSha
-              : undefined,
-            expectedRepositoryAvailable: bootstrapPushKind === "refresh"
+            expectedCommitSha: isRefresh ? localSource?.gitSource.commitSha : undefined,
+            expectedRepositoryAvailable: isRefresh
               ? localSource?.gitSource.repositoryAvailable
               : undefined,
             dryRun: request.mode === "dry-run",
@@ -1838,12 +1843,15 @@ export function createDeployProject(options: {
         // Naming a project also makes the source already-pushed, which would
         // otherwise skip this check: the dry run then reported a deploy that
         // the byte-identical apply refused, because the apply compares the
-        // receipt against the named project. `--skip-source-push` keeps its
-        // existing dry-run behaviour; the caller has said the source is handled.
+        // receipt against the named project. A caller that skips the upload but
+        // still owns this directory verifies its source in both modes.
         if (
           !bootstrapPush &&
-          (request.source.kind === "ensure-pushed" || request.projectSlug !== undefined)
+          (verifyLocalSource || request.projectSlug !== undefined)
         ) {
+          const verifiedLocalSource = verifyLocalSource
+            ? localSource ?? await observeSource(request.projectDir)
+            : localSource;
           await resolvePushedSource({
             projectDir: request.projectDir,
             controlPlane: config.apiUrl,
@@ -1851,7 +1859,7 @@ export function createDeployProject(options: {
             projectSlug: project!.slug,
             branch,
             enforceWorkingTreeClean: verifyLocalSource,
-            local: localSource,
+            local: verifiedLocalSource,
           });
         }
         return {
@@ -1868,19 +1876,21 @@ export function createDeployProject(options: {
         };
       }
 
-      const source = await step(observer, "verify-source", async () =>
-        resolvePushedSource({
+      const source = await step(observer, "verify-source", async () => {
+        return await resolvePushedSource({
           projectDir: request.projectDir,
           controlPlane: config.apiUrl,
           projectId: project!.id,
           projectSlug: project!.slug,
           branch,
           enforceWorkingTreeClean: verifyLocalSource,
-          // Always read the tree again at the final gate. A push rewrites the
-          // receipt, and even a no-push deploy may have spent time resolving
-          // routes and the target after the refresh decision observed source.
+          // Resolve the receipt first, then read the tree at the final gate. A
+          // push rewrites the receipt, and a refresh decision may have preceded
+          // route and target work.
           local: null,
-        }));
+          observeSource,
+        });
+      });
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {

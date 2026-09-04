@@ -49,6 +49,7 @@ import {
   areSourceFilesTracked,
   clearPushReceipt,
   computeSourceDigest,
+  type DeletedGitSourcePaths,
   getProjectTarget,
   type GitSource,
   normalizeControlPlane,
@@ -56,6 +57,7 @@ import {
   readPushReceipt,
   resolveDeletedGitSourcePaths,
   resolveGitSource,
+  resolveGitTrackedSourcePaths,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { buildStudioUrl } from "../studio/command.ts";
@@ -163,7 +165,7 @@ export interface PushSourceSnapshot {
   files: UploadOp[];
   gitSource: GitSource;
   sourceDigest: string;
-  deletedGitPaths?: string[];
+  deletedGitPaths?: DeletedGitSourcePaths;
 }
 
 /**
@@ -266,7 +268,8 @@ function sourceChangedError(): Error {
 
 function gitProvenanceError(): Error {
   return new Error(
-    "Git provenance could not be verified. Ensure GITHUB_SHA matches the checked-out HEAD, then retry.",
+    "Git provenance could not be verified. Ensure Git can inspect the project checkout. " +
+      "In GitHub Actions, ensure GITHUB_SHA matches the checked-out HEAD, then retry.",
   );
 }
 
@@ -661,6 +664,19 @@ export async function deleteFiles(
   return { deleted, failed, conflicts, applied };
 }
 
+function forcedPruneRemoteOnlyFiles(
+  remoteFiles: readonly RemoteFile[],
+  ignoreChecker: IgnoreChecker,
+  plannedFiles: Readonly<Record<string, SyncFileSnapshot>>,
+): RemoteFile[] {
+  const plannedPaths = new Set(Object.keys(plannedFiles));
+  return remoteFiles.filter((file) =>
+    ignoreChecker.isSupportedExtension(file.path) &&
+    !ignoreChecker.isIgnored(file.path) &&
+    !plannedPaths.has(file.path)
+  );
+}
+
 async function deleteForcedPruneRemoteOnlyFiles(
   client: ApiClient,
   projectSlug: string,
@@ -669,14 +685,11 @@ async function deleteForcedPruneRemoteOnlyFiles(
   ignoreChecker: IgnoreChecker,
   plannedFiles: Readonly<Record<string, SyncFileSnapshot>>,
 ): Promise<{ deleted: number; failed: number; conflicts: string[]; applied: string[] }> {
-  const plannedPaths = new Set(Object.keys(plannedFiles));
-  const remoteOnlyDeletes = remoteFiles
-    .filter((file) =>
-      ignoreChecker.isSupportedExtension(file.path) &&
-      !ignoreChecker.isIgnored(file.path) &&
-      !plannedPaths.has(file.path)
-    )
-    .map((file) => ({ path: file.path }));
+  const remoteOnlyDeletes = forcedPruneRemoteOnlyFiles(
+    remoteFiles,
+    ignoreChecker,
+    plannedFiles,
+  ).map((file) => ({ path: file.path }));
   if (remoteOnlyDeletes.length === 0) {
     return { deleted: 0, failed: 0, conflicts: [], applied: [] };
   }
@@ -773,16 +786,86 @@ function isSelectedForPrune(path: string, selectedPrunePaths: ReadonlySet<string
   return false;
 }
 
+function isHeadGitDeletion(path: string, deletedGitPaths: ReadonlySet<string>): boolean {
+  for (const deletedPath of deletedGitPaths) {
+    if (path === deletedPath || path.startsWith(`${deletedPath}/`)) return true;
+  }
+  return false;
+}
+
+async function activeGitlink(projectDir: string, path: string): Promise<boolean> {
+  try {
+    const metadata = await lstat(join(projectDir, path, ".git"));
+    return metadata.isFile || metadata.isDirectory;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+}
+
+async function retainedGitlinkSourcePaths(
+  repositoryDir: string,
+  gitlinks: Readonly<Record<string, string>>,
+): Promise<Set<string>> {
+  const retained = new Set<string>();
+  const grouped = new Map<string, string[]>();
+  for (const [path, gitlink] of Object.entries(gitlinks)) {
+    const paths = grouped.get(gitlink) ?? [];
+    paths.push(path);
+    grouped.set(gitlink, paths);
+  }
+
+  for (const [gitlink, paths] of grouped) {
+    if (!(await activeGitlink(repositoryDir, gitlink))) {
+      for (const path of paths) retained.add(path);
+      continue;
+    }
+    const childDir = join(repositoryDir, gitlink);
+    const childSource = await resolveGitSource(childDir);
+    if (childSource.indeterminate || childSource.commitSha === null) {
+      throw gitProvenanceError();
+    }
+    const childDeletions = await resolveDeletedGitSourcePaths(childDir);
+    const childHeadDeletions = new Set(childDeletions.head);
+    const relativePaths = new Map(
+      paths.map((path) => [path, path.slice(gitlink.length + 1)] as const),
+    );
+    const eligible = [...relativePaths.values()].filter((path) =>
+      !isHeadGitDeletion(path, childHeadDeletions)
+    );
+    const childTracked = await resolveGitTrackedSourcePaths(
+      childDir,
+      childSource.commitSha,
+      eligible,
+    );
+    const childRetained = new Set(childTracked.files);
+    for (const path of await retainedGitlinkSourcePaths(childDir, childTracked.gitlinks)) {
+      childRetained.add(path);
+    }
+    for (const [path, relativePath] of relativePaths) {
+      if (childRetained.has(relativePath)) retained.add(path);
+    }
+  }
+  return retained;
+}
+
 function isSelectedGitDeletion(
   path: string,
-  deletedGitPaths: ReadonlySet<string>,
+  headDeletedGitPaths: ReadonlySet<string>,
+  ownershipRequiredDeletedGitPaths: ReadonlySet<string>,
   previousLocalPaths: ReadonlySet<string> | undefined,
 ): boolean {
-  for (const deletedPath of deletedGitPaths) {
-    if (path === deletedPath) {
-      return previousLocalPaths === undefined || previousLocalPaths.has(path);
+  for (const deletedPath of headDeletedGitPaths) {
+    if (
+      previousLocalPaths?.has(path) &&
+      (path === deletedPath || path.startsWith(`${deletedPath}/`))
+    ) {
+      return true;
     }
-    if (previousLocalPaths?.has(path) && path.startsWith(`${deletedPath}/`)) return true;
+  }
+  if (!previousLocalPaths?.has(path)) return false;
+  for (const deletedPath of ownershipRequiredDeletedGitPaths) {
+    if (path === deletedPath || path.startsWith(`${deletedPath}/`)) return true;
   }
   return false;
 }
@@ -930,6 +1013,7 @@ export async function recordPushReceipt(
   snapshot: PushSourceSnapshot,
   ignoreChecker: IgnoreChecker,
   pushedSourceDigest = snapshot.sourceDigest,
+  retainedLocalPaths: readonly string[] = [],
 ): Promise<void> {
   const project = await getProjectTarget(client, projectApiReference(config));
   let currentSnapshot: PushSourceSnapshot;
@@ -952,7 +1036,7 @@ export async function recordPushReceipt(
     // digest so deploy can recompute it from the directory and prove the source
     // is still the one that was pushed.
     localSourceDigest: snapshot.sourceDigest,
-    localPaths: snapshot.files.map((file) => file.path),
+    localPaths: [...snapshot.files.map((file) => file.path), ...retainedLocalPaths],
     clean: snapshot.gitSource.clean,
   });
 }
@@ -1097,7 +1181,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         throw error;
       }
       const ops = sourceSnapshot.files;
-      const deletedGitPaths = new Set(sourceSnapshot.deletedGitPaths ?? []);
+      const headDeletedGitPaths = new Set(sourceSnapshot.deletedGitPaths?.head ?? []);
+      const ownershipRequiredDeletedGitPaths = new Set(
+        sourceSnapshot.deletedGitPaths?.indexOnly ?? [],
+      );
       const localPaths = new Set(ops.map((op) => op.path));
 
       let target: PushRemoteTarget = projectExists
@@ -1166,27 +1253,54 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         })
         : null;
       let previousLocalPaths: Set<string> | undefined;
+      const retainedTrackedLocalPaths: string[] = [];
+      const missingPriorLocalPaths: string[] = [];
       if (
         project &&
         (options.discoverDeletedGitPaths || options.expectedCommitSha !== undefined)
       ) {
+        let receipt: Awaited<ReturnType<typeof readPushReceipt>> | undefined;
         try {
-          const receipt = await readPushReceipt(projectDir);
-          if (
-            receipt?.projectId === project.id &&
-            receipt.projectSlug === project.slug &&
-            receipt.branch === branchName &&
-            normalizeControlPlane(receipt.controlPlane) === normalizeControlPlane(config.apiUrl) &&
-            receipt.localPaths !== undefined
-          ) {
-            previousLocalPaths = new Set(receipt.localPaths);
-            for (const path of previousLocalPaths) {
-              if (!localPaths.has(path)) deletedGitPaths.add(path);
-            }
-          }
+          receipt = await readPushReceipt(projectDir);
         } catch {
           // Push replaces invalid or unreadable receipt state. It must not use
           // that state as evidence for an automatic remote deletion.
+        }
+        if (
+          receipt?.projectId === project.id &&
+          receipt.projectSlug === project.slug &&
+          receipt.branch === branchName &&
+          normalizeControlPlane(receipt.controlPlane) === normalizeControlPlane(config.apiUrl) &&
+          receipt.localPaths !== undefined
+        ) {
+          previousLocalPaths = new Set(receipt.localPaths);
+          for (const path of previousLocalPaths) {
+            if (
+              !localPaths.has(path) &&
+              !isHeadGitDeletion(path, headDeletedGitPaths)
+            ) {
+              missingPriorLocalPaths.push(path);
+            }
+          }
+          const trackedMissing = options.discoverDeletedGitPaths
+            ? await resolveGitTrackedSourcePaths(
+              projectDir,
+              sourceSnapshot.gitSource.commitSha,
+              missingPriorLocalPaths,
+            )
+            : { files: [], gitlinks: {} };
+          const trackedMissingPaths = new Set(trackedMissing.files);
+          const retainedGitlinkPaths = await retainedGitlinkSourcePaths(
+            projectDir,
+            trackedMissing.gitlinks,
+          );
+          for (const path of missingPriorLocalPaths) {
+            if (trackedMissingPaths.has(path) || retainedGitlinkPaths.has(path)) {
+              retainedTrackedLocalPaths.push(path);
+            } else {
+              ownershipRequiredDeletedGitPaths.add(path);
+            }
+          }
         }
       }
 
@@ -1195,12 +1309,24 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         localPaths,
         ignoreChecker,
       );
+      const isSelectedMissingRemotePath = (path: string): boolean =>
+        isSelectedForPrune(path, selectedPrunePaths) ||
+        isSelectedGitDeletion(
+          path,
+          headDeletedGitPaths,
+          ownershipRequiredDeletedGitPaths,
+          previousLocalPaths,
+        );
+      const selectedMissingRemoteFiles = (files: readonly RemoteFile[]): RemoteFile[] =>
+        files.filter((file) =>
+          !localPaths.has(file.path) &&
+          ignoreChecker.isSupportedExtension(file.path) &&
+          !ignoreChecker.isIgnored(file.path) &&
+          isSelectedMissingRemotePath(file.path)
+        );
       const toDelete = pruneRemoteMissing
         ? remoteFilesMissingLocally
-        : remoteFilesMissingLocally.filter((path) =>
-          isSelectedForPrune(path, selectedPrunePaths) ||
-          isSelectedGitDeletion(path, deletedGitPaths, previousLocalPaths)
-        );
+        : remoteFilesMissingLocally.filter(isSelectedMissingRemotePath);
       // Preflight: fail before any remote mutation if a preserved remote file
       // is missing content, so the digest computations after upload/delete
       // cannot be the first to discover it.
@@ -1227,6 +1353,25 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const deleteOps = plan.deletes;
       const branchId = target.branchId;
       let pushedSyncFiles = plan.nextFiles;
+      const persistAppliedLateDeletes = (
+        remoteFiles: readonly RemoteFile[],
+        applied: readonly string[],
+      ): Promise<void> => {
+        const appliedPaths = new Set(applied);
+        return writeAppliedSyncTarget(
+          projectDir,
+          config,
+          project,
+          branchName,
+          remoteFiles.filter((file) =>
+            !appliedPaths.has(file.path) &&
+            ignoreChecker.isSupportedExtension(file.path) &&
+            !ignoreChecker.isIgnored(file.path)
+          ),
+          [],
+          applied.map((path) => ({ path })),
+        );
+      };
 
       if (!dryRun && !force) {
         spinner = quiet || jsonOutput
@@ -1276,15 +1421,21 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 projectApiReference(config),
                 target.source,
               );
-              const lateDeleteResult = await deleteForcedPruneRemoteOnlyFiles(
-                client,
-                projectApiReference(config),
-                branchId,
+              const latePruneFiles = forcedPruneRemoteOnlyFiles(
                 latestRemoteFiles,
                 ignoreChecker,
                 plan.nextFiles,
               );
+              if (latePruneFiles.length > 0) await clearPushReceipt(projectDir);
+              const lateDeleteResult = await deleteFiles(
+                client,
+                projectApiReference(config),
+                branchId,
+                latePruneFiles.map((file) => ({ path: file.path })),
+                false,
+              );
               forcedPruneDeleteCount = lateDeleteResult.deleted;
+              await persistAppliedLateDeletes(latestRemoteFiles, lateDeleteResult.applied);
               if (lateDeleteResult.conflicts.length > 0) {
                 throw pushConflictError(lateDeleteResult.conflicts);
               }
@@ -1311,11 +1462,45 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
             } else {
-              const latestRemoteFiles = await listAllFiles(
+              let latestRemoteFiles = await listAllFiles(
                 client,
                 projectApiReference(config),
                 target.source,
               );
+              const lateSelectedFiles = selectedMissingRemoteFiles(latestRemoteFiles);
+              if (lateSelectedFiles.length > 0) await clearPushReceipt(projectDir);
+              const lateDeleteResult = await deleteFiles(
+                client,
+                projectApiReference(config),
+                branchId,
+                lateSelectedFiles.map((file) => ({ path: file.path })),
+                false,
+              );
+              forcedPruneDeleteCount = lateDeleteResult.deleted;
+              await persistAppliedLateDeletes(latestRemoteFiles, lateDeleteResult.applied);
+              if (lateDeleteResult.conflicts.length > 0) {
+                throw pushConflictError(lateDeleteResult.conflicts);
+              }
+              if (lateDeleteResult.failed > 0) {
+                throw new Error(
+                  `Push failed for ${lateDeleteResult.failed} file${
+                    lateDeleteResult.failed === 1 ? "" : "s"
+                  } during forced targeted-prune reconciliation`,
+                );
+              }
+              for (const file of lateSelectedFiles) deletePaths.add(file.path);
+              if (lateDeleteResult.deleted > 0) {
+                latestRemoteFiles = await listAllFiles(
+                  client,
+                  projectApiReference(config),
+                  target.source,
+                );
+              }
+              const remainingSelected = selectedMissingRemoteFiles(latestRemoteFiles);
+              if (remainingSelected.length > 0) {
+                await persistAppliedLateDeletes(latestRemoteFiles, lateDeleteResult.applied);
+                throw pushConflictError(remainingSelected.map((file) => file.path));
+              }
               pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
               pushedSyncFiles = await buildSyncFilesAfterAppliedChanges(
                 latestRemoteFiles.filter((file) =>
@@ -1336,6 +1521,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               sourceSnapshot,
               ignoreChecker,
               pushedSourceDigest,
+              retainedTrackedLocalPaths,
             );
             if (project) {
               await writeSyncTarget(projectDir, {
@@ -1689,6 +1875,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
         } else {
           let latestRemoteFiles = await listAllFilesForVerification();
+          const lateSelectedFiles = selectedMissingRemoteFiles(latestRemoteFiles);
+          for (const file of lateSelectedFiles) deletePaths.add(file.path);
           const repairUploadResult = await uploadForcedPlannedFiles(
             client,
             projectApiReference(config),
@@ -1761,9 +1949,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           );
           const conflicts = [
             ...findRemoteSnapshotChanges(expectedUploadSnapshot, actualUploadSnapshot),
-            ...latestRemoteFiles
-              .filter((file) => deletePaths.has(file.path))
-              .map((file) => file.path),
+            ...selectedMissingRemoteFiles(latestRemoteFiles).map((file) => file.path),
           ];
           if (conflicts.length > 0) {
             await writeVerifiedAppliedSyncTarget(latestRemoteFiles);
@@ -1798,6 +1984,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             sourceSnapshot,
             ignoreChecker,
             pushedSourceDigest,
+            retainedTrackedLocalPaths,
           );
         } catch (error) {
           await writePlannedSyncTarget();

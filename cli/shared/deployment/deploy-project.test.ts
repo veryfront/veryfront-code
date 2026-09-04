@@ -100,7 +100,10 @@ function helperControlPlane(overrides: Partial<DeployControlPlane>): DeployContr
     ...overrides,
   };
 }
-function createDeployment(controlPlane: InMemoryDeployControlPlane) {
+function createDeployment(
+  controlPlane: InMemoryDeployControlPlane,
+  observeSource?: typeof observeLocalSource,
+) {
   return createDeployProject({
     polling: {
       assetManifestPollIntervalMs: 100,
@@ -109,6 +112,7 @@ function createDeployment(controlPlane: InMemoryDeployControlPlane) {
       environmentTimeoutMs: 1_000,
     },
     controlPlaneFactory: () => controlPlane,
+    ...(observeSource ? { observeSource } : {}),
   });
 }
 
@@ -301,6 +305,66 @@ describe("DeployProject", () => {
         assertEquals(outcome.kind, "dry-run");
         assertEquals(controlPlane.createdReleases, []);
         assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("validates locally owned already-pushed source during dry runs", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/app/page.tsx`,
+          "export default function Page() { return <main>Changed</main>; }\n",
+        );
+        const deployment = createDeployment(controlPlane);
+
+        await assertRejects(
+          () =>
+            deployment.execute({
+              projectDir,
+              environment: "production",
+              mode: "dry-run",
+              source: { kind: "already-pushed", verifyLocalSource: true },
+            }),
+          Error,
+          "uncommitted changes",
+        );
+        assertEquals(controlPlane.createdReleases, []);
+        assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("observes source once for a normal apply without refresh", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir, files } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.releaseFiles = files;
+      let observations = 0;
+      const deployment = createDeployment(controlPlane, async (dir, dependencies) => {
+        observations++;
+        return await observeLocalSource(dir, dependencies);
+      });
+      try {
+        const outcome = await withFetchStub(
+          () => new Response("ready"),
+          () =>
+            deployment.execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "ensure-pushed" },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(observations, 1);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -1268,6 +1332,21 @@ describe("resolveBootstrapPush", () => {
         target,
       ),
       "none",
+    );
+  });
+
+  it("upgrades a legacy non-Git receipt without full-prune authority", () => {
+    assertEquals(
+      resolveBootstrapPush(
+        { ...receipt, commitSha: null, clean: false },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, repositoryAvailable: false },
+          sourceDigest: `sha256:${"3".repeat(64)}`,
+        },
+        target,
+      ),
+      "refresh-preserving-remote",
     );
   });
 

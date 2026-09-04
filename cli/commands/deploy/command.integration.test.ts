@@ -482,6 +482,8 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
       branch: "main",
       commitSha,
       sourceDigest,
+      localSourceDigest: sourceDigest,
+      localPaths: ["app.ts", "legacy.ts", "veryfront.json"],
       clean: true,
       pushedAt: "2026-07-10T09:20:00.000Z",
     });
@@ -1842,6 +1844,18 @@ it("does not rewrite an existing local project link during dry-run deploy", asyn
     });
     const linkPath = `${projectDir}/.veryfront/project.json`;
     const originalLink = await Deno.readTextFile(linkPath);
+    const sourceDigest = await computeSourceDigest([]);
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "canonical-slug",
+      branch: "main",
+      commitSha: null,
+      sourceDigest,
+      localSourceDigest: sourceDigest,
+      localPaths: [],
+      clean: false,
+    });
 
     await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);

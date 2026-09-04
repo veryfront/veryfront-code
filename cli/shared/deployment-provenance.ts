@@ -2,7 +2,7 @@ import { env } from "#cli/process-env";
 import { createFileSystem, getEnv } from "veryfront/platform";
 import { runCommand } from "#cli/process-command";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
-import { dirname, join, relative } from "veryfront/platform/path";
+import { dirname, isAbsolute, join, relative } from "veryfront/platform/path";
 import { DEPLOYMENT_ERROR } from "veryfront/errors";
 import type { ApiClient } from "./config.ts";
 
@@ -203,6 +203,45 @@ function normalizeCommitSha(value: string | undefined): string | null {
 
 type GitCommandResult = Awaited<ReturnType<typeof runCommand>>;
 
+function remoteMatchesGitHubRepository(remote: GitCommandResult | null): boolean {
+  if (!remote?.success) return false;
+  const repository = getEnv("GITHUB_REPOSITORY")?.trim();
+  const server = getEnv("GITHUB_SERVER_URL")?.trim() || "https://github.com";
+  const remoteUrl = remote.stdout?.trim();
+  if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !remoteUrl) {
+    return false;
+  }
+
+  let hostname: string;
+  let pathname: string;
+  const scpRemote = remoteUrl.includes("://")
+    ? null
+    : /^(?:[^@/:]+@)?([^/:]+):(.+)$/.exec(remoteUrl);
+  if (scpRemote) {
+    hostname = scpRemote[1]!;
+    pathname = scpRemote[2]!;
+  } else {
+    try {
+      const parsed = new URL(remoteUrl);
+      if (!parsed.hostname) return false;
+      hostname = parsed.hostname;
+      pathname = parsed.pathname;
+    } catch {
+      return false;
+    }
+  }
+
+  let serverHostname: string;
+  try {
+    serverHostname = new URL(server).hostname;
+  } catch {
+    return false;
+  }
+  const normalizedPath = pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+  return hostname.toLowerCase() === serverHostname.toLowerCase() &&
+    normalizedPath.toLowerCase() === repository.toLowerCase();
+}
+
 function gitSourcesAgree(
   repositoryAvailable: boolean,
   envSha: string | undefined,
@@ -232,17 +271,45 @@ async function gitSourceFromProbes(
   envSha: string | undefined,
   head: GitCommandResult,
   status: GitCommandResult,
+  repositoryRoot: GitCommandResult,
+  remote: GitCommandResult | null,
 ): Promise<GitSource> {
-  const normalizedEnvSha = normalizeCommitSha(envSha);
+  const workspace = getEnv("GITHUB_WORKSPACE")?.trim();
+  const root = repositoryRoot.success ? repositoryRoot.stdout?.trim() : undefined;
+  let repositoryEnvSha: string | undefined;
+  if (envSha !== undefined && workspace && root) {
+    try {
+      const [canonicalWorkspace, canonicalRoot] = await Promise.all([
+        realPath(workspace),
+        realPath(root),
+      ]);
+      const workspaceRelativeRoot = relative(canonicalWorkspace, canonicalRoot);
+      const insideWorkspace = workspaceRelativeRoot === "." ||
+        (workspaceRelativeRoot !== ".." &&
+          !workspaceRelativeRoot.startsWith("../") &&
+          !isAbsolute(workspaceRelativeRoot));
+      const workspaceIsCheckout = await lstatIfPresent(join(canonicalWorkspace, ".git")) !== null;
+      if (
+        canonicalWorkspace === canonicalRoot ||
+        (insideWorkspace && !workspaceIsCheckout && remoteMatchesGitHubRepository(remote))
+      ) {
+        repositoryEnvSha = envSha;
+      }
+    } catch {
+      // Without a verified checkout boundary, GITHUB_SHA is not evidence about
+      // this repository. The locally resolved HEAD remains authoritative.
+    }
+  }
+  const normalizedEnvSha = normalizeCommitSha(repositoryEnvSha);
   const normalizedHeadSha = normalizeCommitSha(head.success ? head.stdout?.trim() : undefined);
   const gitMetadataPresent = !head.success && !status.success
     ? await hasGitMetadata(projectDir)
     : false;
   const repositoryAvailable = head.success || status.success || gitMetadataPresent;
-  const envShaDescribesCheckout = repositoryAvailable && envSha !== undefined;
+  const envShaDescribesCheckout = repositoryAvailable && repositoryEnvSha !== undefined;
   const sourcesAgree = gitSourcesAgree(
     repositoryAvailable,
-    envSha,
+    repositoryEnvSha,
     normalizedEnvSha,
     normalizedHeadSha,
   );
@@ -333,32 +400,54 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
         capture: true,
         timeoutMs: 5_000,
       }),
+      runCommand("git", {
+        args: ["rev-parse", "--show-toplevel"],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+      envSha === undefined ? Promise.resolve(null) : runCommand("git", {
+        args: ["remote", "get-url", "origin"],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
     ]);
   } catch {
     const repositoryAvailable = await hasGitMetadata(projectDir);
-    const indeterminate = repositoryAvailable || envSha !== undefined;
     return {
-      commitSha: normalizeCommitSha(envSha),
+      commitSha: null,
       clean: false,
       repositoryAvailable,
-      ...(indeterminate ? { indeterminate: true } : {}),
+      ...(repositoryAvailable ? { indeterminate: true } : {}),
     };
   }
 
-  const [head, status] = commandResults;
+  const [head, status, repositoryRoot, remote] = commandResults;
   // A directory with no repository around it has no HEAD for an environment
   // SHA to agree or disagree with: GITHUB_SHA names the checkout the process
   // happens to run under, not this source. Reading it as evidence about this
   // directory would refuse every push of a non-Git project from inside a CI
-  // job, so it is ignored here and the non-Git fallback below — no commit, not
-  // clean, digest-only provenance — stands, exactly as it does off CI. Nothing
+  // job, so it is ignored here and the non-Git fallback below (no commit,
+  // digest-only provenance) stands, exactly as it does off CI. Nothing
   // is vouched for either way: `commitSha` never adopts an environment SHA
   // that no local commit confirmed.
   // `git status` can succeed where `git rev-parse HEAD` cannot: an unborn
   // repository, or a checkout that has lost its Git metadata. The helper
   // keeps that case indeterminate so an environment SHA cannot stand in for a
   // local commit that was never verified.
-  return await gitSourceFromProbes(projectDir, envSha, head, status);
+  return await gitSourceFromProbes(
+    projectDir,
+    envSha,
+    head,
+    status,
+    repositoryRoot,
+    remote,
+  );
 }
 
 /**
@@ -378,7 +467,16 @@ function deletedGitSourcePathsUnavailable(): Error {
   });
 }
 
-export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<string[]> {
+export interface DeletedGitSourcePaths {
+  /** Paths present in HEAD and absent from the working tree. */
+  head: string[];
+  /** Paths deleted only between the index and working tree. */
+  indexOnly: string[];
+}
+
+export async function resolveDeletedGitSourcePaths(
+  projectDir: string,
+): Promise<DeletedGitSourcePaths> {
   const gitEnv = env();
   for (const key of Object.keys(gitEnv)) {
     if (key.startsWith("GIT_")) delete gitEnv[key];
@@ -431,13 +529,100 @@ export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<
   if (results.some((result) => !result.success)) {
     throw deletedGitSourcePathsUnavailable();
   }
-  return [
-    ...new Set(
-      results.flatMap((result) =>
-        (result.stdout ?? "").split("\0").filter((path) => path.length > 0)
-      ),
-    ),
+  const parsePaths = (stdout: string | undefined): string[] => [
+    ...new Set((stdout ?? "").split("\0").filter((path) => path.length > 0)),
   ];
+  const head = parsePaths(results[0]?.stdout);
+  const headPaths = new Set(head);
+  return {
+    head,
+    indexOnly: parsePaths(results[1]?.stdout).filter((path) => !headPaths.has(path)),
+  };
+}
+
+export async function resolveGitTrackedSourcePaths(
+  projectDir: string,
+  commitSha: string | null,
+  paths: readonly string[],
+): Promise<{ files: string[]; gitlinks: Record<string, string> }> {
+  if (commitSha === null || paths.length === 0) return { files: [], gitlinks: {} };
+  const gitEnv = gitCommandEnvironment();
+  let prefixResult: GitCommandResult;
+  try {
+    prefixResult = await runCommand("git", {
+      args: ["rev-parse", "--show-prefix"],
+      cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
+      capture: true,
+      timeoutMs: 5_000,
+    });
+  } catch {
+    throw deletedGitSourcePathsUnavailable();
+  }
+  if (!prefixResult.success) throw deletedGitSourcePathsUnavailable();
+  const projectPrefix = (prefixResult.stdout ?? "").replace(/\r?\n$/, "");
+  const files: string[] = [];
+  const gitlinks: Record<string, string> = {};
+  const uniquePaths = [...new Set(paths)];
+  for (let offset = 0; offset < uniquePaths.length; offset += 64) {
+    const candidates = uniquePaths.slice(offset, offset + 64);
+    const requested = new Set<string>();
+    for (const path of candidates) {
+      const repositoryPath = `${projectPrefix}${path}`;
+      requested.add(repositoryPath);
+      let separator = repositoryPath.lastIndexOf("/");
+      while (separator >= projectPrefix.length) {
+        requested.add(repositoryPath.slice(0, separator));
+        separator = repositoryPath.lastIndexOf("/", separator - 1);
+      }
+    }
+    let result: GitCommandResult;
+    try {
+      result = await runCommand("git", {
+        args: [
+          "ls-tree",
+          "--full-tree",
+          "-z",
+          commitSha,
+          "--",
+          ...[...requested].map((path) => `:(top,literal)${path}`),
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      });
+    } catch {
+      throw deletedGitSourcePathsUnavailable();
+    }
+    if (!result.success) throw deletedGitSourcePathsUnavailable();
+    const modes = new Map<string, string>();
+    for (const raw of (result.stdout ?? "").split("\0")) {
+      if (!raw) continue;
+      const match = /^([0-7]{6}) (?:blob|tree|commit) [0-9a-f]{40,64}\t([\s\S]+)$/.exec(raw);
+      if (!match) throw deletedGitSourcePathsUnavailable();
+      modes.set(match[2]!, match[1]!);
+    }
+    for (const path of candidates) {
+      const repositoryPath = `${projectPrefix}${path}`;
+      if (modes.get(repositoryPath)?.startsWith("100")) {
+        files.push(path);
+        continue;
+      }
+      let separator = repositoryPath.lastIndexOf("/");
+      while (separator >= projectPrefix.length) {
+        const ancestor = repositoryPath.slice(0, separator);
+        if (modes.get(ancestor) === "160000") {
+          gitlinks[path] = ancestor.slice(projectPrefix.length);
+          break;
+        }
+        separator = repositoryPath.lastIndexOf("/", separator - 1);
+      }
+    }
+  }
+  return { files, gitlinks };
 }
 
 export async function areSourceFilesTracked(
