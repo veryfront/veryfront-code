@@ -712,8 +712,8 @@ const JSX_CACHE_PRUNE_RETRY_SLACK_MS = 1_000;
  *
  * One runtime process can serve many projects, and an idle-horizon follow-up
  * stays pending for hours, so the pending set is capped like the other memos
- * here. If the bound is reached, the oldest pending directory is revisited
- * immediately instead of waiting for another transform to arm its sweep.
+ * here. Directories beyond the timer bound wait in a second bounded queue and
+ * are promoted as timers fire, so capacity never starts a recursive scan loop.
  */
 const MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES = 256;
 
@@ -722,6 +722,42 @@ const scheduledJsxCachePrunes = new Map<
   string,
   { timer: ReturnType<typeof setTimeout>; fireAtMs: number }
 >();
+const queuedJsxCachePrunes = new Map<string, number>();
+
+function queueJsxCachePrune(esmCacheDir: string, fireAtMs: number): void {
+  const queuedAtMs = queuedJsxCachePrunes.get(esmCacheDir);
+  if (queuedAtMs !== undefined) {
+    if (fireAtMs < queuedAtMs) queuedJsxCachePrunes.set(esmCacheDir, fireAtMs);
+    return;
+  }
+  if (queuedJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX cache prune queue is full`, {
+      cacheDirectory: esmCacheDir,
+    });
+    return;
+  }
+  queuedJsxCachePrunes.set(esmCacheDir, fireAtMs);
+}
+
+function promoteQueuedJsxCachePrune(): void {
+  if (
+    scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES ||
+    queuedJsxCachePrunes.size === 0
+  ) return;
+  let selectedDirectory: string | undefined;
+  let selectedFireAtMs = Number.POSITIVE_INFINITY;
+  for (const [directory, fireAtMs] of queuedJsxCachePrunes) {
+    if (fireAtMs >= selectedFireAtMs) continue;
+    selectedDirectory = directory;
+    selectedFireAtMs = fireAtMs;
+  }
+  if (selectedDirectory === undefined) return;
+  queuedJsxCachePrunes.delete(selectedDirectory);
+  scheduleJsxCachePruneRetry(
+    selectedDirectory,
+    Math.max(selectedFireAtMs - Date.now(), 0),
+  );
+}
 
 function revisitJsxCacheDirectory(esmCacheDir: string): void {
   void collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now()).catch((error) => {
@@ -756,16 +792,12 @@ function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void 
     if (pending.fireAtMs <= fireAtMs) return;
     clearTimeout(pending.timer);
   } else if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
-    const oldestDirectory = scheduledJsxCachePrunes.keys().next().value;
-    if (oldestDirectory !== undefined) {
-      const oldest = scheduledJsxCachePrunes.get(oldestDirectory);
-      if (oldest) clearTimeout(oldest.timer);
-      scheduledJsxCachePrunes.delete(oldestDirectory);
-      revisitJsxCacheDirectory(oldestDirectory);
-    }
+    queueJsxCachePrune(esmCacheDir, fireAtMs);
+    return;
   }
   const timer = setTimeout(() => {
     scheduledJsxCachePrunes.delete(esmCacheDir);
+    promoteQueuedJsxCachePrune();
     revisitJsxCacheDirectory(esmCacheDir);
   }, delayMs);
   unrefTimer(timer);
@@ -785,7 +817,7 @@ function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void 
  * and deferring it keeps a process's startup burst free of an extra scan.
  */
 export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
-  if (scheduledJsxCachePrunes.has(esmCacheDir)) return;
+  if (scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir)) return;
   scheduleJsxCachePruneRetry(
     esmCacheDir,
     JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
@@ -796,6 +828,7 @@ export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
 function cancelScheduledJsxCachePrunes(): void {
   for (const pending of scheduledJsxCachePrunes.values()) clearTimeout(pending.timer);
   scheduledJsxCachePrunes.clear();
+  queuedJsxCachePrunes.clear();
   if (lazyJsxArtifactHeartbeat !== undefined) {
     clearInterval(lazyJsxArtifactHeartbeat);
     lazyJsxArtifactHeartbeat = undefined;
@@ -1035,18 +1068,16 @@ async function collectExcessJsxArtifacts(
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
 
-  // Recovery tombstones inherit an already-stale lock mtime. Release
-  // tombstones can still be between rename and owner verification, so those
-  // remain protected for one full lease-stale interval before maintenance can
-  // remove an abandoned file.
+  // A recovery rename can capture a fresh replacement owner after validating
+  // a stale predecessor. Both recovery and release tombstones therefore stay
+  // protected for one full lease-stale interval before maintenance removes an
+  // abandoned file.
   for (const name of leaseTombstones) {
-    if (name.includes(".lock.release-")) {
-      const modifiedAtMs = await readArtifactModifiedAtMs(join(esmCacheDir, name));
-      const collectableAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
-      if (modifiedAtMs > 0 && collectableAtMs > nowMs) {
-        noteRetry(collectableAtMs);
-        continue;
-      }
+    const modifiedAtMs = await readArtifactModifiedAtMs(join(esmCacheDir, name));
+    const collectableAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
+    if (modifiedAtMs > 0 && collectableAtMs > nowMs) {
+      noteRetry(collectableAtMs);
+      continue;
     }
     try {
       await localFs.remove(join(esmCacheDir, name));
@@ -1174,7 +1205,7 @@ export const __jsxCacheInternals = {
   cancelScheduledJsxCachePrunes,
   collectExcessJsxArtifacts,
   hasScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
-    scheduledJsxCachePrunes.has(esmCacheDir),
+    scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir),
   isModuleRemembered: (transformedPath: string): boolean =>
     normalizedModulePaths.has(transformedPath),
   isLazyArtifactRetained: isLazyJsxArtifactRetained,
@@ -1188,6 +1219,7 @@ export const __jsxCacheInternals = {
   MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
   MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
   normalizedModuleMemoSize: (): number => normalizedModulePaths.size,
+  queuedJsxCachePruneCount: (): number => queuedJsxCachePrunes.size,
   readArtifactModifiedAtMs,
   retainLazyJsxArtifact,
   releaseJsxArtifact,
@@ -1195,6 +1227,7 @@ export const __jsxCacheInternals = {
   removeJsxArtifactUnlessServed,
   retainJsxArtifact,
   scheduleJsxCachePruneRetry,
+  scheduledJsxCachePruneCount: (): number => scheduledJsxCachePrunes.size,
   runLazyJsxArtifactHeartbeat,
   servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
   wasJsxArtifactRecentlyServed,

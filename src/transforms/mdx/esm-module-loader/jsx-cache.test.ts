@@ -1394,6 +1394,24 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("does not sweep a live stale-recovery tombstone", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-live-stale-test-" });
+    const tombstone = join(
+      tempDir,
+      "jsx-live.mjs.lock.stale-11111111-1111-4111-8111-111111111111",
+    );
+    try {
+      await writeTextFile(tombstone, "replacement-owner");
+
+      await collectExcessJsxArtifacts(tempDir, new Map(), Date.now());
+
+      assertEquals(await getLocalFs().exists(tombstone), true);
+      assertEquals(hasScheduledJsxCachePrune(tempDir), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("recovers stale orphan artifact lease files", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-orphan-lock-test-" });
     const staleArtifact = "jsx-orphaned.mjs";
@@ -2309,13 +2327,15 @@ describe("scheduled prune bound", () => {
     cancelScheduledJsxCachePrunes,
     hasScheduledJsxCachePrune,
     MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
+    queuedJsxCachePruneCount,
+    scheduledJsxCachePruneCount,
   } = __jsxCacheInternals;
 
   afterEach(() => {
     cancelScheduledJsxCachePrunes();
   });
 
-  it("admits new directories by retiring the oldest cleanup timer", () => {
+  it("queues overflow directories without canceling active cleanup timers", () => {
     for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES; entry++) {
       ensureJsxCacheSweepArmed(`/tmp/vf-jsx-sweep-bound/${entry}`);
     }
@@ -2323,14 +2343,16 @@ describe("scheduled prune bound", () => {
     ensureJsxCacheSweepArmed("/tmp/vf-jsx-sweep-bound/overflow");
     assertEquals(
       hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/0"),
-      false,
-      "capacity retires the least-recently armed directory",
+      true,
+      "capacity must not cancel an already scheduled directory",
     );
     assertEquals(
       hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/overflow"),
       true,
       "render admission must not fail because other directories hold cleanup timers",
     );
+    assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
+    assertEquals(queuedJsxCachePruneCount(), 1);
   });
 });
 
