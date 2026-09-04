@@ -693,6 +693,8 @@ describe("metrics public SDK", () => {
     const observed: string[] = [];
     const nativeStringify = JSON.stringify;
     const nativePush = Array.prototype.push;
+    const nativeIterator = Array.prototype[Symbol.iterator];
+    const nativeToJSONDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
     const nativeDefineProperty = Object.defineProperty;
     const nativeIndexDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "0");
     const recordObserved = (value: string): void => {
@@ -707,7 +709,8 @@ describe("metrics public SDK", () => {
     // Record every value a replaced intrinsic would be able to read. Each spy
     // delegates to the captured native so behaviour is unchanged.
     const record = (values: unknown[]): void => {
-      for (const value of values) {
+      for (let index = 0; index < values.length; index++) {
+        const value = values[index];
         if (typeof value === "string") {
           recordObserved(value);
           continue;
@@ -736,6 +739,12 @@ describe("metrics public SDK", () => {
       String.prototype.localeCompare = nativeLocaleCompare;
       Map.prototype.set = nativeMapSet;
       JSON.stringify = nativeStringify;
+      Array.prototype[Symbol.iterator] = nativeIterator;
+      if (nativeToJSONDescriptor) {
+        nativeDefineProperty(Array.prototype, "toJSON", nativeToJSONDescriptor);
+      } else {
+        delete (Array.prototype as { toJSON?: unknown }).toJSON;
+      }
       if (nativeIndexDescriptor) {
         nativeDefineProperty(Array.prototype, "0", nativeIndexDescriptor);
       } else {
@@ -817,6 +826,31 @@ describe("metrics public SDK", () => {
               space,
             );
           }) as typeof JSON.stringify;
+          Array.prototype[Symbol.iterator] = function () {
+            for (let index = 0; index < this.length; index++) {
+              const value = this[index];
+              if (typeof value === "string") recordObserved(value);
+              if (Array.isArray(value)) {
+                if (typeof value[0] === "string") recordObserved(value[0]);
+                if (typeof value[1] === "string") recordObserved(value[1]);
+              }
+            }
+            return Reflect.apply(nativeIterator, this, []);
+          };
+          nativeDefineProperty(Array.prototype, "toJSON", {
+            value: function (this: unknown[]) {
+              for (let index = 0; index < this.length; index++) {
+                const value = this[index];
+                if (typeof value === "string") recordObserved(value);
+                if (Array.isArray(value)) {
+                  if (typeof value[0] === "string") recordObserved(value[0]);
+                  if (typeof value[1] === "string") recordObserved(value[1]);
+                }
+              }
+              return this;
+            },
+            configurable: true,
+          });
           nativeDefineProperty(Array.prototype, "0", {
             set(value: unknown) {
               record([value]);

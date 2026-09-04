@@ -228,7 +228,8 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined) continue;
-    const [key, value] = entry;
+    const key = entry[0];
+    const value = entry[1];
     if (value === null || value === undefined) continue;
     apply(objectDefineProperty, Object, [normalized, key, {
       value,
@@ -262,11 +263,20 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
 function attributesKey(attributes: Record<string, AttributeValue>): string {
   const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
   const sorted = apply(arraySort, entries, [
-    ([left]: [string, AttributeValue], [right]: [string, AttributeValue]) =>
-      left < right ? -1 : left > right ? 1 : 0,
+    (left: [string, AttributeValue], right: [string, AttributeValue]) =>
+      left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
   ]) as Array<[string, AttributeValue]>;
-  const values = mapArrayValues(sorted, ([key, value]) => [key, value]);
-  return jsonStringify(values);
+  let serialized = "[";
+  for (let index = 0; index < sorted.length; index++) {
+    const entry = sorted[index];
+    if (entry === undefined) continue;
+    if (index > 0) serialized += ",";
+    // Keys and values are validated primitives. Serialize them directly so
+    // native JSON never looks up an inherited Array.prototype.toJSON hook on
+    // ordinary Object.entries tuple arrays.
+    serialized += `[${jsonStringify(entry[0])},${jsonStringify(entry[1])}]`;
+  }
+  return serialized + "]";
 }
 
 function getCounter(name: string, options?: MetricInstrumentOptions): Counter | null {
@@ -651,9 +661,9 @@ function toOtlpValue(value: AttributeValue) {
 
 function toOtlpAttributes(attributes: Record<string, AttributeValue>) {
   const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
-  return mapArrayValues(entries, ([key, value]) => ({
-    key,
-    value: toOtlpValue(value),
+  return mapArrayValues(entries, (entry) => ({
+    key: entry[0],
+    value: toOtlpValue(entry[1]),
   }));
 }
 
