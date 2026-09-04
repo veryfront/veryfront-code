@@ -310,6 +310,52 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("does not expose direct targets through inherited descriptor accessors", async () => {
+    const observed: unknown[] = [];
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
+        async () => {
+          Object.defineProperty(Object.prototype, "get", {
+            configurable: true,
+            get() {
+              observed.push((this as { value?: unknown }).value);
+              return undefined;
+            },
+          });
+          Object.defineProperty(Object.prototype, "set", {
+            configurable: true,
+            get() {
+              observed.push((this as { value?: unknown }).value);
+              return undefined;
+            },
+          });
+          try {
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+                OTEL_EXPORTER_OTLP_METRICS_HEADERS: "Authorization=Bearer private-token",
+              },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.counter("vf_descriptor_safety_total", 1),
+            );
+          } finally {
+            delete (Object.prototype as { get?: unknown }).get;
+            delete (Object.prototype as { set?: unknown }).set;
+          }
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(observed, []);
+  });
+
   it("keeps exporting after a non-ok collector response", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];

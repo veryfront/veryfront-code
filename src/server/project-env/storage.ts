@@ -60,6 +60,31 @@ function getProjectEnvStore(): ProjectEnvStore | undefined {
     | undefined;
 }
 
+function dataDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = IntrinsicObjectCreate(null) as PropertyDescriptor;
+  descriptor.value = value;
+  descriptor.enumerable = true;
+  return descriptor;
+}
+
+function createProjectEnvStore(
+  snapshot: ProjectEnvSnapshot,
+  identity?: Readonly<TrustedProjectEnvIdentity>,
+): ProjectEnvStore {
+  const descriptors = IntrinsicObjectCreate(null) as PropertyDescriptorMap;
+  descriptors.snapshot = dataDescriptor(snapshot);
+  descriptors.identity = dataDescriptor(identity);
+  return IntrinsicObjectCreate(null, descriptors) as ProjectEnvStore;
+}
+
+function createTrustedIdentity(identity: TrustedProjectEnvIdentity): TrustedProjectEnvIdentity {
+  const trusted = IntrinsicObjectCreate(null) as TrustedProjectEnvIdentity;
+  if (identity.projectId !== undefined) trusted.projectId = identity.projectId;
+  if (identity.projectSlug !== undefined) trusted.projectSlug = identity.projectSlug;
+  if (identity.environmentId !== undefined) trusted.environmentId = identity.environmentId;
+  return IntrinsicObjectFreeze(trusted);
+}
+
 /**
  * Run a function with project-specific environment variables.
  * Within the callback, `getProjectEnv()` will return values from `vars`.
@@ -69,10 +94,7 @@ export function runWithProjectEnv<T>(
   fn: () => T,
 ): T {
   return IntrinsicReflectApply(AsyncLocalStorageRun, projectEnvStorage, [
-    IntrinsicObjectCreate(null, {
-      snapshot: { value: createProjectEnvSnapshot(vars), enumerable: true },
-      identity: { value: undefined, enumerable: true },
-    }) as ProjectEnvStore,
+    createProjectEnvStore(createProjectEnvSnapshot(vars)),
     fn,
   ]) as T;
 }
@@ -84,10 +106,7 @@ export function runWithTrustedProjectEnv<T>(
   fn: () => T,
 ): T {
   return IntrinsicReflectApply(AsyncLocalStorageRun, projectEnvStorage, [
-    IntrinsicObjectCreate(null, {
-      snapshot: { value: createProjectEnvSnapshot(vars), enumerable: true },
-      identity: { value: IntrinsicObjectFreeze({ ...identity }), enumerable: true },
-    }) as ProjectEnvStore,
+    createProjectEnvStore(createProjectEnvSnapshot(vars), createTrustedIdentity(identity)),
     fn,
   ]) as T;
 }

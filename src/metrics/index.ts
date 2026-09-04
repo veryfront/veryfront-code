@@ -152,13 +152,21 @@ const useAmbientFetchForTests = (() => {
   }
 })();
 
+function dataPropertyDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = apply(objectCreate, Object, [null]) as PropertyDescriptor;
+  descriptor.value = value;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.writable = true;
+  return descriptor;
+}
+
 function appendArrayValue<T>(target: T[], value: T): void {
-  apply(objectDefineProperty, Object, [target, NativeString(target.length), {
-    value,
-    configurable: true,
-    enumerable: true,
-    writable: true,
-  }]);
+  apply(objectDefineProperty, Object, [
+    target,
+    NativeString(target.length),
+    dataPropertyDescriptor(value),
+  ]);
 }
 
 function mapArrayValues<T, U>(
@@ -182,12 +190,11 @@ function removeArrayRange<T>(target: T[], start: number, count: number): T[] {
   }
   const remaining = target.length - end;
   for (let index = 0; index < remaining; index++) {
-    apply(objectDefineProperty, Object, [target, NativeString(start + index), {
-      value: target[end + index],
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    }]);
+    apply(objectDefineProperty, Object, [
+      target,
+      NativeString(start + index),
+      dataPropertyDescriptor(target[end + index]),
+    ]);
   }
   target.length -= end - start;
   return removed;
@@ -232,22 +239,12 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
     const key = entry[0];
     const value = entry[1];
     if (value === null || value === undefined) continue;
-    apply(objectDefineProperty, Object, [normalized, key, {
-      value,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    }]);
+    apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   }
 
   const context = getCurrentRequestContext();
   const addAttribute = (key: string, value: AttributeValue): void => {
-    apply(objectDefineProperty, Object, [normalized, key, {
-      value,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    }]);
+    apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   };
   if (context?.projectId) addAttribute("project_id", context.projectId);
   if (context?.projectSlug) addAttribute("project_slug", context.projectSlug);
@@ -858,12 +855,11 @@ function toHookFreeJsonValue(value: unknown): unknown {
     const result: unknown[] = [];
     apply(objectSetPrototypeOf, Object, [result, null]);
     for (let index = 0; index < value.length; index++) {
-      apply(objectDefineProperty, Object, [result, NativeString(index), {
-        value: toHookFreeJsonValue(value[index]),
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      }]);
+      apply(objectDefineProperty, Object, [
+        result,
+        NativeString(index),
+        dataPropertyDescriptor(toHookFreeJsonValue(value[index])),
+      ]);
     }
     return result;
   }
@@ -874,12 +870,11 @@ function toHookFreeJsonValue(value: unknown): unknown {
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined) continue;
-    apply(objectDefineProperty, Object, [result, entry[0], {
-      value: toHookFreeJsonValue(entry[1]),
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    }]);
+    apply(objectDefineProperty, Object, [
+      result,
+      entry[0],
+      dataPropertyDescriptor(toHookFreeJsonValue(entry[1])),
+    ]);
   }
   return result;
 }

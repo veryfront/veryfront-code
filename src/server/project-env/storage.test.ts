@@ -62,6 +62,36 @@ describe("project-env/storage", () => {
     }
   });
 
+  it("does not expose tenant values through inherited descriptor accessors", () => {
+    const observed: unknown[] = [];
+    Object.defineProperty(Object.prototype, "get", {
+      configurable: true,
+      get() {
+        observed.push((this as { value?: unknown }).value);
+        return undefined;
+      },
+    });
+    Object.defineProperty(Object.prototype, "set", {
+      configurable: true,
+      get() {
+        observed.push((this as { value?: unknown }).value);
+        return undefined;
+      },
+    });
+    try {
+      runWithTrustedProjectEnv(
+        { PROVIDER_TOKEN: "private-provider-token" },
+        { projectId: "project-next" },
+        () => assertEquals(getProjectEnv("PROVIDER_TOKEN"), "private-provider-token"),
+      );
+    } finally {
+      delete (Object.prototype as { get?: unknown }).get;
+      delete (Object.prototype as { set?: unknown }).set;
+    }
+
+    assertEquals(observed, []);
+  });
+
   it("uses context operations captured before project prototype mutation", () => {
     const originalDisable = Object.getOwnPropertyDescriptor(
       AsyncLocalStorage.prototype,
