@@ -164,9 +164,11 @@ describe("StatOperations", () => {
 
     it("should recover a file missing from a stale index via API search", async () => {
       let searchCalls = 0;
+      let searchedBranch: string | undefined;
       const client = createMockClient({
-        searchFiles: (pattern: string) => {
+        searchFiles: (pattern: string, context?: { type: "branch"; name: string }) => {
           searchCalls++;
+          searchedBranch = context?.name;
           return Promise.resolve(
             pattern === "components/Late.tsx"
               ? [{ id: "late-1", path: "components/Late.tsx" }]
@@ -192,6 +194,7 @@ describe("StatOperations", () => {
       );
       assertEquals(info.isDirectory, false, "the recovered entry is a file, not a directory");
       assertEquals(searchCalls, 1, "the stale index must fall back to exactly one API search");
+      assertEquals(searchedBranch, "main");
 
       await statOps.stat("components/Late.tsx");
       assertEquals(

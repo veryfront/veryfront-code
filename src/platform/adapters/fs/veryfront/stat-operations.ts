@@ -133,7 +133,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
         try {
           // Search for the exact file path
-          const matches = await this.client.searchFiles(normalizedPath);
+          const matches = await this.client.searchFiles(
+            normalizedPath,
+            ctx ? toClientContext(ctx) : undefined,
+          );
           this.apiSearchCircuitBreaker.recordSuccess();
 
           const exactMatch = matches.find((m) => m.path === normalizedPath);
