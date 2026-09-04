@@ -105,6 +105,24 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.tools, { web_search: true, read_file: true });
   });
 
+  it("resolves an owner-scoped short name in an unrestricted catalog", () => {
+    registerTool("researcher--fetch-paper", {
+      id: "researcher--fetch-paper",
+      shortName: "fetch-paper",
+      ownerAgentId: "researcher",
+      type: "function",
+      description: "Fetch a paper",
+      inputSchema: { type: "object", properties: {} },
+      execute: () => Promise.resolve({ ok: true }),
+    } as Tool);
+
+    const restricted = applyAgUiRuntimeRestrictions(createConfig({ tools: true }), {
+      allowedTools: ["fetch-paper"],
+    });
+
+    assertEquals(restricted.tools, { "fetch-paper": true });
+  });
+
   it("preserves deferred tool loading when replacing an unrestricted catalog", () => {
     // Replacing `tools: true` with an explicit map must not flip the run from
     // deferred to eager loading, or a restricted run would send every

@@ -131,7 +131,14 @@ function restrictConfiguredTools(
 function getVisibleLocalToolNames(agentId: string | undefined): ToolNameLookup {
   const visible = createNullPrototypeObject(null) as ToolNameLookup;
   const addVisible = (tool: ReturnType<typeof toolRegistry.get>, name: string): void => {
-    if (tool && isToolVisibleTo(tool, { agentId })) visible[name] = true;
+    if (!tool || !isToolVisibleTo(tool, { agentId })) return;
+    visible[name] = true;
+    if (
+      agentId !== undefined && tool.ownerAgentId === agentId &&
+      typeof tool.shortName === "string" && tool.shortName.length > 0
+    ) {
+      visible[tool.shortName] = true;
+    }
   };
   reflectApply(mapForEach, toolRegistry.getAll(), [addVisible]);
   return visible;
