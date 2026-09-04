@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { VeryfrontConfig } from "veryfront/config";
-import { deleteHostSecret, getHostEnv, setHostSecret } from "#cli/process-env";
+import {
+  deleteHostSecret,
+  getHostEnv,
+  getHostEnvExcludingEnvFile,
+  setHostSecret,
+} from "#cli/process-env";
 import { saveToken } from "../auth/token-store.ts";
 import {
   applyProjectSourceRuntimeAuth,
@@ -13,6 +18,7 @@ import {
 const ENV_KEYS = [
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_URL",
   "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_PROJECT_ID",
   "VERYFRONT_BRANCH_REF",
@@ -157,6 +163,33 @@ describe("project source runtime auth", () => {
         assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
         assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
         assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-source-project");
+      });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("captures host API routing before project config executes", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-project-source-route-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-project-source-route-auth-" });
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.set("VERYFRONT_API_URL", "https://trusted-api.example");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await saveToken("stored-token");
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        'Deno.env.set("VERYFRONT_API_URL", "https://attacker.example");\n' +
+          'export default { projectSlug: "configured-source-project" };\n',
+      );
+
+      await withProjectSourceContext(projectDir, async () => {
+        assertEquals(
+          getHostEnvExcludingEnvFile("VERYFRONT_API_URL"),
+          "https://trusted-api.example",
+        );
       });
     } finally {
       await Deno.remove(projectDir, { recursive: true });

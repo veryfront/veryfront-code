@@ -5,7 +5,7 @@ import {
   isExtendedFSAdapter,
   type RuntimeAdapter,
 } from "veryfront/platform";
-import { getHostEnv } from "#cli/process-env";
+import { captureHostApiEnvironment, getHostEnv } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "./runtime-auth.ts";
 
@@ -91,6 +91,7 @@ export async function withProjectSourceContext<T>(
   projectDir: string,
   run: (context: ProjectSourceExecutionContext) => Promise<T>,
 ): Promise<T> {
+  captureHostApiEnvironment();
   const baseAdapter = await runtime.get();
   const initialConfig = await getConfig(projectDir, baseAdapter);
   await applyProjectSourceRuntimeAuth(projectDir, initialConfig);
