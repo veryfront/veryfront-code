@@ -70,6 +70,7 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   message: "Knowledge ingest logs were truncated",
 });
 const ReflectApply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const NativeRequest = Request;
@@ -1086,10 +1087,17 @@ function getStringArrayConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string[] {
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
     const value = config[key];
-    if (Array.isArray(value)) {
-      return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+    if (ArrayIsArray(value)) {
+      const strings: string[] = [];
+      for (let valueIndex = 0; valueIndex < value.length; valueIndex++) {
+        const item = value[valueIndex];
+        if (typeof item === "string" && item.length > 0) strings[strings.length] = item;
+      }
+      return strings;
     }
   }
 
@@ -1100,7 +1108,9 @@ function getStringConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string | undefined {
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
     const value = config[key];
     if (typeof value === "string" && value.length > 0) return value;
   }
@@ -1304,7 +1314,9 @@ function getNumberConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): number | undefined {
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
     const value = config[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string" && value.trim() !== "") {

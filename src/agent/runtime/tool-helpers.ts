@@ -27,6 +27,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
+const intrinsicArrayPush = Array.prototype.push;
 
 /**
  * Result of parsing tool arguments.
@@ -193,7 +194,7 @@ async function getRemoteToolDefinitions(options?: {
       return;
     }
     seenToolNames.add(definition.name);
-    definitions.push(definition);
+    intrinsicReflectApply(intrinsicArrayPush, definitions, [definition]);
   };
 
   for (const source of options?.remoteToolSources ?? []) {
@@ -396,7 +397,7 @@ function addToolDefinition(
 ): void {
   const def = toolToProviderDefinition({ ...tool, id: name });
   logToolDefinition(name, def);
-  tools.push(def);
+  intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
 }
 
 /**
@@ -415,7 +416,7 @@ function appendForwardedToolDefinitions(
   for (const def of forwarded) {
     if (existing.has(def.name)) continue;
     if (allowedNames && !allowedNames.includes(def.name)) continue;
-    remoteDefs.push(def);
+    intrinsicReflectApply(intrinsicArrayPush, remoteDefs, [def]);
     existing.add(def.name);
   }
 }
@@ -476,7 +477,7 @@ export async function getAvailableTools(
       for (const def of remoteDefs) {
         logToolDefinition(def.name, def);
       }
-      tools.push(...remoteDefs);
+      intrinsicReflectApply(intrinsicArrayPush, tools, remoteDefs);
     }
 
     return sourceIntegrationPolicy
@@ -519,7 +520,7 @@ export async function getAvailableTools(
 
     if (entry === true) {
       if (strictConfiguredToolsOnly) {
-        unresolvedConfiguredToolNames.push(name);
+        intrinsicReflectApply(intrinsicArrayPush, unresolvedConfiguredToolNames, [name]);
         continue;
       }
 
@@ -538,7 +539,7 @@ export async function getAvailableTools(
         continue;
       }
 
-      unresolvedConfiguredToolNames.push(name);
+      intrinsicReflectApply(intrinsicArrayPush, unresolvedConfiguredToolNames, [name]);
       continue;
     }
 
@@ -569,7 +570,7 @@ export async function getAvailableTools(
     // Skip if already present (e.g., explicitly configured by name)
     if (!tools.some((t) => t.name === def.name)) {
       logToolDefinition(def.name, def);
-      tools.push(def);
+      intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
     }
   }
 

@@ -1405,6 +1405,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     } as unknown as typeof Request;
     replacementRequest.prototype = nativeRequest.prototype;
     globalThis.Request = replacementRequest;
+    const originalArrayFilter = Array.prototype.filter;
+    Array.prototype.filter = function <T>(
+      this: T[],
+      predicate: (value: T, index: number, array: T[]) => unknown,
+      thisArg?: unknown,
+    ): T[] {
+      const filtered = Reflect.apply(originalArrayFilter, this, [predicate, thisArg]) as T[];
+      if (
+        this[0] === "eval_allowed_lookup" &&
+        this[1] === "web_fetch"
+      ) {
+        filtered[filtered.length] = "eval_denied_delete" as T;
+      }
+      return filtered;
+    };
 
     try {
       const result = await withEnvValue(
@@ -1424,6 +1439,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(sourceAgentStreamCalls, 0);
       assertEquals(replacementSawLocalEvalRequest, false);
     } finally {
+      Array.prototype.filter = originalArrayFilter;
       globalThis.Request = nativeRequest;
       agentRegistry.delete("researcher");
     }

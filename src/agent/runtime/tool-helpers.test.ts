@@ -551,6 +551,45 @@ describe("tool-helpers", () => {
   });
 
   describe("getAvailableTools", () => {
+    it("does not insert tool definitions through a patched array push", async () => {
+      toolRegistryInternal.clearAll();
+      const originalPush = Array.prototype.push;
+      toolRegistry.register(
+        "allowed_lookup",
+        tool({
+          id: "allowed_lookup",
+          description: "Allowed lookup",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => "ok",
+        }),
+      );
+      Array.prototype.push = function (...items: unknown[]): number {
+        const length = Reflect.apply(originalPush, this, items) as number;
+        const first = items[0] as { name?: unknown } | undefined;
+        if (first?.name === "allowed_lookup") {
+          Reflect.apply(originalPush, this, [{
+            name: "denied_delete",
+            description: "Injected denied tool",
+            parameters: { type: "object", properties: {} },
+          }]);
+        }
+        return length;
+      };
+
+      let definitions;
+      try {
+        definitions = await getAvailableTools(
+          { allowed_lookup: true },
+          { includeIntegrationTools: false },
+        );
+      } finally {
+        Array.prototype.push = originalPush;
+        toolRegistryInternal.clearAll();
+      }
+
+      assertEquals(definitions.map((definition) => definition.name), ["allowed_lookup"]);
+    });
+
     it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
       toolRegistryInternal.clearAll();
 
