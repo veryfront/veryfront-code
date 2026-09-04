@@ -855,21 +855,23 @@ Deno.test(
 );
 
 Deno.test(
-  "main refuses to create package.json through a mutable parent path",
+  "main creates package.json for a project that has no manifest",
   async () => {
     const project = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     try {
       await Deno.writeTextFile(`${project}/app.ts`, source);
 
-      await assertRejects(
-        () => main(["--", project]),
-        Error,
-        "Create package.json in the project directory",
-      );
-      await assertRejects(() => Deno.lstat(`${project}/package.json`), Deno.errors.NotFound);
+      await main(["--", project]);
+
+      // The manifest is created with the pin the rewrite depends on.
+      const pkg = JSON.parse(await Deno.readTextFile(`${project}/package.json`)) as {
+        dependencies?: Record<string, string>;
+      };
+      assertEquals(pkg.dependencies?.lodash, "4.17.21");
       const src = await Deno.readTextFile(`${project}/app.ts`);
-      assertEquals(src, source);
+      assertStringIncludes(src, 'from "lodash"');
+      assert(!src.includes("esm.sh"));
     } finally {
       await Deno.remove(project, { recursive: true });
     }
@@ -1221,20 +1223,15 @@ Deno.test("project writes support regular files on Windows", async () => {
   }
 });
 
-Deno.test("project writes refuse a missing manifest", async () => {
+Deno.test("project writes create a missing manifest", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
-    const projectRoot = await Deno.realPath(project);
-    await assertRejects(
-      () =>
-        writeTextFileInsideProject(target, projectRoot, "{}\n", {
-          allowMissing: true,
-        }),
-      Error,
-      "Create package.json in the project directory",
-    );
-    await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+    await writeTextFileInsideProject(target, await Deno.realPath(project), "{}\n", {
+      allowMissing: true,
+    });
+    assertEquals(await Deno.readTextFile(target), "{}\n");
+    assert((await Deno.lstat(target)).isFile, "the manifest must be a regular file");
   } finally {
     await Deno.remove(project, { recursive: true });
   }
