@@ -36,6 +36,28 @@ const catalog = [
   definition("load_skill", "Load a configured skill"),
 ];
 
+it("copies authorized tools without a mutable array iterator", () => {
+  const allowed = [definition("allowed", "Allowed tool")];
+  const denied = definition("denied", "Denied tool");
+  const originalIterator = Array.prototype[Symbol.iterator];
+  let plan!: ReturnType<typeof createToolExposurePlan>;
+  try {
+    Array.prototype[Symbol.iterator] = function* () {
+      yield* Reflect.apply(originalIterator, this, []);
+      if (this === allowed) yield denied;
+    };
+    plan = createToolExposurePlan({
+      authorized: allowed,
+      mode: "eager",
+      state: createToolExposureState(),
+    });
+  } finally {
+    Array.prototype[Symbol.iterator] = originalIterator;
+  }
+
+  assertEquals(plan.authorized.map((tool) => tool.name), ["allowed"]);
+});
+
 function withPollutedDescriptorPrototypeValue<T>(value: unknown, fn: () => T): T {
   const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
   Object.defineProperty(Object.prototype, "value", {

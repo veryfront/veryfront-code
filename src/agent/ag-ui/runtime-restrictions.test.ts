@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
-import type { Tool } from "#veryfront/tool";
+import { type Tool, toolRegistry } from "#veryfront/tool";
 import { clearMCPRegistry, registerTool } from "#veryfront/mcp";
 import { createEphemeralAgent } from "../factory.ts";
 import { getRuntimeRemoteToolSources } from "../runtime/mcp-server-tool-sources.ts";
@@ -304,6 +304,25 @@ describe("agent/ag-ui/runtime-restrictions", () => {
 
     assertEquals(restricted.tools, {});
     assertEquals(restricted.mcpServers, []);
+  });
+
+  it("retains a concrete local invoke_agent tool without reconstructing delegation", () => {
+    registerVisibleTestTool("invoke_agent");
+    const registered = toolRegistry.get("invoke_agent");
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: true,
+        delegates: undefined,
+        providerTools: undefined,
+        mcpServers: undefined,
+      }),
+      { allowedTools: ["invoke_agent"] },
+    );
+
+    assertEquals(
+      (restricted.tools as Record<string, unknown>).invoke_agent === registered,
+      true,
+    );
   });
 
   it("does not add generic delegation to a tools-true source agent", () => {

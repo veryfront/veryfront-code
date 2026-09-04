@@ -155,6 +155,7 @@ function restrictConfiguredTools(
   providerToolNames: ToolNameLookup,
   visibleLocalTools: ToolNameLookup,
   configuredMcpTools: ToolNameLookup,
+  sourceAgentId: string | undefined,
 ): AgentConfig["tools"] {
   if (tools === undefined) return undefined;
   if (tools === true) {
@@ -173,7 +174,12 @@ function restrictConfiguredTools(
         providerToolNames[toolName] !== true &&
         (visibleLocalTools[toolName] === true || configuredMcpTools[toolName] === true)
       ) {
-        selected[toolName] = true;
+        if (toolName === INVOKE_AGENT_TOOL_ID && visibleLocalTools[toolName] === true) {
+          const localTool = resolveVisibleLocalTool(toolName, sourceAgentId);
+          if (localTool) selected[toolName] = localTool;
+        } else {
+          selected[toolName] = true;
+        }
       }
     }
     return selected;
@@ -210,6 +216,22 @@ function getVisibleLocalToolNames(agentId: string | undefined): ToolNameLookup {
   };
   reflectApply(mapForEach, toolRegistry.getAll(), [addVisible]);
   return visible;
+}
+
+function resolveVisibleLocalTool(name: string, agentId: string | undefined) {
+  const exact = toolRegistry.get(name);
+  if (exact && isToolVisibleTo(exact, { agentId })) return exact;
+  if (agentId === undefined) return undefined;
+  let matched: typeof exact;
+  reflectApply(mapForEach, toolRegistry.getAll(), [
+    (tool: NonNullable<typeof exact>) => {
+      if (
+        matched === undefined && tool.ownerAgentId === agentId && tool.shortName === name &&
+        isToolVisibleTo(tool, { agentId })
+      ) matched = tool;
+    },
+  ]);
+  return matched;
 }
 
 function getRetainedRemoteToolNames(
@@ -305,6 +327,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
     providerToolNames,
     visibleLocalTools,
     configuredMcpTools,
+    sourceAgentId,
   );
   if (config.tools === true) {
     // Replacing the authored `tools: true` selector with an explicit map would
