@@ -3,22 +3,33 @@ import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.t
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import type { SandboxOptions } from "./types.ts";
 
 const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;
 }
 
 function isHostApiOrigin(value: string): boolean {
+  if (!urlOriginGetter) return false;
   try {
-    return new NativeURL(value).origin === new NativeURL(resolveHostOwnedApiBaseUrl()).origin;
+    const selected = new NativeURL(value);
+    const host = new NativeURL(resolveHostOwnedApiBaseUrl());
+    return applyIntrinsic(urlOriginGetter, selected, []) ===
+      applyIntrinsic(urlOriginGetter, host, []);
   } catch {
     return false;
   }
+}
+
+/** @internal Send sandbox traffic through the host transport and reject cross-origin redirects. */
+export function fetchSandboxUrl(url: string, init?: RequestInit): Promise<Response> {
+  return createOriginBoundOutboundFetch(url)(url, init);
 }
 
 export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {

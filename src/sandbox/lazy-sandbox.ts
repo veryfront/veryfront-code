@@ -1,7 +1,7 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
-import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
+import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import { readExecStreamEvents } from "./exec-stream.ts";
 import {
@@ -942,14 +942,14 @@ async function fetchWithTimeout(
   init: RequestInit = {},
 ): Promise<Response> {
   if (timeoutMs <= 0) {
-    return await fetch(url, init);
+    return await fetchSandboxUrl(url, init);
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetchSandboxUrl(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }

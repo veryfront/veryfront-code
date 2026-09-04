@@ -6,7 +6,7 @@ import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/proc
 import {
   type FetchCall,
   headerValue,
-  installMockFetch,
+  installMockFetch as createSandboxFetchMock,
   jsonBody,
   jsonResponse,
   type MockResponseEntry,
@@ -16,6 +16,10 @@ import {
   SANDBOX_ENV_KEYS,
   textResponse,
 } from "./sandbox.test-helpers.ts";
+import {
+  installMockFetch as installHostMockFetch,
+  restoreMockFetch as restoreHostMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
@@ -25,7 +29,6 @@ import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 // Mock fetch for testing
-const originalFetch = globalThis.fetch;
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
 
@@ -36,7 +39,7 @@ function clearSandboxEnvironment(): void {
 function mockFetch(responses: MockResponseEntry[]) {
   fetchResponses = [...responses];
   fetchCalls = [];
-  globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
+  installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
 }
 
 async function countTextDecoderFlushes(action: () => Promise<void>): Promise<number> {
@@ -69,7 +72,7 @@ describe("Sandbox", () => {
 
   afterEach(() => {
     restoreTimers();
-    globalThis.fetch = originalFetch;
+    restoreHostMockFetch();
     clearSandboxEnvironment();
   });
 
@@ -191,6 +194,52 @@ describe("Sandbox", () => {
         deleteHostSecret("VERYFRONT_API_TOKEN");
       }
       assertEquals(fetchCalls, []);
+    });
+
+    it("uses the captured URL origin getter for stored-login trust", async () => {
+      const originalOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      Object.defineProperty(URL.prototype, "origin", {
+        get: () => "https://forged.example",
+        configurable: true,
+      });
+      try {
+        await assertRejects(
+          () => Sandbox.create({ apiUrl: "https://caller-selected.example" }),
+          VeryfrontError,
+          "Sandbox auth must be provided explicitly for a custom API URL",
+        );
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+        if (originalOrigin) Object.defineProperty(URL.prototype, "origin", originalOrigin);
+      }
+      assertEquals(fetchCalls, []);
+    });
+
+    it("keeps stored-login sandbox auth on the host transport", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      mockFetch([
+        jsonResponse({
+          id: "session-host-transport",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+      let ambientFetchCalled = false;
+      globalThis.fetch = () => {
+        ambientFetchCalled = true;
+        return Promise.reject(new Error("project fetch must not receive sandbox auth"));
+      };
+      try {
+        const sandbox = await Sandbox.create();
+        assertEquals(sandbox.id, "session-host-transport");
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+
+      assertEquals(ambientFetchCalled, false);
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
     });
 
     it("should poll until ready when not running", async () => {
@@ -1052,52 +1101,57 @@ describe("Sandbox", () => {
       mockTimers({ advanceTimeByMs: true });
 
       let statusChecks = 0;
-      globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-        fetchCalls.push({ url, init });
+      installHostMockFetch(
+        ((input: string | URL | Request, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          fetchCalls.push({ url, init });
 
-        if (url === "https://api.test.com/sandbox-sessions" && init?.method === "POST") {
-          return Promise.resolve(jsonResponse({
-            id: "sandbox-1",
-            endpoint: "https://sandbox.example.com",
-            status: "pending",
-          }));
-        }
+          if (url === "https://api.test.com/sandbox-sessions" && init?.method === "POST") {
+            return Promise.resolve(jsonResponse({
+              id: "sandbox-1",
+              endpoint: "https://sandbox.example.com",
+              status: "pending",
+            }));
+          }
 
-        if (url === "https://api.test.com/sandbox-sessions/sandbox-1" && !init?.method) {
-          statusChecks += 1;
-          return Promise.resolve(jsonResponse({
-            endpoint: "https://sandbox.example.com",
-            status: statusChecks >= 85 ? "running" : "pending",
-          }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            (!init?.method || init.method === "GET")
+          ) {
+            statusChecks += 1;
+            return Promise.resolve(jsonResponse({
+              endpoint: "https://sandbox.example.com",
+              status: statusChecks >= 85 ? "running" : "pending",
+            }));
+          }
 
-        if (
-          url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat" &&
-          init?.method === "POST"
-        ) {
-          return Promise.resolve(jsonResponse({ ok: true }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat" &&
+            init?.method === "POST"
+          ) {
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
 
-        if (
-          url === "https://api.test.com/sandbox-sessions/sandbox-1/file?path=notes.txt" &&
-          !init?.method
-        ) {
-          return Promise.resolve(jsonResponse({ path: "notes.txt", content: "file-body" }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1/file?path=notes.txt" &&
+            (!init?.method || init.method === "GET")
+          ) {
+            return Promise.resolve(jsonResponse({ path: "notes.txt", content: "file-body" }));
+          }
 
-        if (
-          url === "https://api.test.com/sandbox-sessions/sandbox-1" && init?.method === "DELETE"
-        ) {
-          return Promise.resolve(jsonResponse({ ok: true }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1" && init?.method === "DELETE"
+          ) {
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
 
-        throw new Error(`Unexpected fetch call: ${url} ${init?.method ?? "GET"}`);
-      }) as typeof fetch;
+          throw new Error(`Unexpected fetch call: ${url} ${init?.method ?? "GET"}`);
+        }) as typeof fetch,
+      );
 
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
@@ -1175,35 +1229,37 @@ describe("Sandbox", () => {
       let resolveCreate!: (response: Response) => void;
       let hasResolveCreate = false;
 
-      globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-        fetchCalls.push({ url, init });
+      installHostMockFetch(
+        ((input: string | URL | Request, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          fetchCalls.push({ url, init });
 
-        if (fetchCalls.length === 1) {
-          return new Promise<Response>((resolve) => {
-            resolveCreate = resolve;
-            hasResolveCreate = true;
-          });
-        }
+          if (fetchCalls.length === 1) {
+            return new Promise<Response>((resolve) => {
+              resolveCreate = resolve;
+              hasResolveCreate = true;
+            });
+          }
 
-        if (fetchCalls.length === 2) {
-          return Promise.resolve(
-            jsonResponse({
-              ok: true,
-            }),
-          );
-        }
+          if (fetchCalls.length === 2) {
+            return Promise.resolve(
+              jsonResponse({
+                ok: true,
+              }),
+            );
+          }
 
-        if (fetchCalls.length === 3) {
-          return Promise.resolve(jsonResponse({ ok: true }));
-        }
+          if (fetchCalls.length === 3) {
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
 
-        throw new Error(`Unexpected fetch call: ${url}`);
-      }) as typeof fetch;
+          throw new Error(`Unexpected fetch call: ${url}`);
+        }) as typeof fetch,
+      );
 
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
@@ -1212,7 +1268,9 @@ describe("Sandbox", () => {
       });
 
       const ensurePromise = sandbox.ensure();
-      await Promise.resolve();
+      for (let attempt = 0; attempt < 10 && !hasResolveCreate; attempt++) {
+        await Promise.resolve();
+      }
 
       const closePromise = sandbox.close();
 
@@ -1248,23 +1306,25 @@ describe("Sandbox", () => {
       };
 
       try {
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-          const url = typeof input === "string"
-            ? input
-            : input instanceof URL
-            ? input.toString()
-            : input.url;
-          fetchCalls.push({ url, init });
+        installHostMockFetch(
+          ((input: string | URL | Request, init?: RequestInit) => {
+            const url = typeof input === "string"
+              ? input
+              : input instanceof URL
+              ? input.toString()
+              : input.url;
+            fetchCalls.push({ url, init });
 
-          if (fetchCalls.length === 1) {
-            return new Promise<Response>((resolve) => {
-              resolveCreate = resolve;
-              hasResolveCreate = true;
-            });
-          }
+            if (fetchCalls.length === 1) {
+              return new Promise<Response>((resolve) => {
+                resolveCreate = resolve;
+                hasResolveCreate = true;
+              });
+            }
 
-          throw new Error(`Unexpected fetch call: ${url}`);
-        }) as typeof fetch;
+            throw new Error(`Unexpected fetch call: ${url}`);
+          }) as typeof fetch,
+        );
 
         const sandbox = Sandbox.createLazy({
           authToken: "test-token",
@@ -1272,7 +1332,9 @@ describe("Sandbox", () => {
         });
 
         const ensurePromise = sandbox.ensure();
-        await Promise.resolve();
+        for (let attempt = 0; attempt < 10 && !hasResolveCreate; attempt++) {
+          await Promise.resolve();
+        }
 
         const closePromise = sandbox.close();
 
