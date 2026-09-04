@@ -693,8 +693,15 @@ describe("metrics public SDK", () => {
     const observed: string[] = [];
     const nativeStringify = JSON.stringify;
     const nativePush = Array.prototype.push;
+    const nativeDefineProperty = Object.defineProperty;
+    const nativeIndexDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "0");
     const recordObserved = (value: string): void => {
-      Reflect.apply(nativePush, observed, [value]);
+      nativeDefineProperty(observed, String(observed.length), {
+        value,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
     };
 
     // Record every value a replaced intrinsic would be able to read. Each spy
@@ -729,6 +736,11 @@ describe("metrics public SDK", () => {
       String.prototype.localeCompare = nativeLocaleCompare;
       Map.prototype.set = nativeMapSet;
       JSON.stringify = nativeStringify;
+      if (nativeIndexDescriptor) {
+        nativeDefineProperty(Array.prototype, "0", nativeIndexDescriptor);
+      } else {
+        delete Array.prototype[0];
+      }
     };
 
     await withEnv({
@@ -741,7 +753,12 @@ describe("metrics public SDK", () => {
     }, async () => {
       await withMockFetch(
         ((url: string | URL | Request, init?: RequestInit) => {
-          requests[requests.length] = { url: String(url), init };
+          nativeDefineProperty(requests, String(requests.length), {
+            value: { url: String(url), init },
+            configurable: true,
+            enumerable: true,
+            writable: true,
+          });
           return Promise.resolve(new Response("{}", { status: 200 }));
         }) as typeof fetch,
         async () => {
@@ -800,11 +817,26 @@ describe("metrics public SDK", () => {
               space,
             );
           }) as typeof JSON.stringify;
+          nativeDefineProperty(Array.prototype, "0", {
+            set(value: unknown) {
+              record([value]);
+              nativeDefineProperty(this, "0", {
+                value,
+                configurable: true,
+                enumerable: true,
+                writable: true,
+              });
+            },
+            configurable: true,
+          });
 
           try {
             // Two distinct targets so the flush must group by target identity,
             // which is where the credential-bearing headers get compared.
-            metrics.counter("vf_internal_metric_total", 1, { project_id: "project-1" });
+            metrics.counter("vf_internal_metric_total", 1, {
+              project_id: "project-1",
+              tenant_marker: "private-telemetry",
+            });
             await runWithProjectEnv({
               OTEL_METRICS_ENABLED: "true",
               OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
@@ -840,12 +872,13 @@ describe("metrics public SDK", () => {
 
     const encodedCredential = "aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz";
     const leaked = observed.filter((value) =>
-      value.includes(encodedCredential) || value.includes("internal-pass")
+      value.includes(encodedCredential) || value.includes("internal-pass") ||
+      value.includes("vf_internal_metric_total") || value.includes("private-telemetry")
     );
     assertEquals(
       leaked,
       [],
-      "target grouping must never pass the internal proxy credential through a replaceable intrinsic",
+      "target grouping and serialization must not expose credentials or queued telemetry to replaceable intrinsics",
     );
   });
 
@@ -858,13 +891,62 @@ describe("metrics public SDK", () => {
       await withMockFetch(
         (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
         async () => {
+          const requestContext = {
+            projectId: "forged-request-0",
+            projectSlug: "forged-request",
+            token: "token",
+          };
+          await runWithRequestContext(requestContext, async () => {
+            for (let index = 0; index < 150; index++) {
+              requestContext.projectId = `forged-request-${index}`;
+              runWithTrustedProjectEnv(
+                {
+                  OTEL_METRICS_ENABLED: "true",
+                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+                  OTEL_SERVICE_NAME: `project-${index}`,
+                  VERYFRONT_PROJECT_ID: `forged-project-${index}`,
+                },
+                { projectId: "project-a", environmentId: "env-a" },
+                () => metrics.counter("vf_project_metric_total", 1),
+              );
+            }
+            await metrics.__flushForTests();
+          });
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              OTEL_SERVICE_NAME: "project-b",
+              VERYFRONT_PROJECT_ID: "forged-project-a",
+            },
+            { projectId: "project-b", environmentId: "env-b" },
+            () => metrics.counter("vf_project_metric_total", 1),
+          );
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(metrics.__getDirectTargetCountForTests(), 17);
+  });
+
+  it("applies tenant target quotas to metrics routed through the internal proxy", async () => {
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-project",
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
+        async () => {
           for (let index = 0; index < 150; index++) {
             runWithTrustedProjectEnv(
               {
                 OTEL_METRICS_ENABLED: "true",
-                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
                 OTEL_SERVICE_NAME: `project-${index}`,
-                VERYFRONT_PROJECT_ID: `forged-project-${index}`,
               },
               { projectId: "project-a", environmentId: "env-a" },
               () => metrics.counter("vf_project_metric_total", 1),
@@ -874,9 +956,7 @@ describe("metrics public SDK", () => {
           runWithTrustedProjectEnv(
             {
               OTEL_METRICS_ENABLED: "true",
-              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
               OTEL_SERVICE_NAME: "project-b",
-              VERYFRONT_PROJECT_ID: "forged-project-a",
             },
             { projectId: "project-b", environmentId: "env-b" },
             () => metrics.counter("vf_project_metric_total", 1),

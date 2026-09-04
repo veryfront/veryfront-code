@@ -51,6 +51,7 @@ interface DirectMetricsTarget {
   serviceVersion: string;
   capacityScope: string;
   internal: boolean;
+  tenantScoped: boolean;
 }
 
 interface DirectMetricSample {
@@ -106,8 +107,14 @@ const AbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
   "signal",
 )?.get;
 const objectKeys = Object.keys;
+const objectEntries = Object.entries;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectSetPrototypeOf = Object.setPrototypeOf;
+const arrayIsArray = Array.isArray;
+const arrayMap = Array.prototype.map;
+const arrayFindIndex = Array.prototype.findIndex;
 const arraySort = Array.prototype.sort;
-const arrayPush = Array.prototype.push;
 const arraySplice = Array.prototype.splice;
 const mapDelete = Map.prototype.delete;
 const mapForEach = Map.prototype.forEach;
@@ -124,6 +131,8 @@ const mathMin = Math.min;
 const NativeTextEncoder = TextEncoder;
 const textEncoderEncode = NativeTextEncoder.prototype.encode;
 const stringFromCharCode = String.fromCharCode;
+const NativeString = String;
+const jsonStringify = JSON.stringify;
 const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const typedArrayByteLength = Object.getOwnPropertyDescriptor(
   typedArrayPrototype,
@@ -144,6 +153,15 @@ const useAmbientFetchForTests = (() => {
     return false;
   }
 })();
+
+function appendArrayValue<T>(target: T[], value: T): void {
+  apply(objectDefineProperty, Object, [target, NativeString(target.length), {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  }]);
+}
 
 function encodeHostBase64(value: string): string {
   if (!hostBtoa || !typedArrayByteLength) {
@@ -174,31 +192,54 @@ function getMeter() {
 }
 
 function normalizeAttributes(attributes?: MetricAttributes): Record<string, AttributeValue> {
-  const normalized: Record<string, AttributeValue> = {};
-  for (const [key, value] of Object.entries(attributes ?? {})) {
+  const normalized = apply(objectCreate, Object, [null]) as Record<string, AttributeValue>;
+  const entries = apply(objectEntries, Object, [attributes ?? {}]) as Array<
+    [string, MetricAttributeValue]
+  >;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    const [key, value] = entry;
     if (value === null || value === undefined) continue;
-    normalized[key] = value;
+    apply(objectDefineProperty, Object, [normalized, key, {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    }]);
   }
 
   const context = getCurrentRequestContext();
-  if (context?.projectId) normalized.project_id = context.projectId;
-  if (context?.projectSlug) normalized.project_slug = context.projectSlug;
+  const addAttribute = (key: string, value: AttributeValue): void => {
+    apply(objectDefineProperty, Object, [normalized, key, {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    }]);
+  };
+  if (context?.projectId) addAttribute("project_id", context.projectId);
+  if (context?.projectSlug) addAttribute("project_slug", context.projectSlug);
   if (context) {
     const environmentName = context.environmentName ??
       (!context.productionMode ? "preview" : undefined);
-    if (environmentName) normalized.environment = environmentName;
-    if (!context.productionMode) normalized.branch = context.branch ?? "main";
+    if (environmentName) addAttribute("environment", environmentName);
+    if (!context.productionMode) addAttribute("branch", context.branch ?? "main");
   }
 
   return normalized;
 }
 
 function attributesKey(attributes: Record<string, AttributeValue>): string {
-  return JSON.stringify(
-    Object.entries(attributes)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, value]) => [key, value]),
-  );
+  const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
+  const sorted = apply(arraySort, entries, [
+    ([left]: [string, AttributeValue], [right]: [string, AttributeValue]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+  ]) as Array<[string, AttributeValue]>;
+  const values = apply(arrayMap, sorted, [
+    ([key, value]: [string, AttributeValue]) => [key, value],
+  ]);
+  return jsonStringify(values);
 }
 
 function getCounter(name: string, options?: MetricInstrumentOptions): Counter | null {
@@ -323,15 +364,22 @@ function resolveDirectServiceIdentity(): Pick<
 }
 
 function resolveDirectCapacityScope(): string {
+  const trustedIdentity = getTrustedProjectEnvIdentity();
+  if (trustedIdentity) {
+    return trustedIdentity.projectId ??
+      trustedIdentity.projectSlug ??
+      trustedIdentity.environmentId ??
+      "project:unattributed";
+  }
+
   const requestContext = getCurrentRequestContext();
   if (requestContext?.projectId) return requestContext.projectId;
   if (requestContext?.projectSlug) return requestContext.projectSlug;
+  return "project:unattributed";
+}
 
-  const trustedIdentity = getTrustedProjectEnvIdentity();
-  return trustedIdentity?.projectId ??
-    trustedIdentity?.projectSlug ??
-    trustedIdentity?.environmentId ??
-    "project:unattributed";
+function hasTenantMetricsScope(): boolean {
+  return getTrustedProjectEnvIdentity() !== undefined || isProjectEnvActive();
 }
 
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
@@ -346,11 +394,13 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
       ...resolveDirectServiceIdentity(),
       capacityScope: resolveDirectCapacityScope(),
       internal: false,
+      tenantScoped: true,
     };
   }
 
   const internalUrl = resolveInternalMetricsUrl();
   if (internalUrl) {
+    const tenantScoped = hasTenantMetricsScope();
     return {
       url: internalUrl,
       headers: {
@@ -360,13 +410,15 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         ),
       },
       ...resolveDirectServiceIdentity(),
-      capacityScope: "internal",
+      capacityScope: tenantScoped ? resolveDirectCapacityScope() : "internal",
       internal: true,
+      tenantScoped,
     };
   }
 
   const otlpUrl = resolveOtlpMetricsUrl();
   if (!otlpUrl) return null;
+  const tenantScoped = hasTenantMetricsScope();
   return {
     url: otlpUrl,
     headers: parseHeaders(
@@ -374,8 +426,9 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
     ),
     ...resolveDirectServiceIdentity(),
-    capacityScope: "host",
+    capacityScope: tenantScoped ? resolveDirectCapacityScope() : "host",
     internal: false,
+    tenantScoped,
   };
 }
 
@@ -480,13 +533,13 @@ function countPendingDirectSamples(
 
 function hasDirectSampleCapacity(target: DirectMetricsTarget): boolean {
   if (countPendingDirectSamples() >= DIRECT_MAX_QUEUED_SAMPLES) return false;
-  if (target.internal) return true;
+  if (!target.tenantScoped) return true;
   if (
-    countPendingDirectSamples((candidate) => !candidate.internal) >=
+    countPendingDirectSamples((candidate) => candidate.tenantScoped) >=
       DIRECT_MAX_PROJECT_PENDING_SAMPLES
   ) return false;
   return countPendingDirectSamples((candidate) =>
-    !candidate.internal && candidate.capacityScope === target.capacityScope
+    candidate.tenantScoped && candidate.capacityScope === target.capacityScope
   ) < DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE;
 }
 
@@ -500,6 +553,7 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
       interned.target.serviceVersion === target.serviceVersion &&
       interned.target.capacityScope === target.capacityScope &&
       interned.target.internal === target.internal &&
+      interned.target.tenantScoped === target.tenantScoped &&
       headersEqual(interned.target.headers, target.headers)
     ) {
       interned.pendingSamples++;
@@ -507,21 +561,21 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
       return interned.key;
     }
   }
-  if (!target.internal) {
+  if (target.tenantScoped) {
     const scopeTargets = countDirectTargets((candidate) =>
-      !candidate.internal && candidate.capacityScope === target.capacityScope
+      candidate.tenantScoped && candidate.capacityScope === target.capacityScope
     );
     if (
       scopeTargets >= DIRECT_MAX_TARGETS_PER_SCOPE &&
       !evictUnusedDirectTarget((candidate) =>
-        !candidate.internal && candidate.capacityScope === target.capacityScope
+        candidate.tenantScoped && candidate.capacityScope === target.capacityScope
       )
     ) return null;
 
-    const projectTargets = countDirectTargets((candidate) => !candidate.internal);
+    const projectTargets = countDirectTargets((candidate) => candidate.tenantScoped);
     if (
       projectTargets >= DIRECT_MAX_PROJECT_TARGETS &&
-      !evictUnusedDirectTarget((candidate) => !candidate.internal)
+      !evictUnusedDirectTarget((candidate) => candidate.tenantScoped)
     ) return null;
   }
   if (
@@ -531,12 +585,12 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
     return null;
   }
   const key = `t${nextInternedTargetId++}`;
-  internedTargets[internedTargets.length] = {
+  appendArrayValue(internedTargets, {
     target,
     key,
     pendingSamples: 1,
     lastUsed: nextInternedTargetUse++,
-  };
+  });
   return key;
 }
 
@@ -568,23 +622,26 @@ function releaseDirectTargetSamples(targetKey: string, count: number): void {
 function toOtlpValue(value: AttributeValue) {
   if (typeof value === "boolean") return { boolValue: value };
   if (typeof value === "number") return { doubleValue: value };
-  return { stringValue: String(value) };
+  return { stringValue: NativeString(value) };
 }
 
 function toOtlpAttributes(attributes: Record<string, AttributeValue>) {
-  return Object.entries(attributes).map(([key, value]) => ({
+  const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
+  return apply(arrayMap, entries, [([key, value]: [string, AttributeValue]) => ({
     key,
     value: toOtlpValue(value),
-  }));
+  })]);
 }
 
 function getUnixNanoTimestamp(): string {
-  return String(BigInt(Date.now()) * 1_000_000n);
+  return NativeString(BigInt(Date.now()) * 1_000_000n);
 }
 
 function buildHistogramBuckets(value: number): number[] {
   const counts = new Array(HISTOGRAM_BOUNDS.length + 1).fill(0);
-  const bucketIndex = HISTOGRAM_BOUNDS.findIndex((bound) => value <= bound);
+  const bucketIndex = apply(arrayFindIndex, HISTOGRAM_BOUNDS, [
+    (bound: number) => value <= bound,
+  ]) as number;
   counts[bucketIndex === -1 ? counts.length - 1 : bucketIndex] = 1;
   return counts;
 }
@@ -593,12 +650,14 @@ function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
   const attributes = toOtlpAttributes(sample.attributes);
   if (sample.kind === "counter") {
     const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = directCounterTotals.get(key) ?? {
+    const total = (apply(mapGet, directCounterTotals, [key]) as
+      | { value: number; startTimeUnixNano: string }
+      | undefined) ?? {
       value: 0,
       startTimeUnixNano: sample.timestampUnixNano,
     };
     total.value += sample.value;
-    directCounterTotals.set(key, total);
+    apply(mapSet, directCounterTotals, [key, total]);
 
     return {
       name: sample.name,
@@ -617,7 +676,14 @@ function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
 
   if (sample.kind === "histogram") {
     const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = directHistogramTotals.get(key) ?? {
+    const total = (apply(mapGet, directHistogramTotals, [key]) as
+      | {
+        count: number;
+        sum: number;
+        bucketCounts: number[];
+        startTimeUnixNano: string;
+      }
+      | undefined) ?? {
       count: 0,
       sum: 0,
       bucketCounts: new Array(HISTOGRAM_BOUNDS.length + 1).fill(0),
@@ -626,8 +692,10 @@ function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
     const sampleBuckets = buildHistogramBuckets(sample.value);
     total.count += 1;
     total.sum += sample.value;
-    total.bucketCounts = total.bucketCounts.map((count, index) => count + sampleBuckets[index]);
-    directHistogramTotals.set(key, total);
+    total.bucketCounts = apply(arrayMap, total.bucketCounts, [
+      (count: number, index: number) => count + (sampleBuckets[index] ?? 0),
+    ]) as number[];
+    apply(mapSet, directHistogramTotals, [key, total]);
 
     return {
       name: sample.name,
@@ -677,10 +745,43 @@ function buildDirectOtlpBody(
         scope: {
           name: "veryfront.project.metrics",
         },
-        metrics: samples.map((sample) => buildDirectMetric(sample, targetKey)),
+        metrics: apply(arrayMap, samples, [
+          (sample: DirectMetricSample) => buildDirectMetric(sample, targetKey),
+        ]),
       }],
     }],
   };
+}
+
+function toHookFreeJsonValue(value: unknown): unknown {
+  if (arrayIsArray(value)) {
+    const result: unknown[] = [];
+    apply(objectSetPrototypeOf, Object, [result, null]);
+    for (let index = 0; index < value.length; index++) {
+      apply(objectDefineProperty, Object, [result, NativeString(index), {
+        value: toHookFreeJsonValue(value[index]),
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      }]);
+    }
+    return result;
+  }
+  if (typeof value !== "object" || value === null) return value;
+
+  const result = apply(objectCreate, Object, [null]) as Record<string, unknown>;
+  const entries = apply(objectEntries, Object, [value]) as Array<[string, unknown]>;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    apply(objectDefineProperty, Object, [result, entry[0], {
+      value: toHookFreeJsonValue(entry[1]),
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    }]);
+  }
+  return result;
 }
 
 function logDirectExportFailure(error: unknown): void {
@@ -720,7 +821,9 @@ async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
           ...group.target.headers,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildDirectOtlpBody(group.samples, group.target, group.key)),
+        body: jsonStringify(
+          toHookFreeJsonValue(buildDirectOtlpBody(group.samples, group.target, group.key)),
+        ),
         signal: deadline.signal,
       },
     );
@@ -769,9 +872,9 @@ function dispatchDirectMetricsBatch(): void {
     }
     if (!group) {
       group = { key, target, samples: [] };
-      groups[groups.length] = group;
+      appendArrayValue(groups, group);
     }
-    group.samples[group.samples.length] = sample;
+    appendArrayValue(group.samples, sample);
   }
 
   // Start every target request before awaiting any of them. Each request owns
@@ -807,7 +910,7 @@ function dispatchQueuedDirectMetrics(): void {
 function snapshotDirectTargetExports(): Promise<void>[] {
   const exports: Promise<void>[] = [];
   const collect = (pending: Promise<void>): void => {
-    exports[exports.length] = pending;
+    appendArrayValue(exports, pending);
   };
   apply(mapForEach, directTargetExportTails, [collect]);
   return exports;
@@ -859,7 +962,7 @@ function enqueueDirectMetric(
     timestampUnixNano: getUnixNanoTimestamp(),
   };
   apply(weakMapSet, directSampleTargets, [sample, targetKey]);
-  apply(arrayPush, directQueue, [sample]);
+  appendArrayValue(directQueue, sample);
   if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
     void flushDirectMetrics();
     return;
