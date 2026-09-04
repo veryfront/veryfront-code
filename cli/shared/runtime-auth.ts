@@ -9,6 +9,7 @@ export interface RuntimeAuthOptions {
 
 export interface RuntimeAuthContext {
   apiToken?: string;
+  apiTokenSource?: "environment" | "token-store";
   projectSlug?: string;
   serviceLayer?: string;
 }
@@ -54,6 +55,7 @@ export async function resolveRuntimeAuthContext(
 
   return {
     ...(apiToken ? { apiToken } : {}),
+    ...(apiToken ? { apiTokenSource: envToken ? "environment" : "token-store" as const } : {}),
     ...(projectSlug ? { projectSlug } : {}),
     ...(serviceLayer ? { serviceLayer } : {}),
   };

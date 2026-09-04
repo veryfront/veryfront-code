@@ -16,7 +16,11 @@ import { validateProviderConfig } from "veryfront/discovery";
 import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import {
+  applyRuntimeAuthContext,
+  resolveLinkedProjectSlug,
+  type RuntimeAuthContext,
+} from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
@@ -31,6 +35,7 @@ import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fal
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { guardedOutboundFetch } from "#cli/outbound-fetch";
+import { getApiUrl } from "#cli/shared/constants";
 
 export interface DevOptions {
   port: number;
@@ -79,11 +84,12 @@ function authStatus(identity: AuthIdentity): string {
 
 export async function preloadDevAuth(
   apiToken?: string,
+  apiTokenSource?: RuntimeAuthContext["apiTokenSource"],
 ): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
   if (!apiToken) return { identity: null, projects: [] };
 
   const result = await fetchRemoteProjects(apiToken, {
-    apiBaseUrl: resolveHostOwnedApiBaseUrl(),
+    apiBaseUrl: apiTokenSource === "token-store" ? resolveHostOwnedApiBaseUrl() : getApiUrl(),
     transport: guardedOutboundFetch,
   });
   const identity = result.credentialType === "apiKey"
@@ -227,7 +233,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const runtimeAuth = await applyRuntimeAuthContext({
         linkedProjectSlug,
       });
-      const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken).catch(() => ({
+      const initialAuthPromise = preloadDevAuth(
+        runtimeAuth.apiToken,
+        runtimeAuth.apiTokenSource,
+      ).catch(() => ({
         identity: null,
         projects: [],
       }));

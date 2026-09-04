@@ -76,6 +76,7 @@ describe("cli/shared/runtime-auth", () => {
 
     assertEquals(context, {
       apiToken: "env-token",
+      apiTokenSource: "environment",
       projectSlug: "env-project",
       serviceLayer: "local",
     });
@@ -89,6 +90,7 @@ describe("cli/shared/runtime-auth", () => {
 
     assertEquals(context, {
       apiToken: "stored-token",
+      apiTokenSource: "token-store",
       serviceLayer: "cloud",
     });
     assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
@@ -145,6 +147,7 @@ describe("cli/shared/runtime-auth", () => {
 
     assertEquals(context, {
       apiToken: "stored-token",
+      apiTokenSource: "token-store",
       projectSlug: "linked-project",
       serviceLayer: "cloud",
     });
