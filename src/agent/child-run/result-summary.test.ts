@@ -292,6 +292,22 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts?.toolIds?.length, 50);
     });
 
+    it("does not spend the fact limit on empty tool arrays", () => {
+      const text = `${"tools: []\n".repeat(50)}tools: ["critical_tool"]`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
+    it("does not scan object text after a malformed tool element", () => {
+      const text = 'tools: [ invalid, {"id":"bogus_tool"}';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("does not treat fields after an unclosed provider tool array as array values", () => {
       const text = '"provider_tool_ids": [\n"fallback": "web_fetch"';
 

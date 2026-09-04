@@ -252,22 +252,6 @@ function decodeSingleQuotedString(value: string): string | undefined {
   return decoded;
 }
 
-function parseQuotedScalar(
-  text: string,
-  start: number,
-  end: number,
-  quote: string,
-): string | undefined {
-  const value = text.slice(start + 1, end - 1);
-  if (quote === "'") return decodeSingleQuotedString(value);
-  try {
-    const parsed = JSON.parse(text.slice(start, end));
-    return typeof parsed === "string" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function normalizeSingleQuotedJson(text: string): string {
   let normalized = "";
   for (let index = 0; index < text.length; index++) {
@@ -292,44 +276,6 @@ function normalizeSingleQuotedJson(text: string): string {
     index = end - 1;
   }
   return normalized;
-}
-
-function addToolIdsFromLeadingObjectFields(target: string[], fieldBody: string): void {
-  let objectDepth = 0;
-  let arrayDepth = 0;
-
-  for (let index = 0; index < fieldBody.length;) {
-    const character = fieldBody[index]!;
-    if (character === '"' || character === "'") {
-      const end = scanQuotedValueEnd(fieldBody, index, character);
-      if (end === undefined) return;
-      if (objectDepth === 1 && arrayDepth === 0) {
-        const key = parseQuotedScalar(fieldBody, index, end, character);
-        let valueStart = end;
-        while (/\s/.test(fieldBody[valueStart] ?? "")) valueStart += 1;
-        if ((key === "id" || key === "name") && fieldBody[valueStart] === ":") {
-          valueStart += 1;
-          while (/\s/.test(fieldBody[valueStart] ?? "")) valueStart += 1;
-          const valueQuote = fieldBody[valueStart];
-          if (valueQuote === '"' || valueQuote === "'") {
-            const valueEnd = scanQuotedValueEnd(fieldBody, valueStart, valueQuote);
-            if (valueEnd === undefined) return;
-            const value = parseQuotedScalar(fieldBody, valueStart, valueEnd, valueQuote);
-            if (value !== undefined) addToolIdFact(target, value);
-            index = valueEnd;
-            continue;
-          }
-        }
-      }
-      index = end;
-      continue;
-    }
-    if (character === "{") objectDepth += 1;
-    else if (character === "}") objectDepth = Math.max(0, objectDepth - 1);
-    else if (objectDepth > 0 && character === "[") arrayDepth += 1;
-    else if (objectDepth > 0 && character === "]") arrayDepth = Math.max(0, arrayDepth - 1);
-    index += 1;
-  }
 }
 
 function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
@@ -425,7 +371,6 @@ function addToolIdsFromFieldBody(
     parseCompleteLeadingArrayValues(fieldBody),
     includeObjectFields,
   );
-  if (includeObjectFields) addToolIdsFromLeadingObjectFields(target, fieldBody);
 }
 
 function addToolArrayFieldValues(
@@ -434,10 +379,8 @@ function addToolArrayFieldValues(
   pattern: RegExp,
 ): void {
   pattern.lastIndex = 0;
-  let inspectedFields = 0;
+  let extendedScans = 0;
   for (const match of text.matchAll(pattern)) {
-    if (inspectedFields >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
-    inspectedFields += 1;
     const fieldName = match[1];
     const bodyStart = match.index + match[0].length;
     const boundedBody = text.slice(
@@ -447,16 +390,23 @@ function addToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
-    if (fieldName === "tools" && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT) {
-      // Full JSON parsing stays under the small per-field cap above. A tool
-      // object's top-level id/name can safely be scanned farther within the
-      // already bounded head/tail window, so long descriptions or schemas do
-      // not hide an identifier that follows them.
+    if (
+      fieldName === "tools" && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT &&
+      extendedScans < CHILD_RUN_CONTRACT_FACT_LIMIT
+    ) {
+      // Full parsing stays bounded to a fixed number of fields in the already
+      // bounded head/tail window. Parsing complete leading elements, rather
+      // than scanning for object-looking text, stops at the first malformed
+      // element and still reaches ids after long descriptions or schemas.
+      extendedScans += 1;
       const windowBody = text.slice(bodyStart);
       const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-      addToolIdsFromLeadingObjectFields(
+      addToolIdsFromParsedArray(
         target,
-        windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
+        parseCompleteLeadingArrayValues(
+          windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
+        ),
+        true,
       );
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
