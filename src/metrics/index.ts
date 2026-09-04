@@ -884,7 +884,7 @@ function toHookFreeJsonValue(value: unknown): unknown {
   return result;
 }
 
-function recordDirectSampleDrop(reason: string, capacityScope: string): void {
+function recordDirectSampleDrop(reason: string): void {
   droppedDirectSamples++;
   // Log the first drop, then at most one line per 1000 further drops so a
   // stalled tenant endpoint cannot flood the log.
@@ -892,7 +892,6 @@ function recordDirectSampleDrop(reason: string, capacityScope: string): void {
     // debug level - suppressed at default INFO threshold, visible with --debug.
     serverLogger.debug("metrics: direct OTLP sample dropped", {
       reason,
-      capacityScope,
       dropped: droppedDirectSamples,
     });
   }
@@ -1074,7 +1073,7 @@ function enqueueDirectMetric(
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
   if (!hasDirectSampleCapacity(target)) {
-    recordDirectSampleDrop("sample-quota", target.capacityScope);
+    recordDirectSampleDrop("sample-quota");
     return;
   }
   // Complete every fallible field before incrementing the target's retained
@@ -1083,7 +1082,7 @@ function enqueueDirectMetric(
   const timestampUnixNano = getUnixNanoTimestamp();
   const targetKey = retainDirectTarget(target);
   if (targetKey === null) {
-    recordDirectSampleDrop("target-quota", target.capacityScope);
+    recordDirectSampleDrop("target-quota");
     return;
   }
   const sample: DirectMetricSample = {
