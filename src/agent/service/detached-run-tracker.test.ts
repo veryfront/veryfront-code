@@ -20,6 +20,46 @@ function deferred(): { promise: Promise<void>; resolve: () => Promise<void> } {
   };
 }
 
+/** Subscribes to unhandled rejections across Deno (WHATWG events) and Node/Bun (`process.on`). */
+function onUnhandledRejectionForTest(onReason: (reason: unknown) => void): () => void {
+  const target = globalThis as {
+    addEventListener?: (
+      type: string,
+      listener: (event: { reason: unknown; preventDefault(): void }) => void,
+    ) => void;
+    removeEventListener?: (
+      type: string,
+      listener: (event: { reason: unknown; preventDefault(): void }) => void,
+    ) => void;
+    process?: {
+      on?: (event: string, listener: (reason: unknown) => void) => void;
+      off?: (event: string, listener: (reason: unknown) => void) => void;
+    };
+  };
+
+  if (
+    typeof target.addEventListener === "function" &&
+    typeof target.removeEventListener === "function"
+  ) {
+    const listener = (event: { reason: unknown; preventDefault(): void }) => {
+      onReason(event.reason);
+      event.preventDefault();
+    };
+    target.addEventListener("unhandledrejection", listener);
+    return () => target.removeEventListener?.("unhandledrejection", listener);
+  }
+
+  const targetProcess = target.process;
+  if (typeof targetProcess?.on === "function" && typeof targetProcess.off === "function") {
+    const off = targetProcess.off.bind(targetProcess);
+    const listener = (reason: unknown) => onReason(reason);
+    targetProcess.on("unhandledRejection", listener);
+    return () => off("unhandledRejection", listener);
+  }
+
+  throw new Error("No supported unhandled-rejection API in this runtime");
+}
+
 describe("agent/detached-run-tracker", () => {
   it("tracks, cancels, and drains active run executions", async () => {
     const tracker = createDetachedRunTracker<{ result: unknown; isError: boolean }>({
@@ -158,5 +198,26 @@ describe("agent/detached-run-tracker", () => {
     ]);
 
     await execution.resolve();
+  });
+
+  it("does not produce an unhandled rejection when a registered execution fails", async () => {
+    const tracker = createDetachedRunTracker();
+    let unhandled: unknown;
+    const unsubscribe = onUnhandledRejectionForTest((reason) => {
+      unhandled = reason;
+    });
+
+    try {
+      // The caller (durable-chat-run-start.ts) awaits this same promise
+      // directly, so its rejection is already handled there.
+      const execution = Promise.reject(new Error("boom"));
+      execution.catch(() => {});
+      tracker.registerExecution("run_1", execution);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(unhandled, undefined);
   });
 });
