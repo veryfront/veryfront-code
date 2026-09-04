@@ -712,8 +712,8 @@ const JSX_CACHE_PRUNE_RETRY_SLACK_MS = 1_000;
  *
  * One runtime process can serve many projects, and an idle-horizon follow-up
  * stays pending for hours, so the pending set is capped like the other memos
- * here. Dropping the oldest pending timer costs only latency: that directory's
- * collection resumes on its next transform, which arms a sweep again.
+ * here. If the bound is reached, the oldest pending directory is revisited
+ * immediately instead of waiting for another transform to arm its sweep.
  */
 const MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES = 256;
 
@@ -722,6 +722,21 @@ const scheduledJsxCachePrunes = new Map<
   string,
   { timer: ReturnType<typeof setTimeout>; fireAtMs: number }
 >();
+
+function revisitJsxCacheDirectory(esmCacheDir: string): void {
+  void collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now()).catch((error) => {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // A pass that throws, rather than preserving an artifact and naming a
+    // retry, never reaches the scheduling at its end. Re-arm the directory so
+    // transient lease or filesystem failures cannot strand its excess files.
+    scheduleJsxCachePruneRetry(
+      esmCacheDir,
+      JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+    );
+  });
+}
 
 /**
  * Schedule a follow-up prune for variants a preservation rule protected.
@@ -746,24 +761,12 @@ function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void 
       const oldest = scheduledJsxCachePrunes.get(oldestDirectory);
       if (oldest) clearTimeout(oldest.timer);
       scheduledJsxCachePrunes.delete(oldestDirectory);
+      revisitJsxCacheDirectory(oldestDirectory);
     }
   }
   const timer = setTimeout(() => {
     scheduledJsxCachePrunes.delete(esmCacheDir);
-    collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now()).catch((error) => {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // A pass that throws, rather than preserving an artifact and naming a
-      // retry, never reaches the scheduling at its end: a lease it could not
-      // acquire aborts it partway. This callback has already dropped the
-      // directory's entry, so without re-arming here the excess it left waits
-      // for an unrelated future transform.
-      scheduleJsxCachePruneRetry(
-        esmCacheDir,
-        JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
-      );
-    });
+    revisitJsxCacheDirectory(esmCacheDir);
   }, delayMs);
   unrefTimer(timer);
   scheduledJsxCachePrunes.set(esmCacheDir, { timer, fireAtMs });

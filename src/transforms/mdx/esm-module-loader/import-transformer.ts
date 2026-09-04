@@ -552,7 +552,12 @@ export async function transformJsxImports(
           // see the use too.
           await assertLeaseOwned();
           markJsxArtifactServed(transformedPath);
-          await refreshJsxArtifactMtime(transformedPath, stat.mtime?.getTime() ?? 0);
+          await refreshJsxArtifactMtime(
+            transformedPath,
+            stat.mtime?.getTime() ?? 0,
+            Date.now(),
+            true,
+          );
           return true;
         } catch (_) {
           /* expected: cached JSX module may not exist yet */
