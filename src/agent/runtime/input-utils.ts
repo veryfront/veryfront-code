@@ -11,18 +11,18 @@ const syntheticMessageIdValues = new WeakMap<object, string>();
 const syntheticMessageTimestampValues = new WeakMap<object, number>();
 
 /** Whether normalization supplied this message id from the wall clock. */
-export function hasSyntheticMessageId(message: object): boolean {
+export function hasSyntheticMessageId(message: Message): boolean {
   return syntheticMessageIds.has(message);
 }
 
 /** Whether normalization supplied this message timestamp from the wall clock. */
-export function hasSyntheticMessageTimestamp(message: object): boolean {
+export function hasSyntheticMessageTimestamp(message: Message): boolean {
   return syntheticMessageTimestamps.has(message);
 }
 
 /** Whether this message still carries the id supplied by normalization. */
 export function hasUnchangedSyntheticMessageId(
-  message: object,
+  message: Message,
   id: string,
 ): boolean {
   return syntheticMessageIds.has(message) && syntheticMessageIdValues.get(message) === id;
@@ -30,7 +30,7 @@ export function hasUnchangedSyntheticMessageId(
 
 /** Whether this message still carries the timestamp supplied by normalization. */
 export function hasUnchangedSyntheticMessageTimestamp(
-  message: object,
+  message: Message,
   timestamp: number | undefined,
 ): boolean {
   return syntheticMessageTimestamps.has(message) &&
@@ -38,7 +38,7 @@ export function hasUnchangedSyntheticMessageTimestamp(
 }
 
 /** Preserve synthesized-field provenance when middleware clones a message. */
-export function propagateSyntheticMessageMarks(source: object, target: object): void {
+export function propagateSyntheticMessageMarks(source: Message, target: Message): void {
   if (syntheticMessageIds.has(source)) {
     syntheticMessageIds.add(target);
     const id = syntheticMessageIdValues.get(source);

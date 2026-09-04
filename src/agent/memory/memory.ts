@@ -15,8 +15,8 @@ interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
 }
 const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
 
-function registerMemoryRollbackFactory(
-  memory: object,
+function registerMemoryRollbackFactory<M extends MinimalMessage>(
+  memory: Memory<M>,
   factory: () => MemoryRollback,
 ): void {
   memoryRollbackFactories.set(memory, factory);
