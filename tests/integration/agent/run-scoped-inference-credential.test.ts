@@ -77,6 +77,7 @@ describe("run-scoped inference credential", () => {
     restoreMockFetch();
     clearModelProviders();
     deleteEnv("VERYFRONT_API_TOKEN");
+    deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
     deleteEnv("VERYFRONT_PROJECT_SLUG");
   });
 
@@ -1166,6 +1167,21 @@ describe("run-scoped inference credential", () => {
         "run-scoped-inference-token",
       );
     }
+  });
+
+  it("routes run-scoped inference credentials through the trusted public API host env", () => {
+    setEnv(
+      "VERYFRONT_PUBLIC_API_BASE_URL",
+      "https://api.staging.veryfront.example",
+    );
+
+    assertEquals(
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "http://control-plane.internal.example" },
+        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      ),
+      "https://api.staging.veryfront.example",
+    );
   });
 
   it("keeps the inference destination and HTTPS guard out of mutable regex replacement hooks", () => {

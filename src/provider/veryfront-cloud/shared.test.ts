@@ -3,7 +3,6 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -75,24 +74,34 @@ describe("provider/veryfront-cloud/shared", () => {
     );
   });
 
-  it("routes run-scoped inference credentials to the trusted public API base", () => {
-    setEnv(
-      "VERYFRONT_PUBLIC_API_BASE_URL",
-      "https://api.staging.veryfront.example",
-    );
-    try {
-      runWithVeryfrontCloudContext(
-        { apiBaseUrl: "http://control-plane.internal.example" },
-        () => {
-          assertEquals(
-            requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+  it("routes run-scoped inference credentials to the explicit public API base", () => {
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "http://control-plane.internal.example" },
+      () => {
+        assertEquals(
+          requireVeryfrontCloudBootstrap(
+            "run-scoped-inference-token",
             "https://api.staging.veryfront.example",
-          );
-        },
-      );
-    } finally {
-      deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
-    }
+          ).apiBaseUrl,
+          "https://api.staging.veryfront.example",
+        );
+      },
+    );
+  });
+
+  it("allows bracketed IPv6 loopback for run-scoped inference credentials", () => {
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "https://control-plane.example" },
+      () => {
+        assertEquals(
+          requireVeryfrontCloudBootstrap(
+            "run-scoped-inference-token",
+            "http://[::1]:4000",
+          ).apiBaseUrl,
+          "http://[::1]:4000",
+        );
+      },
+    );
   });
 
   it("preserves base URL query parameters and removes fragments", () => {
