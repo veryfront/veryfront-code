@@ -3837,6 +3837,7 @@ describe("DAGExecutor", () => {
           while: (_context, loopContext) => loopContext.iteration < 1,
           maxIterations: 1,
           steps: () => [{ id: "review", config: { type: "step" } as any }],
+          onMaxIterations: () => ({ loop_loop_state: { userValue: true } }),
         }),
         {
           ...subWorkflow("release", {
@@ -3856,6 +3857,7 @@ describe("DAGExecutor", () => {
       assertEquals(result.waitingNode, "loop/review");
       assertEquals(result.nodeStates.release?.status, "running");
       assertEquals(result.nodeStates["loop/review"]?.status, "running");
+      assertEquals(result.context.loop_loop_state, { userValue: true });
     });
 
     it("prefers an active callback-defined sibling's legacy state", async () => {

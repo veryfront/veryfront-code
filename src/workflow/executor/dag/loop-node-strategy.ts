@@ -87,6 +87,9 @@ export function toPersistedNodeStates(
       ...(state._activeCompositeChildIds !== undefined
         ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
         : {}),
+      ...(state._completedCompositeChildIds !== undefined
+        ? { _completedCompositeChildIds: [...state._completedCompositeChildIds] }
+        : {}),
       ...(state.input !== undefined ? { input: state.input } : {}),
       ...(state.output !== undefined ? { output: state.output } : {}),
       ...(state.error !== undefined ? { error: state.error } : {}),
@@ -358,25 +361,27 @@ export async function executeLoopNodeStrategy(
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: new Date(),
+    ...(typeof config.steps === "function"
+      ? { _completedCompositeChildIds: Object.keys(exposedIterationNodeStates) }
+      : {}),
   };
 
   runtime.onNodeComplete?.(node.id, state);
 
+  const contextPatch = createSetContextPatch({
+    [node.id]: output,
+    ...completionUpdates,
+  });
+  if (
+    typeof config.steps === "function" &&
+    !Object.hasOwn(completionUpdates, loopStateKey)
+  ) {
+    contextPatch.delete.push(loopStateKey);
+  }
+
   return {
     state,
-    contextPatch: createSetContextPatch({
-      [node.id]: output,
-      ...(typeof config.steps === "function"
-        ? {
-          [loopStateKey]: {
-            iteration,
-            previousResults,
-            completedNodeIds: Object.keys(exposedIterationNodeStates),
-          },
-        }
-        : {}),
-      ...completionUpdates,
-    }),
+    contextPatch,
     waiting: false,
     errorCause: lastErrorCause,
   };

@@ -630,6 +630,9 @@ function collectCompletedCompositeChildIds(
     if (node.config.type === "loop" && Array.isArray(node.config.steps)) {
       collectExecutedCompositeNodeIds(node.config.steps, nodeStates, target, context);
     } else if (node.config.type === "loop" && context) {
+      for (const childId of nodeStates[node.id]?._completedCompositeChildIds ?? []) {
+        target.add(childId);
+      }
       const loopState = context[`${node.id}_loop_state`];
       const iterationNodeStates = typeof loopState === "object" && loopState !== null &&
           "iterationNodeStates" in loopState
