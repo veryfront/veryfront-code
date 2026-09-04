@@ -5,6 +5,20 @@ import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/type
 import { normalizeInput } from "#veryfront/agent/runtime/input-utils.ts";
 import { cacheMiddleware, createCache } from "./cache.ts";
 
+/**
+ * Wait until the wall clock leaves the current millisecond.
+ *
+ * `normalizeInput` derives synthetic message ids and timestamps from
+ * `Date.now()`, so two inputs built inside one millisecond carry identical
+ * synthesized identity and prove nothing about what the cache key ignores.
+ */
+async function leaveCurrentMillisecond(): Promise<void> {
+  const start = Date.now();
+  while (Date.now() === start) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 function createResponse(text: string): AgentResponse {
   return {
     text,
@@ -43,25 +57,29 @@ describe("cacheMiddleware", () => {
     const middleware = cacheMiddleware({ strategy: "memory" });
     let executions = 0;
     const next = async (): Promise<AgentResponse> => createResponse(`response-${++executions}`);
-    const contextAt = (stamp: number, text: string): AgentContext => {
-      const originalNow = Date.now;
-      Date.now = () => stamp;
-      try {
-        return {
-          agentId: "agent",
-          input: normalizeInput([
-            { role: "user", parts: [{ type: "text", text }] },
-          ] as unknown as Message[]),
-          platform: {},
-        };
-      } finally {
-        Date.now = originalNow;
-      }
-    };
+    const inputFor = (text: string): Message[] =>
+      normalizeInput([
+        { role: "user", parts: [{ type: "text", text }] },
+      ] as unknown as Message[]);
+    const contextFor = (input: Message[]): AgentContext => ({
+      agentId: "agent",
+      input,
+      platform: {},
+    });
 
-    assertEquals((await middleware(contextAt(1_000, "hello"), next)).text, "response-1");
-    assertEquals((await middleware(contextAt(2_000, "hello"), next)).text, "response-1");
-    assertEquals((await middleware(contextAt(3_000, "different"), next)).text, "response-2");
+    const first = inputFor("hello");
+    await leaveCurrentMillisecond();
+    const second = inputFor("hello");
+    assertEquals(
+      first[0]?.id === second[0]?.id,
+      false,
+      "the two inputs must carry different synthesized ids for this to prove anything",
+    );
+
+    assertEquals((await middleware(contextFor(first), next)).text, "response-1");
+    assertEquals((await middleware(contextFor(second), next)).text, "response-1");
+    await leaveCurrentMillisecond();
+    assertEquals((await middleware(contextFor(inputFor("different")), next)).text, "response-2");
     assertEquals(executions, 2);
     middleware.destroy();
   });

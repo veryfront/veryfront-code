@@ -7,7 +7,16 @@ import { agentAsTool } from "./composition/composition.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import { ConversationMemory } from "./memory/index.ts";
 import { cacheMiddleware } from "./middleware/cache/cache.ts";
+import { registerTurnMessageValidator } from "./middleware/turn-validation.ts";
 import type { AgentContext, AgentMiddleware, AgentResponse, Message } from "./types.ts";
+
+/** Wait until the wall clock leaves the current millisecond. */
+async function leaveCurrentMillisecond(): Promise<void> {
+  const start = Date.now();
+  while (Date.now() === start) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
 
 function createDummyMiddleware(label: string): AgentMiddleware {
   const fn: AgentMiddleware = async (_ctx: AgentContext, next: () => Promise<AgentResponse>) => {
@@ -593,12 +602,13 @@ describe("resolveSecurityMiddleware", () => {
       middleware: [middleware],
       resolveModelTransport: async () => ({ model }),
     });
-    const originalNow = Date.now;
     try {
-      Date.now = () => 1_000;
       const first = await (await assistant.stream({ input: "hello" }))
         .toDataStreamResponse().text();
-      Date.now = () => 2_000;
+      // The two turns must land in different milliseconds so `normalizeInput`
+      // synthesizes a different id for the second one; that difference is
+      // exactly what the cache key has to ignore.
+      await leaveCurrentMillisecond();
       const second = await (await assistant.stream({ input: "hello" }))
         .toDataStreamResponse().text();
 
@@ -606,7 +616,6 @@ describe("resolveSecurityMiddleware", () => {
       assertStringIncludes(first, "cached answer");
       assertStringIncludes(second, "cached answer");
     } finally {
-      Date.now = originalNow;
       middleware.destroy();
     }
   });
@@ -648,6 +657,105 @@ describe("resolveSecurityMiddleware", () => {
     const body = await (await assistant.stream({ input: "hello" })).toDataStreamResponse().text();
 
     assertStringIncludes(body, "fallback answer");
+  });
+
+  it("does not replay a middleware rewrite over text that already streamed", async () => {
+    // Output filtering runs after `next()` returns, by which time the provider
+    // chunks have already reached the client. Emitting the rewritten text as a
+    // trailing delta would render the streamed answer followed by its
+    // transformed copy, so the replay is reserved for turns that streamed
+    // nothing at all.
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/stream-rewrite",
+      async doGenerate() {
+        throw new Error("Expected streaming path");
+      },
+      async doStream() {
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "streamed answer" },
+            { type: "finish" },
+          ]),
+        };
+      },
+    };
+    const rewrite: AgentMiddleware = async (_context, next) => {
+      const result = await next();
+      return { ...result, text: "rewritten answer" };
+    };
+    const assistant = agent({
+      id: "stream-rewrite",
+      model: "hosted/stream-rewrite",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      middleware: [rewrite],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "hello" })).toDataStreamResponse().text();
+
+    assertStringIncludes(body, "streamed answer");
+    assertEquals(
+      body.includes("rewritten answer"),
+      false,
+      "a post-stream rewrite must not be appended to the chunks already sent",
+    );
+  });
+
+  it("runs a turn-message validator once on an unchanged first turn", async () => {
+    // The post-write check exists to catch a memory store that rewrites the
+    // transcript while persisting. Its baseline must be the committed clones,
+    // otherwise every first turn looks rewritten and runs a caller-registered
+    // validator a second time.
+    const validatorCalls: Array<{ history: number; turnInput: number }> = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/turn-validator-calls",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const recorder: AgentMiddleware = (context, next) => {
+      registerTurnMessageValidator(context, (history, turnInput) => {
+        validatorCalls.push({ history: history.length, turnInput: turnInput.length });
+        return Promise.resolve();
+      });
+      return next();
+    };
+    const assistant = agent({
+      id: "turn-validator-calls",
+      model: "hosted/turn-validator-calls",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [recorder],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "first" });
+    assertEquals(
+      validatorCalls.length,
+      0,
+      "an empty transcript needs no cross-turn validation, and the write changed nothing",
+    );
+
+    await assistant.generate({ input: "second" });
+    assertEquals(
+      validatorCalls.length,
+      1,
+      "a second turn validates the assembled conversation exactly once",
+    );
+    assertEquals(validatorCalls[0]?.turnInput, 1, "the hook receives only this turn's input");
   });
 
   it("persists a turn once when a middleware invokes the continuation twice", async () => {
