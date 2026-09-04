@@ -478,12 +478,15 @@ export async function transformJsxImports(
   const refreshSelectedArtifacts = async () => {
     await Promise.all(
       [...selectedArtifacts].map((artifactPath) =>
-        withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0))
+        withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+          await assertLeaseOwned();
+          await refreshJsxArtifactMtime(artifactPath, 0);
+        })
       ),
     );
   };
   const selectedArtifactHeartbeat = setInterval(
-    () => void refreshSelectedArtifacts(),
+    () => void refreshSelectedArtifacts().catch(() => undefined),
     JSX_CACHE_VARIANT_MIN_AGE_MS / 4,
   );
   unrefTimer(selectedArtifactHeartbeat);
@@ -536,15 +539,18 @@ export async function transformJsxImports(
       // same lock the prune pass removes under — so a prune either sees the
       // mark and keeps the file, or finishes removing before the check here
       // reports a miss and the transform below regenerates it.
-      const serveCached = await withJsxArtifactLock(transformedPath, async () => {
+      const serveCached = await withJsxArtifactLock(transformedPath, async (assertLeaseOwned) => {
         try {
           const stat = await getLocalFs().stat(transformedPath);
           if (!stat?.isFile) return false;
-          if (!(await ensureCachedJsxModulePatched(transformedPath, filePath))) return false;
+          if (!(await ensureCachedJsxModulePatched(transformedPath, filePath, assertLeaseOwned))) {
+            return false;
+          }
           // A cache hit is an active reference: record it so a concurrent
           // prune cannot retire the artifact this render is about to import,
           // and refresh the on-disk mtime so prune passes in other processes
           // see the use too.
+          await assertLeaseOwned();
           markJsxArtifactServed(transformedPath);
           await refreshJsxArtifactMtime(transformedPath, stat.mtime?.getTime() ?? 0);
           return true;
@@ -591,8 +597,10 @@ export async function transformJsxImports(
       await withJsxArtifactWriteCapacity(
         esmCacheDir,
         transformedPath,
-        () =>
-          withJsxArtifactLock(transformedPath, async () => {
+        (assertCapacityLeaseOwned) =>
+          withJsxArtifactLock(transformedPath, async (assertArtifactLeaseOwned) => {
+            await assertCapacityLeaseOwned();
+            await assertArtifactLeaseOwned();
             await getLocalFs().writeTextFile(transformedPath, transformed);
             markJsxArtifactServed(transformedPath);
           }),

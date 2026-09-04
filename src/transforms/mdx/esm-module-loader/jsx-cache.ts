@@ -61,6 +61,7 @@ function rememberNormalizedModule(transformedPath: string): void {
 export async function ensureCachedJsxModulePatched(
   transformedPath: string,
   sourceFilePath: string,
+  assertLeaseOwned?: () => Promise<void>,
 ): Promise<boolean> {
   const fs = getLocalFs();
 
@@ -83,6 +84,7 @@ export async function ensureCachedJsxModulePatched(
       return true;
     }
 
+    await assertLeaseOwned?.();
     await fs.writeTextFile(transformedPath, rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Rewrote cached JSX dnt imports`, {
       sourceFilePath,
@@ -244,9 +246,10 @@ function ensureLazyJsxArtifactHeartbeat(): void {
         lazyJsxArtifactExpirations.delete(artifactPath);
         continue;
       }
-      void withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0)).catch(
-        () => undefined,
-      );
+      void withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+        await assertLeaseOwned();
+        await refreshJsxArtifactMtime(artifactPath, 0);
+      }).catch(() => undefined);
     }
     if (lazyJsxArtifactExpirations.size === 0 && lazyJsxArtifactHeartbeat !== undefined) {
       clearInterval(lazyJsxArtifactHeartbeat);
@@ -380,7 +383,10 @@ export async function retainJsxArtifactsReferencedIn(
   const refreshAll = async () => {
     await Promise.all(
       uniqueArtifactPaths.map((artifactPath) =>
-        withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0))
+        withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+          await assertLeaseOwned();
+          await refreshJsxArtifactMtime(artifactPath, 0);
+        })
       ),
     );
   };
@@ -451,7 +457,7 @@ async function recoverStaleFilesystemLease(lockPath: string, nowMs: number): Pro
 
 async function withFilesystemLease<T>(
   lockPath: string,
-  operation: () => Promise<T>,
+  operation: (assertLeaseOwned: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
   const localFs = getLocalFs();
   const createExclusive = localFs.createFileBytesExclusive;
@@ -481,8 +487,18 @@ async function withFilesystemLease<T>(
     : undefined;
   if (heartbeat !== undefined) unrefTimer(heartbeat);
 
+  const assertLeaseOwned = async (): Promise<void> => {
+    try {
+      if (await localFs.readTextFile(lockPath) === leaseOwner) return;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    throw new Error("JSX cache lease ownership changed during the operation");
+  };
+
   try {
-    return await operation();
+    await assertLeaseOwned();
+    return await operation(assertLeaseOwned);
   } finally {
     if (heartbeat !== undefined) clearInterval(heartbeat);
     try {
@@ -508,7 +524,7 @@ async function withFilesystemLease<T>(
  */
 export async function withJsxArtifactLock<T>(
   artifactPath: string,
-  operation: () => Promise<T>,
+  operation: (assertLeaseOwned: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
   const previous = jsxArtifactLocks.get(artifactPath) ?? Promise.resolve();
   const run = previous.then(() => withFilesystemLease(`${artifactPath}.lock`, operation));
@@ -641,18 +657,27 @@ async function countJsxArtifacts(esmCacheDir: string): Promise<number> {
 export function withJsxArtifactWriteCapacity<T>(
   esmCacheDir: string,
   artifactPath: string,
-  operation: () => Promise<T>,
+  operation: (assertCapacityLeaseOwned: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
-  return withJsxArtifactLock(join(esmCacheDir, ".jsx-directory-quota"), async () => {
-    if (await getLocalFs().exists(artifactPath)) return await operation();
-    if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
-      await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
-    }
-    if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
-      throw new JsxCacheCapacityError("JSX cache artifact quota is exhausted");
-    }
-    return await operation();
-  });
+  return withJsxArtifactLock(
+    join(esmCacheDir, ".jsx-directory-quota"),
+    async (assertLeaseOwned) => {
+      await assertLeaseOwned();
+      if (await getLocalFs().exists(artifactPath)) {
+        await assertLeaseOwned();
+        return await operation(assertLeaseOwned);
+      }
+      if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
+        await assertLeaseOwned();
+        await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
+      }
+      if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
+        throw new JsxCacheCapacityError("JSX cache artifact quota is exhausted");
+      }
+      await assertLeaseOwned();
+      return await operation(assertLeaseOwned);
+    },
+  );
 }
 
 /** Outcome of one removal attempt; a preserved artifact names its retry time. */
@@ -673,7 +698,7 @@ async function removeJsxArtifactUnlessServed(
   artifactPath: string,
   nowMs: number,
 ): Promise<JsxArtifactRemoval> {
-  return await withJsxArtifactLock(artifactPath, async () => {
+  return await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
     const checkedAtMs = Math.max(nowMs, Date.now());
     if (
       jsxArtifactActiveRefs.has(artifactPath) ||
@@ -699,6 +724,7 @@ async function removeJsxArtifactUnlessServed(
       return { removed: false, retryAtMs: modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
     }
     try {
+      await assertLeaseOwned();
       await getLocalFs().remove(artifactPath);
     } catch (error) {
       if (!isNotFoundError(error)) {

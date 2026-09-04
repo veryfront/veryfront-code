@@ -1292,6 +1292,32 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("fences a protected mutation after filesystem lease ownership changes", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-lease-fence-test-" });
+    const artifactPath = join(tempDir, "jsx-fenced.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    let mutated = false;
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+
+      await assertRejects(
+        () =>
+          withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+            await writeTextFile(leasePath, "replacement-owner");
+            await assertLeaseOwned();
+            mutated = true;
+          }),
+        Error,
+        "lease ownership changed",
+      );
+
+      assertEquals(mutated, false);
+      assertEquals(await readTextFile(artifactPath), "export const v = 0;");
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reports when a preserved artifact next becomes collectable", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-retry-report-test-" });
     const artifactPath = join(tempDir, "jsx-preserved.mjs");
