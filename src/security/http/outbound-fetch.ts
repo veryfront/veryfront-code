@@ -87,11 +87,33 @@ const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pat
 const URLSearchGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")?.get;
 const URLHashGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const NativeSet = Set;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
+
+// String.prototype.split(sep) looks up sep[Symbol.split] even for a string
+// literal separator (it boxes the primitive to do so), so a captured .split
+// reference is still steerable by a same-realm String.prototype[Symbol.split].
+// indexOf/slice take no such detour.
+function splitOnCommas(value: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  while (true) {
+    const commaIndex = IntrinsicReflectApply(StringPrototypeIndexOf, value, [
+      ",",
+      start,
+    ]) as number;
+    if (commaIndex === -1) {
+      parts.push(IntrinsicReflectApply(StringPrototypeSlice, value, [start]) as string);
+      return parts;
+    }
+    parts.push(IntrinsicReflectApply(StringPrototypeSlice, value, [start, commaIndex]) as string);
+    start = commaIndex + 1;
+  }
+}
 
 function readNativeURLString<T>(target: T, getter: ((this: T) => string) | undefined): string {
   if (!getter) {
@@ -207,7 +229,7 @@ function parseAllowedInternalProviderOrigins(value: string | undefined): Readonl
   if (!trimmedValue) return new NativeSet<string>();
 
   const origins = new NativeSet<string>();
-  const entries = IntrinsicReflectApply(StringPrototypeSplit, value, [","]) as string[];
+  const entries = splitOnCommas(value);
   // Indexed, not for...of: a replaced Array.prototype[Symbol.iterator] would
   // otherwise run despite every other intrinsic here being captured.
   for (let i = 0; i < entries.length; i++) {
