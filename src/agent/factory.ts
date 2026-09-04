@@ -71,6 +71,10 @@ import {
 } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicArrayFilter = Array.prototype.filter;
+const IntrinsicObjectEntries = Object.entries;
+
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
@@ -163,7 +167,9 @@ function resolveProviderToolsConfiguration(
     return providerTools;
   }
 
-  return providerTools.filter((toolName) => toolSelection[toolName] !== false);
+  return IntrinsicReflectApply(IntrinsicArrayFilter, providerTools, [
+    (toolName: string) => toolSelection[toolName] !== false,
+  ]) as string[];
 }
 
 /** Everything the public surface closes over, named so the closure is visible. */
@@ -693,7 +699,10 @@ function assertPlatformCompatible(config: AgentConfig, id: string): void {
 function registerConfiguredLocalTools(config: AgentConfig): void {
   if (!config.tools || config.tools === true) return;
 
-  for (const [name, entry] of Object.entries(config.tools)) {
+  const entries = IntrinsicReflectApply(IntrinsicObjectEntries, Object, [config.tools]) as Array<
+    [string, (typeof config.tools)[string]]
+  >;
+  for (const [name, entry] of entries) {
     if (!entry || typeof entry !== "object") continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);

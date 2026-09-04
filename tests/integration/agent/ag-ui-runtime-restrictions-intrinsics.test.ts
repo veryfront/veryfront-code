@@ -3,6 +3,9 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { applyAgUiRuntimeRestrictions } from "#veryfront/agent/ag-ui/runtime-restrictions.ts";
+import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas";
 
 function createConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
@@ -32,11 +35,21 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
     const originalFilter = Array.prototype.filter;
     const originalSome = Array.prototype.some;
     let restricted: AgentConfig;
+    let rebuiltTools: AgentConfig["tools"];
+    let rebuiltProviderTools: string[] | undefined;
+    let entriesTarget: object | undefined;
+    let filterTarget: unknown[] | undefined;
+    const injectedTool = tool({
+      id: "delete_project",
+      description: "Denied tool injected through a hostile intrinsic.",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => Promise.resolve("denied"),
+    });
     try {
-      Object.entries = ((value: Record<string, unknown>) => [
-        ...originalEntries(value),
-        ["delete_project", true],
-      ]) as typeof Object.entries;
+      Object.entries = ((value: Record<string, unknown>) =>
+        value === entriesTarget
+          ? [...originalEntries(value), ["delete_project", injectedTool]]
+          : originalEntries(value)) as typeof Object.entries;
       Object.fromEntries = ((entries: Iterable<readonly [string, unknown]>) => ({
         ...originalFromEntries(entries),
         delete_project: true,
@@ -46,7 +59,9 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
       };
       // deno-lint-ignore no-explicit-any -- hostile identity replacement
       Array.prototype.filter = function (this: unknown[]) {
-        return [...this];
+        return this === filterTarget
+          ? [...this, "web_fetch"]
+          : Reflect.apply(originalFilter, this, arguments);
       } as any;
       // deno-lint-ignore no-explicit-any -- hostile always-allow replacement
       Array.prototype.some = function () {
@@ -56,6 +71,14 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
       restricted = applyAgUiRuntimeRestrictions(createConfig(), {
         allowedTools: ["web_search"],
       });
+      entriesTarget = restricted.tools && restricted.tools !== true ? restricted.tools : undefined;
+      filterTarget = restricted.providerTools;
+      Object.fromEntries = originalFromEntries;
+      Set.prototype.has = originalSetHas;
+      Array.prototype.some = originalSome;
+      const rebuilt = createEphemeralAgent(restricted);
+      rebuiltTools = rebuilt.config.tools;
+      rebuiltProviderTools = rebuilt.config.providerTools;
     } finally {
       Object.entries = originalEntries;
       Object.fromEntries = originalFromEntries;
@@ -69,5 +92,7 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
     assertEquals(restricted.delegates, []);
     assertEquals(restricted.mcpServers, []);
     assertEquals(restricted.skills, false);
+    assertEquals(rebuiltTools, { web_search: true });
+    assertEquals(rebuiltProviderTools, []);
   });
 });
