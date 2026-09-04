@@ -351,40 +351,59 @@ function addToolIdsFromIncompleteLeadingObject(target: string[], fieldBody: stri
   let index = 0;
   while (/\s/.test(fieldBody[index] ?? "")) index += 1;
   if (fieldBody[index] !== "{") return;
-  let objectDepth = 1;
-  let arrayDepth = 0;
   index += 1;
 
-  while (index < fieldBody.length && objectDepth > 0) {
-    const character = fieldBody[index]!;
-    if (character === '"' || character === "'") {
-      const end = scanQuotedValueEnd(fieldBody, index, character);
-      if (end === undefined) return;
-      if (objectDepth === 1 && arrayDepth === 0) {
-        const key = parseQuotedScalar(fieldBody, index, end, character);
-        let valueStart = end;
-        while (/\s/.test(fieldBody[valueStart] ?? "")) valueStart += 1;
-        if ((key === "id" || key === "name") && fieldBody[valueStart] === ":") {
-          valueStart += 1;
-          while (/\s/.test(fieldBody[valueStart] ?? "")) valueStart += 1;
-          const valueQuote = fieldBody[valueStart];
-          if (valueQuote === '"' || valueQuote === "'") {
-            const valueEnd = scanQuotedValueEnd(fieldBody, valueStart, valueQuote);
-            if (valueEnd === undefined) return;
-            const value = parseQuotedScalar(fieldBody, valueStart, valueEnd, valueQuote);
-            if (value !== undefined) addToolIdFact(target, value);
-            index = valueEnd;
-            continue;
-          }
-        }
+  while (index < fieldBody.length) {
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (fieldBody[index] === "}") return;
+    const keyQuote = fieldBody[index];
+    if (keyQuote !== '"' && keyQuote !== "'") return;
+    const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
+    if (keyEnd === undefined) return;
+    const key = parseQuotedScalar(fieldBody, index, keyEnd, keyQuote);
+    index = keyEnd;
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (fieldBody[index] !== ":") return;
+    index += 1;
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+
+    const valueStart = index;
+    const opening = fieldBody[index];
+    if (opening === '"' || opening === "'") {
+      const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
+      if (valueEnd === undefined) return;
+      if (key === "id" || key === "name") {
+        const value = parseQuotedScalar(fieldBody, index, valueEnd, opening);
+        if (value !== undefined) addToolIdFact(target, value);
       }
-      index = end;
-      continue;
+      index = valueEnd;
+    } else if (opening === "{" || opening === "[") {
+      const closings = [opening === "{" ? "}" : "]"];
+      index += 1;
+      while (index < fieldBody.length && closings.length > 0) {
+        const character = fieldBody[index];
+        if (character === '"' || character === "'") {
+          const end = scanQuotedValueEnd(fieldBody, index, character);
+          if (end === undefined) return;
+          index = end;
+          continue;
+        }
+        index += 1;
+        if (character === "{") closings.push("}");
+        else if (character === "[") closings.push("]");
+        else if (character === closings[closings.length - 1]) closings.pop();
+      }
+      if (closings.length > 0) return;
+    } else {
+      while (
+        index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "}"
+      ) index += 1;
+      if (index === valueStart || index >= fieldBody.length) return;
     }
-    if (character === "{") objectDepth += 1;
-    else if (character === "}") objectDepth -= 1;
-    else if (character === "[") arrayDepth += 1;
-    else if (character === "]") arrayDepth = Math.max(0, arrayDepth - 1);
+
+    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (fieldBody[index] === "}") return;
+    if (fieldBody[index] !== ",") return;
     index += 1;
   }
 }

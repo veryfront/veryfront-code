@@ -288,6 +288,15 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
     });
 
+    it("stops an incomplete leading object at invalid member syntax", () => {
+      const text = 'tools: [{"description":"ok"} garbage "id":"bogus_tool"' +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("prioritizes declared tool arrays across windows over integration matches", () => {
       const integrations = Array.from(
         { length: 50 },
