@@ -441,6 +441,56 @@ export function getProviderSendableAssistantMessages(
   return sendable;
 }
 
+/**
+ * Assistant messages Anthropic removes when compacting completed historical
+ * client-tool rounds. The request builder drops their tool calls once a later
+ * historical assistant text answer exists, so a tool-call-only message no
+ * longer separates the user turns on either side.
+ */
+export function getAnthropicCompactedAssistantMessages(
+  messages: readonly Message[],
+): ReadonlySet<Message> {
+  const compacted = new Set<Message>();
+  const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
+  const lastHistoricalAssistantTextIndex = messages.findLastIndex((message, index) =>
+    index < lastUserIndex &&
+    message.role === "assistant" &&
+    message.parts.some((part) =>
+      part.type === "text" && "text" in part &&
+      typeof (part as { text?: unknown }).text === "string" &&
+      (part as { text: string }).text.length > 0
+    )
+  );
+  const providerExecutedToolCallIds = new Set<string>();
+
+  for (const [index, message] of messages.entries()) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+    if (
+      message.role === "assistant" &&
+      index < lastHistoricalAssistantTextIndex &&
+      message.parts.some((part) =>
+        getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null
+      ) &&
+      !message.parts.some((part) =>
+        part.type === "text" && "text" in part &&
+        typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0
+      )
+    ) {
+      compacted.add(message);
+    }
+  }
+
+  return compacted;
+}
+
 function splitAnthropicProviderMetadata(
   providerMetadata: Record<string, unknown>,
   segmentCount: number,

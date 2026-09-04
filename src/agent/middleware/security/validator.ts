@@ -2,7 +2,10 @@ import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/type
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
 import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
-import { getProviderSendableAssistantMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import {
+  getAnthropicCompactedAssistantMessages,
+  getProviderSendableAssistantMessages,
+} from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import {
   registerTurnInputValidator,
   registerTurnMessageValidator,
@@ -486,6 +489,9 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
   const sendableAssistantMessages = role === "user"
     ? getProviderSendableAssistantMessages(messages)
     : undefined;
+  const anthropicCompactedAssistantMessages = role === "user"
+    ? getAnthropicCompactedAssistantMessages(messages)
+    : undefined;
 
   const flushRun = () => {
     // Runs of a single message are already covered by the per-message
@@ -500,7 +506,8 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
       if (role === "user" && message.role === "system") continue;
       if (
         role === "user" && message.role === "assistant" &&
-        !sendableAssistantMessages?.has(message)
+        (!sendableAssistantMessages?.has(message) ||
+          anthropicCompactedAssistantMessages?.has(message))
       ) continue;
       flushRun();
       continue;

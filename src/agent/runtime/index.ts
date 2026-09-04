@@ -1423,8 +1423,9 @@ export class AgentRuntime {
 
     const validateTurnMessages = context && getTurnMessageValidator(context);
     let validated = inputMessages;
+    let history: Message[] = [];
     if (validateTurnMessages) {
-      const history = await this.memory.getMessages();
+      history = await this.memory.getMessages();
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
       if (history.length > 0) {
@@ -1439,7 +1440,17 @@ export class AgentRuntime {
       !(persisted.length === validated.length &&
         persisted.every((message, index) => message === validated[index]))
     ) {
-      await validateTurnMessages([], persisted);
+      try {
+        await validateTurnMessages([], persisted);
+      } catch (error) {
+        // A memory policy can rewrite the transcript while adding this turn,
+        // notably when summary memory compacts old messages. If validation of
+        // that provider-visible form fails, restore the pre-turn transcript so
+        // neither the rejected input nor the failed compaction is retained.
+        await this.memory.clear();
+        for (const message of history) await this.memory.add(message);
+        throw error;
+      }
     }
     return persisted.length > 0 ? persisted : inputMessages;
   }

@@ -7,6 +7,8 @@ import {
 
 const syntheticMessageIds = new WeakSet<object>();
 const syntheticMessageTimestamps = new WeakSet<object>();
+const syntheticMessageIdValues = new WeakMap<object, string>();
+const syntheticMessageTimestampValues = new WeakMap<object, number>();
 
 /** Whether normalization supplied this message id from the wall clock. */
 export function hasSyntheticMessageId(message: object): boolean {
@@ -18,10 +20,35 @@ export function hasSyntheticMessageTimestamp(message: object): boolean {
   return syntheticMessageTimestamps.has(message);
 }
 
+/** Whether this message still carries the id supplied by normalization. */
+export function hasUnchangedSyntheticMessageId(
+  message: object,
+  id: string,
+): boolean {
+  return syntheticMessageIds.has(message) && syntheticMessageIdValues.get(message) === id;
+}
+
+/** Whether this message still carries the timestamp supplied by normalization. */
+export function hasUnchangedSyntheticMessageTimestamp(
+  message: object,
+  timestamp: number | undefined,
+): boolean {
+  return syntheticMessageTimestamps.has(message) &&
+    syntheticMessageTimestampValues.get(message) === timestamp;
+}
+
 /** Preserve synthesized-field provenance when middleware clones a message. */
 export function propagateSyntheticMessageMarks(source: object, target: object): void {
-  if (syntheticMessageIds.has(source)) syntheticMessageIds.add(target);
-  if (syntheticMessageTimestamps.has(source)) syntheticMessageTimestamps.add(target);
+  if (syntheticMessageIds.has(source)) {
+    syntheticMessageIds.add(target);
+    const id = syntheticMessageIdValues.get(source);
+    if (id !== undefined) syntheticMessageIdValues.set(target, id);
+  }
+  if (syntheticMessageTimestamps.has(source)) {
+    syntheticMessageTimestamps.add(target);
+    const timestamp = syntheticMessageTimestampValues.get(source);
+    if (timestamp !== undefined) syntheticMessageTimestampValues.set(target, timestamp);
+  }
 }
 
 export function normalizeInput(input: string | Message[]): Message[] {
@@ -36,6 +63,8 @@ export function normalizeInput(input: string | Message[]): Message[] {
     };
     syntheticMessageIds.add(message);
     syntheticMessageTimestamps.add(message);
+    syntheticMessageIdValues.set(message, message.id);
+    syntheticMessageTimestampValues.set(message, message.timestamp!);
     return [message];
   }
 
@@ -49,9 +78,24 @@ export function normalizeInput(input: string | Message[]): Message[] {
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
-    if (msg.id == null || syntheticMessageIds.has(msg)) syntheticMessageIds.add(normalized);
+    if (msg.id == null) {
+      syntheticMessageIds.add(normalized);
+      syntheticMessageIdValues.set(normalized, normalized.id);
+    } else if (syntheticMessageIds.has(msg)) {
+      syntheticMessageIds.add(normalized);
+      syntheticMessageIdValues.set(
+        normalized,
+        syntheticMessageIdValues.get(msg) ?? normalized.id,
+      );
+    }
     if (msg.timestamp == null || syntheticMessageTimestamps.has(msg)) {
       syntheticMessageTimestamps.add(normalized);
+      syntheticMessageTimestampValues.set(
+        normalized,
+        msg.timestamp == null
+          ? normalized.timestamp!
+          : syntheticMessageTimestampValues.get(msg) ?? normalized.timestamp!,
+      );
     }
     return isRuntimeGeneratedUserMessage(msg)
       ? markRuntimeGeneratedUserMessage(normalized)

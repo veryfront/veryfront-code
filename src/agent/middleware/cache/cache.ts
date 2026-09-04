@@ -1,7 +1,7 @@
 import type { AgentMiddleware, AgentResponse, Message } from "#veryfront/agent/types.ts";
 import {
-  hasSyntheticMessageId,
-  hasSyntheticMessageTimestamp,
+  hasUnchangedSyntheticMessageId,
+  hasUnchangedSyntheticMessageTimestamp,
 } from "#veryfront/agent/runtime/input-utils.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -296,8 +296,8 @@ function toCacheableInputString(input: string | Message[]): string {
       const { id, timestamp, ...rest } = message;
       return {
         ...rest,
-        ...(hasSyntheticMessageId(message) ? {} : { id }),
-        ...(hasSyntheticMessageTimestamp(message) ? {} : { timestamp }),
+        ...(hasUnchangedSyntheticMessageId(message, id) ? {} : { id }),
+        ...(hasUnchangedSyntheticMessageTimestamp(message, timestamp) ? {} : { timestamp }),
       };
     }),
   );

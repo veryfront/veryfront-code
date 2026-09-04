@@ -360,6 +360,16 @@ describe("resolveSecurityMiddleware", () => {
 
     assertEquals(rejected, true, "the compacted system merge must be rejected");
     assertEquals(providerCalls, 2, "the synthesized injection must not reach the provider");
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      2,
+      "the rejected turn and its failed summary compaction must be rolled back",
+    );
+    const memoryMessages = await assistant.getMemory().getMessages();
+    assertEquals(
+      memoryMessages.map((message) => message.id),
+      ["user-fragment", "system-fragment"],
+    );
   });
 
   it("serializes concurrent turns so a racing merge cannot skip validation", async () => {

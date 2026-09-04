@@ -87,6 +87,33 @@ describe("cacheMiddleware", () => {
     assertEquals(executions, 2);
     middleware.destroy();
   });
+
+  it("keeps middleware-rewritten synthetic identity in the cache key", async () => {
+    const middleware = cacheMiddleware({ strategy: "memory" });
+    let executions = 0;
+    const next = async (): Promise<AgentResponse> => createResponse(`response-${++executions}`);
+    const contextWithIdentity = (id: string, timestamp: number): AgentContext => {
+      const [message] = normalizeInput("hello");
+      message!.id = id;
+      message!.timestamp = timestamp;
+      return { agentId: "agent", input: [message!], platform: {} };
+    };
+
+    assertEquals(
+      (await middleware(contextWithIdentity("rewritten-1", 1_000), next)).text,
+      "response-1",
+    );
+    assertEquals(
+      (await middleware(contextWithIdentity("rewritten-2", 2_000), next)).text,
+      "response-2",
+    );
+    assertEquals(
+      (await middleware(contextWithIdentity("rewritten-1", 1_000), next)).text,
+      "response-1",
+    );
+    assertEquals(executions, 2);
+    middleware.destroy();
+  });
 });
 
 describe("createCache key isolation", () => {
