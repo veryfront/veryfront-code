@@ -1,6 +1,7 @@
 import { join, toFileUrl } from "#std/path";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runBoundedCommand } from "./bounded-command.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import type {
   ExtensionManifest,
@@ -13,6 +14,13 @@ import type {
 const LEGACY_PACKAGE = "@veryfront/ext-observability-sentry";
 const NODE_PACKAGE = "@veryfront/ext-observability-sentry-node";
 const DENO_PACKAGE = "@veryfront/ext-observability-sentry-deno";
+
+// Every subprocess below gets its own deadline. A registry call that hangs must
+// fail fast naming itself rather than silently eating the CI job budget: the
+// npm steps here normally finish in a few seconds, and the node/deno import
+// checks in under a second, so these bounds are orders of magnitude of headroom.
+const NPM_COMMAND_TIMEOUT_MS = 240_000;
+const RUNTIME_EVAL_TIMEOUT_MS = 120_000;
 
 describe("Sentry runtime package generation", () => {
   it("resolves only matching SDKs and keeps runtime leaves undiscoverable", async () => {
@@ -251,6 +259,7 @@ async function assertIsolatedNodeConsumer(input: {
       command: "npm",
       args: ["install", "--ignore-scripts", "--legacy-peer-deps"],
       cwd: consumerDir,
+      timeoutMs: NPM_COMMAND_TIMEOUT_MS,
     });
     await assertInstalledPackages(
       consumerDir,
@@ -261,6 +270,7 @@ async function assertIsolatedNodeConsumer(input: {
       command: "node",
       args: ["--input-type=module", "--eval", input.importStatement],
       cwd: consumerDir,
+      timeoutMs: RUNTIME_EVAL_TIMEOUT_MS,
     });
   } finally {
     await Deno.remove(consumerDir, { recursive: true });
@@ -287,6 +297,7 @@ async function assertIsolatedDenoConsumer(input: {
       command: "npm",
       args: ["install", "--ignore-scripts", "--legacy-peer-deps"],
       cwd: consumerDir,
+      timeoutMs: NPM_COMMAND_TIMEOUT_MS,
     });
     await assertInstalledPackages(
       consumerDir,
@@ -298,6 +309,7 @@ async function assertIsolatedDenoConsumer(input: {
       args: ["eval", input.importStatement],
       cwd: consumerDir,
       env: { DENO_NO_PACKAGE_JSON: "0" },
+      timeoutMs: RUNTIME_EVAL_TIMEOUT_MS,
     });
   } finally {
     await Deno.remove(consumerDir, { recursive: true });
@@ -311,22 +323,17 @@ async function createConsumerPackage(
   const consumerDir = await Deno.makeTempDir();
   const packDir = join(consumerDir, "packs");
   await Deno.mkdir(packDir);
-  const packOutput = await new Deno.Command("npm", {
+  const packOutput = await runBoundedCommand({
+    command: "npm",
     args: ["pack", packageDir, "--pack-destination", packDir, "--json"],
-    stderr: "piped",
-    stdout: "piped",
-  }).output();
+    timeoutMs: NPM_COMMAND_TIMEOUT_MS,
+  });
   if (packOutput.code !== 0) {
-    const decoder = new TextDecoder();
     throw new Error(
-      `npm pack failed with ${packOutput.code}\n${
-        decoder.decode(packOutput.stdout)
-      }\n${decoder.decode(packOutput.stderr)}`,
+      `npm pack failed with ${packOutput.code}\n${packOutput.stdout}\n${packOutput.stderr}`,
     );
   }
-  const packResult = JSON.parse(
-    new TextDecoder().decode(packOutput.stdout),
-  ) as Array<{
+  const packResult = JSON.parse(packOutput.stdout) as Array<{
     filename: string;
   }>;
   const tarball = packResult[0]?.filename;
@@ -391,21 +398,13 @@ async function runCommand(input: {
   args: string[];
   cwd: string;
   env?: Record<string, string>;
+  timeoutMs: number;
 }): Promise<void> {
-  const output = await new Deno.Command(input.command, {
-    args: input.args,
-    cwd: input.cwd,
-    env: input.env,
-    stderr: "piped",
-    stdout: "piped",
-  }).output();
+  const output = await runBoundedCommand(input);
   if (output.code === 0) return;
 
-  const decoder = new TextDecoder();
   throw new Error(
-    `${input.command} ${input.args.join(" ")} failed with ${output.code}\n${
-      decoder.decode(output.stdout)
-    }\n${decoder.decode(output.stderr)}`,
+    `${input.command} ${input.args.join(" ")} failed with ${output.code}\n${output.stdout}\n${output.stderr}`,
   );
 }
 

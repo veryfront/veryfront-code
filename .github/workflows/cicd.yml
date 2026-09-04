@@ -694,8 +694,12 @@ jobs:
   tests-sentry-runtime-packages:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    # Cold-cache runs take ~12-15min; 15 was cutting it too close.
-    timeout-minutes: 20
+    # Real work here is ~40s: setup-deno takes 7-10s whether the cache is warm or
+    # cold, and the smoke itself normally runs in ~20s. The long runs were a
+    # single hung `npm install` inside the smoke, not a cold cache. Each
+    # subprocess in the smoke now carries its own deadline, so a stall fails fast
+    # naming the command; this budget only has to cover one bounded stall.
+    timeout-minutes: 10
     name: tests (sentry runtime packages)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

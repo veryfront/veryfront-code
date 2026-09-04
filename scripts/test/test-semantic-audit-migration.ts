@@ -1456,7 +1456,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("scripts/build/sentry-runtime-packages.test.ts", [
       "filesystem-read",
       "filesystem-write",
-      "process",
       "shared-cwd",
     ], {
       "disposition": "integration-relocation",
