@@ -95,10 +95,8 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     try {
       return await building;
     } finally {
-      if (this.buildingTree === building) {
-        this.buildingTree = null;
-        this.buildingTreeScopeKey = null;
-      }
+      this.buildingTree = null;
+      this.buildingTreeScopeKey = null;
     }
   }
 

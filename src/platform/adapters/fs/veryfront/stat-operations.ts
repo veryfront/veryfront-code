@@ -215,10 +215,8 @@ export class StatOperations extends VeryfrontOperationsBase {
     try {
       return await building;
     } finally {
-      if (this.buildingIndex === building) {
-        this.buildingIndex = null;
-        this.buildingIndexScopeKey = null;
-      }
+      this.buildingIndex = null;
+      this.buildingIndexScopeKey = null;
     }
   }
 

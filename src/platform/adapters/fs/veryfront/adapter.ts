@@ -1183,6 +1183,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
           const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
           this.markSourceSnapshotChanged(files, warmupIdentity);
           if (sourceChanged) {
+            await Promise.all([
+              this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(warmupContext)),
+              this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(warmupContext)),
+            ]);
             this.statOps.clearIndex();
             this.dirOps.clearTree();
           }

@@ -177,9 +177,22 @@ export class FileListIndex {
       return null;
     }
 
-    const versionBeforeRead = this.getSnapshotVersion?.();
-    const fileList = await this.getFileListCache(cacheKey, contentContext);
-    const versionAfterRead = this.getSnapshotVersion?.();
+    let versionBeforeRead = this.getSnapshotVersion?.();
+    let fileList = await this.getFileListCache(cacheKey, contentContext);
+    let versionAfterRead = this.getSnapshotVersion?.();
+    if (
+      versionBeforeRead !== undefined && versionAfterRead !== undefined &&
+      versionBeforeRead !== versionAfterRead
+    ) {
+      logger.debug("getOrBuildFileListIndex: retrying read across snapshot change", {
+        versionBeforeRead,
+        versionAfterRead,
+      });
+      versionBeforeRead = versionAfterRead;
+      fileList = await this.getFileListCache(cacheKey, contentContext);
+      versionAfterRead = this.getSnapshotVersion?.();
+      if (versionBeforeRead !== versionAfterRead) return null;
+    }
     const stableSnapshotVersion = versionBeforeRead === versionAfterRead
       ? versionAfterRead
       : undefined;
