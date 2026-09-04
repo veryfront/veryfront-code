@@ -997,6 +997,65 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
+  it("queues selective invalidations separately for overlapping request branches", async () => {
+    let effectiveBranch = "feature-a";
+    const reloadBranches: Array<string | null | undefined> = [];
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => reloadBranches.push(context.branch),
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/a.tsx"], branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+    deliverPoke(socket, { changedPaths: ["app/b.tsx"], branchName: "feature-b" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    for (let attempt = 0; attempt < 20 && reloadBranches.length < 2; attempt++) {
+      await Promise.resolve();
+    }
+    assertEquals(reloadBranches, ["feature-a", "feature-b"]);
+    manager.dispose();
+  });
+
+  it("retains the accepted request branch through full invalidation", async () => {
+    let effectiveBranch = "feature-a";
+    let reloadBranch: string | null | undefined;
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          reloadBranch = context.branch;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+    assertEquals(reloadBranch, "feature-a");
+    manager.dispose();
+  });
+
   it("ignores branchId-only pokes on the default-branch preview", () => {
     let clearCalls = 0;
     let reloadCalls = 0;
@@ -1419,7 +1478,7 @@ describe("WebSocketManager", () => {
       3,
       "replacement must receive the generation captured after the full invalidation clear",
     );
-    assertEquals(replacementCacheKey, "files:branch:test-project:feature");
+    assertEquals(replacementCacheKey, "files:branch:test-project:main");
     assertEquals(pregenerateCalls, 1);
     assertEquals(publishedStyleHash, undefined);
     assertEquals(reloadCalls, 0, "a superseded full invalidation must not publish a reload");
