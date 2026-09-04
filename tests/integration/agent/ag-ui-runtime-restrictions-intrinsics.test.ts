@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { applyAgUiRuntimeRestrictions } from "#veryfront/agent/ag-ui/runtime-restrictions.ts";
 import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
-import { tool } from "#veryfront/tool";
+import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
 
 function createConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -111,5 +111,71 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
     );
     assertEquals(rebuiltProviderTools, []);
     assertEquals(rebuiltDelegates, ["writer"]);
+  });
+
+  it("does not consume configured tool entries through a patched array iterator", () => {
+    // Capturing `Object.entries` does not capture iteration over the array it
+    // returns. The factory's local-tool registration reads those entries by
+    // numeric index so a replaced `Array.prototype[Symbol.iterator]` cannot
+    // append a denied `[name, tool]` pair that the loop would register and
+    // write back into the rebuilt agent's tool surface.
+    const allowed = tool({
+      id: "allowed_lookup",
+      description: "Allowed lookup",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => Promise.resolve("ok"),
+    });
+    const denied = tool({
+      id: "denied_delete",
+      description: "Denied delete",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => Promise.resolve("deleted"),
+    });
+    const originalIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+    if (!originalIterator || typeof originalIterator.value !== "function") {
+      throw new Error("Expected the intrinsic array iterator");
+    }
+    const intrinsicIterator = originalIterator.value as (
+      this: unknown[],
+    ) => Iterator<unknown>;
+
+    try {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: function (this: unknown[]) {
+          const source = intrinsicIterator.call(this);
+          if (
+            this.length === 1 && Array.isArray(this[0]) &&
+            (this[0] as unknown[])[0] === "allowed_lookup"
+          ) {
+            let injected = false;
+            return {
+              next() {
+                const next = source.next();
+                if (!next.done) return next;
+                if (!injected) {
+                  injected = true;
+                  return { done: false, value: ["denied_delete", denied] };
+                }
+                return { done: true, value: undefined };
+              },
+            };
+          }
+          return source;
+        },
+      });
+
+      const assistant = createEphemeralAgent({
+        id: "iterator-safe-agent",
+        system: "Answer directly.",
+        tools: { allowed_lookup: allowed },
+      });
+
+      assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), ["allowed_lookup"]);
+      assertEquals(toolRegistry.has("denied_delete"), false);
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, originalIterator);
+    }
   });
 });
