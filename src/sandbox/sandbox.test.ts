@@ -265,6 +265,44 @@ describe("Sandbox", () => {
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
     });
 
+    it("uses the captured URL constructor for stored-login sandbox transport", async () => {
+      const NativeURL = globalThis.URL;
+      const requests: string[] = [];
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      installHostMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({
+          id: "session-native-url",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }));
+      });
+      class ProjectURL extends NativeURL {
+        constructor(_url: string | URL, _base?: string | URL) {
+          super("https://project-controlled.example");
+        }
+      }
+      Object.defineProperty(globalThis, "URL", {
+        value: ProjectURL,
+        configurable: true,
+        writable: true,
+      });
+      try {
+        const sandbox = await Sandbox.create();
+        assertEquals(sandbox.id, "session-native-url");
+      } finally {
+        Object.defineProperty(globalThis, "URL", {
+          value: NativeURL,
+          configurable: true,
+          writable: true,
+        });
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+
+      assertEquals(requests, ["https://api.test.com/sandbox-sessions"]);
+    });
+
     it("should poll until ready when not running", async () => {
       mockTimers();
       mockFetch([

@@ -26,6 +26,13 @@ export const HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV =
 
 const NODE_EXTRA_CA_CERTS_ENV = "NODE_EXTRA_CA_CERTS";
 const MAX_EXTRA_CA_BYTES = 1024 * 1024;
+const NativeURL = URL;
+const nativeUrlPrototype = NativeURL.prototype;
+const urlHrefGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "href")?.get;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "origin")?.get;
+const urlProtocolGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "protocol")?.get;
+const urlUsernameGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "username")?.get;
+const urlPasswordGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "password")?.get;
 const bunExtraCaFile = isBun ? getHostEnv(NODE_EXTRA_CA_CERTS_ENV)?.trim() : undefined;
 let bunTrustedCaCertificates: Promise<readonly string[]> | undefined;
 
@@ -200,7 +207,16 @@ function parseAllowedInternalProviderOrigins(value: string | undefined): Readonl
 function isHostAllowedInternalProviderOrigin(base: URL): boolean {
   return parseAllowedInternalProviderOrigins(
     getHostEnv(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
-  ).has(base.origin);
+  ).has(readUrlString(urlOriginGetter, base, "origin"));
+}
+
+function readUrlString(
+  getter: ((this: URL) => string) | undefined,
+  url: URL,
+  label: string,
+): string {
+  if (!getter) throw new TypeError(`Native URL ${label} getter is unavailable`);
+  return Reflect.apply(getter, url, []) as string;
 }
 
 function snapshotOutboundFetchTransport(
@@ -252,18 +268,27 @@ function createOriginBoundFetchWithTransport(
   baseUrl: string,
   transport: OutboundFetchTransport,
 ): typeof fetch {
-  const base = new URL(baseUrl);
-  if (base.protocol !== "http:" && base.protocol !== "https:") {
+  const base = new NativeURL(baseUrl);
+  const baseProtocol = readUrlString(urlProtocolGetter, base, "protocol");
+  if (baseProtocol !== "http:" && baseProtocol !== "https:") {
     throw new TypeError("Provider base URL must use http: or https:");
   }
-  if (base.username || base.password) {
+  if (
+    readUrlString(urlUsernameGetter, base, "username") ||
+    readUrlString(urlPasswordGetter, base, "password")
+  ) {
     throw new TypeError("Provider base URL must not include credentials");
   }
   const allowInternalEgress = isHostAllowedInternalProviderOrigin(base);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
-    const target = new URL(raw, base);
+    const raw = input instanceof Request
+      ? input.url
+      : input instanceof NativeURL
+      ? readUrlString(urlHrefGetter, input, "href")
+      : input;
+    const target = new NativeURL(raw, base);
+    const baseOrigin = readUrlString(urlOriginGetter, base, "origin");
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
     const guardedInput: RequestInfo | URL = input instanceof Request ? input : target;
@@ -272,7 +297,7 @@ function createOriginBoundFetchWithTransport(
       { ...init, redirect: "error" },
       {
         authorizeUrl(url) {
-          if (url.origin !== base.origin) {
+          if (readUrlString(urlOriginGetter, url, "origin") !== baseOrigin) {
             throw new OutboundRequestBlockedError(
               "Provider request blocked: destination origin is not authorized",
             );
@@ -429,9 +454,9 @@ export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
 }
 
 function requestUrl(input: RequestInfo | URL): URL {
-  if (input instanceof Request) return new URL(input.url);
-  if (input instanceof URL) return input;
-  return new URL(input);
+  if (input instanceof Request) return new NativeURL(input.url);
+  if (input instanceof NativeURL) return input;
+  return new NativeURL(input);
 }
 
 function requireExactHttpLoopbackUrl(url: URL): void {
