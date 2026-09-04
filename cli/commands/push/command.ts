@@ -584,6 +584,10 @@ export async function uploadFiles(
   return { uploaded, failed, conflicts, applied };
 }
 
+function reportDeleteFailure(path: string, error: unknown): void {
+  if (!isJsonMode()) cliLogger.error(`Failed to delete ${path}:`, error);
+}
+
 export async function deleteFiles(
   client: ApiClient,
   projectSlug: string,
@@ -619,7 +623,7 @@ export async function deleteFiles(
         conflicts.push(op.path);
         break;
       }
-      if (!isJsonMode()) cliLogger.error(`Failed to delete ${op.path}:`, error);
+      reportDeleteFailure(op.path, error);
       failed++;
     }
   }

@@ -357,6 +357,34 @@ describe("cli/sync/ignore", () => {
           "an optional globstar directory covering the subtree cancels its negation",
         );
 
+        const boundarySensitiveGlobstarChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.**/n**",
+        ]);
+        assertEquals(
+          boundarySensitiveGlobstarChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          10,
+          "a nonempty globstar directory must end at a separator before advancing",
+        );
+
+        const leadingGlobstarDirectoryChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.**/*",
+        ]);
+        assertEquals(
+          leadingGlobstarDirectoryChecker.isIgnored(".env", { isDirectory: true }),
+          true,
+        );
+        assertEquals(
+          warnings.length,
+          10,
+          "a leading globstar directory can still cover the protected subtree",
+        );
+
         const parentOnlyChecker = createIgnoreChecker([
           "!.env",
           ".env*",
@@ -364,7 +392,7 @@ describe("cli/sync/ignore", () => {
         assertEquals(parentOnlyChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(
           warnings.length,
-          10,
+          11,
           "a parent-only positive cannot cancel a negation that also matches descendants",
         );
 
@@ -378,7 +406,7 @@ describe("cli/sync/ignore", () => {
         );
         assertEquals(
           warnings.length,
-          11,
+          12,
           "an anchored literal negation must include its implicit descendants",
         );
 
@@ -389,13 +417,13 @@ describe("cli/sync/ignore", () => {
         assertEquals(partialWildcardChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(
           warnings.length,
-          12,
+          13,
           "one matching descendant probe must not imply full wildcard coverage",
         );
 
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 12, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 13, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

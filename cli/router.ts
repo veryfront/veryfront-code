@@ -136,40 +136,46 @@ function commandNameForJson(args: ParsedArgs): string {
   return typeof command === "string" && command.length > 0 ? command : "cli";
 }
 
-export function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
-  if (context === undefined) return undefined;
-  if (context !== null && typeof context === "object" && !Array.isArray(context)) {
-    const protectedDeleted = (context as Record<string, unknown>).protectedDeleted;
-    if (Array.isArray(protectedDeleted)) {
-      const limit = 1_000;
-      const bounded: string[] = [];
-      for (let index = 0; index < protectedDeleted.length && bounded.length < limit; index++) {
-        const path = protectedDeleted[index];
-        if (typeof path === "string") bounded.push(path);
-      }
-      const redactedBounded = redactForSerialization(bounded);
-      if (Array.isArray(redactedBounded)) {
-        return {
-          protectedDeleted: redactedBounded,
-          ...(protectedDeleted.length > bounded.length
-            ? {
-              protectedDeletedTruncated: true,
-              protectedDeletedOmitted: protectedDeleted.length - bounded.length,
-            }
-            : {}),
-        };
-      }
-    }
+const PROTECTED_DELETE_CONTEXT_LIMIT = 1_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function boundedProtectedDeleteContext(context: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(context) || !Array.isArray(context.protectedDeleted)) return undefined;
+  const protectedDeleted = context.protectedDeleted;
+  const bounded: string[] = [];
+  for (const path of protectedDeleted) {
+    if (typeof path === "string") bounded.push(path);
+    if (bounded.length === PROTECTED_DELETE_CONTEXT_LIMIT) break;
   }
+  const redactedBounded = redactForSerialization(bounded);
+  if (!Array.isArray(redactedBounded)) return undefined;
+  return {
+    protectedDeleted: redactedBounded,
+    ...(protectedDeleted.length > bounded.length
+      ? {
+        protectedDeletedTruncated: true,
+        protectedDeletedOmitted: protectedDeleted.length - bounded.length,
+      }
+      : {}),
+  };
+}
+
+function redactedProtectedDeleteContext(context: unknown): Record<string, unknown> | undefined {
   const redacted = redactForSerialization(context);
-  if (redacted === null || typeof redacted !== "object" || Array.isArray(redacted)) {
-    return undefined;
-  }
-  const protectedDeleted = (redacted as Record<string, unknown>).protectedDeleted;
+  if (!isRecord(redacted)) return undefined;
+  const protectedDeleted = redacted.protectedDeleted;
   return Array.isArray(protectedDeleted) &&
       protectedDeleted.every((path) => typeof path === "string")
     ? { protectedDeleted }
     : undefined;
+}
+
+export function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
+  if (context === undefined) return undefined;
+  return boundedProtectedDeleteContext(context) ?? redactedProtectedDeleteContext(context);
 }
 
 async function outputCliJsonError(

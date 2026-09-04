@@ -315,28 +315,70 @@ function epsilonClosure(tokens: readonly GlobToken[], states: ReadonlySet<number
   return closure;
 }
 
+function activeGlobstarDirectoryState(tokens: readonly GlobToken[], tokenIndex: number): number {
+  return tokens.length + tokenIndex + 1;
+}
+
+function activeGlobstarDirectoryTokenIndex(
+  tokens: readonly GlobToken[],
+  state: number,
+): number | null {
+  if (state <= tokens.length) return null;
+  const tokenIndex = state - tokens.length - 1;
+  return tokens[tokenIndex]?.type === "globstar-directory" ? tokenIndex : null;
+}
+
+function transitionGlobState(
+  tokens: readonly GlobToken[],
+  state: number,
+  character: string,
+): number[] {
+  const activeGlobstarIndex = activeGlobstarDirectoryTokenIndex(tokens, state);
+  if (activeGlobstarIndex !== null) {
+    return character === "/" ? [state, activeGlobstarIndex + 1] : [state];
+  }
+
+  const token = tokens[state];
+  switch (token?.type) {
+    case "literal":
+      return token.value === character ? [state + 1] : [];
+    case "single":
+      return character === "/" ? [] : [state + 1];
+    case "star":
+      return character === "/" ? [] : [state];
+    case "double-star":
+      return [state];
+    case "globstar-directory": {
+      const activeState = activeGlobstarDirectoryState(tokens, state);
+      return character === "/" ? [activeState, state + 1] : [activeState];
+    }
+    default:
+      return [];
+  }
+}
+
+function advanceGlobStates(
+  tokens: readonly GlobToken[],
+  states: ReadonlySet<number>,
+  character: string,
+): Set<number> {
+  const nextStates = new Set<number>();
+  for (const state of states) {
+    for (const nextState of transitionGlobState(tokens, state, character)) {
+      nextStates.add(nextState);
+    }
+  }
+  return epsilonClosure(tokens, nextStates);
+}
+
 function anchoredGlobCanMatchDescendant(
   tokens: readonly GlobToken[],
   normalizedPath: string,
 ): boolean {
   let states = epsilonClosure(tokens, new Set([0]));
   const prefix = `${normalizedPath}/`;
-  for (let pathIndex = 0; pathIndex < prefix.length; pathIndex++) {
-    const character = prefix[pathIndex]!;
-    const nextStates = new Set<number>();
-    for (const state of states) {
-      const token = tokens[state];
-      if (token?.type === "literal" && token.value === character) {
-        nextStates.add(state + 1);
-      } else if (token?.type === "single" && character !== "/") {
-        nextStates.add(state + 1);
-      } else if (token?.type === "star" && character !== "/") {
-        nextStates.add(state);
-      } else if (token?.type === "double-star" || token?.type === "globstar-directory") {
-        nextStates.add(state);
-      }
-    }
-    states = epsilonClosure(tokens, nextStates);
+  for (const character of prefix) {
+    states = advanceGlobStates(tokens, states, character);
     if (states.size === 0) return false;
   }
   return states.size > 0;
@@ -348,33 +390,21 @@ function anchoredGlobCoversEveryDescendant(
 ): boolean {
   let states = epsilonClosure(tokens, new Set([0]));
   const prefix = `${normalizedPath}/`;
-  for (let pathIndex = 0; pathIndex < prefix.length; pathIndex++) {
-    const character = prefix[pathIndex]!;
-    const nextStates = new Set<number>();
-    for (const state of states) {
-      const token = tokens[state];
-      if (token?.type === "literal" && token.value === character) {
-        nextStates.add(state + 1);
-      } else if (token?.type === "single" && character !== "/") {
-        nextStates.add(state + 1);
-      } else if (token?.type === "star" && character !== "/") {
-        nextStates.add(state);
-      } else if (token?.type === "double-star" || token?.type === "globstar-directory") {
-        nextStates.add(state);
-      }
-    }
-    states = epsilonClosure(tokens, nextStates);
+  for (const character of prefix) {
+    states = advanceGlobStates(tokens, states, character);
     if (states.size === 0) return false;
   }
 
   for (const state of states) {
-    const token = tokens[state];
+    const activeGlobstarIndex = activeGlobstarDirectoryTokenIndex(tokens, state);
+    const tokenIndex = activeGlobstarIndex ?? state;
+    const token = tokens[tokenIndex];
     if (token?.type === "double-star") {
-      if (epsilonClosure(tokens, new Set([state + 1])).has(tokens.length)) return true;
+      if (epsilonClosure(tokens, new Set([tokenIndex + 1])).has(tokens.length)) return true;
     }
     if (
-      token?.type === "globstar-directory" && tokens[state + 1]?.type === "star" &&
-      epsilonClosure(tokens, new Set([state + 2])).has(tokens.length)
+      token?.type === "globstar-directory" && tokens[tokenIndex + 1]?.type === "star" &&
+      epsilonClosure(tokens, new Set([tokenIndex + 2])).has(tokens.length)
     ) return true;
   }
   return false;

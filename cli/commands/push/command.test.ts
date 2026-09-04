@@ -3098,7 +3098,6 @@ describe("push divergence guard", () => {
   });
 
   it("keeps protected deletion context when final conflict recovery cannot write state", async () => {
-    const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -3127,7 +3126,7 @@ describe("push divergence guard", () => {
 
         let fileListCalls = 0;
         let protectedDeleted = false;
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
@@ -3167,22 +3166,23 @@ describe("push divergence guard", () => {
             return Response.json({});
           }
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
+        };
 
-        const error = await assertRejects(
-          () => pushCommand({ projectDir, prune: true, quiet: true }),
-          Error,
-        );
+        await withMockFetch(fetchHandler, async () => {
+          const error = await assertRejects(
+            () => pushCommand({ projectDir, prune: true, quiet: true }),
+            Error,
+          );
 
-        assertEquals(fileListCalls, 3);
-        assertEquals(protectedDeleted, true);
-        assertEquals(
-          (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
-          [".env.production"],
-        );
+          assertEquals(fileListCalls, 3);
+          assertEquals(protectedDeleted, true);
+          assertEquals(
+            (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
+            [".env.production"],
+          );
+        });
       });
     } finally {
-      globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
@@ -4775,7 +4775,6 @@ describe("push deletion ownership", () => {
   });
 
   it("keeps protected deletion context when a preserved remote file lacks content", async () => {
-    const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -4788,7 +4787,7 @@ describe("push deletion ownership", () => {
 
         let uploadedApp = false;
         let protectedDeleted = false;
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
@@ -4817,22 +4816,24 @@ describe("push deletion ownership", () => {
             return Response.json({});
           }
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
+        };
 
-        const error = await assertRejects(
-          () => pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true }),
-          Error,
-          "Push finalization failed after remote files were deleted",
-        );
+        await withMockFetch(fetchHandler, async () => {
+          const error = await assertRejects(
+            () =>
+              pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true }),
+            Error,
+            "Push finalization failed after remote files were deleted",
+          );
 
-        assertEquals(protectedDeleted, true);
-        assertEquals(
-          (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
-          [".env.production"],
-        );
+          assertEquals(protectedDeleted, true);
+          assertEquals(
+            (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
+            [".env.production"],
+          );
+        });
       });
     } finally {
-      globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
