@@ -608,9 +608,12 @@ export async function withJsxArtifactLock<T>(
 async function readArtifactModifiedAtMs(path: string): Promise<number> {
   try {
     return (await getLocalFs().stat(path)).mtime?.getTime() ?? 0;
-  } catch (_) {
-    /* expected: a concurrent transform may have removed the variant already */
-    return 0;
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      // A concurrent transform may have removed the variant already.
+      return 0;
+    }
+    throw error;
   }
 }
 
@@ -933,6 +936,7 @@ async function collectExcessJsxArtifacts(
   }
 
   const quotaHandled = new Set<string>();
+  const strandedNamespaceNames = new Set(strandedNamespaceArtifacts);
   let directoryExcess = Math.max(
     0,
     allArtifactNames.length - MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
@@ -950,7 +954,10 @@ async function collectExcessJsxArtifacts(
     datedArtifacts.sort((left, right) => left.modifiedAtMs - right.modifiedAtMs);
     for (const { name, modifiedAtMs } of datedArtifacts) {
       if (directoryExcess === 0) break;
-      const collectableAtMs = modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS;
+      const collectableAtMs = modifiedAtMs +
+        (strandedNamespaceNames.has(name)
+          ? JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS
+          : JSX_CACHE_VARIANT_MIN_AGE_MS);
       if (collectableAtMs > nowMs) {
         noteRetry(collectableAtMs);
         continue;
@@ -965,12 +972,12 @@ async function collectExcessJsxArtifacts(
   for (const name of strandedNamespaceArtifacts) {
     if (quotaHandled.has(name)) continue;
     const artifactPath = join(esmCacheDir, name);
-    // The grace period still applies, and cache hits refresh mtime, so during
-    // a rolling deploy a draining process on the previous namespace keeps the
-    // artifacts it is still serving visibly fresh to this check.
+    // Older runtimes do not refresh cache-hit mtimes. Keep prior-namespace
+    // artifacts for the full idle horizon so a rolling deploy cannot retire a
+    // module that a draining pre-heartbeat process still imports.
     const modifiedAtMs = await readArtifactModifiedAtMs(artifactPath);
-    if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) {
-      noteRetry(modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
+    if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS) {
+      noteRetry(modifiedAtMs + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS);
       continue;
     }
     const removal = await removeJsxArtifactUnlessServed(artifactPath, nowMs);

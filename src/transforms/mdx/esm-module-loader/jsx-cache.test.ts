@@ -1245,7 +1245,7 @@ describe("pruneSupersededJsxArtifacts", () => {
       await pruneSupersededJsxArtifacts(
         tempDir,
         new Map([[sourcePath, written[0] ?? ""]]),
-        afterGracePeriod(),
+        Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS + 60_000,
       );
 
       const remaining: string[] = [];
@@ -1272,7 +1272,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     try {
       await writeTextFile(join(tempDir, strandedName), "export const old = 1;");
       // Old enough that the sweep reaches the removal, which needs the lease.
-      const agedAt = new Date(Date.now() - JSX_CACHE_VARIANT_MIN_AGE_MS - 60_000);
+      const agedAt = new Date(Date.now() - JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS - 60_000);
       await localFs.utime?.(join(tempDir, strandedName), agedAt, agedAt);
       // An operational failure reading back the lease owner, not a contended
       // lock: the ownership fence throws, so the pass aborts instead of
@@ -1369,6 +1369,22 @@ describe("pruneSupersededJsxArtifacts", () => {
       assertEquals(remaining.includes(strandedName), true);
     } finally {
       await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("propagates operational artifact stat failures", async () => {
+    const localFs = getLocalFs();
+    const originalStat = localFs.stat.bind(localFs);
+    localFs.stat = () => Promise.reject(new Error("transient stat failure"));
+
+    try {
+      await assertRejects(
+        () => readArtifactModifiedAtMs("/tmp/jsx-operational-stat.mjs"),
+        Error,
+        "transient stat failure",
+      );
+    } finally {
+      localFs.stat = originalStat;
     }
   });
 
