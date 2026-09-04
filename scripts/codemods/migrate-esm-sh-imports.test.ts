@@ -4,6 +4,7 @@ import { parse } from "npm:@babel/parser@7.29.2";
 import { stat as statNativeFile } from "node:fs/promises";
 import {
   assertPathInsideProject,
+  collectSourceFiles,
   filterNeedsResolution,
   joinReportPath,
   main,
@@ -853,6 +854,100 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "main creates package.json for a project that has no manifest",
+  async () => {
+    const project = await makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+
+      await main(["--", project]);
+
+      // The manifest is created with the pin the rewrite depends on.
+      const pkg = JSON.parse(await Deno.readTextFile(`${project}/package.json`)) as {
+        dependencies?: Record<string, string>;
+      };
+      assertEquals(pkg.dependencies?.lodash, "4.17.21");
+      const src = await Deno.readTextFile(`${project}/app.ts`);
+      assertStringIncludes(src, 'from "lodash"');
+      assert(!src.includes("esm.sh"));
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "main reports why a source file could not be read",
+  async () => {
+    const project = await makeTempDir();
+    const srcPath = `${project}/app.ts`;
+    try {
+      await Deno.writeTextFile(srcPath, 'import { x } from "https://esm.sh/lodash@4.17.21";\n');
+      await Deno.writeTextFile(`${project}/package.json`, '{"dependencies":{}}\n');
+      await Deno.chmod(srcPath, 0o000);
+
+      // Running as root ignores the mode; skip rather than fail.
+      let unreadable = false;
+      try {
+        (await Deno.open(srcPath, { read: true })).close();
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) return;
+
+      const error = await assertRejects(() => main(["--", project]), Error);
+      assertStringIncludes(error.message, "Failed to read");
+      assert(error.cause instanceof Error, "the underlying failure must survive as the cause");
+      // The fixed "... safely." text alone gives the operator nothing to act on.
+      assertStringIncludes(error.message, error.cause.message);
+    } finally {
+      try {
+        await Deno.chmod(srcPath, 0o644);
+      } catch { /* ignore */ }
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "manifest read failures are not reported as symlink problems",
+  async () => {
+    const project = await makeTempDir();
+    const pkgPath = `${project}/package.json`;
+    try {
+      await Deno.writeTextFile(pkgPath, '{"dependencies":{}}\n');
+      await Deno.chmod(pkgPath, 0o000);
+
+      // Running as root ignores the mode; skip rather than fail.
+      let unreadable = false;
+      try {
+        (await Deno.open(pkgPath, { read: true })).close();
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) return;
+
+      const result = await readProjectPackageJson(pkgPath, await Deno.realPath(project));
+
+      assert(result.parseError, "a permission failure must not read as an absent manifest");
+      assertStringIncludes(result.parseError, "could not be read");
+      assert(
+        !result.parseError.includes("symlink"),
+        `a permission failure must not be diagnosed as a symlink: ${result.parseError}`,
+      );
+      // The report must still not echo resolved paths.
+      assert(!result.parseError.includes(project));
+    } finally {
+      try {
+        await Deno.chmod(pkgPath, 0o644);
+      } catch { /* ignore */ }
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
 // ---------------------------------------------------------------------------
 // main() integration: symlinked paths must never be followed
 // ---------------------------------------------------------------------------
@@ -945,6 +1040,8 @@ Deno.test(
       await Deno.symlink(`${outside}/victim.ts`, `${project}/linked.ts`);
       await Deno.symlink(`${outside}/victim-dir`, `${project}/linked-dir`);
 
+      // End-to-end cover for the same invariant the collectSourceFiles unit
+      // test pins: a link must never reach the rewrite phase.
       await main(["--", project]);
 
       // Files reachable only through symlinks must keep their esm.sh URLs.
@@ -954,6 +1051,34 @@ Deno.test(
       await Deno.remove(project, { recursive: true });
       await Deno.remove(outside, { recursive: true });
     }
+  },
+);
+
+Deno.test(
+  "collection skips symlinked entries even when readDir reports them as files",
+  async () => {
+    // The skip must not rely on the runtime declining to classify a link as a
+    // file: this reader sets both flags, the way a runtime that resolved the
+    // entry would, so only the isSymlink check can keep the link out.
+    const entries: Record<string, Deno.DirEntry[]> = {
+      "/project": [
+        { name: "app.ts", isFile: true, isDirectory: false, isSymlink: false },
+        { name: "linked.ts", isFile: true, isDirectory: false, isSymlink: true },
+        { name: "linked-dir", isFile: false, isDirectory: true, isSymlink: true },
+      ],
+      "/project/linked-dir": [
+        { name: "nested.ts", isFile: true, isDirectory: false, isSymlink: false },
+      ],
+    };
+    const readDir = (path: string): AsyncIterable<Deno.DirEntry> =>
+      (async function* () {
+        for (const entry of entries[path] ?? []) yield entry;
+      })();
+
+    const files: string[] = [];
+    await collectSourceFiles("/project", files, readDir);
+
+    assertEquals(files, ["/project/app.ts"]);
   },
 );
 
@@ -1093,21 +1218,59 @@ Deno.test("project writes support regular files on Windows", async () => {
   }
 });
 
-Deno.test("project writes refuse to create a missing manifest", async () => {
+Deno.test("project writes create a missing manifest", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
-    let thrown: unknown;
-    try {
-      await writeTextFileInsideProject(target, await Deno.realPath(project), "{}\n", {
-        allowMissing: true,
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    assert(thrown instanceof Error);
-    assertStringIncludes(thrown.message, "Create package.json");
+    await writeTextFileInsideProject(target, await Deno.realPath(project), "{}\n", {
+      allowMissing: true,
+    });
+    assertEquals(await Deno.readTextFile(target), "{}\n");
+    assert((await Deno.lstat(target)).isFile, "the manifest must be a regular file");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("creating a missing manifest never follows a planted symlink", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const target = `${outside}/planted.json`;
+  try {
+    // Dangling link: the manifest is "absent" through the link, so the write
+    // must reject it rather than creating the file it points at.
+    await Deno.symlink(target, `${project}/package.json`);
+    const projectRoot = await Deno.realPath(project);
+
+    const error = await assertRejects(
+      () =>
+        writeTextFileInsideProject(`${project}/package.json`, projectRoot, "{}\n", {
+          allowMissing: true,
+        }),
+      Error,
+    );
+    assertStringIncludes(error.message, "symlink");
     await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("assertPathInsideProject rejects a path that is not a regular file", async () => {
+  const project = await makeTempDir();
+  try {
+    // A directory stands in for any non-regular entry. A FIFO planted as
+    // package.json takes the same branch, and opening one would block until a
+    // writer appears, hanging the codemod.
+    await Deno.mkdir(`${project}/package.json`);
+    const projectRoot = await Deno.realPath(project);
+
+    const error = await assertRejects(
+      () => assertPathInsideProject(`${project}/package.json`, projectRoot),
+      Error,
+    );
+    assertStringIncludes(error.message, "regular file");
   } finally {
     await Deno.remove(project, { recursive: true });
   }
