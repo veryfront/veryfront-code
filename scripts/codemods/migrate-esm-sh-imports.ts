@@ -483,6 +483,10 @@ function parentDirOf(path: string): string {
   return parent === "" ? PATH_SEPARATOR : parent;
 }
 
+class SafeFileGuardError extends Error {
+  override readonly name = "SafeFileGuardError";
+}
+
 /**
  * Fail closed before reading or writing a path collected under the project
  * directory.
@@ -526,30 +530,32 @@ export async function assertPathInsideProject(
       try {
         realParent = await Deno.realPath(parentDirOf(path));
       } catch (parentError) {
-        throw new Error(
-          `Refusing to create ${path}: ${
-            parentError instanceof Error ? parentError.message : String(parentError)
-          }`,
+        throw new SafeFileGuardError(
+          "Refusing to create a file because its parent directory could not be verified.",
+          { cause: parentError },
         );
       }
       if (realParent !== projectRoot && !realParent.startsWith(prefix)) {
-        throw new Error(`Refusing to create a path outside the project directory: ${path}`);
+        throw new SafeFileGuardError(
+          "Refusing to create a path outside the project directory.",
+        );
       }
       return;
     }
-    throw new Error(
-      `Refusing to touch ${path}: ${e instanceof Error ? e.message : String(e)}`,
+    throw new SafeFileGuardError(
+      "Refusing to touch a path because its file type could not be verified.",
+      { cause: e },
     );
   }
   if (info.isSymlink) {
-    throw new Error(`Refusing to follow symlink: ${path}`);
+    throw new SafeFileGuardError("Refusing to follow a symlink.");
   }
   if (!info.isFile) {
-    throw new Error(`Refusing to use a path that is not a regular file: ${path}`);
+    throw new SafeFileGuardError("Refusing to use a path that is not a regular file.");
   }
   const real = await Deno.realPath(path);
   if (real !== projectRoot && !real.startsWith(prefix)) {
-    throw new Error(`Refusing to access path outside the project directory: ${path}`);
+    throw new SafeFileGuardError("Refusing to access a path outside the project directory.");
   }
 }
 
@@ -563,7 +569,7 @@ function stableFileIdentity(
     (typeof info.dev === "bigint" && info.dev <= 0n) ||
     (typeof info.ino === "bigint" && info.ino <= 0n)
   ) {
-    throw new Error("Stable file identity is unavailable.");
+    throw new SafeFileGuardError("Stable file identity is unavailable.");
   }
   return { device: String(info.dev), inode: String(info.ino) };
 }
@@ -629,16 +635,18 @@ async function writeTextFileInsideProjectOnWindows(
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
-      throw new Error("Refusing to write a path that changed after it was opened.");
+      throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
     }
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
-      throw new Error("Refusing to write a file because it changed after being read.");
+      throw new SafeFileGuardError("Refusing to write a file because it changed after being read.");
     }
     if (
       expectedContent !== undefined &&
       await file.readFile({ encoding: "utf8" }) !== expectedContent
     ) {
-      throw new Error("Refusing to write a file because its contents changed after being read.");
+      throw new SafeFileGuardError(
+        "Refusing to write a file because its contents changed after being read.",
+      );
     }
     await file.truncate(0);
     const bytes = new TextEncoder().encode(content);
@@ -650,11 +658,13 @@ async function writeTextFileInsideProjectOnWindows(
         bytes.length - offset,
         offset,
       );
-      if (bytesWritten === 0) throw new Error(`Could not finish writing ${path}`);
+      if (bytesWritten === 0) throw new SafeFileGuardError("Could not finish writing the file.");
       offset += bytesWritten;
     }
     if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
-      throw new Error("Refusing to finish a write because the destination path changed.");
+      throw new SafeFileGuardError(
+        "Refusing to finish a write because the destination path changed.",
+      );
     }
   } catch (error) {
     if (created) await removeUnverifiedFile(path, file);
@@ -718,10 +728,10 @@ export async function writeTextFileInsideProject(
     const opened = stableFileIdentity(await file.stat());
     const current = stableFileIdentity(await Deno.stat(path));
     if (!sameFileIdentity(opened, current)) {
-      throw new Error("Refusing to write a path that changed after it was opened.");
+      throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
     }
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
-      throw new Error("Refusing to write a file because it changed after being read.");
+      throw new SafeFileGuardError("Refusing to write a file because it changed after being read.");
     }
     if (expectedContent !== undefined) {
       const expectedBytes = new TextEncoder().encode(expectedContent);
@@ -736,7 +746,9 @@ export async function writeTextFileInsideProject(
       const contentMatches = currentLength === expectedBytes.length &&
         expectedBytes.every((byte, index) => currentBytes[index] === byte);
       if (!contentMatches) {
-        throw new Error("Refusing to write a file because its contents changed after being read.");
+        throw new SafeFileGuardError(
+          "Refusing to write a file because its contents changed after being read.",
+        );
       }
     }
 
@@ -746,11 +758,13 @@ export async function writeTextFileInsideProject(
     let offset = 0;
     while (offset < bytes.length) {
       const written = await file.write(bytes.subarray(offset));
-      if (written === 0) throw new Error(`Could not finish writing ${path}`);
+      if (written === 0) throw new SafeFileGuardError("Could not finish writing the file.");
       offset += written;
     }
     if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
-      throw new Error("Refusing to finish a write because the destination path changed.");
+      throw new SafeFileGuardError(
+        "Refusing to finish a write because the destination path changed.",
+      );
     }
   } catch (error) {
     if (created) await removeUnverifiedFile(path, file);
@@ -769,12 +783,12 @@ async function readTextFileInsideProject(
     const identity = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
-      throw new Error("A file changed while it was being opened.");
+      throw new SafeFileGuardError("A file changed while it was being opened.");
     }
     const text = await file.readFile({ encoding: "utf8" });
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
-      throw new Error("A file changed while it was being read.");
+      throw new SafeFileGuardError("A file changed while it was being read.");
     }
     return { text, identity };
   } finally {
@@ -789,6 +803,7 @@ async function readTextFileInsideProject(
  * the JSON report, so keep the error code or class and drop the message body.
  */
 function describeFileError(error: unknown): string {
+  if (error instanceof SafeFileGuardError) return error.message;
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string") return code;
   if (error instanceof Error) return error.name;
