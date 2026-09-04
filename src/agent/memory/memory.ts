@@ -208,7 +208,7 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
         }
 
         if (this.config.maxTokens) {
-          await this.trimToTokenLimit();
+          this.trimToTokenLimit();
         }
         this.recordAddition(message);
       },
@@ -216,9 +216,9 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
     );
   }
 
-  private trimToTokenLimit(): Promise<void> {
+  private trimToTokenLimit(): void {
     const maxTokens = this.config.maxTokens;
-    if (!maxTokens) return Promise.resolve();
+    if (!maxTokens) return;
 
     let tokenCount = estimateTokens(this.messages);
 
@@ -226,8 +226,6 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
       this.messages.shift();
       tokenCount = estimateTokens(this.messages);
     }
-
-    return Promise.resolve();
   }
 }
 
@@ -356,7 +354,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         this.messages.push(message);
 
         if (this.messages.length > this.summaryThreshold) {
-          await this.summarizeOldMessages();
+          this.summarizeOldMessages();
         }
 
         this.enforceTokenLimit();
@@ -429,15 +427,13 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
-  private summarizeOldMessages(): Promise<void> {
+  private summarizeOldMessages(): void {
     const halfIndex = Math.floor(this.messages.length / 2);
     const toSummarize = this.messages.slice(0, halfIndex);
     const remaining = this.messages.slice(halfIndex);
 
     this.appendToSummary(toSummarize);
     this.messages = remaining;
-
-    return Promise.resolve();
   }
 
   private appendToSummary(messages: M[]): void {
