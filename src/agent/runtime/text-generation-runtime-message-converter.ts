@@ -94,6 +94,15 @@ function shouldSkipProviderExecutedToolResult(
   return true;
 }
 
+function consumeProviderExecutedToolResults(
+  message: Message,
+  providerExecutedToolCallIds: Set<string>,
+): void {
+  for (const part of message.parts) {
+    shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+  }
+}
+
 function getToolInputRecord(part: Record<string, unknown>): Record<string, unknown> {
   return getRecordPartField(part, "args") ?? getRecordPartField(part, "input") ?? {};
 }
@@ -409,14 +418,19 @@ export function hasProviderSendableAssistantContent(
     if (toolCallId) providerExecutedToolCallIds.add(toolCallId);
   }
 
-  return message.parts.some((part) => {
+  for (const part of message.parts) {
     if (part.type === "text" && "text" in part) {
-      return typeof (part as { text?: unknown }).text === "string" &&
-        (part as { text: string }).text.length > 0;
+      if (
+        typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0
+      ) return true;
+      continue;
     }
 
-    return getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null;
-  });
+    if (shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)) continue;
+    if (getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null) return true;
+  }
+  return false;
 }
 
 /** Assistant messages retained after applying conversation-level provider call identity. */
@@ -434,8 +448,17 @@ export function getProviderSendableAssistantMessages(
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
-    if (hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
-      sendable.add(message);
+    if (message.role === "assistant") {
+      if (hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
+        sendable.add(message);
+        convertAssistantMessageToTextGenerationRuntimeMessages(
+          message,
+          providerExecutedToolCallIds,
+        );
+      } else {
+        consumeProviderExecutedToolResults(message, providerExecutedToolCallIds);
+      }
+      continue;
     }
     if (message.role === "tool") {
       for (const part of message.parts) {
@@ -702,6 +725,7 @@ export function convertToTextGenerationRuntimeMessages(
     }
 
     if (!hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
+      consumeProviderExecutedToolResults(message, providerExecutedToolCallIds);
       continue;
     }
 

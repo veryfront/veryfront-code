@@ -437,13 +437,20 @@ interface InputValidationTexts {
 
 function extractMessageInputText(message: Message): string[] {
   if (!VALIDATED_INPUT_ROLES.has(message.role)) return [];
+  return extractMessageInputTextRegardlessOfRole(message);
+}
+
+function extractMessageInputTextRegardlessOfRole(message: Message): string[] {
   return message.parts.flatMap(extractPartInputText);
 }
 
 /** The assembled forms of one message's text parts, if it has more than one. */
 function extractMessageAssembledTexts(message: Message): string[] {
   if (!VALIDATED_INPUT_ROLES.has(message.role)) return [];
+  return extractMessageAssembledTextsRegardlessOfRole(message);
+}
 
+function extractMessageAssembledTextsRegardlessOfRole(message: Message): string[] {
   // A single text part already equals every assembled form, so only add the
   // joined variants when the parts could actually hide a split phrase.
   const textParts = messageTextParts(message);
@@ -995,6 +1002,9 @@ export function securityMiddleware(
       }
       approvedInputTexts = sanitizedValues;
     }
+    const approvedMessages = typeof context.input === "string"
+      ? undefined
+      : context.input.map((message) => ({ id: message.id, role: message.role }));
 
     // A middleware later in the chain can still replace `context.input` or
     // mutate a message in place after this middleware approved it, and the
@@ -1005,11 +1015,28 @@ export function securityMiddleware(
     // longer rewrite it at that point.
     registerTurnInputValidator(context, async (messages) => {
       const resolvedTexts = extractInputValidationTexts(messages);
-      if (sameTexts(resolvedTexts, approvedInputTexts)) return;
-      await assertInputTextsValid(inputValidator, resolvedTexts, config.onViolation);
+      const sameMessageIdentity = approvedMessages !== undefined &&
+        approvedMessages.length === messages.length &&
+        approvedMessages.every((message, index) => message.id === messages[index]?.id);
+      const roleRewriteCandidates = approvedMessages === undefined
+        ? messages.filter((message) => !VALIDATED_INPUT_ROLES.has(message.role))
+        : messages.filter((message, index) =>
+          !VALIDATED_INPUT_ROLES.has(message.role) &&
+          (!sameMessageIdentity || VALIDATED_INPUT_ROLES.has(approvedMessages[index]!.role))
+        );
+      const rewrittenRoleTexts: InputValidationTexts = {
+        texts: roleRewriteCandidates.flatMap(extractMessageInputTextRegardlessOfRole),
+        assembled: roleRewriteCandidates.flatMap(extractMessageAssembledTextsRegardlessOfRole),
+      };
+      const completeResolvedTexts: InputValidationTexts = {
+        texts: [...resolvedTexts.texts, ...rewrittenRoleTexts.texts],
+        assembled: [...resolvedTexts.assembled, ...rewrittenRoleTexts.assembled],
+      };
+      if (sameTexts(completeResolvedTexts, approvedInputTexts)) return;
+      await assertInputTextsValid(inputValidator, completeResolvedTexts, config.onViolation);
       assertTextsNeedNoSanitization(
         inputValidator,
-        [...resolvedTexts.texts, ...resolvedTexts.assembled],
+        [...completeResolvedTexts.texts, ...completeResolvedTexts.assembled],
         "Middleware-rewritten input contains content sanitization removes",
         config.onViolation,
       );

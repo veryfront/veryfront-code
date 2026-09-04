@@ -40,6 +40,48 @@ describe("NoMemory", () => {
   });
 });
 
+describe("custom memory rollback", () => {
+  it("matches deserialized snapshot and rejected messages by stable content", async () => {
+    let stored = [userMessage("history", "accepted history")];
+    const cloneStored = () => JSON.parse(JSON.stringify(stored)) as MinimalMessage[];
+    const memory = {
+      add(message: MinimalMessage) {
+        stored.push(JSON.parse(JSON.stringify(message)) as MinimalMessage);
+        return Promise.resolve();
+      },
+      getMessages() {
+        return Promise.resolve(cloneStored());
+      },
+      clear() {
+        stored = [];
+        return Promise.resolve();
+      },
+      getStats() {
+        return Promise.resolve({
+          totalMessages: stored.length,
+          estimatedTokens: 0,
+          type: "custom",
+        });
+      },
+    };
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("turn", "rejected input");
+    const later = {
+      ...userMessage("turn", "accepted concurrent output"),
+      role: "assistant" as const,
+    };
+    await memory.add(rejected);
+    await memory.add(later);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), [
+      userMessage("history", "accepted history"),
+      later,
+    ]);
+  });
+});
+
 describe("createAgentMemory", () => {
   it("returns NoMemory when no config is provided (stateless default)", () => {
     assertInstanceOf(createAgentMemory(), NoMemory);
@@ -161,6 +203,41 @@ describe("ConversationMemory", () => {
     await rollback.rollback(new Set([rejected]));
 
     assertEquals((await memory.getMessages()).map((message) => message.id), ["assistant"]);
+  });
+
+  it("starts retained replay additions in their original order before yielding", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("rejected", "rejected input");
+    const first = userMessage("assistant-1", "first concurrent output");
+    const second = userMessage("assistant-2", "second concurrent output");
+    await memory.add(rejected);
+    await memory.add(first);
+    await memory.add(second);
+
+    const originalAdd = memory.add.bind(memory);
+    const interloper = userMessage("assistant-new", "newer concurrent output");
+    let replaying = true;
+    memory.add = async (message) => {
+      await originalAdd(message);
+      if (replaying && message.id === first.id) {
+        await new Promise<void>((resolve) => {
+          queueMicrotask(async () => {
+            await originalAdd(interloper);
+            resolve();
+          });
+        });
+      }
+    };
+
+    await rollback.rollback(new Set([rejected]));
+    replaying = false;
+
+    assertEquals(
+      (await memory.getMessages()).map((message) => message.id),
+      ["history", "assistant-1", "assistant-2", "assistant-new"],
+    );
   });
 });
 

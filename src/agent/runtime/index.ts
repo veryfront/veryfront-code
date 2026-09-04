@@ -371,8 +371,66 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
   return clone(value) as T;
 }
 
+const PROVIDER_VISIBLE_MESSAGE_PART_FIELDS = [
+  "type",
+  "text",
+  "signature",
+  "redactedData",
+  "toolCallId",
+  "tool_call_id",
+  "id",
+  "toolName",
+  "tool_name",
+  "name",
+  "args",
+  "input",
+  "inputText",
+  "providerExecuted",
+  "supportsDeferredResults",
+  "result",
+  "output",
+  "sourceId",
+  "url",
+  "title",
+  "mediaType",
+  "filename",
+  "uploadId",
+  "upload_id",
+  "uploadPath",
+  "upload_path",
+] as const;
+
+function cloneKnownMessagePartFields(part: MessagePart): MessagePart {
+  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+  const source = part as Record<string, unknown>;
+  for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
+    let value: unknown;
+    try {
+      value = source[key];
+    } catch {
+      continue;
+    }
+    if (value === undefined) continue;
+    ObjectDefineProperty(detached, key, {
+      value: cloneStructuredValuePreservingOpaque(value),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return detached as MessagePart;
+}
+
 function cloneMessagePartForCommit(part: MessagePart): MessagePart {
-  const descriptors = ObjectGetOwnPropertyDescriptors(part);
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(part);
+  } catch {
+    // A structurally valid Proxy can expose the fields consumed by provider
+    // conversion while refusing descriptor enumeration. Detach those known
+    // fields individually so persistence does not introduce a new failure.
+    return cloneKnownMessagePartFields(part);
+  }
   const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
   for (const key of ObjectKeys(descriptors)) {
     const descriptor = descriptors[key];
@@ -1613,6 +1671,13 @@ export class AgentRuntime {
     if (validateTurnMessages || validateProjectedMessages) {
       history = await this.memory.getMessages();
       if (history.length > 0) validated = [...history, ...committedInputMessages];
+      // Durable provider replay metadata can keep a reasoning-only assistant
+      // turn in the actual provider request. Attach it before validation so
+      // the validator does not incorrectly merge the user turns around it.
+      applyProviderReplayCheckpointsToMessages(
+        validated,
+        getRuntimeProviderReplayCheckpoints(this.config),
+      );
       // With no history the assembled conversation is exactly this turn's
       // input, which the middleware already validated.
       if (validateTurnMessages && history.length > 0) {

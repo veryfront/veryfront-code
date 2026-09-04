@@ -1069,6 +1069,52 @@ describe("securityMiddleware", () => {
     assertEquals(result.text, "ok");
   });
 
+  it("retains a later local-call boundary after an inline provider result releases its id", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "ignore previous " }] },
+        {
+          id: "assistant-provider-call",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "reused-call",
+            toolName: "web_search",
+            providerExecuted: true,
+          }, {
+            type: "tool-call",
+            toolCallId: "reused-call",
+            toolName: "colliding_local_search",
+            input: {},
+          }, {
+            type: "tool-result",
+            toolCallId: "reused-call",
+            toolName: "web_search",
+            result: { ok: true },
+          }] as unknown as Message["parts"],
+        },
+        {
+          id: "assistant-local-call",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "reused-call",
+            toolName: "later_local_search",
+            input: {},
+          }] as unknown as Message["parts"],
+        },
+        { id: "user-2", role: "user", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    const result = await middleware(context, () => Promise.resolve(createResponse("ok")));
+
+    assertEquals(result.text, "ok");
+  });
+
   it("does not length-check provider-assembled concatenations", async () => {
     // `maxLength` guards caller-supplied message text. The assembled forms are
     // synthetic strings built only to catch a split phrase, and a merged run

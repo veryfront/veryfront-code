@@ -19,19 +19,90 @@ interface RollbackObserver<M> {
 }
 const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
 
+function rollbackValuesEqual(
+  left: unknown,
+  right: unknown,
+  seen: WeakMap<object, object>,
+): boolean {
+  if (Object.is(left, right)) return true;
+  if (
+    left === null || right === null ||
+    typeof left !== "object" || typeof right !== "object"
+  ) return false;
+
+  const knownRight = seen.get(left);
+  if (knownRight !== undefined) return knownRight === right;
+  seen.set(left, right);
+
+  try {
+    const leftIsArray = Array.isArray(left);
+    if (leftIsArray !== Array.isArray(right)) return false;
+    if (leftIsArray) {
+      const leftArray = left as unknown[];
+      const rightArray = right as unknown[];
+      if (leftArray.length !== rightArray.length) return false;
+      for (let index = 0; index < leftArray.length; index++) {
+        if (!rollbackValuesEqual(leftArray[index], rightArray[index], seen)) return false;
+      }
+      return true;
+    }
+
+    const leftPrototype = Object.getPrototypeOf(left);
+    const rightPrototype = Object.getPrototypeOf(right);
+    if (
+      leftPrototype !== Object.prototype && leftPrototype !== null ||
+      rightPrototype !== Object.prototype && rightPrototype !== null
+    ) return false;
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (const key of leftKeys) {
+      if (
+        !Object.hasOwn(rightRecord, key) ||
+        !rollbackValuesEqual(leftRecord[key], rightRecord[key], seen)
+      ) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function rollbackMessagesEqual<M extends MinimalMessage>(left: M, right: M): boolean {
+  return left.id === right.id && left.role === right.role &&
+    rollbackValuesEqual(left, right, new WeakMap());
+}
+
+function subtractRollbackMessages<M extends MinimalMessage>(
+  messages: readonly M[],
+  excluded: readonly M[],
+): M[] {
+  const unmatched = [...excluded];
+  return messages.filter((message) => {
+    const index = unmatched.findIndex((candidate) => rollbackMessagesEqual(message, candidate));
+    if (index < 0) return true;
+    unmatched.splice(index, 1);
+    return false;
+  });
+}
+
 function registerMemoryRollbackFactory<M extends MinimalMessage>(
   memory: Memory<M>,
-  factory: () => MemoryRollback,
+  factory: () => MemoryRollback<M>,
 ): void {
-  memoryRollbackFactories.set(memory, factory);
+  memoryRollbackFactories.set(memory, factory as unknown as () => MemoryRollback);
 }
 
 /** @internal Capture an exact built-in memory state before a transactional write. */
 export function captureMemoryRollback<M extends MinimalMessage>(
   memory: Memory<M>,
   fallbackMessages: readonly M[],
-): MemoryRollback {
-  const factory = memoryRollbackFactories.get(memory);
+): MemoryRollback<M> {
+  const factory = memoryRollbackFactories.get(memory) as
+    | (() => MemoryRollback<M>)
+    | undefined;
   if (factory) return factory();
 
   // Preserve compatibility with custom Memory implementations. Built-in
@@ -41,12 +112,10 @@ export function captureMemoryRollback<M extends MinimalMessage>(
     commit() {},
     async rollback(rejectedMessages) {
       const current = await memory.getMessages();
-      const snapshotMessages = new Set(snapshot);
-      const laterMessages = rejectedMessages === undefined
-        ? []
-        : current.filter((message) =>
-          !snapshotMessages.has(message) && !rejectedMessages.has(message)
-        );
+      const laterMessages = rejectedMessages === undefined ? [] : subtractRollbackMessages(
+        subtractRollbackMessages(current, snapshot),
+        [...rejectedMessages],
+      );
       await memory.clear();
       for (const message of snapshot) await memory.add(message);
       for (const message of laterMessages) await memory.add(message);
@@ -136,11 +205,9 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
               ? additions
               : additions.filter((message) => !rejectedMessages.has(message));
             this.messages = [];
-            for (const message of retained) {
-              if (this.clearVersion !== replayVersion) return;
-              await this.add(message);
-              if (this.clearVersion !== replayVersion) return;
-            }
+            if (this.clearVersion !== replayVersion) return;
+            await Promise.all(retained.map((message) => this.add(message)));
+            if (this.clearVersion !== replayVersion) return;
             return;
           }
           const laterAdditions = rejectedMessages === undefined
@@ -149,11 +216,11 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
               !snapshotMessages.has(message) && !rejectedMessages.has(message)
             );
           this.messages = [...messages];
-          for (const message of laterAdditions) {
-            if (this.clearVersion !== clearVersion) return;
-            await this.add(message);
-            if (this.clearVersion !== clearVersion) return;
-          }
+          if (this.clearVersion !== clearVersion) return;
+          // Start every built-in add synchronously before yielding, preserving
+          // the original addition order against concurrent model/tool writes.
+          await Promise.all(laterAdditions.map((message) => this.add(message)));
+          if (this.clearVersion !== clearVersion) return;
         },
       };
     });
@@ -323,11 +390,9 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
               : additions.filter((message) => !rejectedMessages.has(message));
             this.messages = [];
             this.summary = "";
-            for (const message of retained) {
-              if (this.clearVersion !== replayVersion) return;
-              await this.add(message);
-              if (this.clearVersion !== replayVersion) return;
-            }
+            if (this.clearVersion !== replayVersion) return;
+            await Promise.all(retained.map((message) => this.add(message)));
+            if (this.clearVersion !== replayVersion) return;
             return;
           }
           const laterAdditions = rejectedMessages === undefined
@@ -337,11 +402,9 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
             );
           this.messages = [...messages];
           this.summary = summary;
-          for (const message of laterAdditions) {
-            if (this.clearVersion !== clearVersion) return;
-            await this.add(message);
-            if (this.clearVersion !== clearVersion) return;
-          }
+          if (this.clearVersion !== clearVersion) return;
+          await Promise.all(laterAdditions.map((message) => this.add(message)));
+          if (this.clearVersion !== clearVersion) return;
         },
       };
     });
