@@ -832,6 +832,10 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
     // legacy child could be its output; treating it as previously produced is
     // conservative and prevents a later sibling from bypassing its own wait.
     for (const [nodeId, state] of Object.entries(nodeStates)) {
+      if (
+        currentOwnerIsActive && currentReservations.has(nodeId) &&
+        state._subWorkflowOwnerPath === undefined
+      ) continue;
       if (state._subWorkflowOwnerPath === undefined) producedNodeIds.add(nodeId);
     }
   }
