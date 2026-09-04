@@ -654,7 +654,7 @@ export async function parseHostedChatRequestFromRequest(
   }
 
   const inferenceAuthToken = readInferenceTokenHeader(request);
-  if (inferenceAuthToken instanceof Response) {
+  if (inferenceAuthToken !== undefined && typeof inferenceAuthToken !== "string") {
     return inferenceAuthToken;
   }
 
