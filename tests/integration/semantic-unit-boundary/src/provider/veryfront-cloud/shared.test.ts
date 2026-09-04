@@ -8,6 +8,7 @@ import { withEnv } from "#veryfront/testing";
 import {
   __runWithOutboundFetchTransportForTests,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  isHostAllowedInternalProviderOrigin,
   OutboundRequestBlockedError,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import {
@@ -125,6 +126,85 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
       } finally {
         Set.prototype.has = originalSetHas;
       }
+    },
+  );
+
+  it(
+    "is not aborted by a poisoned Array iterator when parsing a nonempty allowlist",
+    async () => {
+      // Exercises isHostAllowedInternalProviderOrigin directly rather than through
+      // the full createVeryfrontCloudFetch/Request pipeline: Deno's own Headers
+      // iteration is itself backed by Array.prototype[Symbol.iterator], so poisoning
+      // it around a real fetch call would also break unrelated, out-of-scope Request
+      // construction -- this isolates the allowlist-parsing fix under test here.
+      await withEnv(
+        {
+          [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]:
+            "http://some-service.some-namespace.svc.cluster.local",
+        },
+        // deno-lint-ignore require-await
+        async () => {
+          const originalIterator = Array.prototype[Symbol.iterator];
+          // deno-lint-ignore no-explicit-any
+          (Array.prototype as any)[Symbol.iterator] = () => {
+            throw new Error("poisoned iterator reached");
+          };
+          try {
+            assertEquals(
+              isHostAllowedInternalProviderOrigin(
+                new URL("http://some-service.some-namespace.svc.cluster.local/ai/gateway"),
+              ),
+              true,
+            );
+          } finally {
+            Array.prototype[Symbol.iterator] = originalIterator;
+          }
+        },
+      );
+    },
+  );
+
+  it(
+    "is not aborted by a poisoned URL.prototype.toString when resolving the request against the origin-bound base",
+    async () => {
+      const privateAddress = "10.42.0.5";
+      let capturedRequest: Request | undefined;
+      const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider", INTERNAL_API_BASE_URL);
+      const originalToString = URL.prototype.toString;
+      URL.prototype.toString = function () {
+        throw new Error("poisoned URL.toString reached");
+      };
+      try {
+        await withEnv(
+          {
+            [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]:
+              "http://some-service.some-namespace.svc.cluster.local",
+          },
+          () =>
+            __runWithOutboundFetchTransportForTests(
+              {
+                fetch: (input, init) => {
+                  capturedRequest = new Request(input, init);
+                  return Promise.resolve(new Response(null, { status: 204 }));
+                },
+                // Reads `.href` rather than passing `url` itself to `new Request`, which
+                // would coerce it through the very `.toString()` this test poisons --
+                // that coercion happens in the (untouched) worker-egress-guard/pinned-fetch
+                // plumbing, not in the outbound-fetch.ts code path under test here.
+                pinnedFetch: (url, _addresses, init) => {
+                  capturedRequest = new Request(url.href, init);
+                  return Promise.resolve(new Response(null, { status: 204 }));
+                },
+                resolveHost: () => Promise.resolve([privateAddress]),
+              },
+              () => wrappedFetch(`${INTERNAL_API_BASE_URL}/chat/completions`),
+            ),
+        );
+      } finally {
+        URL.prototype.toString = originalToString;
+      }
+
+      assertEquals(capturedRequest?.url, `${INTERNAL_API_BASE_URL}/chat/completions`);
     },
   );
 });

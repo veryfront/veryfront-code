@@ -208,7 +208,10 @@ function parseAllowedInternalProviderOrigins(value: string | undefined): Readonl
 
   const origins = new NativeSet<string>();
   const entries = IntrinsicReflectApply(StringPrototypeSplit, value, [","]) as string[];
-  for (const entry of entries) {
+  // Indexed, not for...of: a replaced Array.prototype[Symbol.iterator] would
+  // otherwise run despite every other intrinsic here being captured.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
     const trimmedEntry = IntrinsicReflectApply(StringPrototypeTrim, entry, []) as string;
     let url: URL;
     try {
@@ -305,6 +308,9 @@ function createOriginBoundFetchWithTransport(
   }
   const baseOrigin = readNativeURLString(base, URLOriginGet);
   const allowInternalEgress = isHostAllowedInternalProviderOrigin(base);
+  // A primitive, not the URL object: passing `base` itself as the second URL()
+  // argument would coerce it through a possibly-replaced URL.prototype.toString.
+  const baseHref = readNativeURLString(base, URLHrefGet);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const isRequestInput = isNativeInstance(input, NativeRequest);
@@ -313,7 +319,7 @@ function createOriginBoundFetchWithTransport(
       : isNativeInstance(input, NativeURL)
       ? readNativeURLString(input as URL, URLHrefGet)
       : input as string;
-    const target = new NativeURL(raw, base);
+    const target = new NativeURL(raw, baseHref);
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
     const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
