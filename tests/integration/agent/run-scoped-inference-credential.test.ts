@@ -820,6 +820,81 @@ describe("run-scoped inference credential", () => {
     assertEquals(exposedToSharedRealmJson, false);
   });
 
+  it("routes a default-chat inference header to gateway Authorization", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    let capturedAuthorization: string | null = null;
+    let frameworkModel: ReturnType<typeof resolveModel> | undefined;
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const routeSet = createHostedAgentServiceRouteSet({
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      runtimeSource: { type: "release", releaseId: "release-42" },
+      authenticateRequest: async (): Promise<HostedServiceAuthenticatedRequest | Response> => ({
+        authToken: "broader-control-plane-token",
+        userId: "user-1",
+      }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunEventAppendToken: async () => ({ verified: true }),
+      prepareExecution: async (request) => {
+        frameworkModel = createHostedInferenceModelResolver(request)?.(
+          "veryfront-cloud/openai/gpt-test",
+        );
+        return { executionId: "exec-default-chat" };
+      },
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {
+        if (!frameworkModel) throw new TypeError("Expected framework model");
+        const result = await frameworkModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+    });
+    const response = await routeSet.handleDurableChatRunExecuteRequest({
+      request: new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-token",
+          "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+        },
+        body: JSON.stringify({
+          messages: [{ id: "message-1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId: "00000000-0000-4000-8000-000000000001",
+            projectId: "00000000-0000-4000-8000-000000000005",
+            branchId: null,
+          },
+          model: "openai/gpt-test",
+          durableRootRun: {
+            runId: "run-default-chat",
+            messageId: "00000000-0000-4000-8000-000000000002",
+          },
+        }),
+      }),
+    });
+
+    assertEquals(response.status, 202);
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+  });
+
   it("ignores an inference credential without a verified run-event token", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
