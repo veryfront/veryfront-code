@@ -354,7 +354,8 @@ function scriptedHeartbeatFetch(
       return Promise.resolve(
         options.registrationResponse?.(
           registrationAttempts,
-          init?.signal ?? undefined,
+          (init as { signal?: AbortSignal | null } | undefined)?.signal ??
+            undefined,
         ) ?? jsonResponse(serviceResponse),
       );
     }

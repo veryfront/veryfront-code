@@ -8,9 +8,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
-import { deleteEnv, setEnv, withTempDir } from "#veryfront/testing/deno-compat.ts";
-import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
+import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 import {
   getTokenStorageAdapter,
   getTokenStorageType,
@@ -213,45 +212,6 @@ describe("platform/adapters/token/integration", () => {
       assertEquals(await adapter.get("test-key"), "test-value");
       await adapter.delete("test-key");
       assertEquals(await adapter.get("test-key"), null);
-    });
-
-    it("keeps a host-private token on its host-owned origin and transport", async () => {
-      setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
-      setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
-      const requests: Array<{ origin: string; authorization: string }> = [];
-      let ambientFetchCalled = false;
-
-      await withTempDir(async (dir) => {
-        await Deno.writeTextFile(
-          `${dir}/.env`,
-          "VERYFRONT_API_URL=https://project-controlled.example\n",
-        );
-        await loadEnv({ cwd: dir, override: true });
-
-        await withMockFetch(
-          ((input: string | URL | Request, init?: RequestInit) => {
-            const url = new URL(String(input));
-            requests.push({
-              origin: url.origin,
-              authorization: new Headers(init?.headers).get("authorization") ?? "",
-            });
-            return Promise.resolve(Response.json({ keys: [] }));
-          }) as typeof fetch,
-          async () => {
-            globalThis.fetch = () => {
-              ambientFetchCalled = true;
-              return Promise.reject(new Error("project fetch must not receive token storage auth"));
-            };
-            await getTokenStorageAdapter();
-          },
-        );
-      });
-
-      assertEquals(ambientFetchCalled, false);
-      assertEquals(requests, [{
-        origin: "https://api.veryfront.com",
-        authorization: "Bearer host-private-token",
-      }]);
     });
   });
 });

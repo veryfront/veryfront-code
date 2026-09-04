@@ -2,8 +2,10 @@ import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import {
+  bindSandboxAuthToken,
   fetchSandboxRuntimeUrl,
   fetchSandboxUrl,
+  readSandboxAuthToken,
   resolveSandboxApiUrl,
   resolveSandboxAuthToken,
 } from "./config.ts";
@@ -114,7 +116,6 @@ function normalizeDataPlaneBaseUrl(url: string): string {
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
 export class LazySandbox {
   private readonly apiUrl: string;
-  private readonly authToken: string;
   private readonly sandboxId: string | undefined;
   private readonly sandboxEndpoint: string | undefined;
   private readonly deleteOnClose: boolean;
@@ -146,7 +147,9 @@ export class LazySandbox {
 
   constructor(options: LazySandboxOptions = {}) {
     this.apiUrl = resolveSandboxApiUrl(options);
-    this.authToken = resolveSandboxAuthToken(options);
+    // Held off the instance: `private` is compile-time only, and `createLazy()`
+    // hands this object to project code through the public export surface.
+    bindSandboxAuthToken(this, resolveSandboxAuthToken(options));
     this.sandboxId = options.sandboxId?.trim() || undefined;
     this.sandboxEndpoint = options.sandboxEndpoint?.trim() || undefined;
     this.deleteOnClose = options.deleteOnClose ?? !this.sandboxId;
@@ -905,7 +908,7 @@ export class LazySandbox {
   }
 
   private authHeaders(): HeadersInit {
-    return { Authorization: `Bearer ${this.authToken}` };
+    return { Authorization: `Bearer ${readSandboxAuthToken(this)}` };
   }
 
   private jsonHeaders(): HeadersInit {

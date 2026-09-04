@@ -13,6 +13,40 @@ const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+
+/**
+ * Resolved sandbox credentials, held outside the sandbox instances themselves.
+ *
+ * `Sandbox.createLazy()` and `Sandbox.attach()` are public `veryfront/sandbox`
+ * exports that hand a served project a live object without making a request,
+ * and a TypeScript `private` field is compile-time only — it stays readable at
+ * runtime as `(sandbox as any).authToken`. Storing the ambient host login token
+ * on the instance would therefore put it back on the supported export surface
+ * this change exists to keep it off. The map is module-private and read through
+ * captured intrinsics, so a project that replaces `WeakMap.prototype.get`
+ * cannot observe the value either.
+ */
+const sandboxAuthTokens = new WeakMap<object, string>();
+
+/** @internal Bind a resolved credential to a sandbox instance. */
+export function bindSandboxAuthToken(instance: object, authToken: string): void {
+  applyIntrinsic(weakMapSet, sandboxAuthTokens, [instance, authToken]);
+}
+
+/** @internal Read the credential bound to a sandbox instance. */
+export function readSandboxAuthToken(instance: object): string {
+  const authToken = applyIntrinsic(weakMapGet, sandboxAuthTokens, [instance]) as
+    | string
+    | undefined;
+  if (authToken === undefined) {
+    throw CONFIG_INVALID.create({
+      detail: "Sandbox auth is not bound to this instance.",
+    });
+  }
+  return authToken;
+}
 
 function trimString(value: string | undefined): string | undefined {
   return value === undefined ? undefined : applyIntrinsic(stringTrim, value, []) as string;

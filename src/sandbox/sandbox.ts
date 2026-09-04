@@ -9,7 +9,13 @@
 
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
-import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
+import {
+  bindSandboxAuthToken,
+  fetchSandboxUrl,
+  readSandboxAuthToken,
+  resolveSandboxApiUrl,
+  resolveSandboxAuthToken,
+} from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import { readExecStreamEvents } from "./exec-stream.ts";
 import type {
@@ -46,9 +52,13 @@ export class Sandbox {
   private constructor(
     private endpoint: string,
     private sessionId: string,
-    private authToken: string,
+    authToken: string,
     private apiUrl: string,
-  ) {}
+  ) {
+    // Held off the instance: `private` is compile-time only, and this object is
+    // handed to project code through the public `veryfront/sandbox` export.
+    bindSandboxAuthToken(this, authToken);
+  }
 
   private static resolveApiUrl(options: SandboxOptions = {}): string {
     return resolveSandboxApiUrl(options);
@@ -200,7 +210,7 @@ export class Sandbox {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.authToken}`,
+          Authorization: `Bearer ${readSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ command, ...options }),
@@ -222,7 +232,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(this.apiUrl, this.sessionId, `/file?path=${encodeURIComponent(path)}`),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 
@@ -240,7 +250,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(sandboxSessionRoute(this.apiUrl, this.sessionId, "/files"), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.authToken}`,
+        Authorization: `Bearer ${readSandboxAuthToken(this)}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ files }),
@@ -260,7 +270,7 @@ export class Sandbox {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.authToken}`,
+          Authorization: `Bearer ${readSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ command, ...options }),
@@ -285,7 +295,7 @@ export class Sandbox {
         `/commands/${encodeURIComponent(commandId)}`,
       ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 
@@ -307,7 +317,7 @@ export class Sandbox {
         `/commands/${encodeURIComponent(commandId)}/output`,
       ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 
@@ -332,7 +342,7 @@ export class Sandbox {
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(this.apiUrl, this.sessionId, "/commands"),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 
@@ -359,7 +369,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 
@@ -393,7 +403,7 @@ export class Sandbox {
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}/heartbeat`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 
@@ -410,7 +420,7 @@ export class Sandbox {
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
       {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${readSandboxAuthToken(this)}` },
       },
     );
 

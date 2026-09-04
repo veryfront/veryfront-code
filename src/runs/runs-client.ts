@@ -25,6 +25,20 @@ import {
   ScheduleRunCreateResponseSchema,
 } from "./schemas.ts";
 
+// Captured before project code runs. `requestJson` normalizes the API base
+// that a host-owned credential is attached to, so a served project that
+// replaces `String.prototype.replace`, `URL`, or the `origin` getter must not
+// be able to rewrite that destination and receive the Bearer token.
+const applyIntrinsic = Reflect.apply;
+const stringReplace = String.prototype.replace;
+const NativeURL = URL;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+
+/** Read `origin` through the captured getter so a replaced accessor cannot lie. */
+function readUrlOrigin(url: URL): string {
+  return urlOriginGetter ? applyIntrinsic(urlOriginGetter, url, []) as string : url.origin;
+}
+
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
@@ -474,8 +488,8 @@ export class VeryfrontRunsClient {
     } = {},
   ): Promise<T> {
     const { apiUrl, authToken } = this.resolveConnection();
-    const normalizedApiUrl = apiUrl.replace(/\/+$/, "");
-    const apiOrigin = new URL(normalizedApiUrl).origin;
+    const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
+    const apiOrigin = readUrlOrigin(new NativeURL(normalizedApiUrl));
     const raw = await requestWithRetry(
       `${normalizedApiUrl}${path}`,
       authToken,
@@ -486,7 +500,7 @@ export class VeryfrontRunsClient {
       },
       {
         authorizeUrl: (target) => {
-          if (target.origin !== apiOrigin) {
+          if (readUrlOrigin(target) !== apiOrigin) {
             throw new Error("Runs request blocked: destination origin is not authorized");
           }
         },

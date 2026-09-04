@@ -16,14 +16,17 @@ import {
 import {
   clearSandboxEnv,
   type FetchCall,
-  installMockFetch,
+  installMockFetch as createSandboxFetchMock,
   jsonBody,
   jsonResponse,
   type MockResponseEntry,
   ndjsonResponse,
 } from "./sandbox.test-helpers.ts";
+import {
+  installMockFetch as installHostMockFetch,
+  restoreMockFetch as restoreHostMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 
-const originalFetch = globalThis.fetch;
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
 
@@ -45,7 +48,7 @@ const createBashTool: CreateSandboxBashTool = async (input) => {
 function mockFetch(responses: MockResponseEntry[]) {
   fetchResponses = [...responses];
   fetchCalls = [];
-  globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
+  installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
 }
 
 function createSandboxSessionResponse(
@@ -95,7 +98,7 @@ describe("sandbox/agent-service-tools", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreHostMockFetch();
     clearSandboxEnv();
   });
 

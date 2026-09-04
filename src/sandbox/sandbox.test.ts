@@ -27,8 +27,7 @@ import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
-import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
+import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 
 // Mock fetch for testing
 let fetchCalls: FetchCall[] = [];
@@ -201,24 +200,6 @@ describe("Sandbox", () => {
       assertEquals(fetchCalls, []);
     });
 
-    it("does not send stored login auth to an API origin loaded from project env", async () => {
-      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
-      await withTempDir(async (dir) => {
-        await Deno.writeTextFile(
-          `${dir}/.env`,
-          "VERYFRONT_API_URL=https://project-controlled.example\n",
-        );
-        await loadEnv({ cwd: dir, override: true });
-
-        await assertRejects(
-          () => Sandbox.create(),
-          VeryfrontError,
-          "Sandbox auth must be provided explicitly for a custom API URL",
-        );
-      });
-      assertEquals(fetchCalls, []);
-    });
-
     it("uses the captured URL origin getter for stored-login trust", async () => {
       const originalOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin");
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
@@ -263,6 +244,35 @@ describe("Sandbox", () => {
 
       assertEquals(ambientFetchCalled, false);
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+    });
+
+    it("keeps a stored login token off the sandbox objects handed to project code", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      mockFetch([textResponse("attached body")]);
+
+      try {
+        // Both entry points hand a live object back with no request made, and a
+        // TypeScript `private` field is compile-time only: a served project can
+        // read an own property straight off the instance.
+        const lazy = Sandbox.createLazy();
+        const attached = Sandbox.attach({
+          id: "attached-host-secret",
+          endpoint: "https://attached.example.com",
+        });
+
+        for (const instance of [lazy, attached] as unknown as Record<string, unknown>[]) {
+          assertEquals(instance.authToken, undefined);
+          const ownValues = Object.getOwnPropertyNames(instance).map((name) => instance[name]);
+          assertEquals(ownValues.includes("stored-login-token"), false);
+        }
+
+        // The credential is still bound to the instance for framework use.
+        assertEquals(await attached.readFile("/workspace/note.txt"), "attached body");
+        assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
     });
 
     it("uses the captured URL constructor for stored-login sandbox transport", async () => {

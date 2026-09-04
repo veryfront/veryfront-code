@@ -13,10 +13,6 @@ import {
   startDevServerOnFreePort,
 } from "./command.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
-import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -313,57 +309,6 @@ describe("cli/commands/dev", () => {
   });
 
   describe("initial authentication", () => {
-    it("preloads project sync from a resolved environment API key", async () => {
-      const requests: Array<{ authorization: string; limit: string | null }> = [];
-      const originalTrim = String.prototype.trim;
-      let tokenObservedByTrim = false;
-      let ambientFetchCalled = false;
-
-      try {
-        installMockFetch(
-          ((input: string | URL | Request, init?: RequestInit) => {
-            const url = new URL(String(input));
-            requests.push({
-              authorization: new Headers(init?.headers).get("authorization") ?? "",
-              limit: url.searchParams.get("limit"),
-            });
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({
-                  data: [{ id: "project-env", slug: "env-project", name: "Env Project" }],
-                  page_info: {},
-                }),
-                { status: 200, headers: { "content-type": "application/json" } },
-              ),
-            );
-          }) as typeof fetch,
-        );
-        String.prototype.trim = function () {
-          if (String(this) === "vf_env_secret") tokenObservedByTrim = true;
-          return Reflect.apply(originalTrim, this, []);
-        };
-        globalThis.fetch = () => {
-          ambientFetchCalled = true;
-          return Promise.reject(new Error("project fetch must not receive dev auth"));
-        };
-
-        const result = await preloadDevAuth("vf_env_secret");
-
-        assertEquals(result.identity, { authenticated: true, type: "apiKey" });
-        assertEquals(result.projects, [
-          { id: "project-env", slug: "env-project", name: "Env Project" },
-        ]);
-        assertEquals(requests, [
-          { authorization: "Bearer vf_env_secret", limit: null },
-        ]);
-        assertEquals(tokenObservedByTrim, false);
-        assertEquals(ambientFetchCalled, false);
-      } finally {
-        String.prototype.trim = originalTrim;
-        restoreMockFetch();
-      }
-    });
-
     it("validates a user token once while loading projects", async () => {
       const paths: string[] = [];
 
@@ -394,46 +339,6 @@ describe("cli/commands/dev", () => {
         assertEquals(paths, ["/me", "/projects"]);
       } finally {
         restoreMockFetch();
-      }
-    });
-
-    it("uses the configured API origin for an environment token", async () => {
-      const originalApiUrl = getEnv("VERYFRONT_API_URL");
-      const origins: string[] = [];
-
-      try {
-        deleteEnv("VERYFRONT_API_URL");
-        __resetEnvLoaderForTests();
-        await withTempDir(async (dir) => {
-          await Deno.writeTextFile(
-            `${dir}/.env`,
-            "VERYFRONT_API_URL=https://self-hosted.example/api\n",
-          );
-          await loadEnv({ cwd: dir, override: true });
-          refreshEnvironmentConfig();
-          installMockFetch(
-            ((input: string | URL | Request) => {
-              origins.push(new URL(String(input)).origin);
-              return Promise.resolve(Response.json({ data: [] }));
-            }) as typeof fetch,
-          );
-
-          const result = await preloadDevAuth("vf_self_hosted", "environment");
-          const storedResult = await preloadDevAuth("vf_stored", "token-store");
-
-          assertEquals(result.identity, { authenticated: true, type: "apiKey" });
-          assertEquals(storedResult.identity, { authenticated: true, type: "apiKey" });
-        });
-        assertEquals(origins, [
-          "https://self-hosted.example",
-          "https://api.veryfront.com",
-        ]);
-      } finally {
-        restoreMockFetch();
-        __resetEnvLoaderForTests();
-        if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
-        else setEnv("VERYFRONT_API_URL", originalApiUrl);
-        refreshEnvironmentConfig();
       }
     });
 
