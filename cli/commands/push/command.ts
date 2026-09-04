@@ -1599,15 +1599,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               uploadOps.filter((op) => appliedUploads.has(op.path)),
               deleteOps.filter((op) => appliedDeletes.has(op.path)),
             );
-            await writeAppliedSyncTarget(
-              projectDir,
-              config,
-              project,
-              branchName,
-              syncBaselineRemoteFiles,
-              stillApplied.uploads,
-              stillApplied.deletes,
-            );
+            try {
+              await writeAppliedSyncTarget(
+                projectDir,
+                config,
+                project,
+                branchName,
+                syncBaselineRemoteFiles,
+                stillApplied.uploads,
+                stillApplied.deletes,
+              );
+            } catch (error) {
+              throw attachProtectedDeleteContext(error, protectedDeleteContext());
+            }
             throw pushConflictError(conflicts, protectedDeleteContext());
           }
           pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);

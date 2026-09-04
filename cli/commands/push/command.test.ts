@@ -3089,6 +3089,97 @@ describe("push divergence guard", () => {
     }
   });
 
+  it("keeps protected deletion context when final conflict recovery cannot write state", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": {
+              digest: await computeContentDigest("export const value = 1;\n"),
+              versionId: "00000000-0000-4000-8000-000000000001",
+            },
+            ".env.production": {
+              digest: await computeContentDigest("SECRET=<REDACTED>\n"),
+              versionId: "00000000-0000-4000-8000-000000000002",
+            },
+          },
+        });
+
+        let fileListCalls = 0;
+        let protectedDeleted = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            if (fileListCalls === 3) {
+              const syncStatePath = `${projectDir}/.veryfront/sync-state.json`;
+              await Deno.remove(syncStatePath);
+              await Deno.mkdir(syncStatePath);
+            }
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls === 3
+                    ? "export const remote = 2;\n"
+                    : "export const value = 1;\n",
+                  version_id: fileListCalls === 3
+                    ? "00000000-0000-4000-8000-000000000003"
+                    : "00000000-0000-4000-8000-000000000001",
+                },
+                ...(!protectedDeleted
+                  ? [{
+                    path: ".env.production",
+                    content: "SECRET=<REDACTED>\n",
+                    version_id: "00000000-0000-4000-8000-000000000002",
+                  }]
+                  : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "DELETE") {
+            protectedDeleted = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, prune: true, quiet: true }),
+          Error,
+        );
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(protectedDeleted, true);
+        assertEquals(
+          (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
+          [".env.production"],
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("records the applied baseline when local source changes after remote writes", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
