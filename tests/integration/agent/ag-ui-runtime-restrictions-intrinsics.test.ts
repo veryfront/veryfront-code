@@ -34,11 +34,14 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
     const originalSetHas = Set.prototype.has;
     const originalFilter = Array.prototype.filter;
     const originalSome = Array.prototype.some;
+    const originalIterator = Array.prototype[Symbol.iterator];
     let restricted: AgentConfig;
     let rebuiltTools: AgentConfig["tools"];
     let rebuiltProviderTools: string[] | undefined;
+    let rebuiltDelegates: string[] | undefined;
     let entriesTarget: object | undefined;
     let filterTarget: unknown[] | undefined;
+    let delegateTarget: unknown[] | undefined;
     const injectedTool = tool({
       id: "delete_project",
       description: "Denied tool injected through a hostile intrinsic.",
@@ -67,32 +70,46 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
       Array.prototype.some = function () {
         return true;
       } as any;
+      Array.prototype[Symbol.iterator] = function* () {
+        yield* Reflect.apply(originalIterator, this, []);
+        if (this === delegateTarget) {
+          yield "admin";
+        }
+      };
 
-      restricted = applyAgUiRuntimeRestrictions(createConfig(), {
-        allowedTools: ["web_search"],
+      restricted = applyAgUiRuntimeRestrictions(createConfig({ delegates: ["writer", "admin"] }), {
+        allowedTools: ["web_search", "agent_writer"],
       });
       entriesTarget = restricted.tools && restricted.tools !== true ? restricted.tools : undefined;
       filterTarget = restricted.providerTools;
+      delegateTarget = restricted.delegates;
       Object.fromEntries = originalFromEntries;
       Set.prototype.has = originalSetHas;
       Array.prototype.some = originalSome;
+      // Keep the targeted delegate iterator poisoned through factory rebuild.
       const rebuilt = createEphemeralAgent(restricted);
       rebuiltTools = rebuilt.config.tools;
       rebuiltProviderTools = rebuilt.config.providerTools;
+      rebuiltDelegates = rebuilt.config.delegates;
     } finally {
       Object.entries = originalEntries;
       Object.fromEntries = originalFromEntries;
       Set.prototype.has = originalSetHas;
       Array.prototype.filter = originalFilter;
       Array.prototype.some = originalSome;
+      Array.prototype[Symbol.iterator] = originalIterator;
     }
 
     assertEquals(restricted.tools, { web_search: true });
     assertEquals(restricted.providerTools, []);
-    assertEquals(restricted.delegates, []);
+    assertEquals(restricted.delegates, ["writer"]);
     assertEquals(restricted.mcpServers, []);
     assertEquals(restricted.skills, false);
-    assertEquals(rebuiltTools, { web_search: true });
+    assertEquals(
+      Object.keys(rebuiltTools as Record<string, unknown>).sort(),
+      ["agent_writer", "web_search"],
+    );
     assertEquals(rebuiltProviderTools, []);
+    assertEquals(rebuiltDelegates, ["writer"]);
   });
 });

@@ -9,6 +9,8 @@ import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
 
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
 
 const getInvokeAgentInputSchema = defineSchema((v) =>
   v.object({
@@ -162,8 +164,10 @@ export function buildAgentDelegateTools(
   const tools: Record<string, Tool> = {};
   const seen = new Set<string>();
 
-  for (const delegateId of input.delegates) {
-    const id = delegateId.trim();
+  for (let index = 0; index < input.delegates.length; index++) {
+    const delegateId = input.delegates[index];
+    if (delegateId === undefined) continue;
+    const id = applyIntrinsic(stringTrim, delegateId, []) as string;
     if (id.length === 0 || id === input.selfId || seen.has(id)) {
       continue;
     }
