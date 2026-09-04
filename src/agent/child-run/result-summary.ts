@@ -200,8 +200,8 @@ function parseCompleteArrayValue(
     // Continue with the bounded pseudo-JSON compatibility path below.
   }
   if (quote === "'") {
-    const value = candidate.slice(1, -1);
-    return value.includes("\\") ? { ok: false } : { ok: true, value };
+    const value = decodeSingleQuotedString(candidate.slice(1, -1));
+    return value === undefined ? { ok: false } : { ok: true, value };
   }
   if (text[start] === "{") {
     const normalized = normalizeSingleQuotedJson(candidate);
@@ -212,6 +212,60 @@ function parseCompleteArrayValue(
     }
   }
   return { ok: false };
+}
+
+function decodeSingleQuotedString(value: string): string | undefined {
+  let decoded = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (character !== "\\") {
+      decoded += character;
+      continue;
+    }
+
+    const escaped = value[++index];
+    if (escaped === undefined) return undefined;
+    const simpleEscapes: Record<string, string> = {
+      "\\": "\\",
+      "'": "'",
+      '"': '"',
+      "/": "/",
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+    };
+    if (escaped in simpleEscapes) {
+      decoded += simpleEscapes[escaped];
+      continue;
+    }
+    if (escaped === "u") {
+      const hex = value.slice(index + 1, index + 5);
+      if (!/^[0-9a-f]{4}$/i.test(hex)) return undefined;
+      decoded += String.fromCharCode(Number.parseInt(hex, 16));
+      index += 4;
+      continue;
+    }
+    return undefined;
+  }
+  return decoded;
+}
+
+function parseQuotedScalar(
+  text: string,
+  start: number,
+  end: number,
+  quote: string,
+): string | undefined {
+  const value = text.slice(start + 1, end - 1);
+  if (quote === "'") return decodeSingleQuotedString(value);
+  try {
+    const parsed = JSON.parse(text.slice(start, end));
+    return typeof parsed === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeSingleQuotedJson(text: string): string {
@@ -232,11 +286,50 @@ function normalizeSingleQuotedJson(text: string): string {
     const end = scanQuotedValueEnd(text, index, "'");
     if (end === undefined) return text;
     const value = text.slice(index + 1, end - 1);
-    if (value.includes("\\")) return text;
-    normalized += JSON.stringify(value);
+    const decoded = decodeSingleQuotedString(value);
+    if (decoded === undefined) return text;
+    normalized += JSON.stringify(decoded);
     index = end - 1;
   }
   return normalized;
+}
+
+function addToolIdsFromLeadingObjectFields(target: string[], fieldBody: string): void {
+  let objectDepth = 0;
+  let arrayDepth = 0;
+
+  for (let index = 0; index < fieldBody.length;) {
+    const character = fieldBody[index]!;
+    if (character === '"' || character === "'") {
+      const end = scanQuotedValueEnd(fieldBody, index, character);
+      if (end === undefined) return;
+      if (objectDepth === 1 && arrayDepth === 0) {
+        const key = parseQuotedScalar(fieldBody, index, end, character);
+        let valueStart = end;
+        while (/\s/.test(fieldBody[valueStart] ?? "")) valueStart += 1;
+        if ((key === "id" || key === "name") && fieldBody[valueStart] === ":") {
+          valueStart += 1;
+          while (/\s/.test(fieldBody[valueStart] ?? "")) valueStart += 1;
+          const valueQuote = fieldBody[valueStart];
+          if (valueQuote === '"' || valueQuote === "'") {
+            const valueEnd = scanQuotedValueEnd(fieldBody, valueStart, valueQuote);
+            if (valueEnd === undefined) return;
+            const value = parseQuotedScalar(fieldBody, valueStart, valueEnd, valueQuote);
+            if (value !== undefined) addToolIdFact(target, value);
+            index = valueEnd;
+            continue;
+          }
+        }
+      }
+      index = end;
+      continue;
+    }
+    if (character === "{") objectDepth += 1;
+    else if (character === "}") objectDepth = Math.max(0, objectDepth - 1);
+    else if (objectDepth > 0 && character === "[") arrayDepth += 1;
+    else if (objectDepth > 0 && character === "]") arrayDepth = Math.max(0, arrayDepth - 1);
+    index += 1;
+  }
 }
 
 function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
@@ -332,6 +425,7 @@ function addToolIdsFromFieldBody(
     parseCompleteLeadingArrayValues(fieldBody),
     includeObjectFields,
   );
+  if (includeObjectFields) addToolIdsFromLeadingObjectFields(target, fieldBody);
 }
 
 function addToolArrayFieldValues(
@@ -430,14 +524,29 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
   const providerToolIds: string[] = [];
   const importPaths: string[] = [];
 
-  for (const boundedText of boundedContractFactWindows(text)) {
+  const windows = boundedContractFactWindows(text);
+  for (const boundedText of windows) {
     addPatternMatches(modelIds, boundedText, MODEL_FIELD_PATTERN, 1);
+  }
+  for (const boundedText of windows) {
     addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
+  }
+  for (const boundedText of windows) {
     addToolArrayFieldValues(toolIds, boundedText, TOOL_IDS_FIELD_PATTERN);
+  }
+  for (const boundedText of windows) {
     addProviderToolArrayFieldValues(providerToolIds, boundedText, PROVIDER_TOOL_IDS_FIELD_PATTERN);
+  }
+  for (const boundedText of windows) {
     addPatternMatches(toolIds, boundedText, INTEGRATION_TOOL_ID_PATTERN);
+  }
+  for (const boundedText of windows) {
     addPatternMatches(importPaths, boundedText, IMPORT_FROM_PATTERN, 1);
+  }
+  for (const boundedText of windows) {
     addPatternMatches(importPaths, boundedText, BARE_IMPORT_PATTERN, 1);
+  }
+  for (const boundedText of windows) {
     addPatternMatches(importPaths, boundedText, DYNAMIC_IMPORT_PATTERN, 1);
   }
 

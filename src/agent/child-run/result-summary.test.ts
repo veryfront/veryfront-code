@@ -157,6 +157,14 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("extracts IDs from single-quoted tool objects with escapes", () => {
+      const text = String.raw`tools: [{'id':'create_agent','description':'don\'t retry'}]`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
+    });
+
     it("extracts structured facts from hostile unclosed tool array text without quadratic scans", () => {
       const hostileText = " tools:[".repeat(64_000);
       const start = performance.now();
@@ -251,6 +259,28 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, {
         toolIds: ["create_agent", "other_tool"],
       });
+    });
+
+    it("preserves an ID from a leading tool object longer than the field limit", () => {
+      const text = '"tools": [{"id":"create_agent","description":"' +
+        "a".repeat(2_500) + '"}]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
+    });
+
+    it("prioritizes declared tool arrays across windows over integration matches", () => {
+      const integrations = Array.from(
+        { length: 50 },
+        (_, index) => `integration${index}__operation`,
+      ).join(" ");
+      const text = `${integrations}${"x".repeat(130_000)}\n"tools": ["critical_tool"]`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts?.toolIds?.[0], "critical_tool");
+      assertEquals(result.contractFacts?.toolIds?.length, 50);
     });
 
     it("does not treat fields after an unclosed provider tool array as array values", () => {
