@@ -159,7 +159,7 @@ describe("provider/veryfront-cloud/shared", () => {
           () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
         ),
       Error,
-      "HTTPS, a loopback, or an internal cluster API base URL",
+      'HTTPS, a loopback, or a ".svc.cluster.local" API base URL',
     );
   });
 

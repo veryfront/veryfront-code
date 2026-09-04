@@ -140,7 +140,7 @@ function requireSecureInferenceApiBaseUrl(value: string): void {
   ) {
     throw CONFIG_INVALID.create({
       detail:
-        "Run-scoped inference credentials require HTTPS, a loopback, or an internal cluster API base URL",
+        `Run-scoped inference credentials require HTTPS, a loopback, or a "${INTERNAL_CLUSTER_DNS_SUFFIX}" API base URL`,
     });
   }
 }
