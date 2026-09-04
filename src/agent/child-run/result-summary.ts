@@ -31,7 +31,6 @@ const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-const QUOTED_VALUE_PATTERN = /["']([^"']+)["']/g;
 
 /** Result return modes supported by delegated child runs. */
 export type ChildRunResultMode = "summary" | "full" | "structured";
@@ -155,6 +154,56 @@ function parseJsonArrayFieldBody(fieldBody: string): unknown[] | undefined {
   }
 }
 
+function scanQuotedValueEnd(text: string, start: number, quote: string): number | undefined {
+  let escaped = false;
+  for (let index = start + 1; index < text.length; index++) {
+    const character = text[index];
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === quote) {
+      return index + 1;
+    }
+  }
+  return undefined;
+}
+
+function findOuterArrayClosingBracket(text: string): number {
+  let depth = 1;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character === '"' || character === "'") {
+      const end = scanQuotedValueEnd(text, index, character);
+      if (end === undefined) return -1;
+      index = end - 1;
+    } else if (character === "[") {
+      depth += 1;
+    } else if (character === "]") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function parseCompleteArrayValue(
+  text: string,
+  start: number,
+  end: number,
+  quote: string | undefined,
+): { ok: true; value: unknown } | { ok: false } {
+  if (quote === "'") {
+    const value = text.slice(start + 1, end - 1);
+    return value.includes("\\") ? { ok: false } : { ok: true, value };
+  }
+  try {
+    return { ok: true, value: JSON.parse(text.slice(start, end)) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
   const values: unknown[] = [];
   let index = 0;
@@ -166,22 +215,11 @@ function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
     const valueStart = index;
     const opening = fieldBody[index];
     let valueEnd = index;
-    if (opening === '"') {
-      index += 1;
-      let escaped = false;
-      while (index < fieldBody.length) {
-        const character = fieldBody[index];
-        index += 1;
-        if (escaped) {
-          escaped = false;
-        } else if (character === "\\") {
-          escaped = true;
-        } else if (character === '"') {
-          valueEnd = index;
-          break;
-        }
-      }
-      if (valueEnd === valueStart) break;
+    if (opening === '"' || opening === "'") {
+      const end = scanQuotedValueEnd(fieldBody, index, opening);
+      if (end === undefined) break;
+      index = end;
+      valueEnd = end;
     } else if (opening === "{" || opening === "[") {
       const closings = [opening === "{" ? "}" : "]"];
       index += 1;
@@ -211,11 +249,9 @@ function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
     if (index < fieldBody.length && fieldBody[index] !== ",") break;
 
-    try {
-      values.push(JSON.parse(fieldBody.slice(valueStart, valueEnd)));
-    } catch {
-      break;
-    }
+    const parsed = parseCompleteArrayValue(fieldBody, valueStart, valueEnd, opening);
+    if (!parsed.ok) break;
+    values.push(parsed.value);
 
     if (index >= fieldBody.length) break;
     index += 1;
@@ -279,7 +315,7 @@ function addToolArrayFieldValues(
       bodyStart,
       bodyStart + CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT,
     );
-    const closingBracket = boundedBody.indexOf("]");
+    const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
@@ -298,7 +334,7 @@ function addProviderToolArrayFieldValues(
       bodyStart,
       bodyStart + CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT,
     );
-    const closingBracket = boundedBody.indexOf("]");
+    const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromParsedArray(target, parseCompleteLeadingArrayValues(fieldBody), false);
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
@@ -306,7 +342,7 @@ function addProviderToolArrayFieldValues(
 }
 
 function isContractFactTokenCharacter(value: string | undefined): boolean {
-  return value !== undefined && /[A-Za-z0-9._:/-]/.test(value);
+  return value !== undefined && !/[\s"'`]/.test(value);
 }
 
 function boundedContractFactWindows(text: string): string[] {

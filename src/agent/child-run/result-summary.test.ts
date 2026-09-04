@@ -126,6 +126,27 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("finds the outer tools bracket after nested schema arrays", () => {
+      const text = '"tools": [{"id":"gmail__list_messages","required":[]},{"name":"create_agent"}]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, {
+        toolIds: ["gmail__list_messages", "create_agent"],
+      });
+    });
+
+    it("extracts tool IDs from single-quoted pseudo-JSON arrays", () => {
+      const text = "tools: ['create_agent']\nprovider_tool_ids: ['web_fetch']";
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, {
+        toolIds: ["create_agent"],
+        providerToolIds: ["web_fetch"],
+      });
+    });
+
     it("extracts structured facts from hostile unclosed tool array text without quadratic scans", () => {
       const hostileText = " tools:[".repeat(64_000);
       const start = performance.now();
@@ -160,6 +181,15 @@ describe("child-run-result-summary", () => {
         "anthropic/claude-sonnet-4-6",
         "x".repeat(130_000),
       ].join("");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("does not return an at-sign fact cut at a bounded-window edge", () => {
+      const partial = 'model: "foo@';
+      const text = `${"x".repeat(64_000 - partial.length)}${partial}bar"${"x".repeat(130_000)}`;
 
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
