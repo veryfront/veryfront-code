@@ -171,10 +171,12 @@ For cross-project delegation, `project_reference` accepts a project UUID or slug
 The hosted runtime resolves it to the canonical project UUID before selecting
 project-agent settings, changing project context, or creating the child run.
 The default `result_mode` is `summary`. The `structured` mode extracts model,
-tool, provider tool, and import ids from a bounded 128,000-character
-head-and-tail window. Put critical ids near the start or end of the child
-result, and keep the array or object that declares them inside the same
-window. Use `full` when the parent needs exact delegated output.
+tool, provider tool, and import ids from bounded head-and-tail windows totaling
+128,000 characters. Model, provider tool, and import facts use 64,000
+characters at each end. Tool arrays use 32,000 characters at the start and
+96,000 at the end so a long declaration can retain a trailing critical id.
+Keep the complete declaration inside its applicable window. Use `full` when
+the parent needs exact delegated output.
 
 When the parent needs the child to act on critical facts from prior tool
 results, it should pass generic `context`. This is the child execution payload:
