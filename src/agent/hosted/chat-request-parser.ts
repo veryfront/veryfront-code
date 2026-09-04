@@ -46,6 +46,8 @@ const JsonParse = JSON.parse;
 
 /** Internal control-plane credential for exact-run durable event appends. */
 export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
+/** Internal control-plane credential for managed inference on legacy chat dispatches. */
+export const INFERENCE_TOKEN_HEADER = "X-Veryfront-Inference-Token";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -188,6 +190,7 @@ async function withVerifiedRunEventAppendToken(
     ChatRequestContext,
     "runtimeTargetKind" | "runtimeTargetEnvironmentId"
   >,
+  inferenceAuthToken?: string,
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
@@ -257,6 +260,7 @@ async function withVerifiedRunEventAppendToken(
       runId,
     },
   );
+  registerHostedInferenceCredential(verifiedRequest, inferenceAuthToken);
   return verifiedRequest;
 }
 
@@ -629,6 +633,8 @@ export async function parseHostedChatRequestFromRequest(
     parsedRequest,
     options.verifyRunEventAppendToken,
     false,
+    undefined,
+    request.headers.get(INFERENCE_TOKEN_HEADER)?.trim() || undefined,
   );
 }
 

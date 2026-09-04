@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
@@ -19,6 +20,7 @@ import {
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
 } from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
+import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -35,6 +37,23 @@ const environmentRuntimeSource = {
 } as const;
 const replayToolName = "github__get_pr_diff";
 const replayOutput = { files: ["src/chat/conversation.ts"] };
+
+function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
+  return new ReadableStream({
+    start(controller) {
+      for (const value of values) controller.enqueue(value);
+      controller.close();
+    },
+  });
+}
+
+async function drainStream(stream: ReadableStream<unknown>): Promise<void> {
+  const reader = stream.getReader();
+  while (!(await reader.read()).done) {
+    // drain: the assertion targets the outgoing authorization header
+  }
+  reader.releaseLock();
+}
 const rawReplayToolCallPart = {
   type: "tool_call",
   id: "tool-call-1",
@@ -1866,6 +1885,70 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.upstreamParentRunId, "run_parent_1");
     assertEquals(parsed.spawnedFromToolCallId, "tool_1");
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
+  });
+
+  it("binds a header inference credential only after the run-event token verifies", async () => {
+    const requestBody = JSON.stringify({
+      messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+      context: { conversationId, projectId, branchId },
+      durableRootRun: { runId: "run_root_1", messageId },
+    });
+    const headers = {
+      "X-Veryfront-Run-Event-Token": "run-event-service-token",
+      "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+    };
+    const options = {
+      authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+      verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+      verifyRunEventAppendToken: () => Promise.resolve(true),
+    };
+
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers,
+        body: requestBody,
+      }),
+      options,
+    );
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    const resolveModel = createHostedInferenceModelResolver(parsed);
+    assertEquals(typeof resolveModel, "function");
+
+    let capturedAuthorization: string | null = null;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    try {
+      const model = resolveModel?.("veryfront-cloud/openai/gpt-test");
+      if (!model) throw new Error("Expected private inference model");
+      const result = await model.doStream({ prompt: [] });
+      await drainStream(result.stream);
+    } finally {
+      restoreMockFetch();
+    }
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+
+    const unverified = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        headers: { "X-Veryfront-Inference-Token": "run-scoped-inference-token" },
+        body: requestBody,
+      }),
+      options,
+    );
+    if (unverified instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(createHostedInferenceModelResolver(unverified), undefined);
   });
 
   it("does not trust runtime environment targets from public hosted chat requests", async () => {
