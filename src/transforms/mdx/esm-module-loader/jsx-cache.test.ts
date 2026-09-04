@@ -1185,6 +1185,46 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("sweeps the stale lease tombstones a recovery could not remove", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-tombstone-test-" });
+    const sourcePath = "/tmp/source/Tombstone.tsx";
+    // The two lock paths this loader leases: a per-artifact lock and the
+    // directory-wide quota lock. A recovery that dies between its rename and
+    // its removal leaves either shape behind, and no artifact accounting
+    // covers them.
+    const tombstones = [
+      "jsx-abandoned.mjs.lock.stale-2a4b8c1d-3e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      ".jsx-directory-quota.lock.stale-7f6e5d4c-3b2a-4190-8765-4321fedcba09",
+    ];
+    const unrelated = "keep-me.lock.stale-0badc0de-1111-4222-8333-444455556666";
+
+    try {
+      for (const name of tombstones) await writeTextFile(join(tempDir, name), "lease-owner");
+      await writeTextFile(join(tempDir, unrelated), "not-ours");
+      const written = await writeVariants(tempDir, sourcePath, 1);
+
+      await pruneSupersededJsxArtifacts(
+        tempDir,
+        new Map([[sourcePath, written[0] ?? ""]]),
+        afterGracePeriod(),
+      );
+
+      const remaining: string[] = [];
+      for await (const entry of readDir(tempDir)) remaining.push(entry.name);
+      for (const name of tombstones) {
+        assertEquals(
+          remaining.includes(name),
+          false,
+          "a tombstone no later pass would revisit grows the cache directory without limit",
+        );
+      }
+      assertEquals(remaining.includes(unrelated), true);
+      assertEquals(remaining.includes(written[0] ?? ""), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("keeps a stranded artifact inside the grace period for a draining process", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-stranded-fresh-test-" });
     const sourcePath = "/tmp/source/MidRoll.tsx";
@@ -1269,16 +1309,18 @@ describe("pruneSupersededJsxArtifacts", () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-stale-lease-test-" });
     const artifactPath = join(tempDir, "jsx-stale.mjs");
     const leasePath = `${artifactPath}.lock`;
-    const createExclusive = getLocalFs().createFileBytesExclusive;
+    const localFs = getLocalFs();
+    const createExclusive = localFs.createFileBytesExclusive;
+    const utime = localFs.utime;
     const staleMs = __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS;
-    if (!createExclusive || !getLocalFs().utime) {
+    if (!createExclusive || !utime) {
       throw new Error("the test runtime must support exclusive creation and file timestamps");
     }
     try {
       await writeTextFile(artifactPath, "export const v = 0;");
       await createExclusive(leasePath, new TextEncoder().encode("terminated-owner"));
       const staleAt = new Date(Date.now() - staleMs - 1);
-      await getLocalFs().utime(leasePath, staleAt, staleAt);
+      await localFs.utime?.(leasePath, staleAt, staleAt);
 
       let entered = false;
       await withJsxArtifactLock(artifactPath, async () => {
@@ -1564,23 +1606,17 @@ describe("jsx artifact references", () => {
 
   it("rolls back active references when initial refresh fails", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-retain-rollback-test-" });
+    // The artifact names a directory that does not exist, so the lease the
+    // refresh takes cannot be created and the failure surfaces on the first
+    // attempt. A reference is taken before the refresh runs, so the rollback
+    // this asserts is what keeps a failed retention from pinning the artifact
+    // against every later prune pass for the life of the process.
     const artifactPath = join(
       tempDir,
+      "absent",
       buildMdxJsxCacheFileName("/tmp/source/Rollback.tsx", "export const v = 1;"),
     );
-    const localFs = getLocalFs();
-    const createExclusive = localFs.createFileBytesExclusive;
-    const leasePath = `${artifactPath}.lock`;
-    const originalSetTimeout = globalThis.setTimeout;
-    if (!createExclusive) throw new Error("the test runtime must support exclusive creation");
     try {
-      await writeTextFile(artifactPath, "export const v = 1;");
-      await createExclusive(leasePath, new TextEncoder().encode("active-owner"));
-      globalThis.setTimeout = ((handler: TimerHandler) => {
-        queueMicrotask(typeof handler === "function" ? handler : () => undefined);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof setTimeout;
-
       await assertRejects(
         () =>
           retainJsxArtifactsReferencedIn(
@@ -1588,11 +1624,9 @@ describe("jsx artifact references", () => {
             tempDir,
           ),
         Error,
-        "Timed out waiting for a JSX cache lease",
       );
       assertEquals(jsxArtifactActiveRefCount(artifactPath), 0);
     } finally {
-      globalThis.setTimeout = originalSetTimeout;
       await remove(tempDir, { recursive: true });
     }
   });

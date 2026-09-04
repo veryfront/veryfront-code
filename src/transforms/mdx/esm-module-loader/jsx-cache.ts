@@ -430,6 +430,34 @@ const JSX_ARTIFACT_LEASE_STALE_MS = 60_000;
 const JSX_ARTIFACT_LEASE_HEARTBEAT_MS = JSX_ARTIFACT_LEASE_STALE_MS / 3;
 const leaseEncoder = new TextEncoder();
 
+/** Base name of the directory-wide lock the artifact quota serializes on. */
+const JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME = ".jsx-directory-quota";
+
+/** Tail a stale-lease recovery gives the lock file it renames aside. */
+const JSX_LEASE_TOMBSTONE_PATTERN =
+  /\.lock\.stale-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Recognize a `.stale-<uuid>` tombstone this loader's lease recovery left.
+ *
+ * Recovery removes its own tombstone, but that removal is best effort: a
+ * transient filesystem error, or a process that exits between the rename and
+ * the removal, leaves the file behind. Nothing ever opens a tombstone after
+ * the recovery that produced it, and the prune pass otherwise looks only at
+ * `jsx-*.mjs` artifacts, so an unswept tombstone would sit in the cache
+ * directory forever and repeated recoveries under a persistent filesystem
+ * condition could grow a bounded directory without limit.
+ */
+function isJsxLeaseTombstoneName(name: string): boolean {
+  if (
+    !name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
+    !name.startsWith(JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME)
+  ) {
+    return false;
+  }
+  return JSX_LEASE_TOMBSTONE_PATTERN.test(name);
+}
+
 async function recoverStaleFilesystemLease(
   lockPath: string,
   nowMs: number,
@@ -474,7 +502,10 @@ async function recoverStaleFilesystemLease(
     }
     try {
       await localFs.remove(stalePath);
-    } catch (_) { /* best effort */ }
+    } catch (_) {
+      // Same stranding risk as the removal below, so arm the same sweep.
+      scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+    }
     return false;
   }
   try {
@@ -693,7 +724,7 @@ export function withJsxArtifactWriteCapacity<T>(
   operation: (assertCapacityLeaseOwned: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
   return withJsxArtifactLock(
-    join(esmCacheDir, ".jsx-directory-quota"),
+    join(esmCacheDir, JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME),
     async (assertLeaseOwned) => {
       await assertLeaseOwned();
       if (await getLocalFs().exists(artifactPath)) {
@@ -816,7 +847,9 @@ export async function pruneSupersededJsxArtifacts(
  * (the directory-wide backstop that keeps retired source paths from leaking
  * one artifact each) and reclaims artifacts stranded under a superseded
  * cache namespace: recognisably this loader's files, but unreachable since the
- * roll, so no variant window can ever cover them again.
+ * roll, so no variant window can ever cover them again. It also sweeps the
+ * `.stale-<uuid>` lease tombstones a recovery could not remove itself, which
+ * nothing else in the directory accounts for.
  */
 async function collectExcessJsxArtifacts(
   esmCacheDir: string,
@@ -827,16 +860,13 @@ async function collectExcessJsxArtifacts(
 
   const variantsByPrefix = new Map<string, string[]>();
   const strandedNamespaceArtifacts: string[] = [];
+  const leaseTombstones: string[] = [];
   const allArtifactNames: string[] = [];
-  const staleLeaseTombstones: string[] = [];
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
-      if (
-        entry.name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
-        entry.name.includes(".mjs.lock.stale-")
-      ) {
-        staleLeaseTombstones.push(entry.name);
+      if (isJsxLeaseTombstoneName(entry.name)) {
+        leaseTombstones.push(entry.name);
         continue;
       }
       if (!entry.name.endsWith(".mjs")) continue;
@@ -875,13 +905,21 @@ async function collectExcessJsxArtifacts(
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
 
-  for (const name of staleLeaseTombstones) {
+  // A tombstone is write-only after the recovery that renamed it: that
+  // recovery reads it back on the next line and nothing else ever opens it,
+  // so removing one here cannot disturb a concurrent recovery. The worst case
+  // is a recovery whose own read finds the file gone, which it already treats
+  // as "someone else won" and retries. No age floor applies for the same
+  // reason, and a tombstone inherits the mtime of the lock it replaced, which
+  // is stale by construction.
+  for (const name of leaseTombstones) {
     try {
       await localFs.remove(join(esmCacheDir, name));
     } catch (error) {
-      if (!isNotFoundError(error)) {
-        noteRetry(nowMs + JSX_CACHE_PRUNE_RETRY_SLACK_MS);
-      }
+      if (isNotFoundError(error)) continue;
+      // Transient removal failures are exactly the case this sweep exists for,
+      // so come back rather than waiting for an unrelated future write.
+      noteRetry(nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
     }
   }
 
