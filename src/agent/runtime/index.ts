@@ -314,6 +314,9 @@ const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectIs = Object.is;
+const ObjectKeys = Object.keys;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
 const WeakMapGet = IntrinsicWeakMap.prototype.get;
@@ -365,6 +368,67 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
     return object;
   };
   return clone(value) as T;
+}
+
+function providerValuesEqual(
+  left: unknown,
+  right: unknown,
+  seen: WeakMap<object, object>,
+): boolean {
+  if (ObjectIs(left, right)) return true;
+  if (
+    left === null || right === null ||
+    typeof left !== "object" || typeof right !== "object"
+  ) return false;
+
+  const knownRight = IntrinsicReflectApply(WeakMapGet, seen, [left]);
+  if (knownRight !== undefined) return knownRight === right;
+  IntrinsicReflectApply(WeakMapSet, seen, [left, right]);
+
+  const leftIsArray = ArrayIsArray(left);
+  if (leftIsArray !== ArrayIsArray(right)) return false;
+  if (leftIsArray) {
+    const leftArray = left as unknown[];
+    const rightArray = right as unknown[];
+    if (leftArray.length !== rightArray.length) return false;
+    for (let index = 0; index < leftArray.length; index++) {
+      if (!providerValuesEqual(leftArray[index], rightArray[index], seen)) return false;
+    }
+    return true;
+  }
+
+  const leftPrototype = ObjectGetPrototypeOf(left);
+  const rightPrototype = ObjectGetPrototypeOf(right);
+  if (
+    leftPrototype !== rightPrototype ||
+    leftPrototype !== ObjectPrototype && leftPrototype !== null
+  ) return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = ObjectKeys(leftRecord);
+  const rightKeys = ObjectKeys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let index = 0; index < leftKeys.length; index++) {
+    const key = leftKeys[index]!;
+    if (
+      !ObjectHasOwn(rightRecord, key) ||
+      !providerValuesEqual(leftRecord[key], rightRecord[key], seen)
+    ) return false;
+  }
+  return true;
+}
+
+function providerTranscriptsEqual(left: readonly Message[], right: readonly Message[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    const leftMessage = left[index]!;
+    const rightMessage = right[index]!;
+    if (
+      leftMessage.role !== rightMessage.role ||
+      !providerValuesEqual(leftMessage.parts, rightMessage.parts, new IntrinsicWeakMap())
+    ) return false;
+  }
+  return true;
 }
 
 function getStructuredCloneFailureFingerprint(error: unknown): string | undefined {
@@ -1510,8 +1574,7 @@ export class AgentRuntime {
     }
     if (
       validateTurnMessages && persisted.length > 0 &&
-      !(persisted.length === validated.length &&
-        persisted.every((message, index) => message === validated[index]))
+      !providerTranscriptsEqual(persisted, validated)
     ) {
       try {
         await validateTurnMessages([], persisted);

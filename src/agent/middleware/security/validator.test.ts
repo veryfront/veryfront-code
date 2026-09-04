@@ -3,9 +3,15 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
-import type { AgentContext, AgentResponse, Message } from "../../types.ts";
-import { attachOutputSchemaParser, resolveAgentOutputSchema } from "../../output-schema.ts";
-import { getTurnInputValidator, getTurnMessageValidator } from "../turn-validation.ts";
+import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/types.ts";
+import {
+  attachOutputSchemaParser,
+  resolveAgentOutputSchema,
+} from "#veryfront/agent/output-schema.ts";
+import {
+  getTurnInputValidator,
+  getTurnMessageValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 import {
   COMMON_BLOCKED_PATTERNS,
   InputValidator,

@@ -2,13 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
-import { agent, resolveSecurityMiddleware } from "./factory.ts";
-import { agentAsTool } from "./composition/composition.ts";
-import { AgentRuntime } from "./runtime/index.ts";
-import { ConversationMemory } from "./memory/index.ts";
-import { cacheMiddleware } from "./middleware/cache/cache.ts";
-import { registerTurnMessageValidator } from "./middleware/turn-validation.ts";
-import type { AgentContext, AgentMiddleware, AgentResponse, Message } from "./types.ts";
+import { agent, resolveSecurityMiddleware } from "#veryfront/agent/factory.ts";
+import { agentAsTool } from "#veryfront/agent/composition/composition.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import { ConversationMemory } from "#veryfront/agent/memory/index.ts";
+import { cacheMiddleware } from "#veryfront/agent/middleware/cache/cache.ts";
+import { registerTurnMessageValidator } from "#veryfront/agent/middleware/turn-validation.ts";
+import type {
+  AgentContext,
+  AgentMiddleware,
+  AgentResponse,
+  Message,
+} from "#veryfront/agent/types.ts";
 
 /** Wait until the wall clock leaves the current millisecond. */
 async function leaveCurrentMillisecond(): Promise<void> {
@@ -836,6 +841,54 @@ describe("resolveSecurityMiddleware", () => {
       "a second turn validates the assembled conversation exactly once",
     );
     assertEquals(validatorCalls[0]?.turnInput, 1, "the hook receives only this turn's input");
+  });
+
+  it("does not revalidate an unchanged synthesized summary projection", async () => {
+    const validatorCalls: Array<{ history: number; turnInput: number }> = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/summary-validator-calls",
+      async doGenerate() {
+        throw new Error("provider unavailable");
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const recorder: AgentMiddleware = (context, next) => {
+      registerTurnMessageValidator(context, (history, turnInput) => {
+        validatorCalls.push({ history: history.length, turnInput: turnInput.length });
+        return Promise.resolve();
+      });
+      return next();
+    };
+    const assistant = agent({
+      id: "summary-validator-calls",
+      model: "hosted/summary-validator-calls",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "summary", maxMessages: 4 },
+      middleware: [recorder],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    for (const input of ["first", "second", "third", "fourth", "fifth"]) {
+      await assistant.generate({ input }).catch(() => undefined);
+    }
+    assertEquals(
+      validatorCalls.length,
+      5,
+      "the fifth write validates once before and once after summary compaction",
+    );
+
+    await assistant.generate({ input: "sixth" }).catch(() => undefined);
+
+    assertEquals(
+      validatorCalls.length,
+      6,
+      "a fresh object for unchanged summary content must not trigger another validation",
+    );
   });
 
   it("persists a turn once when a middleware invokes the continuation twice", async () => {
