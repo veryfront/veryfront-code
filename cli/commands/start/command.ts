@@ -7,7 +7,7 @@ import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 
 const logger = cliLogger.component("global");
 
@@ -144,7 +144,7 @@ export async function hydrateStartRuntimeAuth(
   selectedProject: StartProjectSelection,
 ): Promise<string | undefined> {
   const linkedProjectSlug = await resolveLinkedProjectSlug(selectedProject.projectDir);
-  await applyRuntimeAuthContext({ linkedProjectSlug });
+  await applyQualifiedRuntimeAuth(selectedProject.projectDir, linkedProjectSlug);
   return linkedProjectSlug;
 }
 

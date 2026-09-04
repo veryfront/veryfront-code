@@ -5,13 +5,14 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "veryfront/platform/path";
 import { saveToken } from "../auth/token-store.ts";
 import {
-  applyRuntimeAuthContext,
+  applyQualifiedRuntimeAuth,
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
 } from "./runtime-auth.ts";
 
 const ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_BASE_URL",
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
   "XDG_CONFIG_HOME",
@@ -69,6 +70,7 @@ describe("cli/shared/runtime-auth", () => {
     setEnv("VERYFRONT_SERVICE_LAYER", "local");
 
     const context = await resolveRuntimeAuthContext({
+      apiToken: "env-token",
       linkedProjectSlug: "config-project",
     });
 
@@ -79,14 +81,24 @@ describe("cli/shared/runtime-auth", () => {
     });
   });
 
-  it("uses stored login auth without claiming an unlinked project", async () => {
+  it("does not let the low-level context resolver consult the token store", async () => {
     await useTempConfigHome();
     await saveToken("stored-token");
 
-    const context = await applyRuntimeAuthContext({});
+    assertEquals(await resolveRuntimeAuthContext({ apiToken: null }), {});
+  });
+
+  it("uses stored login auth without claiming an unlinked project", async () => {
+    await useTempConfigHome();
+    await saveToken("stored-token");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-runtime-auth-project-" });
+    tempDirs.push(projectDir);
+
+    const context = await applyQualifiedRuntimeAuth(projectDir);
 
     assertEquals(context, {
       apiToken: "stored-token",
+      apiBaseUrl: "https://api.veryfront.com",
       serviceLayer: "cloud",
     });
     assertEquals(getEnv("VERYFRONT_API_TOKEN"), "stored-token");
@@ -97,17 +109,41 @@ describe("cli/shared/runtime-auth", () => {
   it("keeps an explicitly linked project scoped to cloud requests", async () => {
     await useTempConfigHome();
     await saveToken("stored-token");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-runtime-auth-linked-" });
+    tempDirs.push(projectDir);
 
-    const context = await applyRuntimeAuthContext({
-      linkedProjectSlug: "linked-project",
-    });
+    const context = await applyQualifiedRuntimeAuth(projectDir, "linked-project");
 
     assertEquals(context, {
       apiToken: "stored-token",
+      apiBaseUrl: "https://api.veryfront.com",
       projectSlug: "linked-project",
       serviceLayer: "cloud",
     });
     assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), "linked-project");
+  });
+
+  it("applies a project credential together with its configured API base", async () => {
+    await useTempConfigHome();
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-runtime-auth-config-" });
+    tempDirs.push(projectDir);
+    await Deno.writeTextFile(
+      join(projectDir, "veryfront.json"),
+      JSON.stringify({
+        apiUrl: "https://runtime.example/graphql",
+        apiToken: "project-token",
+      }),
+    );
+
+    const context = await applyQualifiedRuntimeAuth(projectDir);
+
+    assertEquals(context, {
+      apiToken: "project-token",
+      apiBaseUrl: "https://runtime.example",
+      serviceLayer: "cloud",
+    });
+    assertEquals(getEnv("VERYFRONT_API_TOKEN"), "project-token");
+    assertEquals(getEnv("VERYFRONT_API_BASE_URL"), "https://runtime.example");
   });
 
   it("reads the persisted project link without inferring from the directory name", async () => {
@@ -126,8 +162,10 @@ describe("cli/shared/runtime-auth", () => {
 
   it("does not inject project or service-layer auth without a token", async () => {
     await useTempConfigHome();
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-runtime-auth-empty-" });
+    tempDirs.push(projectDir);
 
-    const context = await applyRuntimeAuthContext({});
+    const context = await applyQualifiedRuntimeAuth(projectDir);
 
     assertEquals(context, {});
     assertEquals(getEnv("VERYFRONT_API_TOKEN"), undefined);

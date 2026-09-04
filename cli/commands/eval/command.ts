@@ -5,7 +5,7 @@
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { Agent, AgentResponse } from "veryfront/agent";
-import { getEnvironmentConfig, type VeryfrontConfig } from "veryfront/config";
+import type { VeryfrontConfig } from "veryfront/config";
 import {
   isErroredToolExecutionResult,
   type Tool,
@@ -41,13 +41,7 @@ import {
   getCurrentVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
-import {
-  assertApiUrlAcceptsNewCredential,
-  readConfigFile,
-  resolveApiCredentialCandidatesForAuth,
-  resolveApiUrlTrust,
-} from "#cli/shared/config";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
 import {
@@ -65,7 +59,6 @@ import {
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
-import { getEnvSource } from "veryfront/utils/env-loader";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -598,25 +591,13 @@ export async function hydrateEvalRuntimeAuth(
   projectDir: string,
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
-  const env = getEnvironmentConfig();
-  const requestEnv = getEnvSource("VERYFRONT_API_BASE_URL").source === "unset"
-    ? env
-    : { ...env, apiUrl: undefined };
-  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
-  const candidate = candidates[0];
-  if (
-    !candidate &&
-    resolveApiUrlTrust(requestEnv, await readConfigFile(projectDir)).repositorySteered
-  ) {
-    await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
-  }
-  return await applyRuntimeAuthContext({
-    apiToken: candidate?.apiToken ?? null,
-    linkedProjectSlug: await resolveLinkedProjectSlug(
+  return await applyQualifiedRuntimeAuth(
+    projectDir,
+    await resolveLinkedProjectSlug(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
     ),
-  });
+  );
 }
 
 function createEvalToolExecutionContext(

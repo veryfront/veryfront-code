@@ -1,16 +1,25 @@
 import { getEnv, setEnv } from "#cli/process-env";
-import { readToken } from "../auth/token-store.ts";
-import { readConfigFile } from "./config.ts";
+import { getEnvironmentConfig } from "veryfront/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
+import {
+  assertApiUrlAcceptsNewCredential,
+  readConfigFile,
+  resolveApiCredentialCandidatesForAuth,
+  resolveApiUrlTrust,
+} from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
-  /** Prequalified credential, or null to suppress ambient stored-login fallback. */
-  apiToken?: string | null;
+  /** Prequalified credential, or null when no credential is authorized. */
+  apiToken: string | null;
+  /** REST base paired with apiToken. */
+  apiBaseUrl?: string;
 }
 
 export interface RuntimeAuthContext {
   apiToken?: string;
+  apiBaseUrl?: string;
   projectSlug?: string;
   serviceLayer?: string;
 }
@@ -36,10 +45,8 @@ export async function resolveLinkedProjectSlug(
 export async function resolveRuntimeAuthContext(
   options: RuntimeAuthOptions,
 ): Promise<RuntimeAuthContext> {
-  const apiToken = options.apiToken === undefined
-    ? normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN")) ??
-      normalizeEnvValue(await readToken() ?? undefined)
-    : normalizeEnvValue(options.apiToken ?? undefined);
+  const apiToken = normalizeEnvValue(options.apiToken ?? undefined);
+  const apiBaseUrl = normalizeEnvValue(options.apiBaseUrl);
 
   const envProjectSlug = normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG"));
   const projectSlug = envProjectSlug ?? normalizeEnvValue(options.linkedProjectSlug);
@@ -48,6 +55,7 @@ export async function resolveRuntimeAuthContext(
 
   return {
     ...(apiToken ? { apiToken } : {}),
+    ...(apiToken && apiBaseUrl ? { apiBaseUrl } : {}),
     ...(projectSlug ? { projectSlug } : {}),
     ...(serviceLayer ? { serviceLayer } : {}),
   };
@@ -60,6 +68,10 @@ export async function applyRuntimeAuthContext(
 
   if (context.apiToken && !normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN"))) {
     setEnv("VERYFRONT_API_TOKEN", context.apiToken);
+  }
+
+  if (context.apiToken && context.apiBaseUrl) {
+    setEnv("VERYFRONT_API_BASE_URL", context.apiBaseUrl);
   }
 
   if (
@@ -76,4 +88,28 @@ export async function applyRuntimeAuthContext(
   }
 
   return context;
+}
+
+/** Resolve and apply one token together with the REST endpoint allowed to receive it. */
+export async function applyQualifiedRuntimeAuth(
+  projectDir: string,
+  linkedProjectSlug?: string,
+): Promise<RuntimeAuthContext> {
+  const env = getEnvironmentConfig();
+  const requestEnv = getEnvSource("VERYFRONT_API_BASE_URL").source === "unset"
+    ? env
+    : { ...env, apiUrl: undefined };
+  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
+  const candidate = candidates[0];
+  if (
+    !candidate &&
+    resolveApiUrlTrust(requestEnv, await readConfigFile(projectDir)).repositorySteered
+  ) {
+    await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
+  }
+  return await applyRuntimeAuthContext({
+    apiToken: candidate?.apiToken ?? null,
+    apiBaseUrl: candidate?.validationEnv.apiBaseUrl,
+    linkedProjectSlug,
+  });
 }
