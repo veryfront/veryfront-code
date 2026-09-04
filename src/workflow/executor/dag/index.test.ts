@@ -5089,6 +5089,76 @@ describe("DAGExecutor", () => {
       assertEquals(result.waiting, true);
     });
 
+    it("uses completed ancestor evidence for a nested legacy owner with a reused id", async () => {
+      const completedOuter = subWorkflow("outer-1", {
+        workflow: {
+          id: "completed-outer",
+          steps: [
+            subWorkflow("inner", {
+              workflow: {
+                id: "completed-inner",
+                steps: [{
+                  id: "old-gate",
+                  config: {
+                    type: "branch",
+                    condition: () => true,
+                    then: [waitForApproval("old-review", { message: "Old review" })],
+                    else: [waitForApproval("shared-review", { message: "Untaken review" })],
+                  },
+                }],
+              },
+            }),
+          ],
+        },
+      });
+      const activeOuter = {
+        ...subWorkflow("outer-2", {
+          workflow: {
+            id: "active-outer",
+            steps: [
+              subWorkflow("inner", {
+                workflow: {
+                  id: "active-inner",
+                  steps: [waitForApproval("shared-review", { message: "Active review" })],
+                },
+              }),
+            ],
+          },
+        }),
+        dependsOn: ["outer-1"],
+      };
+      const approvedAt = new Date("2026-01-01T00:00:00.000Z");
+
+      const result = await executor.execute(
+        [completedOuter, activeOuter],
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "outer-1": { nodeId: "outer-1", status: "completed", attempt: 1 },
+            "outer-2": { nodeId: "outer-2", status: "running", attempt: 1 },
+            inner: { nodeId: "inner", status: "running", attempt: 1 },
+            "old-gate": {
+              nodeId: "old-gate",
+              status: "completed",
+              output: { branch: "then" },
+              attempt: 1,
+            },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "completed",
+              attempt: 1,
+              completedAt: approvedAt,
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates["outer-2"]?.status, "completed");
+      assertEquals(result.nodeStates["shared-review"]?.completedAt, approvedAt);
+    });
+
     it("keeps slash-containing sub-workflow owner paths distinct", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({

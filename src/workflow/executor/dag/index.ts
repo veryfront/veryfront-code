@@ -258,6 +258,7 @@ function collectStaticSubWorkflowReservation(
   owners: Map<string, string>,
   nodeStates: Readonly<Record<string, NodeState>>,
   branchOwnerPaths: ReadonlyMap<string, ReadonlySet<string>>,
+  ancestorOwnerStatus?: NodeState["status"],
 ): void {
   switch (node.config.type) {
     case "parallel":
@@ -268,6 +269,7 @@ function collectStaticSubWorkflowReservation(
         owners,
         nodeStates,
         branchOwnerPaths,
+        ancestorOwnerStatus,
       );
       return;
     case "branch":
@@ -278,6 +280,7 @@ function collectStaticSubWorkflowReservation(
         owners,
         nodeStates,
         branchOwnerPaths,
+        ancestorOwnerStatus,
       );
       if (node.config.else) {
         collectStaticSubWorkflowReservations(
@@ -287,6 +290,7 @@ function collectStaticSubWorkflowReservation(
           owners,
           nodeStates,
           branchOwnerPaths,
+          ancestorOwnerStatus,
         );
       }
       return;
@@ -299,6 +303,7 @@ function collectStaticSubWorkflowReservation(
           owners,
           nodeStates,
           branchOwnerPaths,
+          ancestorOwnerStatus,
         );
       }
       return;
@@ -310,7 +315,10 @@ function collectStaticSubWorkflowReservation(
         !Array.isArray(node.config.workflow.steps)
       ) return;
       const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
-      const ownerStatus = nodeStates[node.id]?.status;
+      const ownerStatus = parentPath &&
+          (ancestorOwnerStatus === "completed" || ancestorOwnerStatus === "skipped")
+        ? ancestorOwnerStatus
+        : nodeStates[node.id]?.status;
       if (ownerStatus === "skipped") childIds.clear();
       else if (ownerStatus === "completed") {
         narrowReservationsToSelectedBranches(
@@ -333,6 +341,7 @@ function collectStaticSubWorkflowReservation(
         owners,
         nodeStates,
         branchOwnerPaths,
+        ownerStatus,
       );
     }
   }
@@ -345,6 +354,7 @@ function collectStaticSubWorkflowReservations(
   owners = new Map<string, string>(),
   nodeStates: Readonly<Record<string, NodeState>> = {},
   branchOwnerPaths: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+  ancestorOwnerStatus?: NodeState["status"],
 ): Map<string, Set<string>> {
   for (const node of nodes) {
     collectStaticSubWorkflowReservation(
@@ -354,6 +364,7 @@ function collectStaticSubWorkflowReservations(
       owners,
       nodeStates,
       branchOwnerPaths,
+      ancestorOwnerStatus,
     );
   }
   return reservations;
