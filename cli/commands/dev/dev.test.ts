@@ -16,6 +16,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { deleteToken, saveToken } from "../../auth/token-store.ts";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -424,6 +425,7 @@ describe("cli/commands/dev", () => {
     it("does not preload auth to an API origin selected by a project env file", async () => {
       const originalBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
       const originalApiUrl = getEnv("VERYFRONT_API_URL");
+      const originalXdgConfigHome = getEnv("XDG_CONFIG_HOME");
       const originalFetch = globalThis.fetch;
       let fetchCalls = 0;
       try {
@@ -431,12 +433,14 @@ describe("cli/commands/dev", () => {
         deleteEnv("VERYFRONT_API_URL");
         __resetEnvLoaderForTests();
         await withTempDir(async (dir) => {
+          setEnv("XDG_CONFIG_HOME", `${dir}/config`);
           await Deno.writeTextFile(
             `${dir}/.env`,
             "VERYFRONT_API_URL=https://project-controlled.example/api\n",
           );
           await loadEnv({ cwd: dir, override: true });
           refreshEnvironmentConfig();
+          await saveToken("stored-login-token");
           globalThis.fetch = () => {
             fetchCalls += 1;
             return Promise.reject(new Error("must not fetch"));
@@ -446,6 +450,11 @@ describe("cli/commands/dev", () => {
             identity: null,
             projects: [],
           });
+          assertEquals(await preloadDevAuth(undefined, dir), {
+            identity: null,
+            projects: [],
+          });
+          await deleteToken();
         });
         assertEquals(fetchCalls, 0);
       } finally {
@@ -455,6 +464,63 @@ describe("cli/commands/dev", () => {
         else setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl);
         if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
         else setEnv("VERYFRONT_API_URL", originalApiUrl);
+        if (originalXdgConfigHome === undefined) deleteEnv("XDG_CONFIG_HOME");
+        else setEnv("XDG_CONFIG_HOME", originalXdgConfigHome);
+        refreshEnvironmentConfig();
+      }
+    });
+
+    it("preloads a repository token only to its paired env-file API origin", async () => {
+      const originalBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = getEnv("VERYFRONT_API_URL");
+      const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+      const originalTokenBase = getEnv("DEV_PRELOAD_TOKEN_BASE");
+      const originalFetch = globalThis.fetch;
+      const requests: Array<{ origin: string; authorization: string }> = [];
+      try {
+        deleteEnv("VERYFRONT_API_BASE_URL");
+        deleteEnv("VERYFRONT_API_URL");
+        deleteEnv("VERYFRONT_API_TOKEN");
+        deleteEnv("DEV_PRELOAD_TOKEN_BASE");
+        __resetEnvLoaderForTests();
+        await withTempDir(async (dir) => {
+          await Deno.writeTextFile(`${dir}/.env`, "DEV_PRELOAD_TOKEN_BASE=vf_repository_token\n");
+          await Deno.writeTextFile(
+            `${dir}/.env.local`,
+            "VERYFRONT_API_URL=https://project-controlled.example/api\n" +
+              "VERYFRONT_API_TOKEN=$DEV_PRELOAD_TOKEN_BASE\n",
+          );
+          await loadEnv({ cwd: dir, override: true });
+          refreshEnvironmentConfig();
+          globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+            const url = new URL(String(input));
+            requests.push({
+              origin: url.origin,
+              authorization: new Headers(init?.headers).get("authorization") ?? "",
+            });
+            return Promise.resolve(Response.json({ data: [] }));
+          }) as typeof fetch;
+
+          assertEquals(await preloadDevAuth("vf_repository_token", dir), {
+            identity: { authenticated: true, type: "apiKey" },
+            projects: [],
+          });
+        });
+        assertEquals(requests, [{
+          origin: "https://project-controlled.example",
+          authorization: "Bearer vf_repository_token",
+        }]);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        if (originalBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl);
+        if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+        else setEnv("VERYFRONT_API_URL", originalApiUrl);
+        if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+        else setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+        if (originalTokenBase === undefined) deleteEnv("DEV_PRELOAD_TOKEN_BASE");
+        else setEnv("DEV_PRELOAD_TOKEN_BASE", originalTokenBase);
         refreshEnvironmentConfig();
       }
     });

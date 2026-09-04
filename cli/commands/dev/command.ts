@@ -29,7 +29,7 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
-import { resolveApiUrlTrust } from "#cli/shared/config";
+import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 
 export interface DevOptions {
   port: number;
@@ -78,13 +78,31 @@ function authStatus(identity: AuthIdentity): string {
 
 export async function preloadDevAuth(
   apiToken?: string,
+  projectDir?: string,
 ): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
-  if (!apiToken) return { identity: null, projects: [] };
-  if (resolveApiUrlTrust(getEnvironmentConfig(), null).repositorySteered) {
+  const env = getEnvironmentConfig();
+  const trust = resolveApiUrlTrust(env, null);
+  const candidates = await resolveApiCredentialCandidatesForAuth(
+    env,
+    projectDir,
+    true,
+  );
+  const candidate = apiToken
+    ? candidates.find((entry) => entry.apiToken === apiToken)
+    : candidates[0];
+
+  // Direct callers can supply an explicit token without loading it into the
+  // process environment. That remains valid only when the repository did not
+  // choose the destination. A repository-steered destination requires the
+  // resolver's source-qualified token and its paired validation environment.
+  if (!candidate && (!apiToken || trust.repositorySteered)) {
     return { identity: null, projects: [] };
   }
 
-  const result = await fetchRemoteProjects(apiToken);
+  const result = await fetchRemoteProjects(
+    candidate?.apiToken ?? apiToken,
+    candidate?.validationEnv ?? env,
+  );
   const identity = result.credentialType === "apiKey"
     ? result.error ? null : { authenticated: true, type: "apiKey" } as const
     : result.user;
@@ -226,7 +244,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const runtimeAuth = await applyRuntimeAuthContext({
         linkedProjectSlug,
       });
-      const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken).catch(() => ({
+      const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken, projectDir).catch(() => ({
         identity: null,
         projects: [],
       }));
@@ -432,7 +450,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             if (!result) return;
 
             identity = result;
-            const projectResult = await fetchRemoteProjects();
+            const projectResult = await preloadDevAuth(undefined, projectDir);
             projects = projectResult.projects;
             console.log(
               `  ✓ ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,

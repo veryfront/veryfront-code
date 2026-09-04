@@ -32,6 +32,8 @@ export async function loadEnv(
 
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
+  const loadedVars: Record<string, string> = {};
+  const taintedLoadedVars = new Set<string>();
 
   let loadedCount = 0;
   let totalVars = 0;
@@ -39,7 +41,7 @@ export async function loadEnv(
   for (const file of envFiles) {
     try {
       const content = await readTextFile(file);
-      const vars = parseEnvFile(content);
+      const vars = parseEnvFile(content, loadedVars, taintedLoadedVars);
 
       for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
         const existing = getEnv(key);
@@ -47,6 +49,9 @@ export async function loadEnv(
 
         setEnv(key, value);
         envSources.set(key, { file, expandedFromProcessEnv });
+        loadedVars[key] = value;
+        if (expandedFromProcessEnv) taintedLoadedVars.add(key);
+        else taintedLoadedVars.delete(key);
         totalVars++;
 
         // Log only the key name and value length — never any part of the value.
@@ -84,13 +89,18 @@ interface ParsedEnvEntry {
   expandedFromProcessEnv: boolean;
 }
 
-function parseEnvFile(content: string): Record<string, ParsedEnvEntry> {
+function parseEnvFile(
+  content: string,
+  priorVars: Readonly<Record<string, string>> = {},
+  priorTaintedVars: ReadonlySet<string> = new Set(),
+): Record<string, ParsedEnvEntry> {
   const entries: Record<string, ParsedEnvEntry> = {};
-  // Plain values for `$NAME` references to entries earlier in the same file.
-  const vars: Record<string, string> = {};
+  // Plain values for `$NAME` references to entries loaded from earlier project
+  // env files or declared earlier in this file.
+  const vars: Record<string, string> = { ...priorVars };
   // Keys whose value already carries something from the process environment.
   // Referencing one of them taints the referring value in turn.
-  const tainted = new Set<string>();
+  const tainted = new Set<string>(priorTaintedVars);
 
   const record = (key: string, raw: string): void => {
     const { value, expandedFromProcessEnv } = expandVariables(raw, vars, tainted);

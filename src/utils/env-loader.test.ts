@@ -470,6 +470,23 @@ describe("env-loader", () => {
       cleanupKeys(key, baseKey);
     });
 
+    it("should preserve file provenance through references across env files", async () => {
+      const baseKey = createKey("SOURCE_EARLIER_FILE_BASE");
+      const key = createKey("SOURCE_LATER_FILE_LEAF");
+      await writeEnvFile(".env", `${baseKey}=repository-value`);
+      await writeEnvFile(".env.local", `${key}=\${${baseKey}}`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "repository-value");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env.local`, expandedFromProcessEnv: false },
+        "a later env file that references repository content must not be attributed to the shell",
+      );
+
+      cleanupKeys(key, baseKey);
+    });
+
     it("should report a key present only in the process env as process", async () => {
       const key = createKey("SOURCE_PROCESS");
       setEnv(key, "only-process");
