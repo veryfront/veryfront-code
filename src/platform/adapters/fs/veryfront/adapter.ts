@@ -480,13 +480,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return buildFileListCacheKey(context);
   }
 
-  #getCurrentSourceSnapshotIdentity(): string | undefined {
-    const context = this.contentContext;
-    if (!context) return undefined;
-
+  #getSourceSnapshotIdentity(context: ResolvedContentContext): string {
     switch (context.sourceType) {
       case "branch":
-        return `branch:${context.projectSlug}:${this.requestBranch ?? context.branch ?? "main"}`;
+        return `branch:${context.projectSlug}:${context.branch ?? "main"}`;
       case "environment":
         return `environment:${context.projectSlug}:${context.environmentName ?? ""}:${
           context.releaseId ?? ""
@@ -494,6 +491,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       case "release":
         return `release:${context.projectSlug}:${context.releaseId ?? ""}`;
     }
+  }
+
+  #getCurrentSourceSnapshotIdentity(): string | undefined {
+    const context = this.getEffectiveContentContext();
+    if (!context) return undefined;
+    return this.#getSourceSnapshotIdentity(context);
   }
 
   private syncClientContext(): void {
@@ -1123,7 +1126,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const warmupBaseContext = this.contentContext;
     const warmupContext = contentContext ?? this.getEffectiveContentContext();
     if (!warmupContext) return;
-    const warmupIdentity = this.#getCurrentSourceSnapshotIdentity();
+    const warmupIdentity = this.#getSourceSnapshotIdentity(warmupContext);
     const warmupSnapshotVersion = this.sourceSnapshotVersion;
     let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
@@ -1730,28 +1733,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return [];
     }
 
+    const contentContext = this.getEffectiveContentContext();
+    if (!contentContext) return [];
+    const cacheKey = buildFileListCacheKey(contentContext);
     const cached = await this.getCachedFileListAsync<{ path: string; content?: string }>(
       "getAllSourceFiles: no contentContext",
       "getAllSourceFiles",
       "getAllSourceFiles miss",
+      {
+        cacheKey,
+        contentContext,
+        waitForWarmup: options.waitForWarmup,
+      },
     );
-    const cacheKey = cached?.cacheKey;
     let files = cached?.files;
-
-    // A miss schedules a warmup and returns immediately, which is right for
-    // callers that can proceed without the list. This one cannot: nothing else
-    // populates it for a release-backed context, so returning early meant the
-    // list was empty on every request for the life of the process. Wait for the
-    // fetch this read just started, then look again.
-    if (options.waitForWarmup && cacheKey && files === undefined && this.fileListWarmupPromise) {
-      // Take what the fetch returned rather than re-reading the cache: with
-      // caching disabled, or a failed backend write, the cache keeps nothing
-      // and correctness would depend on a write that never happened.
-      const fetched = await this.fileListWarmupPromise;
-      files = fetched !== null
-        ? fetched
-        : await this.cache.getAsync<{ path: string; content?: string }[]>(cacheKey);
-    }
 
     if (!cacheKey || !files?.length) {
       logger.debug("getAllSourceFiles cache miss or empty", {
