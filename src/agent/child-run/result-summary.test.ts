@@ -442,6 +442,23 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("does not scan tool pseudo-fields inside a quoted tail value", () => {
+      const description = `${"x".repeat(100_000)} tools:['bogus_tool'] ${"x".repeat(40_000)}`;
+      const text = JSON.stringify({ tools: [{ description }] });
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("does not retain facts from an unterminated short array", () => {
+      const result = buildChildRunResultSummary('tools: ["bogus_tool"', {
+        mode: "structured",
+      });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("does not treat a tail window cut as a tool field boundary", () => {
       const opener = "tools:['bogus_tool']";
       const text = `${"p".repeat(70_000)}z"${opener}${"y".repeat(96_000 - opener.length)}`;
@@ -476,6 +493,14 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
+    });
+
+    it("keeps imports after a semicolon-delimited cut token", () => {
+      const text = `${"x".repeat(70_000)};import "veryfront/agent";${"y".repeat(60_000)}`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { importPaths: ["veryfront/agent"] });
     });
 
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {

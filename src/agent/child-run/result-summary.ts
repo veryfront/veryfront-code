@@ -4,7 +4,6 @@ const CHILD_RUN_VALUE_SUMMARY_MAX_DEPTH = 5;
 const CHILD_RUN_CONTRACT_FACT_LIMIT = 50;
 const CHILD_RUN_CONTRACT_FACT_VALUE_MAX_LENGTH = 200;
 const CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT = 128_000;
-const CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT = 2_000;
 const CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT = 256;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
 const MALFORMED_TOOL_COMMAND_PREFIX_PATTERN =
@@ -32,14 +31,10 @@ const PROVIDER_TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?provider_tool_ids["']
 const PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN = /[,{(\s]["']?provider_tool_ids["']?\s*[:=]\s*\[/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
-const CONTRACT_FACT_SCALAR_PATTERN =
-  /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/;
-const CONTRACT_FACT_SCALAR_PREFIX_PATTERN =
-  /^(?:|t(?:r(?:u(?:e)?)?)?|f(?:a(?:l(?:s(?:e)?)?)?)?|n(?:u(?:l(?:l)?)?)?|-|-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][+-]?[0-9]*)?)$/;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-const FIELD_SEPARATOR_PATTERN = /[,{(\s]/;
+const FIELD_SEPARATOR_PATTERN = /[,{(;\s]/;
 
 /** Result return modes supported by delegated child runs. */
 export type ChildRunResultMode = "summary" | "full" | "structured";
@@ -190,47 +185,85 @@ function hasValidQuotedValuePrefix(
   quote: string,
   trailingSource?: string,
 ): boolean {
-  for (let index = start + 1; index < text.length; index++) {
+  let index = start + 1;
+  while (index < text.length) {
     const character = text[index]!;
-    if (character.charCodeAt(0) < 0x20) return false;
-    if (character !== "\\") continue;
-    const escaped = text[++index];
-    if (escaped === undefined) {
-      if (trailingSource === undefined || trailingSource.length === 0) return true;
-      const boundaryEscape = trailingSource[0]!;
-      if (boundaryEscape === "u") return /^[0-9a-f]*$/i.test(trailingSource.slice(1, 5));
-      return `\\"/bfnrt${quote === "'" ? "'" : ""}`.includes(boundaryEscape);
-    }
-    if (escaped === "u") {
-      const availableHex = text.slice(index + 1, Math.min(index + 5, text.length));
-      if (!/^[0-9a-f]*$/i.test(availableHex)) return false;
-      if (availableHex.length < 4) {
-        const needed = 4 - availableHex.length;
-        return trailingSource === undefined ||
-          /^[0-9a-f]*$/i.test(trailingSource.slice(0, needed));
-      }
-      index += 4;
+    if ((character.codePointAt(0) ?? 0) < 0x20) return false;
+    if (character !== "\\") {
+      index += 1;
       continue;
     }
-    if (`\\"/bfnrt${quote === "'" ? "'" : ""}`.includes(escaped)) continue;
-    return false;
+    const escapeEnd = validQuotedEscapeEnd(text, index, quote, trailingSource);
+    if (escapeEnd === null) return false;
+    if (escapeEnd === undefined) return true;
+    index = escapeEnd;
   }
   return true;
 }
 
+function validQuotedEscapeEnd(
+  text: string,
+  backslash: number,
+  quote: string,
+  trailingSource: string | undefined,
+): number | null | undefined {
+  const escaped = text[backslash + 1];
+  if (escaped === undefined) {
+    return hasValidBoundaryEscape(trailingSource, quote) ? undefined : null;
+  }
+  if (escaped !== "u") {
+    return isSimpleQuotedEscape(escaped, quote) ? backslash + 2 : null;
+  }
+  const availableHex = text.slice(backslash + 2, Math.min(backslash + 6, text.length));
+  if (!isValidUnicodeEscapePrefix(availableHex, trailingSource)) return null;
+  return availableHex.length < 4 ? undefined : backslash + 6;
+}
+
+function isSimpleQuotedEscape(value: string, quote: string): boolean {
+  return value === "\\" || value === '"' || value === "/" ||
+    value === "b" || value === "f" || value === "n" ||
+    value === "r" || value === "t" || (quote === "'" && value === "'");
+}
+
+function isHexPrefix(value: string): boolean {
+  return value.length <= 4 && /^[\da-f]*$/i.test(value);
+}
+
+function hasValidBoundaryEscape(trailingSource: string | undefined, quote: string): boolean {
+  if (!trailingSource) return true;
+  const boundaryEscape = trailingSource[0]!;
+  return boundaryEscape === "u"
+    ? isHexPrefix(trailingSource.slice(1, 5))
+    : isSimpleQuotedEscape(boundaryEscape, quote);
+}
+
+function isValidUnicodeEscapePrefix(
+  availableHex: string,
+  trailingSource: string | undefined,
+): boolean {
+  if (!isHexPrefix(availableHex)) return false;
+  if (availableHex.length === 4 || trailingSource === undefined) return true;
+  return isHexPrefix(availableHex + trailingSource.slice(0, 4 - availableHex.length));
+}
+
 function findOuterArrayClosingBracket(text: string): number {
   let depth = 1;
-  for (let index = 0; index < text.length; index++) {
+  let index = 0;
+  while (index < text.length) {
     const character = text[index];
     if (character === '"' || character === "'") {
       const end = scanQuotedValueEnd(text, index, character);
       if (end === undefined) return -1;
-      index = end - 1;
+      index = end;
     } else if (character === "[") {
       depth += 1;
+      index += 1;
     } else if (character === "]") {
       depth -= 1;
       if (depth === 0) return index;
+      index += 1;
+    } else {
+      index += 1;
     }
   }
   return -1;
@@ -292,7 +325,7 @@ function decodeSingleQuotedString(value: string): string | undefined {
     if (escaped === "u") {
       const hex = value.slice(index + 1, index + 5);
       if (!/^[0-9a-f]{4}$/i.test(hex)) return undefined;
-      decoded += String.fromCharCode(Number.parseInt(hex, 16));
+      decoded += String.fromCodePoint(Number.parseInt(hex, 16));
       index += 4;
       continue;
     }
@@ -319,17 +352,19 @@ function parseQuotedScalar(
 
 function normalizeSingleQuotedJson(text: string): string {
   let normalized = "";
-  for (let index = 0; index < text.length; index++) {
+  let index = 0;
+  while (index < text.length) {
     const character = text[index]!;
     if (character === '"') {
       const end = scanQuotedValueEnd(text, index, '"');
       if (end === undefined) return text;
       normalized += text.slice(index, end);
-      index = end - 1;
+      index = end;
       continue;
     }
     if (character !== "'") {
       normalized += character;
+      index += 1;
       continue;
     }
     const end = scanQuotedValueEnd(text, index, "'");
@@ -338,13 +373,32 @@ function normalizeSingleQuotedJson(text: string): string {
     const decoded = decodeSingleQuotedString(value);
     if (decoded === undefined) return text;
     normalized += JSON.stringify(decoded);
-    index = end - 1;
+    index = end;
   }
   return normalized;
 }
 
+function skipWhitespace(text: string, start: number): number {
+  let index = start;
+  while (/\s/.test(text[index] ?? "")) index += 1;
+  return index;
+}
+
 function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
   return scanCompleteLeadingArrayValues(fieldBody).values;
+}
+
+function completeArrayElementEnd(fieldBody: string, start: number): number | undefined {
+  const opening = fieldBody[start];
+  if (opening === '"' || opening === "'") {
+    return scanQuotedValueEnd(fieldBody, start, opening);
+  }
+  if (opening === "{" || opening === "[") {
+    const end = scanNestedArrayOrObjectEnd(fieldBody, start);
+    return typeof end === "number" ? end : undefined;
+  }
+  const comma = fieldBody.indexOf(",", start);
+  return comma === -1 ? fieldBody.length : comma;
 }
 
 /**
@@ -361,41 +415,14 @@ function scanCompleteLeadingArrayValues(
   let nextIndex = 0;
 
   while (index < fieldBody.length) {
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    index = skipWhitespace(fieldBody, index);
     if (index >= fieldBody.length) break;
 
     const valueStart = index;
     const opening = fieldBody[index];
-    let valueEnd: number;
-    if (opening === '"' || opening === "'") {
-      const end = scanQuotedValueEnd(fieldBody, index, opening);
-      if (end === undefined) break;
-      index = end;
-      valueEnd = end;
-    } else if (opening === "{" || opening === "[") {
-      const closings = [opening === "{" ? "}" : "]"];
-      index += 1;
-      while (index < fieldBody.length && closings.length > 0) {
-        const character = fieldBody[index];
-        if (character === '"' || character === "'") {
-          const end = scanQuotedValueEnd(fieldBody, index, character);
-          if (end === undefined) break;
-          index = end;
-          continue;
-        }
-        index += 1;
-        if (character === "{") closings.push("}");
-        else if (character === "[") closings.push("]");
-        else if (character === closings[closings.length - 1]) closings.pop();
-      }
-      if (closings.length > 0) break;
-      valueEnd = index;
-    } else {
-      while (index < fieldBody.length && fieldBody[index] !== ",") index += 1;
-      valueEnd = index;
-    }
-
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    const valueEnd = completeArrayElementEnd(fieldBody, index);
+    if (valueEnd === undefined) break;
+    index = skipWhitespace(fieldBody, valueEnd);
     if (index < fieldBody.length && fieldBody[index] !== ",") break;
 
     const parsed = parseCompleteArrayValue(fieldBody, valueStart, valueEnd, opening);
@@ -408,6 +435,18 @@ function scanCompleteLeadingArrayValues(
   }
 
   return { values, nextIndex };
+}
+
+function updateContainerClosings(closings: string[], character: string): boolean {
+  if (character === "{" || character === "[") {
+    if (closings.length >= CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT) return false;
+    closings.push(character === "{" ? "}" : "]");
+    return true;
+  }
+  if (character !== "}" && character !== "]") return true;
+  if (character !== closings.at(-1)) return false;
+  closings.pop();
+  return true;
 }
 
 function scanNestedArrayOrObjectEnd(
@@ -426,73 +465,184 @@ function scanNestedArrayOrObjectEnd(
       continue;
     }
     index += 1;
-    if (character === "{" || character === "[") {
-      if (closings.length >= CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT) return null;
-      closings.push(character === "{" ? "}" : "]");
-    } else if (character === "}" || character === "]") {
-      if (character !== closings[closings.length - 1]) return null;
-      closings.pop();
-    }
+    if (!updateContainerClosings(closings, character!)) return null;
   }
 
   if (closings.length > 0) return undefined;
   return parseCompleteArrayValue(fieldBody, start, index, fieldBody[start]).ok ? index : null;
 }
 
+function isContractFactScalar(token: string): boolean {
+  try {
+    const value: unknown = JSON.parse(token);
+    return value === null || typeof value === "boolean" || typeof value === "number";
+  } catch {
+    return false;
+  }
+}
+
+function isContractFactScalarPrefix(token: string): boolean {
+  if (["true", "false", "null"].some((value) => value.startsWith(token))) return true;
+  return ["", "0", ".0", "e0", "+0", "-0"].some((suffix) => isContractFactScalar(token + suffix));
+}
+
 function scalarPrefixCanContinue(token: string, trailingSource?: string): boolean {
-  if (!CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(token)) return false;
+  if (!isContractFactScalarPrefix(token)) return false;
   if (trailingSource === undefined || trailingSource.length === 0) return true;
   const combined = token + trailingSource;
-  if (CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(combined)) return true;
+  if (isContractFactScalarPrefix(combined)) return true;
   for (let index = 0; index < trailingSource.length; index++) {
     if (!/[\s,}\]]/.test(trailingSource[index]!)) continue;
-    return CONTRACT_FACT_SCALAR_PATTERN.test(token + trailingSource.slice(0, index));
+    return isContractFactScalar(token + trailingSource.slice(0, index));
   }
   return false;
 }
 
-function isValidIncompleteArrayPrefix(fieldBody: string, trailingSource?: string): boolean {
-  let index = 0;
-  while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+type PrefixValueScan =
+  | { status: "complete"; next: number; value?: unknown }
+  | { status: "incomplete" }
+  | { status: "invalid" };
+
+type ObjectMemberScan =
+  | { status: "complete"; next: number; key: string; value?: unknown }
+  | { status: "incomplete" }
+  | { status: "invalid" };
+
+function firstTerminator(text: string, start: number, terminators: string): number {
+  let index = start;
+  while (index < text.length && !terminators.includes(text[index]!)) index += 1;
+  return index;
+}
+
+function scanQuotedPrefixValue(
+  text: string,
+  start: number,
+  quote: string,
+  trailingSource?: string,
+): PrefixValueScan {
+  const end = scanQuotedValueEnd(text, start, quote);
+  if (end === undefined) {
+    return hasValidQuotedValuePrefix(text, start, quote, trailingSource)
+      ? { status: "incomplete" }
+      : { status: "invalid" };
+  }
+  const value = parseQuotedScalar(text, start, end, quote);
+  return value === undefined ? { status: "invalid" } : { status: "complete", next: end, value };
+}
+
+function scanNestedPrefixValue(
+  text: string,
+  start: number,
+  trailingSource: string | undefined,
+  depth: number,
+): PrefixValueScan {
+  const end = scanNestedArrayOrObjectEnd(text, start);
+  if (end === null) return { status: "invalid" };
+  if (end !== undefined) {
+    const parsed = parseCompleteArrayValue(text, start, end, text[start]);
+    return parsed.ok
+      ? { status: "complete", next: end, value: parsed.value }
+      : { status: "invalid" };
+  }
+  if (depth >= CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT) return { status: "invalid" };
+  const nested = text.slice(start);
+  const valid = text[start] === "{"
+    ? scanIncompleteLeadingObjectToolIds(nested, trailingSource, depth + 1) !== undefined
+    : isValidIncompleteArrayPrefix(nested, trailingSource, depth + 1);
+  return valid ? { status: "incomplete" } : { status: "invalid" };
+}
+
+function scanScalarPrefixValue(
+  text: string,
+  start: number,
+  terminators: string,
+  trailingSource?: string,
+): PrefixValueScan {
+  const end = firstTerminator(text, start, terminators);
+  const token = text.slice(start, end).trim();
+  if (end === text.length) {
+    return scalarPrefixCanContinue(token, trailingSource)
+      ? { status: "incomplete" }
+      : { status: "invalid" };
+  }
+  if (!isContractFactScalar(token)) return { status: "invalid" };
+  return { status: "complete", next: end, value: JSON.parse(token) };
+}
+
+function scanPrefixValue(
+  text: string,
+  start: number,
+  terminators: string,
+  trailingSource: string | undefined,
+  depth: number,
+): PrefixValueScan {
+  const opening = text[start];
+  if (opening === '"' || opening === "'") {
+    return scanQuotedPrefixValue(text, start, opening, trailingSource);
+  }
+  if (opening === "{" || opening === "[") {
+    return scanNestedPrefixValue(text, start, trailingSource, depth);
+  }
+  return scanScalarPrefixValue(text, start, terminators, trailingSource);
+}
+
+function isValidIncompleteArrayPrefix(
+  fieldBody: string,
+  trailingSource?: string,
+  depth = 0,
+): boolean {
+  let index = skipWhitespace(fieldBody, 0);
   if (fieldBody[index] !== "[") return false;
   index += 1;
   while (index < fieldBody.length) {
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    index = skipWhitespace(fieldBody, index);
     if (index >= fieldBody.length) return true;
-    const valueStart = index;
-    const opening = fieldBody[index];
-    if (opening === '"' || opening === "'") {
-      const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
-      if (valueEnd === undefined) {
-        return hasValidQuotedValuePrefix(fieldBody, index, opening, trailingSource);
-      }
-      if (parseQuotedScalar(fieldBody, index, valueEnd, opening) === undefined) return false;
-      index = valueEnd;
-    } else if (opening === "{" || opening === "[") {
-      const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
-      if (valueEnd === null) return false;
-      if (valueEnd === undefined) {
-        const nested = fieldBody.slice(index);
-        return opening === "{"
-          ? scanIncompleteLeadingObjectToolIds(nested, trailingSource) !== undefined
-          : isValidIncompleteArrayPrefix(nested, trailingSource);
-      }
-      index = valueEnd;
-    } else {
-      while (
-        index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "]"
-      ) index += 1;
-      const token = fieldBody.slice(valueStart, index).trim();
-      if (index >= fieldBody.length) return scalarPrefixCanContinue(token, trailingSource);
-      if (!CONTRACT_FACT_SCALAR_PATTERN.test(token)) return false;
-    }
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    const value = scanPrefixValue(fieldBody, index, ",]", trailingSource, depth);
+    if (value.status === "invalid") return false;
+    if (value.status === "incomplete") return true;
+    index = skipWhitespace(fieldBody, value.next);
     if (index >= fieldBody.length) return true;
     if (fieldBody[index] === "]") return false;
     if (fieldBody[index] !== ",") return false;
     index += 1;
   }
   return true;
+}
+
+function scanObjectMember(
+  fieldBody: string,
+  start: number,
+  trailingSource: string | undefined,
+  depth: number,
+): ObjectMemberScan {
+  const keyStart = skipWhitespace(fieldBody, start);
+  if (keyStart >= fieldBody.length) return { status: "incomplete" };
+  const keyQuote = fieldBody[keyStart];
+  if (keyQuote !== '"' && keyQuote !== "'") return { status: "invalid" };
+  const key = scanQuotedPrefixValue(fieldBody, keyStart, keyQuote, trailingSource);
+  if (key.status !== "complete") return key;
+  if (typeof key.value !== "string") return { status: "invalid" };
+
+  const colon = skipWhitespace(fieldBody, key.next);
+  if (colon >= fieldBody.length) return { status: "incomplete" };
+  if (fieldBody[colon] !== ":") return { status: "invalid" };
+  const valueStart = skipWhitespace(fieldBody, colon + 1);
+  if (valueStart >= fieldBody.length) return { status: "incomplete" };
+  const value = scanPrefixValue(fieldBody, valueStart, ",}", trailingSource, depth);
+  return value.status === "complete" ? { ...value, key: key.value } : value;
+}
+
+function addObjectMemberToolId(ids: string[], member: ObjectMemberScan): void {
+  if (
+    member.status === "complete" &&
+    (member.key === "id" || member.key === "name") &&
+    typeof member.value === "string" &&
+    ids.length < CHILD_RUN_CONTRACT_FACT_LIMIT
+  ) ids.push(member.value);
+}
+
+function windowCanContinueObject(trailingSource: string | undefined): boolean {
+  return !trailingSource || /[\s,}]/.test(trailingSource[0]!);
 }
 
 /**
@@ -506,88 +656,21 @@ function isValidIncompleteArrayPrefix(fieldBody: string, trailingSource?: string
 function scanIncompleteLeadingObjectToolIds(
   fieldBody: string,
   trailingSource?: string,
+  depth = 0,
 ): string[] | undefined {
   const ids: string[] = [];
-  let index = 0;
-  while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+  let index = skipWhitespace(fieldBody, 0);
   if (fieldBody[index] !== "{") return undefined;
   index += 1;
 
   while (index < fieldBody.length) {
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (index >= fieldBody.length) break;
-    const keyQuote = fieldBody[index];
-    if (keyQuote !== '"' && keyQuote !== "'") return undefined;
-    const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
-    if (keyEnd === undefined) {
-      if (!hasValidQuotedValuePrefix(fieldBody, index, keyQuote, trailingSource)) {
-        return undefined;
-      }
-      break;
-    }
-    const key = parseQuotedScalar(fieldBody, index, keyEnd, keyQuote);
-    if (key === undefined) return undefined;
-    index = keyEnd;
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (index >= fieldBody.length) break;
-    if (fieldBody[index] !== ":") return undefined;
-    index += 1;
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (index >= fieldBody.length) break;
-
-    const valueStart = index;
-    const opening = fieldBody[index];
-    if (opening === '"' || opening === "'") {
-      const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
-      if (valueEnd === undefined) {
-        if (!hasValidQuotedValuePrefix(fieldBody, index, opening, trailingSource)) {
-          return undefined;
-        }
-        break;
-      }
-      // Every completed quoted member is parsed, not just ids, so an invalid
-      // escape anywhere in the object withdraws the ids it contributed.
-      const value = parseQuotedScalar(fieldBody, index, valueEnd, opening);
-      if (value === undefined) return undefined;
-      if ((key === "id" || key === "name") && ids.length < CHILD_RUN_CONTRACT_FACT_LIMIT) {
-        ids.push(value);
-      }
-      index = valueEnd;
-    } else if (opening === "{" || opening === "[") {
-      const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
-      if (valueEnd === undefined) {
-        const nested = fieldBody.slice(index);
-        const validPrefix = opening === "{"
-          ? scanIncompleteLeadingObjectToolIds(nested, trailingSource) !== undefined
-          : isValidIncompleteArrayPrefix(nested, trailingSource);
-        if (!validPrefix) return undefined;
-        break;
-      }
-      if (valueEnd === null) return undefined;
-      index = valueEnd;
-    } else {
-      while (
-        index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "}"
-      ) index += 1;
-      // A bare token that reaches the window edge is itself incomplete, while a
-      // token that is not a JSON scalar is invalid member syntax.
-      if (index >= fieldBody.length) {
-        if (!scalarPrefixCanContinue(fieldBody.slice(valueStart).trim(), trailingSource)) {
-          return undefined;
-        }
-        break;
-      }
-      if (!CONTRACT_FACT_SCALAR_PATTERN.test(fieldBody.slice(valueStart, index).trim())) {
-        return undefined;
-      }
-    }
-
-    while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    const member = scanObjectMember(fieldBody, index, trailingSource, depth);
+    if (member.status === "invalid") return undefined;
+    if (member.status === "incomplete") break;
+    addObjectMemberToolId(ids, member);
+    index = skipWhitespace(fieldBody, member.next);
     if (index >= fieldBody.length) {
-      if (
-        trailingSource !== undefined && trailingSource.length > 0 &&
-        !/[\s,}]/.test(trailingSource[0]!)
-      ) return undefined;
+      if (!windowCanContinueObject(trailingSource)) return undefined;
       break;
     }
     if (fieldBody[index] !== ",") return undefined;
@@ -664,36 +747,30 @@ function addToolArrayFieldValues(
     if (match.index < coveredUntil) continue;
     const fieldName = match[1];
     const bodyStart = match.index + match[0].length;
-    const boundedBody = text.slice(
-      bodyStart,
-      bodyStart + CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT,
-    );
-    const closingBracket = findOuterArrayClosingBracket(boundedBody);
-    const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
-    addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
+    const windowBody = text.slice(bodyStart);
+    const closingBracket = findOuterArrayClosingBracket(windowBody);
     if (closingBracket !== -1) {
+      addToolIdsFromFieldBody(
+        target,
+        windowBody.slice(0, closingBracket),
+        fieldName === "tools",
+      );
       coveredUntil = bodyStart + closingBracket + 1;
     } else {
       // Scan each outer array at most once. Complete sequential arrays occupy
       // disjoint ranges, while one unclosed outer array covers the rest of the
       // bounded window. This reaches facts in every long declaration without
       // letting nested opener-like text turn the work quadratic.
-      const windowBody = text.slice(bodyStart);
-      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-      const scanned = scanCompleteLeadingArrayValues(
-        windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
-      );
-      addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
-      if (fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject) {
+      if (allowIncompleteLeadingObject) {
+        const scanned = scanCompleteLeadingArrayValues(windowBody);
+        addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
         addToolIdsFromIncompleteLeadingObject(
           target,
           windowBody.slice(scanned.nextIndex),
           trailingSource,
         );
       }
-      coveredUntil = windowClosingBracket === -1
-        ? text.length
-        : bodyStart + windowClosingBracket + 1;
+      coveredUntil = text.length;
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
@@ -709,28 +786,13 @@ function addProviderToolArrayFieldValues(
   for (const match of text.matchAll(pattern)) {
     if (match.index < coveredUntil) continue;
     const bodyStart = match.index + match[0].length;
-    const boundedBody = text.slice(
-      bodyStart,
-      bodyStart + CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT,
-    );
-    const closingBracket = findOuterArrayClosingBracket(boundedBody);
-    const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
-    addToolIdsFromParsedArray(target, parseCompleteLeadingArrayValues(fieldBody), false);
+    const windowBody = text.slice(bodyStart);
+    const closingBracket = findOuterArrayClosingBracket(windowBody);
     if (closingBracket !== -1) {
+      addToolIdsFromFieldBody(target, windowBody.slice(0, closingBracket), false);
       coveredUntil = bodyStart + closingBracket + 1;
     } else {
-      const windowBody = text.slice(bodyStart);
-      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-      if (windowClosingBracket !== -1) {
-        addToolIdsFromParsedArray(
-          target,
-          parseCompleteLeadingArrayValues(windowBody.slice(0, windowClosingBracket)),
-          false,
-        );
-      }
-      coveredUntil = windowClosingBracket === -1
-        ? text.length
-        : bodyStart + windowClosingBracket + 1;
+      coveredUntil = text.length;
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
@@ -740,11 +802,45 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
   return value !== undefined && !FIELD_SEPARATOR_PATTERN.test(value) && !/["'`]/.test(value);
 }
 
-function boundedContractFactWindows(text: string): string[] {
+function quoteAtEnd(text: string): string | undefined {
+  let quote: string | undefined;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index]!;
+    if (quote === undefined) {
+      if (character === '"' || character === "'") quote = character;
+      continue;
+    }
+    if (character === "\\") {
+      index += 1;
+    } else if (character === quote) {
+      quote = undefined;
+    }
+  }
+  return quote;
+}
+
+function findTailQuoteBoundary(text: string, start: number, quote: string): number | undefined {
+  let quoteStart = start - 1;
+  while (quoteStart < text.length) {
+    const quoteEnd = scanQuotedValueEnd(text, quoteStart, quote);
+    if (quoteEnd === undefined) return undefined;
+    if (quoteEnd === text.length || /[\s,}\];]/.test(text[quoteEnd]!)) return quoteEnd;
+    quoteStart = quoteEnd - 1;
+  }
+  return undefined;
+}
+
+function boundedContractFactWindows(text: string, headLength: number): string[] {
   if (text.length <= CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT) return [text];
 
-  const windowLength = CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2;
-  let tailStart = text.length - windowLength;
+  let tailStart = text.length - (CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT - headLength);
+  const head = text.slice(0, headLength);
+  const openQuote = quoteAtEnd(head);
+  if (openQuote !== undefined) {
+    const quoteEnd = findTailQuoteBoundary(text, tailStart, openQuote);
+    if (quoteEnd === undefined) return [head, ""];
+    tailStart = quoteEnd;
+  }
   while (
     tailStart < text.length && isContractFactTokenCharacter(text[tailStart - 1]) &&
     isContractFactTokenCharacter(text[tailStart])
@@ -752,7 +848,7 @@ function boundedContractFactWindows(text: string): string[] {
     tailStart += 1;
   }
 
-  return [text.slice(0, windowLength), text.slice(tailStart)];
+  return [head, text.slice(tailStart)];
 }
 
 function windowStartsAtFieldBoundary(text: string, window: string): boolean {
@@ -783,6 +879,94 @@ function contractFactsOrUndefined(input: {
   return Object.keys(facts).length > 0 ? facts : undefined;
 }
 
+function patternForWindow(
+  source: string,
+  window: string,
+  index: number,
+  primaryPattern: RegExp,
+  tailPattern: RegExp,
+): RegExp {
+  return index === 0 || windowStartsAtFieldBoundary(source, window) ? primaryPattern : tailPattern;
+}
+
+function addFieldFactsAcrossWindows(
+  target: string[],
+  source: string,
+  windows: string[],
+  primaryPattern: RegExp,
+  tailPattern: RegExp,
+  headTrailingCharacter?: string,
+): void {
+  windows.forEach((window, index) => {
+    addPatternMatches(
+      target,
+      window,
+      patternForWindow(source, window, index, primaryPattern, tailPattern),
+      1,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
+  });
+}
+
+function addPatternFactsAcrossWindows(
+  target: string[],
+  windows: string[],
+  pattern: RegExp,
+  group: number,
+  headTrailingCharacter?: string,
+): void {
+  windows.forEach((window, index) => {
+    addPatternMatches(
+      target,
+      window,
+      pattern,
+      group,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
+  });
+}
+
+function addToolFactsAcrossWindows(
+  target: string[],
+  source: string,
+  windows: string[],
+  trailingSource: string | undefined,
+): void {
+  windows.forEach((window, index) => {
+    const pattern = patternForWindow(
+      source,
+      window,
+      index,
+      TOOL_IDS_FIELD_PATTERN,
+      TOOL_IDS_FIELD_TAIL_PATTERN,
+    );
+    addToolArrayFieldValues(
+      target,
+      window,
+      pattern,
+      index === 0 && !!trailingSource,
+      trailingSource,
+    );
+  });
+}
+
+function addProviderToolFactsAcrossWindows(
+  target: string[],
+  source: string,
+  windows: string[],
+): void {
+  windows.forEach((window, index) => {
+    const pattern = patternForWindow(
+      source,
+      window,
+      index,
+      PROVIDER_TOOL_IDS_FIELD_PATTERN,
+      PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN,
+    );
+    addProviderToolArrayFieldValues(target, window, pattern);
+  });
+}
+
 /** Extract structured contract facts from a bounded head-and-tail text window. */
 export function extractChildRunContractFacts(text: string): ChildRunContractFacts | undefined {
   const modelIds: string[] = [];
@@ -790,9 +974,10 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
   const providerToolIds: string[] = [];
   const importPaths: string[] = [];
 
-  const windows = boundedContractFactWindows(text);
+  const headLength = CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2;
+  const windows = boundedContractFactWindows(text, headLength);
   const headTrailingCharacter = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
-    ? text[CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2]
+    ? text[headLength]
     : undefined;
   // Structured array parsing validates its own token boundaries. Keep a raw
   // head so trimming cannot hide malformed syntax after an id, and devote the
@@ -800,95 +985,41 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
   // opener when its critical id is placed near the end.
   const toolHeadLength = CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 4;
   const toolWindows = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
-    ? [
-      text.slice(0, toolHeadLength),
-      text.slice(text.length - (CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT - toolHeadLength)),
-    ]
+    ? boundedContractFactWindows(text, toolHeadLength)
     : windows;
   // A tail window starts at a cut, not at the start of the child result, so it
   // matches with patterns that drop the start-of-text alternative. A field at
   // the start of a tail line still matches through its preceding newline.
-  for (let index = 0; index < windows.length; index++) {
-    const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, windows[index]!)
-      ? MODEL_FIELD_PATTERN
-      : MODEL_FIELD_TAIL_PATTERN;
-    addPatternMatches(
-      modelIds,
-      windows[index]!,
-      fieldPattern,
-      1,
-      index === 0 ? headTrailingCharacter : undefined,
-    );
-  }
-  for (let index = 0; index < windows.length; index++) {
-    addPatternMatches(
-      modelIds,
-      windows[index]!,
-      MODEL_ID_PATTERN,
-      0,
-      index === 0 ? headTrailingCharacter : undefined,
-    );
-  }
-  for (let index = 0; index < toolWindows.length; index++) {
-    const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, toolWindows[index]!)
-      ? TOOL_IDS_FIELD_PATTERN
-      : TOOL_IDS_FIELD_TAIL_PATTERN;
-    addToolArrayFieldValues(
-      toolIds,
-      toolWindows[index]!,
-      fieldPattern,
-      text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT && index === 0,
-      index === 0 && text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
-        ? text.slice(toolHeadLength, toolHeadLength + 5)
-        : undefined,
-    );
-  }
-  for (let index = 0; index < windows.length; index++) {
-    const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, windows[index]!)
-      ? PROVIDER_TOOL_IDS_FIELD_PATTERN
-      : PROVIDER_TOOL_IDS_FIELD_TAIL_PATTERN;
-    addProviderToolArrayFieldValues(
-      providerToolIds,
-      windows[index]!,
-      fieldPattern,
-    );
-  }
-  for (let index = 0; index < windows.length; index++) {
-    addPatternMatches(
-      toolIds,
-      windows[index]!,
-      INTEGRATION_TOOL_ID_PATTERN,
-      0,
-      index === 0 ? headTrailingCharacter : undefined,
-    );
-  }
-  for (let index = 0; index < windows.length; index++) {
-    addPatternMatches(
-      importPaths,
-      windows[index]!,
-      IMPORT_FROM_PATTERN,
-      1,
-      index === 0 ? headTrailingCharacter : undefined,
-    );
-  }
-  for (let index = 0; index < windows.length; index++) {
-    addPatternMatches(
-      importPaths,
-      windows[index]!,
-      BARE_IMPORT_PATTERN,
-      1,
-      index === 0 ? headTrailingCharacter : undefined,
-    );
-  }
-  for (let index = 0; index < windows.length; index++) {
-    addPatternMatches(
-      importPaths,
-      windows[index]!,
-      DYNAMIC_IMPORT_PATTERN,
-      1,
-      index === 0 ? headTrailingCharacter : undefined,
-    );
-  }
+  addFieldFactsAcrossWindows(
+    modelIds,
+    text,
+    windows,
+    MODEL_FIELD_PATTERN,
+    MODEL_FIELD_TAIL_PATTERN,
+    headTrailingCharacter,
+  );
+  addPatternFactsAcrossWindows(modelIds, windows, MODEL_ID_PATTERN, 0, headTrailingCharacter);
+  const toolTrailingSource = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
+    ? text.slice(toolHeadLength, toolHeadLength + 5)
+    : undefined;
+  addToolFactsAcrossWindows(toolIds, text, toolWindows, toolTrailingSource);
+  addProviderToolFactsAcrossWindows(providerToolIds, text, windows);
+  addPatternFactsAcrossWindows(
+    toolIds,
+    windows,
+    INTEGRATION_TOOL_ID_PATTERN,
+    0,
+    headTrailingCharacter,
+  );
+  addPatternFactsAcrossWindows(importPaths, windows, IMPORT_FROM_PATTERN, 1, headTrailingCharacter);
+  addPatternFactsAcrossWindows(importPaths, windows, BARE_IMPORT_PATTERN, 1, headTrailingCharacter);
+  addPatternFactsAcrossWindows(
+    importPaths,
+    windows,
+    DYNAMIC_IMPORT_PATTERN,
+    1,
+    headTrailingCharacter,
+  );
 
   return contractFactsOrUndefined({
     modelIds,
