@@ -1,5 +1,9 @@
 import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudBootstrap,
+  normalizeVeryfrontApiBaseUrl,
+  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
+} from "#veryfront/platform/cloud/resolver.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -210,15 +214,25 @@ export function parseVeryfrontCloudModelId(
   };
 }
 
-export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
+export function requireVeryfrontCloudBootstrap(
+  apiTokenOverride?: string,
+  inferenceApiBaseUrlOverride?: string,
+): {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug?: string;
 } {
   const bootstrap = getVeryfrontCloudBootstrap();
+  const normalizedInferenceApiBaseUrlOverride = inferenceApiBaseUrlOverride === undefined
+    ? undefined
+    : normalizeVeryfrontApiBaseUrl(inferenceApiBaseUrlOverride) ?? inferenceApiBaseUrlOverride;
+  const apiBaseUrl = apiTokenOverride
+    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontPublicApiBaseUrlFromHostEnv() ??
+      bootstrap.apiBaseUrl
+    : bootstrap.apiBaseUrl;
 
   if (apiTokenOverride) {
-    requireSecureInferenceApiBaseUrl(bootstrap.apiBaseUrl);
+    requireSecureInferenceApiBaseUrl(apiBaseUrl);
   }
 
   const apiToken = apiTokenOverride ?? bootstrap.apiToken;
@@ -234,7 +248,7 @@ export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
   }
 
   return {
-    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiBaseUrl,
     apiToken,
     projectSlug: bootstrap.projectSlug,
   };

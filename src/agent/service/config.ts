@@ -19,6 +19,7 @@ export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
 /** Configuration used by agent service. */
 export type AgentServiceConfig = {
   VERYFRONT_API_URL: string;
+  VERYFRONT_PUBLIC_API_BASE_URL?: string;
   VERYFRONT_MCP_URL: string;
   VERYFRONT_API_TOKEN?: string;
   VERYFRONT_PROJECT_ID?: string;
@@ -66,6 +67,7 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
 
   return v.object({
     VERYFRONT_API_URL: v.string().url().default("https://api.veryfront.com"),
+    VERYFRONT_PUBLIC_API_BASE_URL: v.string().url().optional(),
     VERYFRONT_API_TOKEN: v.string().min(1).optional(),
     VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
     VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
@@ -108,6 +110,7 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     OTEL_EXPORTER_OTLP_ENDPOINT: v.string().optional(),
   }).transform((env) => ({
     VERYFRONT_API_URL: env.VERYFRONT_API_URL,
+    VERYFRONT_PUBLIC_API_BASE_URL: env.VERYFRONT_PUBLIC_API_BASE_URL,
     VERYFRONT_MCP_URL: buildVeryfrontMcpUrl(env.VERYFRONT_API_URL),
     VERYFRONT_API_TOKEN: env.VERYFRONT_API_TOKEN,
     VERYFRONT_PROJECT_ID: env.VERYFRONT_PROJECT_ID,

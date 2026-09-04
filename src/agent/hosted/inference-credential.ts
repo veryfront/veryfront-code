@@ -24,6 +24,7 @@ export function registerHostedInferenceCredential(
 /** @internal Create a model resolver without exposing verified inference authority. */
 export function createVeryfrontCloudInferenceModelResolver(
   credential: string,
+  options: { apiBaseUrl?: string } = {},
 ): AgentModelRuntimeResolver {
   let active = true;
   const resolver: AgentModelRuntimeResolver = (modelId) => {
@@ -35,6 +36,7 @@ export function createVeryfrontCloudInferenceModelResolver(
       modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length),
       credential,
       {
+        ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
         assertInferenceCredentialActive() {
           if (!active) {
             throw new TypeError("Run-scoped inference credential is no longer active");
@@ -52,9 +54,10 @@ export function createVeryfrontCloudInferenceModelResolver(
 /** @internal Create a model resolver without exposing verified inference authority. */
 export function createHostedInferenceModelResolver(
   request: ParsedHostedChatRequest,
+  options: { apiBaseUrl?: string } = {},
 ): AgentModelRuntimeResolver | undefined {
   const storedCredential = inferenceCredentials.get(request);
   return typeof storedCredential === "string"
-    ? createVeryfrontCloudInferenceModelResolver(storedCredential)
+    ? createVeryfrontCloudInferenceModelResolver(storedCredential, options)
     : undefined;
 }
