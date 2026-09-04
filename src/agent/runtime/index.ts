@@ -105,7 +105,10 @@ import {
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
-import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -269,6 +272,7 @@ import {
   accumulateUsage,
   getMaxSteps,
   normalizeInput,
+  propagateSyntheticMessageMarks,
   resolveValidatedTurnInput,
 } from "./input-utils.ts";
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
@@ -303,6 +307,7 @@ const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicStructuredClone = globalThis.structuredClone;
 const IntrinsicReadableStream = ReadableStream;
 const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
@@ -1437,9 +1442,19 @@ export class AgentRuntime {
     const rollbackMemory = validateTurnMessages
       ? captureMemoryRollback(this.memory, history)
       : undefined;
+    const committedInputMessages = inputMessages.map((message) => {
+      const cloned = IntrinsicStructuredClone(message) as Message;
+      propagateSyntheticMessageMarks(message, cloned);
+      return isRuntimeGeneratedUserMessage(message)
+        ? markRuntimeGeneratedUserMessage(cloned)
+        : cloned;
+    });
+    if (validateTurnMessages && history.length > 0) {
+      validated = [...history, ...committedInputMessages];
+    }
     let persisted: Message[];
     try {
-      for (const msg of inputMessages) await this.memory.add(msg);
+      for (const msg of committedInputMessages) await this.memory.add(msg);
       persisted = await this.memory.getMessages();
     } catch (error) {
       rollbackMemory?.commit();
@@ -1457,7 +1472,7 @@ export class AgentRuntime {
         // notably when summary memory compacts old messages. If validation of
         // that provider-visible form fails, restore the pre-turn transcript so
         // neither the rejected input nor the failed compaction is retained.
-        await rollbackMemory?.rollback(new Set(inputMessages));
+        await rollbackMemory?.rollback(new Set(committedInputMessages));
         throw error;
       }
     }
