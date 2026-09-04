@@ -93,15 +93,26 @@ const StringPrototypeTrim = String.prototype.trim;
 const NativeSet = Set;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
+const ObjectDefineProperty = Object.defineProperty;
+
+// Indexed assignment (parts[parts.length] = ...) still isn't safe: with no own
+// property at that index yet, [[Set]] walks the prototype chain and invokes an
+// inherited accessor there instead of creating an own property. Object.defineProperty
+// uses [[DefineOwnProperty]], which never consults the prototype chain.
+function appendEntry(parts: string[], value: string): void {
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [parts, parts.length, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  }]);
+}
 
 // String.prototype.split(sep) looks up sep[Symbol.split] even for a string
 // literal separator (it boxes the primitive to do so), so a captured .split
 // reference is still steerable by a same-realm String.prototype[Symbol.split].
 // indexOf/slice take no such detour.
 function splitOnCommas(value: string): string[] {
-  // Indexed writes, not .push(): a replaced Array.prototype.push is an
-  // ordinary same-realm method override, unlike Symbol.split's boxed-argument
-  // dispatch above -- assigning parts[parts.length] never looks it up.
   const parts: string[] = [];
   let start = 0;
   while (true) {
@@ -110,13 +121,13 @@ function splitOnCommas(value: string): string[] {
       start,
     ]) as number;
     if (commaIndex === -1) {
-      parts[parts.length] = IntrinsicReflectApply(StringPrototypeSlice, value, [start]) as string;
+      appendEntry(parts, IntrinsicReflectApply(StringPrototypeSlice, value, [start]) as string);
       return parts;
     }
-    parts[parts.length] = IntrinsicReflectApply(StringPrototypeSlice, value, [
-      start,
-      commaIndex,
-    ]) as string;
+    appendEntry(
+      parts,
+      IntrinsicReflectApply(StringPrototypeSlice, value, [start, commaIndex]) as string,
+    );
     start = commaIndex + 1;
   }
 }

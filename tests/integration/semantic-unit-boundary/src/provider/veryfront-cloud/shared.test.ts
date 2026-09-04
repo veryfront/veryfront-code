@@ -237,4 +237,45 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
       }
     },
   );
+
+  it(
+    "is not fooled by an inherited Array.prototype index setter into swallowing a parsed entry",
+    async () => {
+      const originalDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      let setterCalledWith: unknown;
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set(value) {
+          setterCalledWith = value;
+        },
+        get() {
+          return undefined;
+        },
+      });
+      try {
+        await withEnv(
+          {
+            [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]:
+              "http://some-service.some-namespace.svc.cluster.local",
+          },
+          // deno-lint-ignore require-await
+          async () => {
+            assertEquals(setterCalledWith, undefined);
+            assertEquals(
+              isHostAllowedInternalProviderOrigin(
+                new URL("http://some-service.some-namespace.svc.cluster.local/ai/gateway"),
+              ),
+              true,
+            );
+          },
+        );
+      } finally {
+        if (originalDescriptor) {
+          Object.defineProperty(Array.prototype, "0", originalDescriptor);
+        } else {
+          delete (Array.prototype as Record<PropertyKey, unknown>)["0"];
+        }
+      }
+    },
+  );
 });
