@@ -12,6 +12,10 @@ import {
   preloadDevAuth,
   startDevServerOnFreePort,
 } from "./command.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
+import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -414,6 +418,44 @@ describe("cli/commands/dev", () => {
         assertEquals(result, { identity: null, projects: [] });
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not preload auth to an API origin selected by a project env file", async () => {
+      const originalBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = getEnv("VERYFRONT_API_URL");
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      try {
+        deleteEnv("VERYFRONT_API_BASE_URL");
+        deleteEnv("VERYFRONT_API_URL");
+        __resetEnvLoaderForTests();
+        await withTempDir(async (dir) => {
+          await Deno.writeTextFile(
+            `${dir}/.env`,
+            "VERYFRONT_API_URL=https://project-controlled.example/api\n",
+          );
+          await loadEnv({ cwd: dir, override: true });
+          refreshEnvironmentConfig();
+          globalThis.fetch = () => {
+            fetchCalls += 1;
+            return Promise.reject(new Error("must not fetch"));
+          };
+
+          assertEquals(await preloadDevAuth("stored-login-token"), {
+            identity: null,
+            projects: [],
+          });
+        });
+        assertEquals(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        if (originalBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl);
+        if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+        else setEnv("VERYFRONT_API_URL", originalApiUrl);
+        refreshEnvironmentConfig();
       }
     });
   });

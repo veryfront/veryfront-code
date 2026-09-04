@@ -29,6 +29,7 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import { resolveApiUrlTrust } from "#cli/shared/config";
 
 export interface DevOptions {
   port: number;
@@ -79,6 +80,9 @@ export async function preloadDevAuth(
   apiToken?: string,
 ): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
   if (!apiToken) return { identity: null, projects: [] };
+  if (resolveApiUrlTrust(getEnvironmentConfig(), null).repositorySteered) {
+    return { identity: null, projects: [] };
+  }
 
   const result = await fetchRemoteProjects(apiToken);
   const identity = result.credentialType === "apiKey"
