@@ -6,6 +6,7 @@ import {
   agentServiceConfigSchema,
   parseAgentServiceConfig,
   parseHostedAgentServiceConfig,
+  resolveAgentServiceInferenceApiBaseUrl,
 } from "./config.ts";
 
 describe("agent/agent-service-config", () => {
@@ -27,6 +28,26 @@ describe("agent/agent-service-config", () => {
     const config = parseAgentServiceConfig({});
 
     assertEquals(config.VERYFRONT_API_URL, "https://api.veryfront.com");
+    assertEquals(config.VERYFRONT_PUBLIC_API_BASE_URL, undefined);
+  });
+
+  it("keeps inference routing inside the parsed service environment", () => {
+    const isolated = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "http://isolated-control-plane.internal",
+    });
+    assertEquals(
+      resolveAgentServiceInferenceApiBaseUrl(isolated),
+      "http://isolated-control-plane.internal",
+    );
+
+    const publicRoute = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "http://isolated-control-plane.internal",
+      VERYFRONT_PUBLIC_API_BASE_URL: "https://isolated-public-api.example",
+    });
+    assertEquals(
+      resolveAgentServiceInferenceApiBaseUrl(publicRoute),
+      "https://isolated-public-api.example",
+    );
   });
 
   it("exposes agent service aliases without the hosted prefix", () => {
@@ -80,6 +101,7 @@ describe("agent/agent-service-config", () => {
   it("normalizes derived URLs, booleans, port, and origins", () => {
     const config = parseHostedAgentServiceConfig({
       VERYFRONT_API_URL: "https://api.example.com",
+      VERYFRONT_PUBLIC_API_BASE_URL: "https://public-api.example.com",
       NODE_ENV: "production",
       PORT: "4200",
       OAUTH_PUBLIC_KEY: "public-key",
@@ -111,6 +133,7 @@ describe("agent/agent-service-config", () => {
     });
 
     assertEquals(config.VERYFRONT_API_URL, "https://api.example.com");
+    assertEquals(config.VERYFRONT_PUBLIC_API_BASE_URL, "https://public-api.example.com");
     assertEquals(config.VERYFRONT_MCP_URL, "https://api.example.com/mcp");
     assertEquals(config.NODE_ENV, "production");
     assertEquals(config.PORT, 4200);
@@ -162,5 +185,8 @@ describe("agent/agent-service-config", () => {
 
   it("rejects invalid API URLs", () => {
     assertThrows(() => parseHostedAgentServiceConfig({ VERYFRONT_API_URL: "not-a-url" }));
+    assertThrows(() =>
+      parseHostedAgentServiceConfig({ VERYFRONT_PUBLIC_API_BASE_URL: "not-a-url" })
+    );
   });
 });
