@@ -6,6 +6,7 @@ import { agent, resolveSecurityMiddleware } from "./factory.ts";
 import { agentAsTool } from "./composition/composition.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import { ConversationMemory } from "./memory/index.ts";
+import { cacheMiddleware } from "./middleware/cache/cache.ts";
 import type { AgentContext, AgentMiddleware, AgentResponse, Message } from "./types.ts";
 
 function createDummyMiddleware(label: string): AgentMiddleware {
@@ -551,6 +552,53 @@ describe("resolveSecurityMiddleware", () => {
       1,
       "a short-circuited turn must still record its user message",
     );
+  });
+
+  it("reuses and streams cached string-input responses across synthetic ids", async () => {
+    let streams = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/stream-cache-synthetic-id",
+      async doGenerate() {
+        throw new Error("Expected streaming path");
+      },
+      // deno-lint-ignore require-await
+      async doStream() {
+        streams += 1;
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "cached answer" },
+            { type: "finish" },
+          ]),
+        };
+      },
+    };
+    const middleware = cacheMiddleware({ strategy: "memory" });
+    const assistant = agent({
+      id: "stream-cache-synthetic-id",
+      model: "hosted/stream-cache-synthetic-id",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      middleware: [middleware],
+      resolveModelTransport: async () => ({ model }),
+    });
+    const originalNow = Date.now;
+    try {
+      Date.now = () => 1_000;
+      const first = await (await assistant.stream({ input: "hello" }))
+        .toDataStreamResponse().text();
+      Date.now = () => 2_000;
+      const second = await (await assistant.stream({ input: "hello" }))
+        .toDataStreamResponse().text();
+
+      assertEquals(streams, 1);
+      assertStringIncludes(first, "cached answer");
+      assertStringIncludes(second, "cached answer");
+    } finally {
+      Date.now = originalNow;
+      middleware.destroy();
+    }
   });
 
   it("persists a turn once when a middleware invokes the continuation twice", async () => {

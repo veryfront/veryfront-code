@@ -499,7 +499,7 @@ function extractAdjacentRuns(messages: Message[], role: Message["role"]): Messag
       flushRun();
       continue;
     }
-    if (isBlankText(message)) continue;
+    if (role === "system" ? isEmptySystemText(message) : isBlankText(message)) continue;
     run.push(message);
   }
   flushRun();
@@ -513,6 +513,10 @@ function messageTextParts(message: Message): string[] {
 
 function isBlankText(message: Message): boolean {
   return messageTextParts(message).join("").trim().length === 0;
+}
+
+function isEmptySystemText(message: Message): boolean {
+  return messageTextParts(message).join("").length === 0;
 }
 
 /**
@@ -536,10 +540,10 @@ function isBlankText(message: Message): boolean {
 function extractMergedSystemRuns(messages: Message[]): Message[][] {
   const runs = extractAdjacentRuns(messages, "system");
 
-  // Mirror the converters' blank handling: a system message whose assembled
-  // text is blank is dropped before the hoist, so it joins nothing.
+  // Anthropic retains whitespace-only system layers and joins each layer with
+  // a blank line. It drops only system layers whose assembled text is empty.
   const hoisted = messages.filter(
-    (message) => message.role === "system" && !isBlankText(message),
+    (message) => message.role === "system" && !isEmptySystemText(message),
   );
   // A single system message is covered by the per-message extraction.
   if (hoisted.length < 2) return runs;

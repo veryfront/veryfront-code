@@ -1875,10 +1875,21 @@ export class AgentRuntime {
             const response = await inFlight;
             // Turn persistence is the first thing the continuation does, so an
             // untouched flag means a middleware answered without calling
-            // `next()` (a cache hit). That turn was still accepted, so it must
-            // be committed here.
+            // `next()` (a cache hit). No provider stream ran, so replay the
+            // response text after committing the accepted turn.
+            const answeredWithoutContinuation = !turnPersistence.persisted;
             if (!turnPersistence.persisted) await turnPersistence.persist();
             throwIfAborted(streamAbortSignal);
+            if (answeredWithoutContinuation && response.text.length > 0) {
+              sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+              sendSSE(controller, encoder, {
+                type: "text-delta",
+                id: textPartId,
+                delta: response.text,
+              });
+              callbacks?.onChunk?.(response.text);
+              sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+            }
             callbacks?.onFinish?.(response);
             throwIfAborted(streamAbortSignal);
 
