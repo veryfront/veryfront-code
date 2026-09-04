@@ -297,8 +297,21 @@ function normalizeSingleQuotedJson(text: string): string {
 }
 
 function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
+  return scanCompleteLeadingArrayValues(fieldBody).values;
+}
+
+/**
+ * Parses complete leading array elements and reports where scanning stopped.
+ *
+ * `nextIndex` is the offset of the first element that was not consumed, so a
+ * caller can resume at the element the window cutoff left incomplete.
+ */
+function scanCompleteLeadingArrayValues(
+  fieldBody: string,
+): { values: unknown[]; nextIndex: number } {
   const values: unknown[] = [];
   let index = 0;
+  let nextIndex = 0;
 
   while (index < fieldBody.length) {
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
@@ -344,72 +357,102 @@ function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
 
     if (index >= fieldBody.length) break;
     index += 1;
+    nextIndex = index;
   }
 
-  return values;
+  return { values, nextIndex };
 }
 
-function addToolIdsFromIncompleteLeadingObject(target: string[], fieldBody: string): void {
+function scanNestedArrayOrObjectEnd(fieldBody: string, start: number): number | undefined {
+  const closings = [fieldBody[start] === "{" ? "}" : "]"];
+  let index = start + 1;
+
+  while (index < fieldBody.length && closings.length > 0) {
+    const character = fieldBody[index];
+    if (character === '"' || character === "'") {
+      const end = scanQuotedValueEnd(fieldBody, index, character);
+      if (end === undefined) return undefined;
+      index = end;
+      continue;
+    }
+    index += 1;
+    if (character === "{") closings.push("}");
+    else if (character === "[") closings.push("]");
+    else if (character === closings[closings.length - 1]) closings.pop();
+  }
+
+  return closings.length > 0 ? undefined : index;
+}
+
+/**
+ * Scans a tool object that the bounded window left unclosed.
+ *
+ * Ids are returned only when the scan runs out of window without meeting
+ * invalid member syntax, so an object whose members stop parsing contributes
+ * nothing even when an id appears before the malformed text. A completed
+ * object returns nothing because complete elements are parsed separately.
+ */
+function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undefined {
+  const ids: string[] = [];
   let index = 0;
   while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-  if (fieldBody[index] !== "{") return;
+  if (fieldBody[index] !== "{") return undefined;
   index += 1;
 
   while (index < fieldBody.length) {
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (fieldBody[index] === "}") return;
+    if (index >= fieldBody.length) break;
     const keyQuote = fieldBody[index];
-    if (keyQuote !== '"' && keyQuote !== "'") return;
+    if (keyQuote !== '"' && keyQuote !== "'") return undefined;
     const keyEnd = scanQuotedValueEnd(fieldBody, index, keyQuote);
-    if (keyEnd === undefined) return;
+    if (keyEnd === undefined) break;
     const key = parseQuotedScalar(fieldBody, index, keyEnd, keyQuote);
     index = keyEnd;
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (fieldBody[index] !== ":") return;
+    if (index >= fieldBody.length) break;
+    if (fieldBody[index] !== ":") return undefined;
     index += 1;
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
+    if (index >= fieldBody.length) break;
 
     const valueStart = index;
     const opening = fieldBody[index];
     if (opening === '"' || opening === "'") {
       const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
-      if (valueEnd === undefined) return;
-      if (key === "id" || key === "name") {
-        const value = parseQuotedScalar(fieldBody, index, valueEnd, opening);
-        if (value !== undefined) addToolIdFact(target, value);
-      }
+      if (valueEnd === undefined) break;
+      const value = key === "id" || key === "name"
+        ? parseQuotedScalar(fieldBody, index, valueEnd, opening)
+        : undefined;
+      if (value !== undefined && ids.length < CHILD_RUN_CONTRACT_FACT_LIMIT) ids.push(value);
       index = valueEnd;
     } else if (opening === "{" || opening === "[") {
-      const closings = [opening === "{" ? "}" : "]"];
-      index += 1;
-      while (index < fieldBody.length && closings.length > 0) {
-        const character = fieldBody[index];
-        if (character === '"' || character === "'") {
-          const end = scanQuotedValueEnd(fieldBody, index, character);
-          if (end === undefined) return;
-          index = end;
-          continue;
-        }
-        index += 1;
-        if (character === "{") closings.push("}");
-        else if (character === "[") closings.push("]");
-        else if (character === closings[closings.length - 1]) closings.pop();
-      }
-      if (closings.length > 0) return;
+      const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
+      if (valueEnd === undefined) break;
+      index = valueEnd;
     } else {
       while (
         index < fieldBody.length && fieldBody[index] !== "," && fieldBody[index] !== "}"
       ) index += 1;
-      // A bare token that reaches the window edge may itself be truncated, and a
-      // token that is not a JSON scalar is invalid member syntax either way.
-      if (index >= fieldBody.length) return;
-      if (!CONTRACT_FACT_SCALAR_PATTERN.test(fieldBody.slice(valueStart, index).trim())) return;
+      // A bare token that reaches the window edge is itself incomplete, while a
+      // token that is not a JSON scalar is invalid member syntax.
+      if (index >= fieldBody.length) break;
+      if (!CONTRACT_FACT_SCALAR_PATTERN.test(fieldBody.slice(valueStart, index).trim())) {
+        return undefined;
+      }
     }
 
     while (/\s/.test(fieldBody[index] ?? "")) index += 1;
-    if (fieldBody[index] === "}") return;
-    if (fieldBody[index] !== ",") return;
+    if (index >= fieldBody.length) break;
+    if (fieldBody[index] !== ",") return undefined;
     index += 1;
+  }
+
+  return ids;
+}
+
+function addToolIdsFromIncompleteLeadingObject(target: string[], fieldBody: string): void {
+  for (const id of scanIncompleteLeadingObjectToolIds(fieldBody) ?? []) {
+    addToolIdFact(target, id);
   }
 }
 
@@ -484,17 +527,14 @@ function addToolArrayFieldValues(
       extendedScans += 1;
       const windowBody = text.slice(bodyStart);
       const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-      addToolIdsFromParsedArray(
-        target,
-        parseCompleteLeadingArrayValues(
-          windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
-        ),
-        fieldName === "tools",
+      const scanned = scanCompleteLeadingArrayValues(
+        windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
       );
+      addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
       if (
         fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject
       ) {
-        addToolIdsFromIncompleteLeadingObject(target, windowBody);
+        addToolIdsFromIncompleteLeadingObject(target, windowBody.slice(scanned.nextIndex));
       }
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;

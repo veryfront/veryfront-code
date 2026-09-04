@@ -315,6 +315,23 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
     });
 
+    it("stops an incomplete leading object at invalid syntax after an ID", () => {
+      const text = 'tools: [{"id":"bogus_tool" garbage ' + "y ".repeat(70_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("resumes the incomplete object scan at the element crossing the cutoff", () => {
+      const text = 'tools: [{"id":"first_tool"},{"id":"critical_tool","description":"' +
+        "y ".repeat(70_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["first_tool", "critical_tool"] });
+    });
+
     it("prioritizes declared tool arrays across windows over integration matches", () => {
       const integrations = Array.from(
         { length: 50 },
