@@ -3999,6 +3999,61 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates.release?.status, "running");
     });
 
+    it("tracks ownerless descendants from a completed callback-defined map", async () => {
+      const nodes: WorkflowNode[] = [
+        map("orders", {
+          items: [{}],
+          processor: {
+            id: "order-workflow",
+            steps: () => [waitForApproval("review", { message: "Map review" })],
+          },
+        }),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("orders_0/review", { message: "Release review" })],
+            },
+          }),
+          dependsOn: ["orders"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            orders: {
+              nodeId: "orders",
+              status: "completed",
+              output: [{}],
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            orders_0: {
+              nodeId: "orders_0",
+              status: "completed",
+              output: { "orders_0/review": { approved: true } },
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "orders_0/review": {
+              nodeId: "orders_0/review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "orders_0/review");
+      assertEquals(result.nodeStates.release?.status, "running");
+    });
+
     it("does not seed a completed parallel child into a later sub-workflow", async () => {
       const nodes: WorkflowNode[] = [
         parallel("group", [waitForApproval("review", { message: "Group review" })]),

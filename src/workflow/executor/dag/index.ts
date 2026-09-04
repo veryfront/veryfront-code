@@ -480,6 +480,17 @@ function reservationOwnerStatus(
   return ownerNodeId === undefined ? undefined : nodeStates[ownerNodeId]?.status;
 }
 
+function collectRecordedDescendantIds(
+  parentId: string,
+  nodeStates: Readonly<Record<string, NodeState>>,
+  target: Set<string>,
+): void {
+  const prefix = `${parentId}/`;
+  for (const nodeId of Object.keys(nodeStates)) {
+    if (nodeId.startsWith(prefix)) target.add(nodeId);
+  }
+}
+
 function collectCompletedCompositeChildIds(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -515,6 +526,16 @@ function collectCompletedCompositeChildIds(
           if (nodeStates[wrapperId] === undefined) continue;
           target.add(wrapperId);
           const processor = node.config.processor;
+          if (
+            typeof processor === "object" && processor !== null && "steps" in processor &&
+            typeof processor.steps === "function"
+          ) {
+            // Callback-defined workflow descendants cannot be recovered from
+            // the definition after a restart. Their persisted, wrapper-prefixed
+            // node-state ids are the execution evidence for legacy checkpoints
+            // that predate explicit ownership metadata.
+            collectRecordedDescendantIds(wrapperId, nodeStates, target);
+          }
           if (
             typeof processor === "object" && processor !== null && "steps" in processor &&
             Array.isArray(processor.steps)
@@ -721,6 +742,12 @@ function collectCompositeMapStateEvidence(
         if (wrapper === undefined) continue;
         for (const descendantId of collectWorkflowNodeIds([wrapper])) {
           declaredIds.add(descendantId);
+        }
+        if (
+          typeof processor === "object" && processor !== null && "steps" in processor &&
+          typeof processor.steps === "function"
+        ) {
+          collectRecordedDescendantIds(wrapperId, nodeStates, declaredIds);
         }
         collectCompositeSubWorkflowOwnerPaths([wrapper], parentPath, allowedOwnerPaths);
         collectCompositeMapStateEvidence(
