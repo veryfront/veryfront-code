@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
-import { makeTempDir } from "#veryfront/testing/deno-compat";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { parse } from "npm:@babel/parser@7.29.2";
 import { stat as statNativeFile } from "node:fs/promises";
 import {
@@ -855,23 +855,21 @@ Deno.test(
 );
 
 Deno.test(
-  "main creates package.json for a project that has no manifest",
+  "main refuses to create package.json through a mutable parent path",
   async () => {
     const project = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     try {
       await Deno.writeTextFile(`${project}/app.ts`, source);
 
-      await main(["--", project]);
-
-      // The manifest is created with the pin the rewrite depends on.
-      const pkg = JSON.parse(await Deno.readTextFile(`${project}/package.json`)) as {
-        dependencies?: Record<string, string>;
-      };
-      assertEquals(pkg.dependencies?.lodash, "4.17.21");
+      await assertRejects(
+        () => main(["--", project]),
+        Error,
+        "Create package.json in the project directory",
+      );
+      await assertRejects(() => Deno.lstat(`${project}/package.json`), Deno.errors.NotFound);
       const src = await Deno.readTextFile(`${project}/app.ts`);
-      assertStringIncludes(src, 'from "lodash"');
-      assert(!src.includes("esm.sh"));
+      assertEquals(src, source);
     } finally {
       await Deno.remove(project, { recursive: true });
     }
@@ -900,8 +898,13 @@ Deno.test(
       const error = await assertRejects(() => main(["--", project]), Error);
       assertStringIncludes(error.message, "Failed to read");
       assert(error.cause instanceof Error, "the underlying failure must survive as the cause");
-      // The fixed "... safely." text alone gives the operator nothing to act on.
-      assertStringIncludes(error.message, error.cause.message);
+      const failureKind = (error.cause as Error & { code?: string }).code ??
+        error.cause.name;
+      assertStringIncludes(error.message, failureKind);
+      assert(
+        !error.message.includes(error.cause.message),
+        "the wrapped error must not echo the filesystem error body",
+      );
     } finally {
       try {
         await Deno.chmod(srcPath, 0o644);
@@ -1218,15 +1221,20 @@ Deno.test("project writes support regular files on Windows", async () => {
   }
 });
 
-Deno.test("project writes create a missing manifest", async () => {
+Deno.test("project writes refuse a missing manifest", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
-    await writeTextFileInsideProject(target, await Deno.realPath(project), "{}\n", {
-      allowMissing: true,
-    });
-    assertEquals(await Deno.readTextFile(target), "{}\n");
-    assert((await Deno.lstat(target)).isFile, "the manifest must be a regular file");
+    const projectRoot = await Deno.realPath(project);
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "{}\n", {
+          allowMissing: true,
+        }),
+      Error,
+      "Create package.json in the project directory",
+    );
+    await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
   } finally {
     await Deno.remove(project, { recursive: true });
   }

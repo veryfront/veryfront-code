@@ -158,6 +158,13 @@ export interface StableFileIdentity {
   inode: string;
 }
 
+const MISSING_MANIFEST_GUIDANCE =
+  "Create package.json in the project directory, then run the codemod again.";
+
+class MissingManifestError extends Error {
+  override name = "MissingManifestError";
+}
+
 // ---------------------------------------------------------------------------
 // URL parsing
 // ---------------------------------------------------------------------------
@@ -620,10 +627,7 @@ async function writeTextFileInsideProjectOnWindows(
     file = await openNativeFile(path, "r+");
   } catch (error) {
     if (!allowMissing || !isNotFoundError(error)) throw error;
-    // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
-    // planted at the path, so creating an absent manifest stays contained.
-    file = await openNativeFile(path, "wx+");
-    created = true;
+    throw new MissingManifestError(MISSING_MANIFEST_GUIDANCE);
   }
   try {
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
@@ -668,10 +672,9 @@ async function writeTextFileInsideProjectOnWindows(
  * Write through a verified file handle so a later path swap cannot redirect
  * truncation or content outside the project.
  *
- * `allowMissing` creates the file when it does not exist yet, which the
- * manifest write needs: a project with esm.sh URLs and no package.json is the
- * codemod's main case.  Creation uses exclusive open semantics, so a symlink
- * planted at the path fails the create instead of being followed.
+ * `allowMissing` permits containment inspection for an absent path. The write
+ * still fails closed because the available cross-platform APIs cannot create a
+ * child through a stable parent handle.
  */
 export async function writeTextFileInsideProject(
   path: string,
@@ -704,12 +707,7 @@ export async function writeTextFileInsideProject(
     if (!allowMissing || !(error instanceof Deno.errors.NotFound)) {
       throw error;
     }
-    // `createNew` opens with O_CREAT|O_EXCL, which fails instead of following
-    // a symlink planted at the path, so creating an absent manifest cannot
-    // write through a link.  The containment checks below still run, and the
-    // created file is removed again if any of them rejects it.
-    file = await Deno.open(path, { read: true, write: true, createNew: true });
-    created = true;
+    throw new MissingManifestError(MISSING_MANIFEST_GUIDANCE);
   }
 
   try {
@@ -788,6 +786,7 @@ async function readTextFileInsideProject(
  * the JSON report, so keep the error code or class and drop the message body.
  */
 function describeFileError(error: unknown): string {
+  if (error instanceof MissingManifestError) return error.message;
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string") return code;
   if (error instanceof Error) return error.name;
@@ -1053,11 +1052,6 @@ export function joinReportPath(
     : `${displayRoot}/${normalizedRelative}`;
 }
 
-/** Message of a caught error, for operator-facing failure text. */
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 async function main(args: string[]): Promise<void> {
   const { projectDir, dryRun, failOnConflict } = parseCliOptions(args);
 
@@ -1089,7 +1083,7 @@ async function main(args: string[]): Promise<void> {
   try {
     await collectSourceFiles(projectRoot, sourceFiles);
   } catch (error) {
-    throw new Error(`Failed to scan ${displayRoot} safely: ${describeError(error)}`, {
+    throw new Error(`Failed to scan ${displayRoot} safely: ${describeFileError(error)}`, {
       cause: error,
     });
   }
@@ -1123,7 +1117,7 @@ async function main(args: string[]): Promise<void> {
       source = opened.text;
       identity = opened.identity;
     } catch (error) {
-      throw new Error(`Failed to read ${reportFile} safely: ${describeError(error)}`, {
+      throw new Error(`Failed to read ${reportFile} safely: ${describeFileError(error)}`, {
         cause: error,
       });
     }
@@ -1292,7 +1286,7 @@ async function main(args: string[]): Promise<void> {
         );
       } catch (error) {
         throw new Error(
-          `Failed to write ${toReportPath(pkgJsonPath)} safely: ${describeError(error)}`,
+          `Failed to write ${toReportPath(pkgJsonPath)} safely: ${describeFileError(error)}`,
           { cause: error },
         );
       }
@@ -1305,9 +1299,12 @@ async function main(args: string[]): Promise<void> {
           expectedContent: source,
         });
       } catch (error) {
-        throw new Error(`Failed to write ${toReportPath(file)} safely: ${describeError(error)}`, {
-          cause: error,
-        });
+        throw new Error(
+          `Failed to write ${toReportPath(file)} safely: ${describeFileError(error)}`,
+          {
+            cause: error,
+          },
+        );
       }
     }
   }
