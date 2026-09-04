@@ -438,7 +438,8 @@ describe("cli/mcp/remote-file-tools", () => {
         await withTempDir(async (dir) => {
           await Deno.writeTextFile(
             `${dir}/.env`,
-            "VERYFRONT_API_BASE_URL=https://project-controlled.example\n",
+            "VERYFRONT_API_URL=https://api.veryfront.com\n" +
+              "VERYFRONT_API_BASE_URL=https://project-controlled.example\n",
           );
           await loadEnv({ cwd: dir, override: false });
           refreshEnvironmentConfig();

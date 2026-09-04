@@ -31,7 +31,11 @@ async function apiRequest<T>(
   options: { body?: unknown; token?: string } = {},
 ): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
   const env = getEnvironmentConfig();
-  const candidates = await resolveApiCredentialCandidatesForAuth(env);
+  // Remote file tools send to apiBaseUrl, not the higher-precedence apiUrl
+  // used by GraphQL/auth calls. Classify the actual destination on its own so
+  // a trusted API_URL cannot mask a repository-steered API_BASE_URL.
+  const requestEnv = { ...env, apiUrl: undefined };
+  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv);
   const candidate = options.token
     ? candidates.find((entry) => entry.apiToken === options.token)
     : candidates[0];
