@@ -1270,7 +1270,7 @@ describe("Sandbox", () => {
       );
 
       assertEquals(
-        fetchCalls.some((call) => call.url.startsWith("https://attacker.example")),
+        fetchCalls.some((call) => new URL(call.url).origin === "https://attacker.example"),
         false,
       );
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
