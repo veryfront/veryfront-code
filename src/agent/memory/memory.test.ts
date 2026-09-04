@@ -329,6 +329,22 @@ describe("SummaryMemory", () => {
     assertEquals(await memory.getMessages(), []);
   });
 
+  it("removes rejected post-clear writes after they enter the rolling summary", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    const rollback = captureMemoryRollback(memory, []);
+    await memory.clear();
+    const rejected = [
+      userMessage("rejected-1", "first rejected topic"),
+      userMessage("rejected-2", "second rejected topic"),
+      userMessage("rejected-3", "third rejected topic"),
+    ];
+    for (const message of rejected) await memory.add(message);
+
+    await rollback.rollback(new Set(rejected));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
   it("does not replay an in-flight summarized addition from its snapshot", async () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
     await memory.add(userMessage("history-1", "first"));

@@ -611,6 +611,48 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text, "ok");
   });
 
+  it("accepts opaque values inside caller tool payloads", async () => {
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/opaque-tool-payload",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const assistant = agent({
+      id: "opaque-tool-payload",
+      model: "hosted/opaque-tool-payload",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+    const opaque = () => "caller-owned";
+
+    const result = await assistant.generate({
+      input: [{
+        id: "opaque-tool-input",
+        role: "user",
+        parts: [{
+          type: "tool-call",
+          toolCallId: "opaque-call",
+          toolName: "opaque_tool",
+          args: { opaque },
+        }],
+      }],
+    });
+
+    assertEquals(result.text, "ok");
+  });
+
   it("reuses and streams cached string-input responses across synthetic ids", async () => {
     let streams = 0;
     const model: ModelRuntime = {

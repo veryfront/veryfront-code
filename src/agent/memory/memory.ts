@@ -13,6 +13,10 @@ interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
   commit(): void;
   rollback(rejectedMessages?: ReadonlySet<M>): Promise<void>;
 }
+interface RollbackObserver<M> {
+  add(message: M): void;
+  clear(): void;
+}
 const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
 
 function registerMemoryRollbackFactory<M extends MinimalMessage>(
@@ -98,7 +102,7 @@ function getBasicStatsWithTrace<M extends MinimalMessage>(
 
 abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   protected messages: M[] = [];
-  private rollbackObservers = new Set<(message: M) => void>();
+  private rollbackObservers = new Set<RollbackObserver<M>>();
   private clearVersion = 0;
   protected abstract readonly memoryType: BasicMemoryType;
   protected abstract readonly spanPrefix: string;
@@ -109,7 +113,12 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
       const snapshotMessages = new Set(messages);
       const clearVersion = this.clearVersion;
       const additions: M[] = [];
-      const observe = (message: M) => additions.push(message);
+      const observe: RollbackObserver<M> = {
+        add: (message) => additions.push(message),
+        clear: () => {
+          additions.length = 0;
+        },
+      };
       this.rollbackObservers.add(observe);
       let active = true;
       const close = () => {
@@ -122,9 +131,11 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
         rollback: async (rejectedMessages) => {
           close();
           if (this.clearVersion !== clearVersion) {
-            if (rejectedMessages !== undefined) {
-              this.messages = this.messages.filter((message) => !rejectedMessages.has(message));
-            }
+            const retained = rejectedMessages === undefined
+              ? additions
+              : additions.filter((message) => !rejectedMessages.has(message));
+            this.messages = [];
+            for (const message of retained) await this.add(message);
             return;
           }
           const laterAdditions = rejectedMessages === undefined
@@ -142,7 +153,7 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   abstract add(message: M): Promise<void>;
 
   protected recordAddition(message: M): void {
-    for (const observe of this.rollbackObservers) observe(message);
+    for (const observe of this.rollbackObservers) observe.add(message);
   }
 
   getMessages(): Promise<M[]> {
@@ -154,6 +165,7 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
       () => {
         this.messages = [];
         this.clearVersion += 1;
+        for (const observe of this.rollbackObservers) observe.clear();
       },
       `${this.spanPrefix}.clear`,
       this.memoryType,
@@ -246,7 +258,7 @@ const SUMMARY_MESSAGE_PREFIX = "Previous conversation summary:\n";
 /** Implement summary memory. */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
-  private rollbackObservers = new Set<(message: M) => void>();
+  private rollbackObservers = new Set<RollbackObserver<M>>();
   private summary = "";
   private summaryThreshold: number;
   private summaryMaxChars: number;
@@ -266,7 +278,12 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       const summary = this.summary;
       const clearVersion = this.clearVersion;
       const additions: M[] = [];
-      const observe = (message: M) => additions.push(message);
+      const observe: RollbackObserver<M> = {
+        add: (message) => additions.push(message),
+        clear: () => {
+          additions.length = 0;
+        },
+      };
       this.rollbackObservers.add(observe);
       let active = true;
       const close = () => {
@@ -279,9 +296,12 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         rollback: async (rejectedMessages) => {
           close();
           if (this.clearVersion !== clearVersion) {
-            if (rejectedMessages !== undefined) {
-              this.messages = this.messages.filter((message) => !rejectedMessages.has(message));
-            }
+            const retained = rejectedMessages === undefined
+              ? additions
+              : additions.filter((message) => !rejectedMessages.has(message));
+            this.messages = [];
+            this.summary = "";
+            for (const message of retained) await this.add(message);
             return;
           }
           const laterAdditions = rejectedMessages === undefined
@@ -308,7 +328,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         }
 
         this.enforceTokenLimit();
-        for (const observe of this.rollbackObservers) observe(message);
+        for (const observe of this.rollbackObservers) observe.add(message);
       },
       { "memory.type": "summary", "memory.threshold": this.summaryThreshold },
     );
@@ -349,6 +369,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
           this.messages = [];
           this.summary = "";
           this.clearVersion += 1;
+          for (const observe of this.rollbackObservers) observe.clear();
         },
         { "memory.type": "summary" },
       ),

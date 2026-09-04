@@ -321,6 +321,52 @@ const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
+function cloneStructuredValuePreservingOpaque<T>(value: T): T {
+  const seen = new IntrinsicWeakMap<object, unknown>();
+  const clone = (candidate: unknown): unknown => {
+    try {
+      return IntrinsicStructuredClone(candidate);
+    } catch {
+      // Functions and other opaque values are valid in public message metadata
+      // and tool payloads even though the provider ignores them.
+    }
+    if (candidate === null || typeof candidate !== "object") return candidate;
+    const existing = IntrinsicReflectApply(WeakMapGet, seen, [candidate]);
+    if (existing !== undefined) return existing;
+    if (ArrayIsArray(candidate)) {
+      const array: unknown[] = [];
+      IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
+      for (let index = 0; index < candidate.length; index++) {
+        array[index] = clone(candidate[index]);
+      }
+      return array;
+    }
+    let prototype: object | null;
+    let descriptors: PropertyDescriptorMap;
+    try {
+      prototype = ObjectGetPrototypeOf(candidate);
+      if (prototype !== ObjectPrototype && prototype !== null) return candidate;
+      descriptors = ObjectGetOwnPropertyDescriptors(candidate);
+    } catch {
+      return candidate;
+    }
+    const object = ObjectCreate(prototype) as Record<PropertyKey, unknown>;
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
+    for (const key of ReflectOwnKeys(descriptors)) {
+      const descriptor = descriptors[key as keyof typeof descriptors];
+      if (!descriptor) continue;
+      if ("value" in descriptor) descriptor.value = clone(descriptor.value);
+      try {
+        ObjectDefineProperty(object, key, descriptor);
+      } catch {
+        return candidate;
+      }
+    }
+    return object;
+  };
+  return clone(value) as T;
+}
+
 function getStructuredCloneFailureFingerprint(error: unknown): string | undefined {
   if (!(error instanceof DOMException) || error.name !== "DataCloneError") {
     return undefined;
@@ -1443,11 +1489,7 @@ export class AgentRuntime {
       ? captureMemoryRollback(this.memory, history)
       : undefined;
     const committedInputMessages = inputMessages.map((message) => {
-      const metadata = message.metadata;
-      const cloneable = { ...message };
-      delete cloneable.metadata;
-      const cloned = IntrinsicStructuredClone(cloneable) as Message;
-      if (metadata !== undefined) cloned.metadata = metadata;
+      const cloned = cloneStructuredValuePreservingOpaque(message);
       propagateSyntheticMessageMarks(message, cloned);
       return isRuntimeGeneratedUserMessage(message)
         ? markRuntimeGeneratedUserMessage(cloned)
