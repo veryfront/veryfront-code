@@ -1109,6 +1109,9 @@ export async function createRuntimeAgentStreamResponse(
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
           ...(inferenceAuthToken
             ? {
+              // This server surface has no AgentServiceConfig object to thread through. The
+              // credential resolver reads VERYFRONT_PUBLIC_API_BASE_URL from trusted host env;
+              // project-scoped env overlays cannot redirect that lookup.
               resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken),
             }
             : {}),

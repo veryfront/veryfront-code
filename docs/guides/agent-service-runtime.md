@@ -112,6 +112,11 @@ VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
 VERYFRONT_AGENT_SERVICE_REGISTRATION=auto
 ```
 
+When an agent service keeps control-plane traffic on an internal HTTP service
+URL, set `VERYFRONT_PUBLIC_API_BASE_URL` to the environment's HTTPS API origin.
+Run-scoped inference credentials use that public origin for provider gateway
+requests and never travel over the internal HTTP connection.
+
 Use `VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` when startup must fail if the
 service cannot register. Use `disabled` when the service must run without
 control-plane registration.

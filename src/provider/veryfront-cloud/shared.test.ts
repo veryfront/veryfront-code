@@ -3,10 +3,12 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
+  requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
@@ -71,6 +73,26 @@ describe("provider/veryfront-cloud/shared", () => {
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "mistral"),
       "https://api.veryfront.com/ai/gateway/mistral/v1",
     );
+  });
+
+  it("routes run-scoped inference credentials to the trusted public API base", () => {
+    setEnv(
+      "VERYFRONT_PUBLIC_API_BASE_URL",
+      "https://api.staging.veryfront.example",
+    );
+    try {
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "http://control-plane.internal.example" },
+        () => {
+          assertEquals(
+            requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+            "https://api.staging.veryfront.example",
+          );
+        },
+      );
+    } finally {
+      deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
+    }
   });
 
   it("preserves base URL query parameters and removes fragments", () => {

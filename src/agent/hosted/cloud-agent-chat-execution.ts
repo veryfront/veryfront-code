@@ -293,7 +293,10 @@ function createHostedChatContextBudgetOptions(
         maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,
         abortSignal,
       },
-      () => createHostedInferenceModelResolver(req),
+      () =>
+        createHostedInferenceModelResolver(req, {
+          apiBaseUrl: config.VERYFRONT_PUBLIC_API_BASE_URL,
+        }),
     ),
     logger: {
       debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
@@ -317,7 +320,9 @@ export async function prepareChatExecutionWithinProjectRuntime(
     spawnedFromToolCallId,
   } = req;
   const config = context.infrastructure.getConfig();
-  const resolveModelRuntime = createHostedInferenceModelResolver(req);
+  const resolveModelRuntime = createHostedInferenceModelResolver(req, {
+    apiBaseUrl: config.VERYFRONT_PUBLIC_API_BASE_URL,
+  });
   const projectServiceTraceAttributes = buildProjectServiceTraceAttributes({
     projectSlug: req.projectSlug,
     readEnv: getEnv,

@@ -270,7 +270,9 @@ platform. Keep stable project structure in `veryfront.config.ts`.
 Common groups:
 
 - **Cloud bootstrap**: `VERYFRONT_API_TOKEN`, `VERYFRONT_PROJECT_ID`,
-  `VERYFRONT_PROJECT_SLUG`, and `VERYFRONT_API_URL`.
+  `VERYFRONT_PROJECT_SLUG`, `VERYFRONT_API_URL`, and
+  `VERYFRONT_PUBLIC_API_BASE_URL` for HTTPS inference gateway traffic when the
+  control-plane URL is an internal HTTP service.
 - **Agent services**: `VERYFRONT_AGENT_SERVICE_NAME`,
   `VERYFRONT_AGENT_SERVICE_URL`, `VERYFRONT_AGENT_SERVICE_KEY`,
   `VERYFRONT_AGENT_SERVICE_REGISTRATION`, and
