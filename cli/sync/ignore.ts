@@ -317,7 +317,7 @@ function anchoredGlobCanMatchDescendant(
 }
 
 function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
-  if (!rule.negated || rule.regex.test(normalizedPath)) return false;
+  if (!rule.negated) return false;
   // An unanchored rule can begin at any descendant segment below this
   // protected directory, even when none of its literal segments are present
   // in the directory path itself.

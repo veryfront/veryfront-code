@@ -221,39 +221,47 @@ describe("cli/sync/ignore", () => {
           "a protected parent must warn before traversal drops a descendant negation",
         );
 
+        const divergentDescendantChecker = createIgnoreChecker(["!.env**", ".env*"]);
+        assertEquals(divergentDescendantChecker.isIgnored(".env"), true);
+        assertEquals(
+          warnings.length,
+          3,
+          "a later parent match must not hide a negation still effective for descendants",
+        );
+
         const wildcardChecker = createIgnoreChecker([".env*", "!**/.env/**"]);
         assertEquals(wildcardChecker.isIgnored(".env"), true);
-        assertEquals(warnings.length, 3, "a recursive prefix must not hide the warning");
+        assertEquals(warnings.length, 4, "a recursive prefix must not hide the warning");
 
         const internalWildcardChecker = createIgnoreChecker([
           "src/.env*",
           "!src/**/.env/**",
         ]);
         assertEquals(internalWildcardChecker.isIgnored("src/.env"), true);
-        assertEquals(warnings.length, 4, "an internal wildcard must not hide the warning");
+        assertEquals(warnings.length, 5, "an internal wildcard must not hide the warning");
 
         const anchoredRootFileChecker = createIgnoreChecker([".git", "!/*.ts"]);
         assertEquals(anchoredRootFileChecker.isIgnored(".git"), true);
-        assertEquals(warnings.length, 4, "a root file rule must not warn for protected children");
+        assertEquals(warnings.length, 5, "a root file rule must not warn for protected children");
 
         const anchoredRecursiveFileChecker = createIgnoreChecker([".env*", "!/**.json"]);
         assertEquals(anchoredRecursiveFileChecker.isIgnored(".env"), true);
-        assertEquals(warnings.length, 5, "an anchored double-star must retain its warning");
+        assertEquals(warnings.length, 6, "an anchored double-star must retain its warning");
 
         const unanchoredNestedChecker = createIgnoreChecker([".env*", "!foo/bar.json"]);
         assertEquals(unanchoredNestedChecker.isIgnored(".env"), true);
-        assertEquals(warnings.length, 6, "an unanchored nested rule must retain its warning");
+        assertEquals(warnings.length, 7, "an unanchored nested rule must retain its warning");
 
         const anchoredOtherPrefixChecker = createIgnoreChecker([".env*", "!/foo**.json"]);
         assertEquals(anchoredOtherPrefixChecker.isIgnored(".env"), true);
-        assertEquals(warnings.length, 6, "an unrelated anchored prefix must not warn");
+        assertEquals(warnings.length, 7, "an unrelated anchored prefix must not warn");
 
         const embeddedDoubleStarChecker = createIgnoreChecker([
           ".env*",
           "!/foo**/bar.json",
         ]);
         assertEquals(embeddedDoubleStarChecker.isIgnored("foo/.env"), true);
-        assertEquals(warnings.length, 7, "an embedded double-star must retain its warning");
+        assertEquals(warnings.length, 8, "an embedded double-star must retain its warning");
 
         const canceledNegationChecker = createIgnoreChecker([
           ".env*",
@@ -261,11 +269,11 @@ describe("cli/sync/ignore", () => {
           ".env/**",
         ]);
         assertEquals(canceledNegationChecker.isIgnored(".env"), true);
-        assertEquals(warnings.length, 7, "a later matching ignore rule cancels the warning");
+        assertEquals(warnings.length, 8, "a later matching ignore rule cancels the warning");
 
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 7, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 8, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

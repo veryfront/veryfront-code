@@ -1437,15 +1437,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         const appliedUploads = new Set(uploadResult.applied);
         const appliedDeletes = [...new Set(deleteResult.applied)]
           .map((path) => ({ path }));
-        await writeAppliedSyncTarget(
-          projectDir,
-          config,
-          project,
-          branchName,
-          syncBaselineRemoteFiles,
-          uploadOps.filter((op) => appliedUploads.has(op.path)),
-          appliedDeletes,
-        );
+        try {
+          await writeAppliedSyncTarget(
+            projectDir,
+            config,
+            project,
+            branchName,
+            syncBaselineRemoteFiles,
+            uploadOps.filter((op) => appliedUploads.has(op.path)),
+            appliedDeletes,
+          );
+        } catch (error) {
+          throw attachProtectedDeleteContext(error, protectedDeleteContext());
+        }
       };
       const listAllFilesForVerification = async () => {
         try {
@@ -1480,15 +1484,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           uploadOps.filter((op) => appliedUploads.has(op.path)),
           appliedDeletes,
         );
-        await writeAppliedSyncTarget(
-          projectDir,
-          config,
-          project,
-          branchName,
-          syncBaselineRemoteFiles,
-          stillApplied.uploads,
-          stillApplied.deletes,
-        );
+        try {
+          await writeAppliedSyncTarget(
+            projectDir,
+            config,
+            project,
+            branchName,
+            syncBaselineRemoteFiles,
+            stillApplied.uploads,
+            stillApplied.deletes,
+          );
+        } catch (error) {
+          throw attachProtectedDeleteContext(error, protectedDeleteContext());
+        }
       };
 
       if (uploadOps.length > 0) {

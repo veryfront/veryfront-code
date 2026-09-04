@@ -136,8 +136,31 @@ function commandNameForJson(args: ParsedArgs): string {
   return typeof command === "string" && command.length > 0 ? command : "cli";
 }
 
-function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
+export function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
   if (context === undefined) return undefined;
+  if (context !== null && typeof context === "object" && !Array.isArray(context)) {
+    const protectedDeleted = (context as Record<string, unknown>).protectedDeleted;
+    if (Array.isArray(protectedDeleted)) {
+      const limit = 1_000;
+      const bounded: string[] = [];
+      for (let index = 0; index < protectedDeleted.length && bounded.length < limit; index++) {
+        const path = protectedDeleted[index];
+        if (typeof path === "string") bounded.push(path);
+      }
+      const redactedBounded = redactForSerialization(bounded);
+      if (Array.isArray(redactedBounded)) {
+        return {
+          protectedDeleted: redactedBounded,
+          ...(protectedDeleted.length > bounded.length
+            ? {
+              protectedDeletedTruncated: true,
+              protectedDeletedOmitted: protectedDeleted.length - bounded.length,
+            }
+            : {}),
+        };
+      }
+    }
+  }
   const redacted = redactForSerialization(context);
   if (redacted === null || typeof redacted !== "object" || Array.isArray(redacted)) {
     return undefined;
