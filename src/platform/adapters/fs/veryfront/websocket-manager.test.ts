@@ -1027,6 +1027,39 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
+  it("continues queued branch invalidations after one batch fails", async () => {
+    let effectiveBranch = "feature-a";
+    const reloadBranches: Array<string | null | undefined> = [];
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          if (context.branch === "feature-a") throw new Error("first branch reload failed");
+          reloadBranches.push(context.branch);
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/a.tsx"], branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+    deliverPoke(socket, { changedPaths: ["app/b.tsx"], branchName: "feature-b" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    for (let attempt = 0; attempt < 20 && reloadBranches.length < 1; attempt++) {
+      await Promise.resolve();
+    }
+    assertEquals(reloadBranches, ["feature-b"]);
+    manager.dispose();
+  });
+
   it("retains the accepted request branch through full invalidation", async () => {
     let effectiveBranch = "feature-a";
     let reloadBranch: string | null | undefined;
@@ -1053,6 +1086,39 @@ describe("WebSocketManager", () => {
     assertEquals(runOnlyScheduledTimer(), 100);
     await flushMicrotasks();
     assertEquals(reloadBranch, "feature-a");
+    manager.dispose();
+  });
+
+  it("continues queued full branch invalidations after one batch fails", async () => {
+    let effectiveBranch = "feature-a";
+    const reloadBranches: Array<string | null | undefined> = [];
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          if (context.branch === "feature-a") throw new Error("first branch reload failed");
+          reloadBranches.push(context.branch);
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+    deliverPoke(socket, { branchName: "feature-b" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    for (let attempt = 0; attempt < 20 && reloadBranches.length < 1; attempt++) {
+      await Promise.resolve();
+    }
+    assertEquals(reloadBranches, ["feature-b"]);
     manager.dispose();
   });
 

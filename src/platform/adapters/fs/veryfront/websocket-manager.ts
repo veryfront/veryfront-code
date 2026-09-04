@@ -707,7 +707,14 @@ export class WebSocketManager {
       this.pendingFullInvalidations.clear();
       void (async () => {
         for (const invalidation of pending) {
-          await this.performInvalidation(invalidation.contentContext, invalidation.token);
+          try {
+            await this.performInvalidation(invalidation.contentContext, invalidation.token);
+          } catch (error) {
+            logger.error("Queued full invalidation failed", {
+              projectSlug: this.deps.projectSlug,
+              error,
+            });
+          }
         }
       })();
     }, INVALIDATION_DEBOUNCE_MS);
@@ -745,11 +752,18 @@ export class WebSocketManager {
       this.pendingSelectiveInvalidations.clear();
       void (async () => {
         for (const invalidation of scheduled) {
-          await this.performSelectiveInvalidation(
-            [...invalidation.changedPaths],
-            invalidation.contentContext,
-            invalidation.token,
-          );
+          try {
+            await this.performSelectiveInvalidation(
+              [...invalidation.changedPaths],
+              invalidation.contentContext,
+              invalidation.token,
+            );
+          } catch (error) {
+            logger.error("Queued selective invalidation failed", {
+              projectSlug: this.deps.projectSlug,
+              error,
+            });
+          }
         }
       })();
     }, INVALIDATION_DEBOUNCE_MS);
