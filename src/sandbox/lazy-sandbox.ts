@@ -262,7 +262,7 @@ export class LazySandbox {
     await this.touchSession();
     const route = this.resolveDataPlaneRoute();
 
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${route.baseUrl}/file?path=${encodeURIComponent(path)}`,
       {
         headers: this.#authHeaders(),
@@ -281,7 +281,7 @@ export class LazySandbox {
     await this.touchSession();
     const route = this.resolveDataPlaneRoute();
 
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${route.baseUrl}/files`,
       {
         method: "POST",
@@ -303,7 +303,7 @@ export class LazySandbox {
     const route = this.resolveDataPlaneRoute();
 
     const commandsUrl = backgroundCommandsUrl(route);
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       commandsUrl,
       {
         method: "POST",
@@ -330,7 +330,7 @@ export class LazySandbox {
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
     const route = await this.resolveBackgroundCommandRoute(commandId);
 
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}`,
       {
         headers: this.#authHeaders(),
@@ -352,7 +352,7 @@ export class LazySandbox {
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
     const route = await this.resolveBackgroundCommandRoute(commandId);
 
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}/output`,
       {
         headers: this.#authHeaders(),
@@ -382,7 +382,7 @@ export class LazySandbox {
     await this.ensure();
     const route = this.resolveDataPlaneRoute();
 
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       backgroundCommandsUrl(route),
       { headers: this.#authHeaders() },
       route.kind,
@@ -402,7 +402,7 @@ export class LazySandbox {
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
     const route = await this.resolveBackgroundCommandRoute(commandId);
 
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}/cancel`,
       {
         method: "POST",
@@ -440,7 +440,7 @@ export class LazySandbox {
 
     const pending = {
       promise: (async () => {
-        const res = await this.fetchControl(
+        const res = await this.#fetchControl(
           `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
             encodeURIComponent(currentSessionId)
           }/heartbeat`,
@@ -554,7 +554,7 @@ export class LazySandbox {
 
   private async bootstrapCreatedSession(): Promise<void> {
     const projectId = this.resolveProjectId();
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions`,
       {
         method: "POST",
@@ -618,7 +618,7 @@ export class LazySandbox {
   }
 
   private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
-    const res = await this.fetchControl(
+    const res = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
         encodeURIComponent(sessionId)
       }`,
@@ -642,7 +642,7 @@ export class LazySandbox {
     while (Date.now() - start < this.startupTimeoutMs) {
       await sleep(this.pollIntervalMs);
 
-      const res = await this.fetchControl(
+      const res = await this.#fetchControl(
         `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
           encodeURIComponent(sessionId)
         }`,
@@ -680,7 +680,7 @@ export class LazySandbox {
 
     while (Date.now() - start < this.startupTimeoutMs) {
       try {
-        const res = await this.fetchControl(`${runtimeEndpoint}/readyz`, {}, "internal");
+        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, {}, "internal");
 
         if (res.ok) {
           return;
@@ -747,7 +747,7 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    await this.fetchControl(
+    await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions/${
         encodeURIComponent(sessionId)
       }`,
@@ -878,7 +878,7 @@ export class LazySandbox {
     return fetchWithTimeout(url, this.execStartTimeoutMs, init, routeKind === "internal");
   }
 
-  private async fetchControl(
+  async #fetchControl(
     url: string,
     init: RequestInit = {},
     routeKind: DataPlaneRoute["kind"] = "proxy",

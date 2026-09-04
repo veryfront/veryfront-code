@@ -94,6 +94,14 @@ describe("Sandbox", () => {
     );
   });
 
+  it("does not expose lazy credential-bearing dispatch", () => {
+    const sandbox = Sandbox.createLazy({
+      authToken: "explicit-token",
+      apiUrl: "https://api.test.com",
+    });
+    assertEquals((sandbox as unknown as Record<string, unknown>).fetchControl, undefined);
+  });
+
   it("keeps the validated API origin in private instance state", async () => {
     setEnv("VERYFRONT_API_URL", "https://api.test.com");
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
