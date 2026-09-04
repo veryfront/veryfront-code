@@ -570,6 +570,33 @@ describe("text-generation-runtime-message-converter", () => {
       ]);
     });
 
+    it("omits an ordinary call that collides with a provider-executed call ID", () => {
+      const messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "first" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "shared-call",
+            toolName: "web_search",
+            providerExecuted: true,
+          }, {
+            type: "tool-call",
+            toolCallId: "shared-call",
+            toolName: "local_search",
+            input: {},
+          }],
+        },
+        { id: "u2", role: "user", parts: [{ type: "text", text: "second" }] },
+      ] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+        { role: "user", content: "first" },
+        { role: "user", content: "second" },
+      ]);
+    });
+
     it("omits provider-executed tool result messages from replay", () => {
       const messages = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },

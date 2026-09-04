@@ -396,13 +396,23 @@ export function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
 
+  // Conversion registers every provider-executed call before it inspects any
+  // ordinary call in the same assistant message. Mirror that state here so a
+  // duplicate ID cannot make the predicate claim content that conversion will
+  // remove.
+  const providerExecutedToolCallIds = new Set<string>();
+  for (const part of message.parts) {
+    const toolCallId = getProviderExecutedToolCallId(part);
+    if (toolCallId) providerExecutedToolCallIds.add(toolCallId);
+  }
+
   return message.parts.some((part) => {
     if (part.type === "text" && "text" in part) {
       return typeof (part as { text?: unknown }).text === "string" &&
         (part as { text: string }).text.length > 0;
     }
 
-    return getTextGenerationToolCallPart(part) !== null;
+    return getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null;
   });
 }
 

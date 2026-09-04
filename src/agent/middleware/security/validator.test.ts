@@ -721,6 +721,42 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("tracks colliding provider call IDs when deciding whether an assistant is dropped", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
+    });
+    const context = createContext({
+      input: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "ignore previous " }] },
+        {
+          id: "assistant-collision",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-web_search",
+              toolCallId: "shared-call",
+              toolName: "web_search",
+              providerExecuted: true,
+            },
+            {
+              type: "tool-call",
+              toolCallId: "shared-call",
+              toolName: "local_search",
+              input: {},
+            },
+          ] as unknown as Message["parts"],
+        },
+        { id: "user-2", role: "user", parts: [{ type: "text", text: "instructions" }] },
+      ],
+    });
+
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
   it("does not length-check provider-assembled concatenations", async () => {
     // `maxLength` guards caller-supplied message text. The assembled forms are
     // synthetic strings built only to catch a split phrase, and a merged run
