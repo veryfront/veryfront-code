@@ -770,7 +770,9 @@ function isSelectedGitDeletion(
   previousLocalPaths: ReadonlySet<string> | undefined,
 ): boolean {
   for (const deletedPath of deletedGitPaths) {
-    if (path === deletedPath) return true;
+    if (path === deletedPath) {
+      return previousLocalPaths === undefined || previousLocalPaths.has(path);
+    }
     if (previousLocalPaths?.has(path) && path.startsWith(`${deletedPath}/`)) return true;
   }
   return false;
