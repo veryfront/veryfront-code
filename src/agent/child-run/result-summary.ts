@@ -5,6 +5,7 @@ const CHILD_RUN_CONTRACT_FACT_LIMIT = 50;
 const CHILD_RUN_CONTRACT_FACT_VALUE_MAX_LENGTH = 200;
 const CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT = 128_000;
 const CHILD_RUN_CONTRACT_FACT_ARRAY_BODY_LIMIT = 2_000;
+const CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT = 256;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
 const MALFORMED_TOOL_COMMAND_PREFIX_PATTERN =
   /<(?:tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?(?=<(?:tool_response|function_result)(?:\s[^>]*)?>)/gi;
@@ -411,9 +412,10 @@ function scanNestedArrayOrObjectEnd(
       continue;
     }
     index += 1;
-    if (character === "{") closings.push("}");
-    else if (character === "[") closings.push("]");
-    else if (character === "}" || character === "]") {
+    if (character === "{" || character === "[") {
+      if (closings.length >= CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT) return null;
+      closings.push(character === "{" ? "}" : "]");
+    } else if (character === "}" || character === "]") {
       if (character !== closings[closings.length - 1]) return null;
       closings.pop();
     }
@@ -683,7 +685,7 @@ function addProviderToolArrayFieldValues(
 }
 
 function isContractFactTokenCharacter(value: string | undefined): boolean {
-  return value !== undefined && !/[\s"'`]/.test(value);
+  return value !== undefined && !FIELD_SEPARATOR_PATTERN.test(value) && !/["'`]/.test(value);
 }
 
 function boundedContractFactWindows(text: string): string[] {

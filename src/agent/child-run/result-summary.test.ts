@@ -392,6 +392,16 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("bounds validation of deeply nested metadata cut by the head window", () => {
+      const text = 'tools: [{"id":"bogus_tool","metadata":' +
+        "[".repeat(15_000) + "0" + "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.truncated, true);
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("does not treat a tail window cut as a tool field boundary", () => {
       const opener = "tools:['bogus_tool']";
       const text = `${"p".repeat(70_000)}z"${opener}${"y".repeat(96_000 - opener.length)}`;
@@ -418,6 +428,14 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
+    it("keeps an unquoted field after a cut numeric token in the tail window", () => {
+      const text = `{value:${"1".repeat(70_000)},model:"sonnet",tail:"${"x".repeat(58_100)}"}`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
     });
 
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {
