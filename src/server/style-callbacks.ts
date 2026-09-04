@@ -20,6 +20,12 @@ import {
 } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import {
+  invalidateProjectCandidateScans,
+} from "#veryfront/server/handlers/dev/styles-candidate-scanner.ts";
+import {
+  invalidateProjectCssImportScans,
+} from "#veryfront/server/handlers/dev/styles-css-import-scanner.ts";
 
 const styleCallbackLog = logger.component("server-style-callbacks");
 
@@ -96,6 +102,8 @@ export function createServerStyleInvalidationCallbacks(): Pick<
       invalidateProjectCSS(projectSlug);
       invalidatePreparedProjectCSS(projectSlug);
       invalidateProjectCandidateManifests(projectSlug);
+      invalidateProjectCandidateScans(projectSlug);
+      invalidateProjectCssImportScans(projectSlug);
     },
   };
 }

@@ -1608,7 +1608,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("validates an environment token against the configured API URL in JSON mode", async () => {
+    it("validates an environment token against the default API URL, not a veryfront.json apiUrl, in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalError = console.error;
@@ -1630,7 +1630,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
           requestedUrls.push(String(input));
           requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
-          if (String(input) === "https://control.example.test/api/me") {
+          if (String(input) === "https://api.veryfront.com/me") {
             return Promise.resolve(
               Response.json({ id: "env-user", email: "env@example.com" }),
             );
@@ -1657,7 +1657,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           email: "env@example.com",
           source: "env",
         });
-        assertEquals(requestedUrls, ["https://control.example.test/api/me"]);
+        assertEquals(requestedUrls, ["https://api.veryfront.com/me"]);
         assertEquals(requestedAuth, ["Bearer env-valid-token"]);
         assertEquals(output.join("\n").includes("env-valid-token"), false);
         assertEquals(errors, []);
@@ -1673,7 +1673,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
-    it("validates a stored token against the configured API URL in JSON mode", async () => {
+    it("validates a stored token against the default API URL, not a veryfront.json apiUrl, in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalError = console.error;
@@ -1696,7 +1696,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
           requestedUrls.push(String(input));
           requestedAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
-          if (String(input) === "https://control.example.test/api/me") {
+          if (String(input) === "https://api.veryfront.com/me") {
             return Promise.resolve(
               Response.json({ id: "stored-user", email: "stored@example.com" }),
             );
@@ -1720,7 +1720,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           email: "stored@example.com",
           source: "token-store",
         });
-        assertEquals(requestedUrls, ["https://control.example.test/api/me"]);
+        assertEquals(requestedUrls, ["https://api.veryfront.com/me"]);
         assertEquals(requestedAuth, ["Bearer stored-valid-token"]);
         assertEquals(output.join("\n").includes("stored-valid-token"), false);
         assertEquals(errors, []);

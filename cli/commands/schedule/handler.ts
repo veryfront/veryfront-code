@@ -1,5 +1,5 @@
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
-import { resolveConfigWithAuth } from "#cli/shared/config";
+import { resolveConfigWithAuthNoModule } from "#cli/shared/config";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess } from "#cli/utils";
@@ -368,7 +368,10 @@ async function runRemoteSchedule(
   opts: ScheduleArgs & { id: string },
 ): Promise<void> {
   const startedAt = Date.now();
-  const cliConfig = await resolveConfigWithAuth(projectDir);
+  // Remote runs execute source already pushed to Veryfront; resolving
+  // credentials for them must never import veryfront.config.ts/.js, which
+  // would execute local (possibly untrusted) repository code.
+  const cliConfig = await resolveConfigWithAuthNoModule(projectDir);
   const client = createRunsClient({
     apiUrl: cliConfig.apiUrl,
     authToken: cliConfig.apiToken,

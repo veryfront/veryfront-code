@@ -17,7 +17,7 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import { decodeCacheKeySegment } from "#veryfront/cache/keys/segment-codec.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { cacheNamespaceSegment, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
@@ -425,7 +425,10 @@ export function clearSSRModuleCacheForProject(
   options: ClearSSRModuleCacheForProjectOptions = {},
 ): void {
   let cleared = 0;
-  const encodedProjectId = hashCodeHex(projectId);
+  const encodedProjectId = cacheNamespaceSegment(projectId);
+  // Tmp dir keys written before the collision-free namespace segments still
+  // carry the weak 32-bit project hash; keep clearing those too.
+  const legacyEncodedProjectId = hashCodeHex(projectId);
   const preserveActiveTransforms = options.preserveActiveTransforms === true;
 
   for (const key of globalModuleCache.keys()) {
@@ -453,7 +456,10 @@ export function clearSSRModuleCacheForProject(
 
   for (const key of globalTmpDirs.keys()) {
     const parts = key.split("|");
-    if (parts[2] === encodedProjectId || parts[1] === encodedProjectId) {
+    if (
+      parts[2] === encodedProjectId || parts[1] === encodedProjectId ||
+      parts[2] === legacyEncodedProjectId || parts[1] === legacyEncodedProjectId
+    ) {
       globalTmpDirs.delete(key);
       continue;
     }

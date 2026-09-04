@@ -8,6 +8,7 @@ import {
   CSSOptimizationEngineName,
 } from "#veryfront/extensions/css/index.ts";
 import { createMockAdapter, type MockRuntimeAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import type { HandlerContext } from "../types.ts";
@@ -19,10 +20,26 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { invalidatePreparedProjectCSS } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import { invalidateProjectCandidateScans } from "./styles-candidate-scanner.ts";
+import { invalidateProjectCssImportScans } from "./styles-css-import-scanner.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
 
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 const PROJECT_SLUG = "dreamy-haven";
+/** Cache scope for a request that resolves no content context outside proxy mode. */
+const PROJECT_DIR = "/project";
+
+/**
+ * Drop the compiled and prepared CSS under both scopes a context in this suite
+ * can key on: the resolved content slug when the adapter exposes a content
+ * context, and `ctx.projectDir` when it does not.
+ */
+function invalidateProjectStyleCaches(): void {
+  for (const scope of [PROJECT_SLUG, PROJECT_DIR]) {
+    invalidateProjectCSS(scope);
+    invalidatePreparedProjectCSS(scope);
+  }
+}
 
 function mockTailwindFetch(): { restore: () => void; getCallCount: () => number } {
   const originalFetch = globalThis.fetch;
@@ -178,9 +195,13 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      // Unscoped: this adapter resolves no content context and the context is
+      // not in proxy mode, so the scanner scopes its entry by `ctx.projectDir`
+      // rather than by the slug — a slug-scoped poke would leave it cached.
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -191,9 +212,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     } finally {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
       unregister(CSSOptimizationEngineName);
       if (previousEngine !== undefined) {
         register(CSSOptimizationEngineName, previousEngine);
@@ -217,9 +239,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
       const etag = result.response!.headers.get("etag");
@@ -237,9 +260,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
     }
   });
 
@@ -259,9 +283,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
 
       const first = await handler.handle(req, ctx);
       const etag = first.response!.headers.get("etag");
@@ -285,9 +310,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
     }
   });
 
@@ -304,9 +330,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
       const firstBody = await first.response!.text();
@@ -329,9 +356,68 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+    }
+  });
+
+  it("does not let a client-supplied slug force a recompile on a standalone server", async () => {
+    // Outside proxy mode `ctx.projectSlug` is the raw x-project-slug header or
+    // the Host-parsed subdomain, while the filesystem serves `projectDir`
+    // whatever the client claims. Keying the prepared-CSS and compiled-CSS
+    // caches on it let an unauthenticated client vary that header to miss both
+    // and force a full Tailwind compile per request, on a route that is public
+    // and exempt from the concurrency limiter.
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{ path: "/project/pages/index.tsx", content: '<div className="text-lime-500">Hello</div>' }],
+      null,
+    );
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+    const reset = () => {
+      clearCSSCache();
+      invalidateCompiler();
+      for (const scope of [PROJECT_DIR, "claim-1", "claim-2", "claim-3"]) {
+        invalidateProjectCSS(scope);
+        invalidatePreparedProjectCSS(scope);
+      }
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
+    };
+
+    try {
+      reset();
+
+      const first = await handler.handle(req, makeCtx(adapter, { projectSlug: "claim-1" }));
+      const firstBody = await first.response!.text();
+
+      assertEquals(first.response!.status, 200);
+      assertEquals(firstBody.length > 0, true);
+
+      const preparedEntries = () =>
+        getCacheStats().find((cache) => cache.name === "prepared-project-css-cache")?.entries ?? 0;
+      const afterFirst = preparedEntries();
+
+      for (const projectSlug of ["claim-2", "claim-3"]) {
+        const next = await handler.handle(req, makeCtx(adapter, { projectSlug }));
+        assertEquals(await next.response!.text(), firstBody);
+      }
+
+      // One entry, not one per claimed slug: a varied header must reuse the
+      // prepared stylesheet rather than mint a key that misses it and drives a
+      // fresh compile.
+      assertEquals(
+        preparedEntries(),
+        afterFirst,
+        "client-supplied slugs must not multiply prepared CSS entries",
+      );
+    } finally {
+      fetchMock.restore();
+      reset();
     }
   });
 
@@ -351,9 +437,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
       const firstBody = await first.response!.text();
@@ -364,7 +451,9 @@ describe("server/handlers/dev/styles-css.handler", () => {
 
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
       adapter.setFiles([]);
 
       const second = await handler.handle(req, ctx);
@@ -378,9 +467,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
@@ -423,9 +513,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
       const firstBody = await first.response!.text();
@@ -436,9 +527,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(!!storedHash, true);
 
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
       adapter.setFiles([]);
 
       const second = await handler.handle(req, ctx);
@@ -452,9 +544,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
@@ -496,9 +589,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -512,9 +606,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
@@ -554,9 +649,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -569,9 +665,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
     }
   });
 
@@ -609,9 +706,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -624,9 +722,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
@@ -670,9 +769,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -685,9 +785,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
@@ -715,9 +816,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -732,9 +834,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 
@@ -762,9 +865,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
     try {
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
       const body = await result.response!.text();
@@ -784,9 +888,10 @@ describe("server/handlers/dev/styles-css.handler", () => {
       fetchMock.restore();
       clearCSSCache();
       invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectStyleCaches();
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
 });
