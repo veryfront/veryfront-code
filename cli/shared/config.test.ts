@@ -1649,6 +1649,7 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
       );
       assertEquals(configCandidate?.apiToken, "config-token");
       assertEquals(configCandidate?.validationEnv.apiUrl, "https://api.veryfront.org");
+      assertEquals(configCandidate?.validationEnv.apiBaseUrl, "https://api.veryfront.org");
     });
   });
 });

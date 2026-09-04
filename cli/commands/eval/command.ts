@@ -65,6 +65,7 @@ import {
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
+import { getEnvSource } from "veryfront/utils/env-loader";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -598,10 +599,16 @@ export async function hydrateEvalRuntimeAuth(
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
   const env = getEnvironmentConfig();
-  const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir, false);
+  const requestEnv = getEnvSource("VERYFRONT_API_BASE_URL").source === "unset"
+    ? env
+    : { ...env, apiUrl: undefined };
+  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
   const candidate = candidates[0];
-  if (!candidate && resolveApiUrlTrust(env, await readConfigFile(projectDir)).repositorySteered) {
-    await assertApiUrlAcceptsNewCredential(env, projectDir);
+  if (
+    !candidate &&
+    resolveApiUrlTrust(requestEnv, await readConfigFile(projectDir)).repositorySteered
+  ) {
+    await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
   return await applyRuntimeAuthContext({
     apiToken: candidate?.apiToken ?? null,

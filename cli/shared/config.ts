@@ -371,6 +371,10 @@ function isRepositorySuppliedCredential(
   return !tokenSource.expandedFromProcessEnv;
 }
 
+function apiBaseUrlForRequest(apiUrl: string): string {
+  return apiUrl.replace(/\/(?:graphql|api)\/?$/, "").replace(/\/+$/, "");
+}
+
 async function resolveApiTokenForMode(
   env: EnvironmentConfig,
   configFile: VeryfrontConfig | null,
@@ -479,6 +483,9 @@ export async function resolveApiCredentialCandidatesForAuth(
   const configFileValidationEnv = {
     ...env,
     apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+    ...(configFile?.apiUrl
+      ? { apiBaseUrl: apiBaseUrlForRequest(resolveCliApiUrl(env, configFile.apiUrl)) }
+      : {}),
   };
 
   const candidates = await resolveApiCredentialCandidates(
