@@ -1955,7 +1955,7 @@ describe("eval CLI command helpers", () => {
       });
 
       assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
-      assertEquals(Deno.env.get("VERYFRONT_API_BASE_URL"), "https://api.veryfront.com");
+      assertEquals(Deno.env.get("VERYFRONT_API_BASE_URL"), undefined);
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {

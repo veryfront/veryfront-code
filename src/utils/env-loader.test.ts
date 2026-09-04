@@ -2,20 +2,27 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { __resetEnvLoaderForTests, getEnvSource, loadEnv, supportsEnvFiles } from "./env-loader.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  __resetEnvLoaderForTests,
+  __setEnvLoaderOsTypeForTests,
+  getEnvSource,
+  loadEnv,
+  supportsEnvFiles,
+} from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/logger.ts";
 
 describe("env-loader", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir({ prefix: "env-loader-test-" });
+    tempDir = await makeTempDir({ prefix: "env-loader-test-" });
     __resetEnvLoaderForTests();
   });
 
   afterEach(async () => {
     __resetEnvLoaderForTests();
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   function createKey(suffix: string): string {
@@ -23,7 +30,7 @@ describe("env-loader", () => {
   }
 
   async function writeEnvFile(name: string, content: string): Promise<void> {
-    await Deno.writeTextFile(`${tempDir}/${name}`, content);
+    await writeTextFile(`${tempDir}/${name}`, content);
   }
 
   function captureConsoleLog(): {
@@ -56,46 +63,25 @@ describe("env-loader", () => {
   /**
    * Run `fn` with the reported OS type replaced.
    *
-   * `getOsType()` reads `Deno.build.os` on every call, so swapping the frozen
-   * build record lets one case-sensitive host exercise both provenance rules.
+   * The test seam lets one case-sensitive host exercise both provenance rules.
    * Windows is the case-insensitive one, and it is the host where a lowercase
    * `.env` key sets the real uppercase variable.
    */
   function withOsType<T>(os: string, fn: () => T): T {
-    const original = Deno.build;
-    const replace = (value: typeof Deno.build): void => {
-      Object.defineProperty(Deno, "build", {
-        value,
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-    };
-
-    replace({ ...original, os } as typeof Deno.build);
+    __setEnvLoaderOsTypeForTests(os);
     try {
       return fn();
     } finally {
-      replace(original);
+      __setEnvLoaderOsTypeForTests(undefined);
     }
   }
 
   async function withOsTypeAsync<T>(os: string, fn: () => Promise<T>): Promise<T> {
-    const original = Deno.build;
-    const replace = (value: typeof Deno.build): void => {
-      Object.defineProperty(Deno, "build", {
-        value,
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-    };
-
-    replace({ ...original, os } as typeof Deno.build);
+    __setEnvLoaderOsTypeForTests(os);
     try {
       return await fn();
     } finally {
-      replace(original);
+      __setEnvLoaderOsTypeForTests(undefined);
     }
   }
 
@@ -279,7 +265,7 @@ describe("env-loader", () => {
         assertEquals(getEnv(key), "local", ".env.local outranks .env.{NODE_ENV}");
 
         __resetEnvLoaderForTests();
-        await Deno.remove(`${tempDir}/.env.local`);
+        await remove(`${tempDir}/.env.local`);
 
         await loadEnv({ cwd: tempDir, override: true });
         assertEquals(

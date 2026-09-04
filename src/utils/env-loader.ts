@@ -8,6 +8,7 @@ const logger = serverLogger.component("env");
 
 interface EnvSourceRecord {
   file: string;
+  source: "env-file" | "config-file";
   /**
    * True when `$NAME` expansion pulled part of this value out of the real
    * process environment. The file supplied the template, but the secret came
@@ -18,6 +19,11 @@ interface EnvSourceRecord {
 
 const envSources = new Map<string, EnvSourceRecord>();
 let envLoaded = false;
+let osTypeOverride: string | undefined;
+
+function envLoaderOsType(): string {
+  return osTypeOverride ?? getOsType();
+}
 
 /** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
 export async function loadEnv(
@@ -48,7 +54,7 @@ export async function loadEnv(
         if (existing && !override) continue;
 
         setEnv(key, value);
-        envSources.set(key, { file, expandedFromProcessEnv });
+        envSources.set(key, { file, source: "env-file", expandedFromProcessEnv });
         loadedVars[key] = value;
         if (expandedFromProcessEnv) taintedLoadedVars.add(key);
         else taintedLoadedVars.delete(key);
@@ -101,7 +107,7 @@ function parseEnvFile(
   priorTaintedVars: ReadonlySet<string> = new Set(),
 ): Record<string, ParsedEnvEntry> {
   const entries: Record<string, ParsedEnvEntry> = {};
-  const caseInsensitive = getOsType() === "windows";
+  const caseInsensitive = envLoaderOsType() === "windows";
   const normalizeKey = (key: string) => caseInsensitive ? key.toLowerCase() : key;
   // Plain values for `$NAME` references to entries loaded from earlier project
   // env files or declared earlier in this file.
@@ -254,10 +260,14 @@ export type EnvSource =
      */
     expandedFromProcessEnv: boolean;
   }
+  | { source: "config-file"; file: string }
   | { source: "process" }
   | { source: "unset" };
 
-function toEnvFileSource(record: EnvSourceRecord): EnvSource {
+function toFileSource(record: EnvSourceRecord): EnvSource {
+  if (record.source === "config-file") {
+    return { source: "config-file", file: record.file };
+  }
   return {
     source: "env-file",
     file: record.file,
@@ -278,7 +288,7 @@ function toEnvFileSource(record: EnvSourceRecord): EnvSource {
  * the value being asked about.
  */
 function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | undefined {
-  if (getOsType() !== "windows") return undefined;
+  if (envLoaderOsType() !== "windows") return undefined;
   const folded = key.toLowerCase();
 
   for (const [recordedKey, record] of envSources) {
@@ -293,18 +303,45 @@ function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | und
 
 export function getEnvSource(key: string): EnvSource {
   const record = envSources.get(key);
-  if (record) return toEnvFileSource(record);
+  if (record) return toFileSource(record);
 
   const value = getEnv(key);
   if (value === undefined) return { source: "unset" };
 
   const aliased = findAliasedEnvSource(key, value);
-  if (aliased) return toEnvFileSource(aliased);
+  if (aliased) return toFileSource(aliased);
 
   return { source: "process" };
+}
+
+/** Preserve config-file provenance when exporting a derived environment value. */
+export function markConfigFileSource(
+  key: string,
+  file: string,
+): void {
+  envSources.set(key, { file, source: "config-file", expandedFromProcessEnv: false });
+}
+
+/** Record that a process write replaced any earlier file-derived value. */
+export function markProcessEnvSource(key: string): void {
+  envSources.delete(key);
+}
+
+/** Preserve env-file provenance when exporting a derived environment value. */
+export function markEnvFileSource(
+  key: string,
+  file: string,
+  expandedFromProcessEnv = false,
+): void {
+  envSources.set(key, { file, source: "env-file", expandedFromProcessEnv });
 }
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
   envSources.clear();
+  osTypeOverride = undefined;
+}
+
+export function __setEnvLoaderOsTypeForTests(os: string | undefined): void {
+  osTypeOverride = os;
 }

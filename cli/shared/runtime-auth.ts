@@ -1,6 +1,14 @@
-import { getEnv, setEnv } from "#cli/process-env";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { getEnvironmentConfig } from "veryfront/config";
-import { getEnvSource } from "veryfront/utils/env-loader";
+import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  getEnvSource,
+  markConfigFileSource,
+  markEnvFileSource,
+  markProcessEnvSource,
+} from "veryfront/utils/env-loader";
+import { join } from "veryfront/platform/path";
+import { DEFAULT_API_URL, isSameApiEndpoint, resolveRestApiBaseUrl } from "./constants.ts";
 import {
   assertApiUrlAcceptsNewCredential,
   readConfigFile,
@@ -27,6 +35,13 @@ export interface RuntimeAuthContext {
 function normalizeEnvValue(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function runtimeApiBaseUrl(
+  value: string | undefined,
+): string | undefined {
+  const normalized = normalizeEnvValue(value);
+  return normalized ? resolveRestApiBaseUrl(normalized, false) : undefined;
 }
 
 export async function resolveLinkedProjectSlug(
@@ -96,23 +111,71 @@ export async function applyQualifiedRuntimeAuth(
   linkedProjectSlug?: string,
 ): Promise<RuntimeAuthContext> {
   const env = getEnvironmentConfig();
-  const requestEnv = getEnvSource("VERYFRONT_API_BASE_URL").source === "unset"
+  const configPath = join(projectDir, "veryfront.json");
+  const configFile = await readConfigFile(projectDir);
+  const apiBaseSource = getEnvSource("VERYFRONT_API_BASE_URL");
+  const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
+  const staleConfigToken = apiTokenSource.source === "config-file" &&
+    (apiTokenSource.file !== configPath || configFile?.apiToken === undefined ||
+      normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN")) !== normalizeEnvValue(configFile.apiToken));
+  const staleConfigBase = apiBaseSource.source === "config-file" &&
+    (apiBaseSource.file !== configPath || configFile?.apiUrl === undefined ||
+      configFile.apiToken === undefined ||
+      !resolveApiUrlTrust(env, configFile, configPath).steeringConfigFile);
+  const requestEnv = apiBaseSource.source === "unset"
     ? env
+    : staleConfigBase
+    ? { ...env, apiBaseUrl: DEFAULT_API_URL, apiUrl: undefined }
     : { ...env, apiUrl: undefined };
   const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
   const candidate = candidates[0];
-  const repositorySelectedApiEnvironment =
-    getEnvSource("VERYFRONT_API_URL").source === "env-file" ||
-    getEnvSource("VERYFRONT_API_BASE_URL").source === "env-file";
+  const trust = resolveApiUrlTrust(requestEnv, configFile, configPath);
   if (
     !candidate &&
-    resolveApiUrlTrust(requestEnv, await readConfigFile(projectDir)).repositorySteered
+    trust.repositorySteered
   ) {
     await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
-  return await applyRuntimeAuthContext({
+  if (staleConfigBase) deleteEnv("VERYFRONT_API_BASE_URL");
+  if (staleConfigToken) {
+    deleteEnv("VERYFRONT_API_TOKEN");
+    markProcessEnvSource("VERYFRONT_API_TOKEN");
+  }
+  const candidateApiBaseUrl = runtimeApiBaseUrl(candidate?.validationEnv.apiBaseUrl);
+  const preservesImplicitDefault = candidateApiBaseUrl !== undefined &&
+    isSameApiEndpoint(candidateApiBaseUrl, DEFAULT_API_URL) &&
+    (apiBaseSource.source === "unset" || staleConfigBase) && env.apiUrl === undefined;
+  const context = await applyRuntimeAuthContext({
     apiToken: candidate?.apiToken ?? null,
-    apiBaseUrl: repositorySelectedApiEnvironment ? undefined : candidate?.validationEnv.apiBaseUrl,
+    apiBaseUrl: preservesImplicitDefault ? undefined : candidateApiBaseUrl,
     linkedProjectSlug,
   });
+  if (context.apiBaseUrl && trust.repositorySteered) {
+    const source = trust.steeringEnvFile ?? join(projectDir, "veryfront.json");
+    if (trust.steeringConfigFile && candidate?.apiTokenSource === "config-file") {
+      markConfigFileSource("VERYFRONT_API_BASE_URL", source);
+      markConfigFileSource("VERYFRONT_API_TOKEN", source);
+    } else if (trust.steeringEnvFile) {
+      markEnvFileSource("VERYFRONT_API_BASE_URL", source);
+    }
+  }
+  if (candidate?.apiTokenSource === "config-file") {
+    markConfigFileSource("VERYFRONT_API_TOKEN", configPath);
+  }
+  if (
+    apiBaseSource.source === "config-file" && candidate?.apiTokenSource === "config-file" &&
+    configFile?.apiUrl === undefined
+  ) {
+    markProcessEnvSource("VERYFRONT_API_BASE_URL");
+  }
+  if (apiBaseSource.source === "config-file" && candidate?.apiTokenSource !== "config-file") {
+    if (!candidate) {
+      deleteEnv("VERYFRONT_API_BASE_URL");
+      deleteEnv("VERYFRONT_API_TOKEN");
+    }
+    markProcessEnvSource("VERYFRONT_API_BASE_URL");
+    markProcessEnvSource("VERYFRONT_API_TOKEN");
+  }
+  refreshEnvironmentConfig();
+  return context;
 }

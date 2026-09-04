@@ -313,17 +313,19 @@ source:
 - Or set both `VERYFRONT_API_URL` and `VERYFRONT_API_TOKEN` in the same project
   `.env` file. A token that `$NAME` expansion copied out of your shell does not
   count as coming from the file, because the secret is still yours.
-- Or confirm the host yourself: set `VERYFRONT_API_URL` in your shell or in the
-  CI job environment to that API endpoint, including any base path it needs.
+- Or confirm the host yourself: set `VERYFRONT_API_URL` in your shell for
+  GraphQL commands, or set `VERYFRONT_API_BASE_URL` for REST consumers such as
+  `dev`, `start`, `eval`, `styles build-artifact`, and the `vf_remote_*` tools.
+  Set the variable in the CI job environment to the API endpoint, including any base path it needs.
   Any credential then applies, including a CI secret and a `veryfront login`
   session.
 
 Naming the default `https://api.veryfront.com` needs no confirmation, in any
 equivalent spelling.
 
-In CI, set `VERYFRONT_API_URL` next to `VERYFRONT_API_TOKEN` in the job
-environment whenever the project uses a self-hosted API host, so a non-interactive
-run has a confirmed host. See
+In CI, set the API URL variable used by the command next to
+`VERYFRONT_API_TOKEN` in the job environment whenever the project uses a
+self-hosted API host, so a non-interactive run has a confirmed host. See
 [Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
 
 ## SSR transform cache

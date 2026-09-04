@@ -21,6 +21,7 @@ import {
   isSameApiEndpoint,
   resolveCliApiUrl,
   resolveCliApiUrlWithOrigin,
+  resolveRestApiBaseUrl,
 } from "./constants.ts";
 import { readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
@@ -242,13 +243,14 @@ export interface ApiUrlTrust {
   /** Set when a project `.env` file supplied the host; the variable it set. */
   steeringEnvKey?: ApiUrlEnvKey;
   /** Set when the effective endpoint came from this project's veryfront.json. */
-  steeringConfigFile?: true;
+  steeringConfigFile?: string;
 }
 
 /** Classify the effective API URL and who chose it. */
 export function resolveApiUrlTrust(
   env: EnvironmentConfig,
   configFile: VeryfrontConfig | null,
+  configFilePath = "veryfront.json",
 ): ApiUrlTrust {
   const { apiUrl, origin } = resolveCliApiUrlWithOrigin(env, configFile?.apiUrl);
 
@@ -257,6 +259,18 @@ export function resolveApiUrlTrust(
     // Set in the operator's own shell it confirms the host; read out of a
     // project `.env` file it is just more repository content.
     const source = getEnvSource(origin.key);
+    if (source.source === "config-file") {
+      const matchesCurrentConfig = source.file === configFilePath &&
+        configFile?.apiUrl !== undefined &&
+        (isSameApiEndpoint(apiUrl, configFile.apiUrl) ||
+          isSameApiEndpoint(apiUrl, apiBaseUrlForRequest(configFile.apiUrl)) ||
+          isSameApiEndpoint(apiUrl, `${apiBaseUrlForRequest(configFile.apiUrl)}/api`));
+      return {
+        apiUrl,
+        repositorySteered: !isSameApiEndpoint(apiUrl, DEFAULT_API_URL),
+        ...(matchesCurrentConfig ? { steeringConfigFile: configFilePath } : {}),
+      };
+    }
     // Compare a project .env value with the endpoint selected after removing
     // EVERY repository-controlled override, not just the one that happened to
     // win. `apiBaseUrl` falls back to `apiUrl.replace("/graphql", "/api")`
@@ -303,7 +317,7 @@ export function resolveApiUrlTrust(
   return {
     apiUrl,
     repositorySteered: !isSameApiEndpoint(apiUrl, resolveCliApiUrl(env)),
-    steeringConfigFile: true,
+    steeringConfigFile: configFilePath,
   };
 }
 
@@ -336,12 +350,18 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
       basename(trust.steeringEnvFile)
     } file sets ${trust.steeringEnvKey} to a repository-configured API endpoint`;
 
+  const endpointSource = trust.steeringEnvKey ? getEnvSource(trust.steeringEnvKey) : undefined;
+  const endpointExpandedFromProcess = endpointSource?.source === "env-file" &&
+    endpointSource.expandedFromProcessEnv;
   const repositoryCredential = trust.steeringEnvFile === undefined
     ? "Add a matching apiToken to the same veryfront.json"
     : `Add a literal VERYFRONT_API_TOKEN to the same ${basename(trust.steeringEnvFile)} file`;
   const confirmationKey = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
+  const remedy = endpointExpandedFromProcess
+    ? `Replace ${confirmationKey} with a literal endpoint in the same file, or, if you trust the `
+    : `${repositoryCredential}, or, if you trust the `;
   return `${steer}. Veryfront does not send credentials from your shell environment or ` +
-    `'veryfront login' to that endpoint. ${repositoryCredential}, or, if you trust the ` +
+    `'veryfront login' to that endpoint. ${remedy}` +
     `configured endpoint, set ${confirmationKey} in your shell to the complete API endpoint ` +
     `to confirm it.`;
 }
@@ -358,8 +378,11 @@ function isRepositorySuppliedCredential(
   candidate: ApiCredentialCandidate,
   trust: ApiUrlTrust,
 ): boolean {
-  if (candidate.apiTokenSource === "config-file") return trust.steeringConfigFile === true;
+  if (candidate.apiTokenSource === "config-file") return trust.steeringConfigFile !== undefined;
   if (candidate.apiTokenSource !== "env-file" || trust.steeringEnvFile === undefined) return false;
+
+  const endpointSource = trust.steeringEnvKey ? getEnvSource(trust.steeringEnvKey) : undefined;
+  if (endpointSource?.source === "env-file" && endpointSource.expandedFromProcessEnv) return false;
 
   const tokenSource = getEnvSource("VERYFRONT_API_TOKEN");
   if (tokenSource.source !== "env-file" || tokenSource.file !== trust.steeringEnvFile) return false;
@@ -412,7 +435,8 @@ async function resolveApiCredentialCandidates(
   const storedToken = await readToken(env);
   const candidates: ApiCredentialCandidate[] = [];
 
-  const shellEnvToken = envToken && envSource.source !== "env-file";
+  const shellEnvToken = envToken && envSource.source !== "env-file" &&
+    envSource.source !== "config-file";
   const projectEnvTokenAfterStored = interactive && envToken && envSource.source === "env-file" &&
     storedToken;
 
@@ -443,7 +467,7 @@ async function resolveApiCredentialCandidates(
     });
   }
 
-  if (envToken && !shellEnvToken) {
+  if (envToken && envSource.source === "env-file") {
     candidates.push({
       apiToken: envToken,
       apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
@@ -470,7 +494,7 @@ export async function resolveApiCredentialCandidatesForAuth(
   interactive = true,
 ): Promise<ApiCredentialCandidate[]> {
   const configFile = await readConfigJsonFile(projectDir);
-  const trust = resolveApiUrlTrust(env, configFile);
+  const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
   // A checked-in veryfront.json apiUrl only steers the credential that came
   // from that same file. Shell-environment, .env-file, and token-store
   // credentials validate against the environment-derived API URL, so a
@@ -480,11 +504,17 @@ export async function resolveApiCredentialCandidatesForAuth(
     ...env,
     apiUrl: resolveCliApiUrl(env),
   };
+  const configEndpoint = resolveCliApiUrlWithOrigin(env, configFile?.apiUrl);
   const configFileValidationEnv = {
     ...env,
-    apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+    apiUrl: configEndpoint.apiUrl,
     ...(configFile?.apiUrl
-      ? { apiBaseUrl: apiBaseUrlForRequest(resolveCliApiUrl(env, configFile.apiUrl)) }
+      ? {
+        apiBaseUrl: configEndpoint.origin.source === "env" &&
+            configEndpoint.origin.key === "VERYFRONT_API_BASE_URL"
+          ? resolveRestApiBaseUrl(configEndpoint.apiUrl, false)
+          : resolveRestApiBaseUrl(configEndpoint.apiUrl, false),
+      }
       : {}),
   };
 
@@ -495,6 +525,15 @@ export async function resolveApiCredentialCandidatesForAuth(
     validationEnv,
     configFileValidationEnv,
   );
+
+  const apiBaseSource = getEnvSource("VERYFRONT_API_BASE_URL");
+  if (
+    trust.repositorySteered && apiBaseSource.source === "config-file" &&
+    (trust.steeringConfigFile === undefined ||
+      (configFile?.apiToken === undefined && isSameApiEndpoint(env.apiBaseUrl, trust.apiUrl)))
+  ) {
+    return [];
+  }
 
   if (trust.repositorySteered && trust.steeringConfigFile) {
     const configCandidates = candidates.filter((entry) => entry.apiTokenSource === "config-file");
@@ -527,8 +566,11 @@ export async function assertApiUrlAcceptsNewCredential(
   projectDir: string = cwd(),
 ): Promise<void> {
   const configFile = await readConfigJsonFile(projectDir);
-  const trust = resolveApiUrlTrust(env, configFile);
-  if (!trust.repositorySteered || trust.steeringEnvFile === undefined) return;
+  const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
+  if (!trust.repositorySteered) return;
+  const configEndpointHydrated = getEnvSource("VERYFRONT_API_URL").source === "config-file" ||
+    getEnvSource("VERYFRONT_API_BASE_URL").source === "config-file";
+  if (trust.steeringEnvFile === undefined && !configEndpointHydrated) return;
 
   throw new UntrustedApiUrlCredentialError(
     describeUntrustedApiUrl(trust),
@@ -599,7 +641,7 @@ async function resolveConfigBase(
   const configFileResolution = await readConfigFileResolution(dir);
   const configFile = configFileResolution.config;
 
-  const trust = resolveApiUrlTrust(env, configFile);
+  const trust = resolveApiUrlTrust(env, configFile, join(dir, "veryfront.json"));
   const apiUrl = trust.apiUrl;
 
   let { apiToken, apiTokenSource } = await resolveApiTokenForMode(
