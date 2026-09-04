@@ -19,6 +19,7 @@ import {
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
 } from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
+import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -1866,6 +1867,61 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.upstreamParentRunId, "run_parent_1");
     assertEquals(parsed.spawnedFromToolCallId, "tool_1");
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
+  });
+
+  it("reads the default-chat inference header through captured intrinsics", async () => {
+    const request = new Request("https://agent.example.test/api/runs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Veryfront-Run-Event-Token": "run-event-service-token",
+        "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+      },
+      body: JSON.stringify({
+        messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+        context: { conversationId, projectId, branchId },
+        durableRootRun: { runId: "run_root_1", messageId },
+      }),
+    });
+    const requestHeadersDescriptor = Object.getOwnPropertyDescriptor(
+      Request.prototype,
+      "headers",
+    )!;
+    const headersGetDescriptor = Object.getOwnPropertyDescriptor(Headers.prototype, "get")!;
+    const requestHeaders = Reflect.apply(requestHeadersDescriptor.get!, request, []) as Headers;
+    let exposed = false;
+
+    Object.defineProperty(Request.prototype, "headers", {
+      ...requestHeadersDescriptor,
+      get() {
+        if (this === request) exposed = true;
+        return Reflect.apply(requestHeadersDescriptor.get!, this, []);
+      },
+    });
+    Object.defineProperty(Headers.prototype, "get", {
+      ...headersGetDescriptor,
+      value(this: Headers, name: string) {
+        if (this === requestHeaders && name.toLowerCase() === "x-veryfront-inference-token") {
+          exposed = true;
+        }
+        return Reflect.apply(headersGetDescriptor.value!, this, [name]);
+      },
+    });
+
+    try {
+      const parsed = await parseHostedChatRequestFromRequest(request, {
+        authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+      });
+      if (parsed instanceof Response) throw new Error("Expected parsed request");
+      assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
+    } finally {
+      Object.defineProperty(Request.prototype, "headers", requestHeadersDescriptor);
+      Object.defineProperty(Headers.prototype, "get", headersGetDescriptor);
+    }
+
+    assertEquals(exposed, false);
   });
 
   it("does not trust runtime environment targets from public hosted chat requests", async () => {

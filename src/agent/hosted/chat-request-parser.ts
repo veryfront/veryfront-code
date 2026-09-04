@@ -43,6 +43,17 @@ import {
 
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
+const HeadersGet = Headers.prototype.get;
+const StringTrim = String.prototype.trim;
+
+function readRequestHeader(request: Request, name: string): string | undefined {
+  if (!RequestHeadersGetter) return undefined;
+  const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
+  const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
+  if (value === null) return undefined;
+  return (IntrinsicReflectApply(StringTrim, value, []) as string) || undefined;
+}
 
 /** Internal control-plane credential for exact-run durable event appends. */
 export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
@@ -192,7 +203,7 @@ async function withVerifiedRunEventAppendToken(
   >,
   inferenceAuthToken?: string,
 ): Promise<ParsedHostedChatRequest | Response> {
-  const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
+  const token = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
   if (!token) {
     const hasLegacyReplayState = isRecord(parsedRequest.forwardedProps) &&
       Object.hasOwn(
@@ -634,7 +645,7 @@ export async function parseHostedChatRequestFromRequest(
     options.verifyRunEventAppendToken,
     false,
     undefined,
-    request.headers.get(INFERENCE_TOKEN_HEADER)?.trim() || undefined,
+    readRequestHeader(request, INFERENCE_TOKEN_HEADER),
   );
 }
 
