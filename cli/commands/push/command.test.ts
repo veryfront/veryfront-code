@@ -3156,7 +3156,7 @@ describe("push divergence guard", () => {
         const error = await assertRejects(
           () => pushCommand({ projectDir, quiet: true, prune: true }),
           Error,
-          "Local source changed during push",
+          "Push finalization failed after remote files were deleted",
         );
 
         assertEquals(fileListCalls, 3);

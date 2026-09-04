@@ -753,7 +753,8 @@ function attachProtectedDeleteContext(
     } catch { /* fall through to a typed push error */ }
   }
   return pushMutationError(
-    error instanceof Error ? error.message : "Push finalization failed",
+    "Push finalization failed after remote files were deleted. " +
+      "Retry the push and rotate any credential named in protectedDeleted.",
     normalized,
   );
 }
