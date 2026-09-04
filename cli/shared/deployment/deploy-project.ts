@@ -521,11 +521,23 @@ export interface LocalSourceObservation {
 }
 
 export async function observeLocalSource(projectDir: string): Promise<LocalSourceObservation> {
-  // Finish the Git probe before reading source bytes. If an editor writes
-  // while Git is still running, the digest must describe the later tree rather
-  // than the pre-write tree that the receipt already describes.
-  const gitSource = await resolveGitSource(projectDir);
+  // Bracket the source scan with Git probes. The first keeps writes during a
+  // slow Git command inside the digest, and the second refuses a HEAD or
+  // cleanliness transition that occurred while source bytes were read.
+  const beforeDigest = await resolveGitSource(projectDir);
   const sourceDigest = await computeLocalSourceDigest(projectDir);
+  const afterDigest = await resolveGitSource(projectDir);
+  const gitSource = beforeDigest.commitSha === afterDigest.commitSha &&
+      beforeDigest.clean === afterDigest.clean &&
+      beforeDigest.repositoryAvailable === afterDigest.repositoryAvailable &&
+      beforeDigest.indeterminate === afterDigest.indeterminate
+    ? afterDigest
+    : {
+      ...afterDigest,
+      commitSha: null,
+      clean: false,
+      indeterminate: true as const,
+    };
   return { gitSource, sourceDigest };
 }
 
