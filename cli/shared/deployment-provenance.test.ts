@@ -509,6 +509,28 @@ describe("push receipt persistence", () => {
 });
 
 describe("resolveGitSource", () => {
+  it("treats an unavailable Git executable outside a repository as non-Git", async () => {
+    const projectDir = await makeTempDir();
+    const originalGithubSha = getEnv("GITHUB_SHA");
+    const originalPath = getEnv("PATH");
+    try {
+      deleteEnv("GITHUB_SHA");
+      setEnv("PATH", projectDir);
+
+      assertEquals(await resolveGitSource(projectDir), {
+        commitSha: null,
+        clean: false,
+        repositoryAvailable: false,
+      });
+    } finally {
+      if (originalGithubSha === undefined) deleteEnv("GITHUB_SHA");
+      else setEnv("GITHUB_SHA", originalGithubSha);
+      if (originalPath === undefined) deleteEnv("PATH");
+      else setEnv("PATH", originalPath);
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("marks failed probes with local Git metadata as indeterminate", async () => {
     const projectDir = await makeTempDir();
     try {

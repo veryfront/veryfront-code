@@ -258,11 +258,12 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
     ]);
   } catch {
     const repositoryAvailable = await hasGitMetadata(projectDir);
+    const indeterminate = repositoryAvailable || envSha !== undefined;
     return {
       commitSha: envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null,
       clean: false,
       repositoryAvailable,
-      indeterminate: true,
+      ...(indeterminate ? { indeterminate: true } : {}),
     };
   }
 
