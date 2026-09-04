@@ -6,7 +6,6 @@ import {
   assertExists,
   assertNotEquals,
   assertRejects,
-  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -1266,6 +1265,33 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("recovers a stale filesystem lease left by a terminated process", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-stale-lease-test-" });
+    const artifactPath = join(tempDir, "jsx-stale.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    const createExclusive = getLocalFs().createFileBytesExclusive;
+    const staleMs = __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS;
+    if (!createExclusive || !getLocalFs().utime) {
+      throw new Error("the test runtime must support exclusive creation and file timestamps");
+    }
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      await createExclusive(leasePath, new TextEncoder().encode("terminated-owner"));
+      const staleAt = new Date(Date.now() - staleMs - 1);
+      await getLocalFs().utime(leasePath, staleAt, staleAt);
+
+      let entered = false;
+      await withJsxArtifactLock(artifactPath, async () => {
+        entered = true;
+      });
+
+      assertEquals(entered, true);
+      assertEquals(await getLocalFs().exists(leasePath), false);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reports when a preserved artifact next becomes collectable", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-retry-report-test-" });
     const artifactPath = join(tempDir, "jsx-preserved.mjs");
@@ -1461,6 +1487,7 @@ describe("jsx artifact references", () => {
   const {
     cancelScheduledJsxCachePrunes,
     isLazyArtifactRetained,
+    LAZY_JSX_ARTIFACT_RETENTION_MS,
     jsxArtifactActiveRefCount,
     removeJsxArtifactUnlessServed,
     wasJsxArtifactRecentlyServed,
@@ -1509,7 +1536,7 @@ describe("jsx artifact references", () => {
     }
   });
 
-  it("retains a lazy artifact after the parent module import settles", async () => {
+  it("retires a lazy artifact after its parent retention window", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-lazy-retain-test-" });
     const artifactPath = join(
       tempDir,
@@ -1525,12 +1552,14 @@ describe("jsx artifact references", () => {
       release();
 
       assertEquals(isLazyArtifactRetained(artifactPath), true);
+      const expiredAt = Date.now() + LAZY_JSX_ARTIFACT_RETENTION_MS + 1;
+      assertEquals(isLazyArtifactRetained(artifactPath, expiredAt), false);
       const removal = await removeJsxArtifactUnlessServed(
         artifactPath,
-        Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS + 60_000,
+        expiredAt + JSX_CACHE_VARIANT_MIN_AGE_MS,
       );
-      assertEquals(removal.removed, false);
-      assertEquals((await readTextFile(artifactPath)).length > 0, true);
+      assertEquals(removal.removed, true);
+      await assertRejects(() => readTextFile(artifactPath));
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -1813,25 +1842,21 @@ describe("scheduled prune bound", () => {
     cancelScheduledJsxCachePrunes();
   });
 
-  it("refuses new directories without discarding an existing cleanup obligation", () => {
+  it("admits new directories by retiring the oldest cleanup timer", () => {
     for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES; entry++) {
       ensureJsxCacheSweepArmed(`/tmp/vf-jsx-sweep-bound/${entry}`);
     }
 
-    assertThrows(
-      () => ensureJsxCacheSweepArmed("/tmp/vf-jsx-sweep-bound/overflow"),
-      Error,
-      "JSX cache cleanup capacity is exhausted",
-    );
+    ensureJsxCacheSweepArmed("/tmp/vf-jsx-sweep-bound/overflow");
     assertEquals(
       hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/0"),
-      true,
-      "capacity must never cancel an existing directory's only cleanup timer",
+      false,
+      "capacity retires the least-recently armed directory",
     );
     assertEquals(
       hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/overflow"),
-      false,
-      "an untracked directory must be refused rather than admitted without cleanup",
+      true,
+      "render admission must not fail because other directories hold cleanup timers",
     );
   });
 });

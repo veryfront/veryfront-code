@@ -29,6 +29,7 @@ import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./module-fetcher/limits.ts";
 
 /** Bound on the cached-module paths this process remembers as normalized. */
 const MAX_NORMALIZED_MODULE_MEMO_ENTRIES = 4096;
+const cryptoRandomUUID = crypto.randomUUID.bind(crypto);
 
 /**
  * Cached JSX module paths already known to be free of relative _dnt imports.
@@ -219,7 +220,8 @@ function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): b
  * however long the render's HTTP-caching and bundle-recovery phases run.
  */
 const jsxArtifactActiveRefs = new Map<string, number>();
-const lazyJsxArtifactPaths = new Set<string>();
+const LAZY_JSX_ARTIFACT_RETENTION_MS = 10 * 60_000;
+const lazyJsxArtifactExpirations = new Map<string, number>();
 let lazyJsxArtifactHeartbeat: ReturnType<typeof setInterval> | undefined;
 
 function retainJsxArtifact(artifactPath: string): void {
@@ -236,18 +238,38 @@ function releaseJsxArtifact(artifactPath: string): void {
 function ensureLazyJsxArtifactHeartbeat(): void {
   if (lazyJsxArtifactHeartbeat !== undefined) return;
   lazyJsxArtifactHeartbeat = setInterval(() => {
-    for (const artifactPath of lazyJsxArtifactPaths) {
+    const nowMs = Date.now();
+    for (const [artifactPath, expiresAtMs] of lazyJsxArtifactExpirations) {
+      if (expiresAtMs <= nowMs) {
+        lazyJsxArtifactExpirations.delete(artifactPath);
+        continue;
+      }
       void withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0)).catch(
         () => undefined,
       );
+    }
+    if (lazyJsxArtifactExpirations.size === 0 && lazyJsxArtifactHeartbeat !== undefined) {
+      clearInterval(lazyJsxArtifactHeartbeat);
+      lazyJsxArtifactHeartbeat = undefined;
     }
   }, JSX_CACHE_MTIME_REFRESH_INTERVAL_MS);
   unrefTimer(lazyJsxArtifactHeartbeat);
 }
 
 function retainLazyJsxArtifact(artifactPath: string): void {
-  lazyJsxArtifactPaths.add(artifactPath);
+  lazyJsxArtifactExpirations.set(
+    artifactPath,
+    Date.now() + LAZY_JSX_ARTIFACT_RETENTION_MS,
+  );
   ensureLazyJsxArtifactHeartbeat();
+}
+
+function isLazyJsxArtifactRetained(artifactPath: string, nowMs: number = Date.now()): boolean {
+  const expiresAtMs = lazyJsxArtifactExpirations.get(artifactPath);
+  if (expiresAtMs === undefined) return false;
+  if (expiresAtMs > nowMs) return true;
+  lazyJsxArtifactExpirations.delete(artifactPath);
+  return false;
 }
 
 /**
@@ -389,7 +411,35 @@ export async function retainJsxArtifactsReferencedIn(
 const jsxArtifactLocks = new Map<string, Promise<void>>();
 const JSX_ARTIFACT_LEASE_RETRY_MS = 10;
 const JSX_ARTIFACT_LEASE_ATTEMPTS = 500;
-const EMPTY_LEASE = new Uint8Array();
+const JSX_ARTIFACT_LEASE_STALE_MS = 60_000;
+const JSX_ARTIFACT_LEASE_HEARTBEAT_MS = JSX_ARTIFACT_LEASE_STALE_MS / 3;
+const leaseEncoder = new TextEncoder();
+
+async function recoverStaleFilesystemLease(lockPath: string, nowMs: number): Promise<boolean> {
+  const localFs = getLocalFs();
+  if (!localFs.rename) return false;
+  let modifiedAtMs: number;
+  try {
+    modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+  } catch (error) {
+    return isNotFoundError(error);
+  }
+  if (nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return false;
+
+  const stalePath = `${lockPath}.stale-${cryptoRandomUUID()}`;
+  try {
+    await localFs.rename(lockPath, stalePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return true;
+    return false;
+  }
+  try {
+    await localFs.remove(stalePath);
+  } catch (_) {
+    /* best effort: the uniquely renamed stale lease no longer blocks the lock */
+  }
+  return true;
+}
 
 async function withFilesystemLease<T>(
   lockPath: string,
@@ -399,24 +449,38 @@ async function withFilesystemLease<T>(
   const createExclusive = localFs.createFileBytesExclusive;
   if (!createExclusive) throw new Error("Atomic JSX cache leases are unavailable");
 
+  const leaseOwner = cryptoRandomUUID();
+  const leaseBytes = leaseEncoder.encode(leaseOwner);
   let acquired = false;
   for (let attempt = 0; attempt < JSX_ARTIFACT_LEASE_ATTEMPTS; attempt++) {
     try {
-      await createExclusive(lockPath, EMPTY_LEASE);
+      await createExclusive(lockPath, leaseBytes);
       acquired = true;
       break;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
+      if (await recoverStaleFilesystemLease(lockPath, Date.now())) continue;
       await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   if (!acquired) throw new Error("Timed out waiting for a JSX cache lease");
 
+  const heartbeat = localFs.utime
+    ? setInterval(() => {
+      const now = new Date();
+      void localFs.utime?.(lockPath, now, now).catch(() => undefined);
+    }, JSX_ARTIFACT_LEASE_HEARTBEAT_MS)
+    : undefined;
+  if (heartbeat !== undefined) unrefTimer(heartbeat);
+
   try {
     return await operation();
   } finally {
+    if (heartbeat !== undefined) clearInterval(heartbeat);
     try {
-      await localFs.remove(lockPath);
+      if (await localFs.readTextFile(lockPath) === leaseOwner) {
+        await localFs.remove(lockPath);
+      }
     } catch (error) {
       if (!isNotFoundError(error)) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease`, {
@@ -499,7 +563,12 @@ function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void 
     if (pending.fireAtMs <= fireAtMs) return;
     clearTimeout(pending.timer);
   } else if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
-    throw new Error("JSX cache cleanup capacity is exhausted");
+    const oldestDirectory = scheduledJsxCachePrunes.keys().next().value;
+    if (oldestDirectory !== undefined) {
+      const oldest = scheduledJsxCachePrunes.get(oldestDirectory);
+      if (oldest) clearTimeout(oldest.timer);
+      scheduledJsxCachePrunes.delete(oldestDirectory);
+    }
   }
   const timer = setTimeout(() => {
     scheduledJsxCachePrunes.delete(esmCacheDir);
@@ -541,7 +610,7 @@ function cancelScheduledJsxCachePrunes(): void {
     clearInterval(lazyJsxArtifactHeartbeat);
     lazyJsxArtifactHeartbeat = undefined;
   }
-  lazyJsxArtifactPaths.clear();
+  lazyJsxArtifactExpirations.clear();
 }
 
 export class JsxCacheCapacityError extends Error {
@@ -598,7 +667,10 @@ async function removeJsxArtifactUnlessServed(
 ): Promise<JsxArtifactRemoval> {
   return await withJsxArtifactLock(artifactPath, async () => {
     const checkedAtMs = Math.max(nowMs, Date.now());
-    if (jsxArtifactActiveRefs.has(artifactPath) || lazyJsxArtifactPaths.has(artifactPath)) {
+    if (
+      jsxArtifactActiveRefs.has(artifactPath) ||
+      isLazyJsxArtifactRetained(artifactPath, checkedAtMs)
+    ) {
       // Release time is the parent import settling, which has no schedule of
       // its own; poll again one grace period out.
       return { removed: false, retryAtMs: checkedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
@@ -829,7 +901,9 @@ export const __jsxCacheInternals = {
     scheduledJsxCachePrunes.has(esmCacheDir),
   isModuleRemembered: (transformedPath: string): boolean =>
     normalizedModulePaths.has(transformedPath),
-  isLazyArtifactRetained: (artifactPath: string): boolean => lazyJsxArtifactPaths.has(artifactPath),
+  isLazyArtifactRetained: isLazyJsxArtifactRetained,
+  JSX_ARTIFACT_LEASE_STALE_MS,
+  LAZY_JSX_ARTIFACT_RETENTION_MS,
   jsxArtifactActiveRefCount: (artifactPath: string): number =>
     jsxArtifactActiveRefs.get(artifactPath) ?? 0,
   MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
