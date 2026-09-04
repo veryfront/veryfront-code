@@ -263,4 +263,50 @@ describe("veryfront/file-list-access", () => {
       ["fresh.tsx"],
     );
   });
+
+  it("keeps the caller's branch context when retrying across a snapshot change", async () => {
+    let apiCalls = 0;
+    let snapshotVersion = 1;
+    let currentBranch = "branch-b";
+    const requestedBranches: string[] = [];
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => false,
+      getReleaseId: () => null,
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: currentBranch,
+      }),
+      getSourceSnapshotVersion: () => snapshotVersion,
+      isPersistentCacheInvalidated: () => false,
+    };
+    const client = {
+      listAllFiles: (_options: unknown, context: { name?: string }) => {
+        apiCalls += 1;
+        requestedBranches.push(context.name ?? "");
+        if (apiCalls === 1) {
+          currentBranch = "branch-b";
+          snapshotVersion += 1;
+        }
+        return Promise.resolve([makeFile(`${context.name}.tsx`)]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await loadAllProjectFiles({
+      client,
+      cache: new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+      contentContext: {
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: "branch-a",
+      },
+    });
+
+    assertEquals(requestedBranches, ["branch-a", "branch-a"]);
+    assertEquals(loaded.map((file) => file.path), ["branch-a.tsx"]);
+  });
 });

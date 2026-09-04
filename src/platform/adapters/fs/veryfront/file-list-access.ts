@@ -132,6 +132,7 @@ export async function loadAllProjectFiles({
         contextProvider,
         logger,
         operationLabel,
+        contentContext: ctx,
         snapshotRetryCount: 1,
       });
     }
