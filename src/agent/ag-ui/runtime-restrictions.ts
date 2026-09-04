@@ -1,4 +1,4 @@
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig, AgentMcpServerConfig, AgentMcpToolPolicy } from "../types.ts";
 import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
@@ -60,6 +60,35 @@ function filterAllowedNames(
     }
   }
   return kept;
+}
+
+function restrictConfiguredMcpServers(
+  servers: readonly AgentMcpServerConfig[] | undefined,
+  allowedToolNames: readonly string[],
+): AgentMcpServerConfig[] {
+  if (servers === undefined) return [];
+  const restricted: AgentMcpServerConfig[] = [];
+  for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+    const server = servers[serverIndex];
+    if (server === undefined) continue;
+    const policy: AgentMcpToolPolicy = { ...(server.toolPolicy ?? {}) };
+    const allowedByServer = policy.allow === undefined ? undefined : toToolNameLookup(policy.allow);
+    const deniedByServer = policy.deny === undefined ? undefined : toToolNameLookup(policy.deny);
+    const allow: string[] = [];
+    for (let toolIndex = 0; toolIndex < allowedToolNames.length; toolIndex++) {
+      const toolName = allowedToolNames[toolIndex];
+      if (
+        toolName !== undefined &&
+        (allowedByServer === undefined || allowedByServer[toolName] === true) &&
+        deniedByServer?.[toolName] !== true
+      ) {
+        allow[allow.length] = toolName;
+      }
+    }
+    policy.allow = allow;
+    restricted[restricted.length] = { ...server, toolPolicy: policy };
+  }
+  return restricted;
 }
 
 /**
@@ -144,7 +173,11 @@ function getVisibleLocalToolNames(agentId: string | undefined): ToolNameLookup {
   return visible;
 }
 
-function getRetainedRemoteToolNames(tools: AgentConfig["tools"]): string[] {
+function getRetainedRemoteToolNames(
+  tools: AgentConfig["tools"],
+  visibleLocalTools: ToolNameLookup,
+  providerToolNames: ToolNameLookup,
+): string[] {
   if (tools === undefined || tools === true) return [];
   const names: string[] = [];
   const seen = createNullPrototypeObject(null) as ToolNameLookup;
@@ -153,9 +186,14 @@ function getRetainedRemoteToolNames(tools: AgentConfig["tools"]): string[] {
     const toolName = toolNames[index];
     if (toolName === undefined) continue;
     const canonicalName = getRemoteToolProvenance(tools[toolName]);
-    if (canonicalName !== undefined && seen[canonicalName] !== true) {
-      seen[canonicalName] = true;
-      names[names.length] = canonicalName;
+    const retainedName = canonicalName ??
+      (tools[toolName] === true && visibleLocalTools[toolName] !== true &&
+          providerToolNames[toolName] !== true
+        ? toolName
+        : undefined);
+    if (retainedName !== undefined && seen[retainedName] !== true) {
+      seen[retainedName] = true;
+      names[names.length] = retainedName;
     }
   }
   return names;
@@ -219,9 +257,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
     ? []
     : filterAllowedNames(config.providerTools, supportedProviderTools);
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
-  const visibleLocalTools = config.tools === true
-    ? getVisibleLocalToolNames(sourceAgentId)
-    : toToolNameLookup([]);
+  const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
   restricted.tools = restrictConfiguredTools(
     config.tools,
     allowedToolNames,
@@ -244,20 +280,25 @@ export function applyAgUiRuntimeRestrictionsForModel(
   restricted.delegates = config.delegates === undefined
     ? undefined
     : filterAllowedNames(config.delegates, allowedTools, AGENT_DELEGATE_TOOL_PREFIX);
-  // MCP servers publish their tool names when the run connects to them, so a
-  // name allowlist resolved before the run cannot bound that surface. Drop the
-  // servers instead of leaving remote tools reachable.
-  //
-  // The list has to be explicitly empty rather than absent: an absent
+  // Preserve explicitly configured MCP sources, but stamp the run allowlist
+  // into every server policy before the rebuilt agent can connect. The list
+  // stays explicitly empty when no source was configured: an absent
   // `mcpServers` makes `getRuntimeRemoteToolSources` treat allowlisted boolean
   // tool references that no local registry resolves as a request for an
   // implicit Veryfront API MCP server, and it lets ambient runtime remote
   // sources be inherited. Injected remote-source fields are cleared for the
   // same reason.
-  restricted.mcpServers = [];
   const remoteToolConfig = restricted as AgentConfig & RuntimeRemoteToolConfig;
   remoteToolConfig.__vfRemoteToolSources = [];
-  remoteToolConfig.__vfAllowedRemoteTools = getRetainedRemoteToolNames(restricted.tools);
+  const retainedRemoteToolNames = getRetainedRemoteToolNames(
+    restricted.tools,
+    visibleLocalTools,
+    providerToolNames,
+  );
+  restricted.mcpServers = retainedRemoteToolNames.length === 0
+    ? []
+    : restrictConfiguredMcpServers(config.mcpServers, retainedRemoteToolNames);
+  remoteToolConfig.__vfAllowedRemoteTools = retainedRemoteToolNames;
   // Skills reach further instructions and tools through the skill loader, so
   // they stay out unless the loader itself is allowlisted.
   let skillLoaderAllowed = false;
