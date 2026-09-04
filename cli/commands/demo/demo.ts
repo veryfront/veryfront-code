@@ -334,6 +334,7 @@ async function executeStepAction(
     case "login": {
       const existingToken = await readToken();
       if (existingToken) {
+        await assertApiUrlAcceptsNewCredential();
         const userInfo = await validateToken(existingToken);
         if (userInfo) {
           console.log();

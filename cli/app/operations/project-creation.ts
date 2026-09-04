@@ -15,7 +15,11 @@ import { getLocalProjectsFromState } from "../utils.ts";
 import { reserveProjectSlug } from "../../shared/reserve-slug.ts";
 import { normalizeProjectSlug } from "../../shared/slug.ts";
 import { resolveOrCreateProject } from "../../shared/project-resolution.ts";
-import { createApiClient, type ResolvedConfig } from "../../shared/config.ts";
+import {
+  assertApiUrlAcceptsNewCredential,
+  createApiClient,
+  type ResolvedConfig,
+} from "../../shared/config.ts";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import { resolveCliApiUrl } from "../../shared/constants.ts";
 import { createProject as createSharedProject } from "../../shared/project-creation.ts";
@@ -47,6 +51,7 @@ export async function createProject(
     if (!token) {
       return addLog("error", "Not authenticated. Press 'a' to login.")(state);
     }
+    await assertApiUrlAcceptsNewCredential();
 
     const normalizedSlug = normalizeProjectSlug(projectName);
     const reserved = await reserveProjectSlug(normalizedSlug, token);
