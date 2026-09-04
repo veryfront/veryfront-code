@@ -99,6 +99,9 @@ const SetPrototypeHas = NativeSet.prototype.has;
 // reference is still steerable by a same-realm String.prototype[Symbol.split].
 // indexOf/slice take no such detour.
 function splitOnCommas(value: string): string[] {
+  // Indexed writes, not .push(): a replaced Array.prototype.push is an
+  // ordinary same-realm method override, unlike Symbol.split's boxed-argument
+  // dispatch above -- assigning parts[parts.length] never looks it up.
   const parts: string[] = [];
   let start = 0;
   while (true) {
@@ -107,10 +110,13 @@ function splitOnCommas(value: string): string[] {
       start,
     ]) as number;
     if (commaIndex === -1) {
-      parts.push(IntrinsicReflectApply(StringPrototypeSlice, value, [start]) as string);
+      parts[parts.length] = IntrinsicReflectApply(StringPrototypeSlice, value, [start]) as string;
       return parts;
     }
-    parts.push(IntrinsicReflectApply(StringPrototypeSlice, value, [start, commaIndex]) as string);
+    parts[parts.length] = IntrinsicReflectApply(StringPrototypeSlice, value, [
+      start,
+      commaIndex,
+    ]) as string;
     start = commaIndex + 1;
   }
 }

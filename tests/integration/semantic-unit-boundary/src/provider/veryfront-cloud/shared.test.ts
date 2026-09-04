@@ -207,4 +207,34 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
       assertEquals(capturedRequest?.url, `${INTERNAL_API_BASE_URL}/chat/completions`);
     },
   );
+
+  it(
+    "is not fooled by a poisoned Array.prototype.push into dropping allowlist entries",
+    async () => {
+      const originalPush = Array.prototype.push;
+      // deno-lint-ignore no-explicit-any
+      (Array.prototype as any).push = function () {
+        return 0;
+      };
+      try {
+        await withEnv(
+          {
+            [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]:
+              "http://some-service.some-namespace.svc.cluster.local",
+          },
+          // deno-lint-ignore require-await
+          async () => {
+            assertEquals(
+              isHostAllowedInternalProviderOrigin(
+                new URL("http://some-service.some-namespace.svc.cluster.local/ai/gateway"),
+              ),
+              true,
+            );
+          },
+        );
+      } finally {
+        Array.prototype.push = originalPush;
+      }
+    },
+  );
 });
