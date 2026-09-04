@@ -33,6 +33,8 @@ const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const CONTRACT_FACT_SCALAR_PATTERN =
   /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/;
+const CONTRACT_FACT_SCALAR_PREFIX_PATTERN =
+  /^(?:|t(?:r(?:u(?:e)?)?)?|f(?:a(?:l(?:s(?:e)?)?)?)?|n(?:u(?:l(?:l)?)?)?|-|-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][+-]?[0-9]*)?)$/;
 const IMPORT_FROM_PATTERN = /\bfrom\s+["']([^"']+)["']/g;
 const BARE_IMPORT_PATTERN = /\bimport\s+["']([^"']+)["']/g;
 const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -451,7 +453,12 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
       ) index += 1;
       // A bare token that reaches the window edge is itself incomplete, while a
       // token that is not a JSON scalar is invalid member syntax.
-      if (index >= fieldBody.length) break;
+      if (index >= fieldBody.length) {
+        if (!CONTRACT_FACT_SCALAR_PREFIX_PATTERN.test(fieldBody.slice(valueStart).trim())) {
+          return undefined;
+        }
+        break;
+      }
       if (!CONTRACT_FACT_SCALAR_PATTERN.test(fieldBody.slice(valueStart, index).trim())) {
         return undefined;
       }
@@ -521,8 +528,9 @@ function addToolArrayFieldValues(
   allowIncompleteLeadingObject = false,
 ): void {
   pattern.lastIndex = 0;
-  const extendedCandidates: Array<{ fieldName: string; bodyStart: number }> = [];
+  let coveredUntil = 0;
   for (const match of text.matchAll(pattern)) {
+    if (match.index < coveredUntil) continue;
     const fieldName = match[1];
     const bodyStart = match.index + match[0].length;
     const boundedBody = text.slice(
@@ -532,22 +540,25 @@ function addToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
-    if (closingBracket === -1) extendedCandidates.push({ fieldName, bodyStart });
-    if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
-  }
-
-  // Full parsing stays bounded to a fixed number of fields in the already
-  // bounded head/tail window. Reserve that work for the latest declarations,
-  // so earlier long arrays without IDs cannot hide a later contract fact.
-  for (const { fieldName, bodyStart } of extendedCandidates.slice(-CHILD_RUN_CONTRACT_FACT_LIMIT)) {
-    const windowBody = text.slice(bodyStart);
-    const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-    const scanned = scanCompleteLeadingArrayValues(
-      windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
-    );
-    addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
-    if (fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject) {
-      addToolIdsFromIncompleteLeadingObject(target, windowBody.slice(scanned.nextIndex));
+    if (closingBracket !== -1) {
+      coveredUntil = bodyStart + closingBracket + 1;
+    } else {
+      // Scan each outer array at most once. Complete sequential arrays occupy
+      // disjoint ranges, while one unclosed outer array covers the rest of the
+      // bounded window. This reaches facts in every long declaration without
+      // letting nested opener-like text turn the work quadratic.
+      const windowBody = text.slice(bodyStart);
+      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
+      const scanned = scanCompleteLeadingArrayValues(
+        windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
+      );
+      addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
+      if (fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject) {
+        addToolIdsFromIncompleteLeadingObject(target, windowBody.slice(scanned.nextIndex));
+      }
+      coveredUntil = windowClosingBracket === -1
+        ? text.length
+        : bodyStart + windowClosingBracket + 1;
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
@@ -559,8 +570,9 @@ function addProviderToolArrayFieldValues(
   pattern: RegExp,
 ): void {
   pattern.lastIndex = 0;
-  const extendedCandidates: number[] = [];
+  let coveredUntil = 0;
   for (const match of text.matchAll(pattern)) {
+    if (match.index < coveredUntil) continue;
     const bodyStart = match.index + match[0].length;
     const boundedBody = text.slice(
       bodyStart,
@@ -569,19 +581,21 @@ function addProviderToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromParsedArray(target, parseCompleteLeadingArrayValues(fieldBody), false);
-    if (closingBracket === -1) extendedCandidates.push(bodyStart);
-    if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
-  }
-
-  for (const bodyStart of extendedCandidates.slice(-CHILD_RUN_CONTRACT_FACT_LIMIT)) {
-    const windowBody = text.slice(bodyStart);
-    const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
-    if (windowClosingBracket !== -1) {
-      addToolIdsFromParsedArray(
-        target,
-        parseCompleteLeadingArrayValues(windowBody.slice(0, windowClosingBracket)),
-        false,
-      );
+    if (closingBracket !== -1) {
+      coveredUntil = bodyStart + closingBracket + 1;
+    } else {
+      const windowBody = text.slice(bodyStart);
+      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
+      if (windowClosingBracket !== -1) {
+        addToolIdsFromParsedArray(
+          target,
+          parseCompleteLeadingArrayValues(windowBody.slice(0, windowClosingBracket)),
+          false,
+        );
+      }
+      coveredUntil = windowClosingBracket === -1
+        ? text.length
+        : bodyStart + windowClosingBracket + 1;
     }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }

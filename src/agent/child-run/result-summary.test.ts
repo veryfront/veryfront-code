@@ -331,6 +331,15 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("rejects an arbitrary bare scalar prefix cut by the head window", () => {
+      const text = 'tools: [{"id":"bogus_tool","cost": garbage' +
+        "x".repeat(40_000) + "\n" + "z".repeat(100_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("rejects an ID after malformed nested metadata in an incomplete object", () => {
       const text = 'tools: [{"schema":[}],"id":"bogus_tool","description":"' +
         "x".repeat(130_000);
@@ -429,6 +438,16 @@ describe("child-run-result-summary", () => {
       const noIdArray = `tools: [{"description":"${"a".repeat(2_100)}"}]\n`;
       const text = noIdArray.repeat(50) +
         `tools: [{"description":"${"b".repeat(2_500)}","id":"critical_tool"}]`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
+    it("does not let later no-ID arrays displace an earlier extended fact", () => {
+      const factArray = `tools: [{"description":"${"a".repeat(2_100)}","id":"critical_tool"}]\n`;
+      const noIdArray = `tools: [{"description":"${"b".repeat(2_100)}"}]\n`;
+      const text = factArray + noIdArray.repeat(50);
 
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
