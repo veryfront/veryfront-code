@@ -159,4 +159,27 @@ describe("agent/detached-run-tracker", () => {
 
     await execution.resolve();
   });
+
+  it("does not produce an unhandled rejection when a registered execution fails", async () => {
+    const tracker = createDetachedRunTracker();
+    let unhandled: unknown;
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      unhandled = event.reason;
+      event.preventDefault();
+    };
+    globalThis.addEventListener("unhandledrejection", onUnhandledRejection);
+
+    try {
+      // The caller (durable-chat-run-start.ts) awaits this same promise
+      // directly, so its rejection is already handled there.
+      const execution = Promise.reject(new Error("boom"));
+      execution.catch(() => {});
+      tracker.registerExecution("run_1", execution);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      globalThis.removeEventListener("unhandledrejection", onUnhandledRejection);
+    }
+
+    assertEquals(unhandled, undefined);
+  });
 });

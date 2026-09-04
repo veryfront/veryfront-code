@@ -93,6 +93,8 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
         activeExecutions.delete(runId);
         untrackRun(runId);
       });
+      // Only waitForDrain (shutdown) ever reads this promise; unhandled otherwise, a rejection crashes the process.
+      trackedExecution.catch(() => {});
 
       activeExecutions.set(runId, trackedExecution);
     },
