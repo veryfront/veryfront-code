@@ -5,7 +5,11 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
+  refreshEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 import {
   remoteFileTools,
   vfRemoteCloneProject,
@@ -421,6 +425,45 @@ describe("cli/mcp/remote-file-tools", () => {
         projectSlug: "project",
       });
     };
+
+    it("does not send a shell token to a project env API origin", async () => {
+      const keys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"];
+      const prior = keys.map((key) => getEnv(key));
+      let fetchCalls = 0;
+      try {
+        setEnv("VERYFRONT_API_TOKEN", "shell-token");
+        deleteEnv("VERYFRONT_API_URL");
+        deleteEnv("VERYFRONT_API_BASE_URL");
+        __resetEnvLoaderForTests();
+        await withTempDir(async (dir) => {
+          await Deno.writeTextFile(
+            `${dir}/.env`,
+            "VERYFRONT_API_BASE_URL=https://project-controlled.example\n",
+          );
+          await loadEnv({ cwd: dir, override: false });
+          refreshEnvironmentConfig();
+
+          const result = await withMockFetch(
+            (() => {
+              fetchCalls += 1;
+              return Promise.resolve(Response.json({ data: [] }));
+            }) as typeof fetch,
+            () => vfRemoteListFiles.execute({ project: "project", limit: 50 }),
+          );
+
+          assertEquals(result.success, false);
+        });
+        assertEquals(fetchCalls, 0);
+      } finally {
+        __resetEnvLoaderForTests();
+        keys.forEach((key, index) => {
+          const value = prior[index];
+          if (value === undefined) deleteEnv(key);
+          else setEnv(key, value);
+        });
+        _resetEnvironmentConfig();
+      }
+    });
 
     it("loads a file via API with encoded path and returns typed payload", async () => {
       resetEnv();

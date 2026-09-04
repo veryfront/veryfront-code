@@ -17,6 +17,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
 import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
+import { resolveApiCredentialCandidatesForAuth } from "#cli/shared/config";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -24,25 +25,23 @@ import {
   slugToName,
 } from "./remote-file-tool-helpers.ts";
 
-function getApiBaseUrl(): string {
-  return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
-}
-
-function getApiToken(): string | undefined {
-  return getEnvironmentConfig().apiToken;
-}
-
 async function apiRequest<T>(
   method: string,
   path: string,
   options: { body?: unknown; token?: string } = {},
 ): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
-  const token = options.token ?? getApiToken();
-  if (!token) {
+  const env = getEnvironmentConfig();
+  const candidates = await resolveApiCredentialCandidatesForAuth(env);
+  const candidate = options.token
+    ? candidates.find((entry) => entry.apiToken === options.token)
+    : candidates[0];
+  if (!candidate) {
     return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
   }
 
-  const url = `${getApiBaseUrl()}/api${path}`;
+  const token = candidate.apiToken;
+  const apiBaseUrl = candidate.validationEnv.apiBaseUrl || DEFAULT_LOCAL_API_URL;
+  const url = `${apiBaseUrl}/api${path}`;
 
   try {
     const response = await fetch(url, {

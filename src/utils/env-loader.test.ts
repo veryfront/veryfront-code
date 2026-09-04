@@ -385,6 +385,40 @@ describe("env-loader", () => {
         __resetLoggerConfigForTests();
       }
     });
+
+    it("should not log process values expanded into an API URL", async () => {
+      const secretKey = createKey("LOGGED_API_URL_SECRET");
+      const previousValue = getEnv("VERYFRONT_API_BASE_URL");
+      const previousLogFormat = getEnv("LOG_FORMAT");
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        setEnv(secretKey, "highly-sensitive-host-label");
+        setEnv("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+        await writeEnvFile(
+          ".env",
+          `VERYFRONT_API_BASE_URL=https://$${secretKey}.example.test/api`,
+        );
+
+        await loadEnv({ cwd: tempDir, override: true });
+
+        const output = getOutput();
+        assertEquals(output.includes("highly-sensitive-host-label"), false);
+        assertEquals(
+          JSON.parse(output).message,
+          "VERYFRONT_API_BASE_URL loaded from an expanded project env value",
+        );
+      } finally {
+        restore();
+        cleanupKeys(secretKey);
+        if (previousValue === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", previousValue);
+        if (previousLogFormat === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 
   describe("getEnvSource", () => {

@@ -61,8 +61,14 @@ export async function loadEnv(
           logger.debug(`[env] ${key} (${value.length} chars)`);
         }
         if (key === "VERYFRONT_API_BASE_URL") {
-          // Hybrid setups can embed userinfo credentials in the URL; strip them.
-          logger.info(`VERYFRONT_API_BASE_URL loaded: ${sanitizeUrlCredentials(value)}`);
+          // Hybrid setups can embed userinfo credentials in the URL. An
+          // expansion can also place an arbitrary shell secret in any URL
+          // component, which structural URL sanitization cannot identify.
+          logger.info(
+            expandedFromProcessEnv
+              ? "VERYFRONT_API_BASE_URL loaded from an expanded project env value"
+              : `VERYFRONT_API_BASE_URL loaded: ${sanitizeUrlCredentials(value)}`,
+          );
         }
       }
 
