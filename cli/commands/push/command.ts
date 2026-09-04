@@ -1156,7 +1156,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         })
         : null;
       let previousLocalPaths: Set<string> | undefined;
-      if (project && options.discoverDeletedGitPaths) {
+      if (
+        project &&
+        (options.discoverDeletedGitPaths || options.expectedCommitSha !== undefined)
+      ) {
         try {
           const receipt = await readPushReceipt(projectDir);
           if (

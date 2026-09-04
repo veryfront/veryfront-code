@@ -4721,6 +4721,93 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("applies receipt-owned deletions during an unborn repository refresh", async () => {
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.remove(`${projectDir}/.git`, { recursive: true });
+        await runGit("init", "--quiet");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha: null,
+          sourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "removed.ts", content: "export const removed = true;\n" },
+          ]),
+          localSourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "removed.ts", content: "export const removed = true;\n" },
+          ]),
+          localPaths: ["app.ts", "removed.ts"],
+          clean: false,
+        });
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            "removed.ts": {
+              digest: await computeContentDigest("export const removed = true;\n"),
+            },
+          },
+        });
+
+        const deleted: string[] = [];
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "export const value = 1;\n" },
+                ...(!deleted.includes("removed.ts")
+                  ? [{
+                    path: "removed.ts",
+                    content: "export const removed = true;\n",
+                    version_id: "00000000-0000-4000-8000-000000000005",
+                  }]
+                  : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(fetchHandler, () =>
+          pushCommand({
+            projectDir,
+            branch: "main",
+            expectedCommitSha: null,
+            quiet: true,
+          }));
+
+        assertEquals(deleted, ["removed.ts"]);
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("re-deletes a selected path recreated during a forced targeted refresh", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
