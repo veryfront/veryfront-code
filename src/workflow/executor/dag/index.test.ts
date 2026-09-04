@@ -3545,6 +3545,64 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["release-2"], undefined);
     });
 
+    it("resumes an active sub-workflow before a queued sibling reuses its child id", async () => {
+      const serialExecutor = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(),
+        maxConcurrency: 1,
+      });
+      const release = (id: string): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-workflow`,
+            steps: [waitForApproval("review", { message: `Approve ${id}` })],
+          },
+        }),
+        dependsOn: [],
+      });
+      const nodes = [release("release-1"), release("release-2")];
+
+      const first = await serialExecutor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.nodeStates["release-1"]?.status, "running");
+      assertEquals(first.nodeStates["release-2"], undefined);
+
+      const second = await serialExecutor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            review: {
+              ...first.nodeStates.review!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+      assertEquals(second.waiting, true);
+      assertEquals(second.nodeStates["release-1"]?.status, "completed");
+      assertEquals(second.nodeStates["release-2"]?.status, "running");
+
+      const third = await serialExecutor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...second.nodeStates,
+            review: {
+              ...second.nodeStates.review!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+      assertEquals(third.completed, true);
+      assertEquals(third.nodeStates["release-1"]?.status, "completed");
+      assertEquals(third.nodeStates["release-2"]?.status, "completed");
+    });
+
     it("rejects collisions from a sub-workflow nested in a concurrent composite", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
@@ -3803,6 +3861,57 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.completed, true);
       assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates.release?.status, "completed");
+    });
+
+    it("does not infer map descendants from a normal processor's output keys", async () => {
+      const nodes: WorkflowNode[] = [
+        map("orders", {
+          items: [{}],
+          processor: { id: "process-order", config: { type: "step" } as any },
+        }),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("orders_0/review", { message: "Already approved" })],
+            },
+          }),
+          dependsOn: ["orders"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            orders: {
+              nodeId: "orders",
+              status: "completed",
+              output: [{}],
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            orders_0: {
+              nodeId: "orders_0",
+              status: "completed",
+              output: { "orders_0/review": { arbitrary: true } },
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            release: { nodeId: "release", status: "running", attempt: 1 },
+            "orders_0/review": {
+              nodeId: "orders_0/review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
       assertEquals(result.nodeStates.release?.status, "completed");
     });
 
@@ -4107,6 +4216,42 @@ describe("DAGExecutor", () => {
 
       assertEquals(resumed.completed, true);
       assertEquals(resumed.waiting, false);
+    });
+
+    it("retains directly owned approval state in a nested composite resume", async () => {
+      const nodes = [subWorkflow("outer", {
+        workflow: {
+          id: "outer-workflow",
+          steps: [parallel("group", [
+            waitForApproval("review", { message: "Review the nested group" }),
+          ])],
+        },
+      })];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "group/review");
+      assertExists(first.waitingNode);
+      const waitingState = first.nodeStates[first.waitingNode];
+      assertExists(waitingState);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            [first.waitingNode]: {
+              ...waitingState,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.completed, true);
+      assertEquals(resumed.waiting, false);
+      assertEquals(resumed.nodeStates[first.waitingNode]?.status, "completed");
     });
 
     it("isolates a deferred map from a dynamic sub-workflow child", async () => {

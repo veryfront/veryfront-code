@@ -50,6 +50,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import { collectWorkflowNodeIds } from "#veryfront/workflow/dsl/validation.ts";
+import { namespaceWorkflowDefinition } from "#veryfront/workflow/dsl/validation.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import {
   executeCompositeNodeWithPolicy,
@@ -399,10 +400,15 @@ function collectCompletedCompositeChildIds(
           const wrapperId = `${node.id}_${index}`;
           if (nodeStates[wrapperId] === undefined) continue;
           target.add(wrapperId);
-          const wrapperOutput = nodeStates[wrapperId]?.output;
-          if (typeof wrapperOutput !== "object" || wrapperOutput === null) continue;
-          for (const childId of Object.keys(wrapperOutput)) {
-            if (childId.startsWith(`${wrapperId}/`)) target.add(childId);
+          const processor = node.config.processor;
+          if (
+            typeof processor === "object" && processor !== null && "steps" in processor &&
+            Array.isArray(processor.steps)
+          ) {
+            const namespaced = namespaceWorkflowDefinition(`${wrapperId}/`, processor);
+            for (const childId of collectWorkflowNodeIds(namespaced.steps as WorkflowNode[])) {
+              target.add(childId);
+            }
           }
         }
       }
@@ -479,9 +485,8 @@ function createCompositeNodeStateView(
   for (const [nodeId, state] of Object.entries(nodeStates)) {
     const ownerPath = state._subWorkflowOwnerPath;
     if (ownerPath !== undefined) {
-      const allowed = [...allowedOwnerPaths].some((candidate) =>
-        isSubWorkflowDescendant(ownerPath, candidate)
-      );
+      const allowed = ownerPath === parentPath && declaredIds.has(nodeId) ||
+        [...allowedOwnerPaths].some((candidate) => isSubWorkflowDescendant(ownerPath, candidate));
       if (allowed) visible[nodeId] = state;
       continue;
     }
@@ -783,6 +788,7 @@ export class DAGExecutor {
       // ordinary approval.
       const { resumingWait } = scope;
       const exhausted: Array<{ nodeId: string; attempts: number; maxAttempts: number }> = [];
+      const resumableComposites: string[] = [];
       for (const [nodeId, degree] of inDegree) {
         if (degree !== 0 || ready.includes(nodeId)) continue;
         const state = nodeStates[nodeId];
@@ -793,7 +799,7 @@ export class DAGExecutor {
         // Re-enter it so the child resumes; nothing crashed, so it spends no
         // recovery budget.
         if (resumingWait && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) {
-          ready.push(nodeId);
+          resumableComposites.push(nodeId);
           continue;
         }
         // A wait recorded as running is parked on its decision, never a dead
@@ -831,6 +837,12 @@ export class DAGExecutor {
         recoveryQueued.add(nodeId);
         ready.push(nodeId);
       }
+      // A pending sibling can legally reuse child IDs after this composite
+      // finishes, but it must not overwrite the approval the active composite
+      // is resuming. Re-enter active composites before untouched ready nodes;
+      // normal batch collision checks still compare them when concurrency
+      // admits more than one at once.
+      ready = [...resumableComposites, ...ready];
 
       if (exhausted.length > 0) {
         const first = exhausted[0]!;
