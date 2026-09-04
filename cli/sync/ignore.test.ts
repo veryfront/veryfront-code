@@ -332,9 +332,20 @@ describe("cli/sync/ignore", () => {
           "an anchored literal negation must include its implicit descendants",
         );
 
+        const partialWildcardChecker = createIgnoreChecker([
+          "!foo.ts",
+          "*e*",
+        ]);
+        assertEquals(partialWildcardChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          12,
+          "one matching descendant probe must not imply full wildcard coverage",
+        );
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 11, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 12, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

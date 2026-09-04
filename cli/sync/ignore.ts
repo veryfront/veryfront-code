@@ -101,6 +101,7 @@ interface IgnoreRule {
   negated: boolean;
   regex: RegExp;
   anchored: boolean;
+  implicitDescendants: boolean;
   globTokens: GlobToken[];
 }
 
@@ -249,6 +250,7 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
     negated,
     regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
     anchored,
+    implicitDescendants: directoryOnly || !hasSlash && !hasGlob,
     globTokens: tokenizeGlob(pattern),
   };
 }
@@ -331,11 +333,10 @@ function hasEffectiveDescendantNegation(
   normalizedPath: string,
   canceledNegations: ReadonlySet<IgnoreRule>,
 ): boolean {
-  const descendantProbe = `${normalizedPath}/__veryfront_probe__.json`;
   let lastBroadIgnoreIndex = -1;
   for (let index = 0; index < rules.length; index++) {
     const rule = rules[index]!;
-    if (!rule.negated && rule.regex.test(normalizedPath) && rule.regex.test(descendantProbe)) {
+    if (!rule.negated && rule.implicitDescendants && rule.regex.test(normalizedPath)) {
       lastBroadIgnoreIndex = index;
     }
   }
@@ -370,8 +371,7 @@ function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<Ign
           if (!(rule.anchored || !positive.anchored) || !positive.regex.test(literalPath)) {
             return false;
           }
-          const descendantProbe = `${literalPath}/__veryfront_probe__.json`;
-          return !rule.regex.test(descendantProbe) || positive.regex.test(descendantProbe);
+          return !rule.implicitDescendants || positive.implicitDescendants;
         }))
       ) {
         canceled.add(rule);
