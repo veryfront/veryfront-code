@@ -483,13 +483,14 @@ function collectCompletedCompositeChildIds(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
   target: Set<string>,
+  context?: WorkflowContext,
 ): void {
   for (const node of nodes) {
     const status = nodeStates[node.id]?.status;
     if (status !== "completed") continue;
 
     if (node.config.type === "parallel") {
-      collectExecutedCompositeNodeIds(node.config.nodes, nodeStates, target);
+      collectExecutedCompositeNodeIds(node.config.nodes, nodeStates, target, context);
       continue;
     }
     if (node.config.type === "branch") {
@@ -502,7 +503,7 @@ function collectCompletedCompositeChildIds(
         : branch === "else"
         ? (node.config.else ?? [])
         : [];
-      collectExecutedCompositeNodeIds(selected, nodeStates, target);
+      collectExecutedCompositeNodeIds(selected, nodeStates, target, context);
       continue;
     }
     if (node.config.type === "map") {
@@ -522,6 +523,7 @@ function collectCompletedCompositeChildIds(
               namespaced.steps as WorkflowNode[],
               nodeStates,
               target,
+              context,
             );
           } else if (typeof processor === "object" && processor !== null && "config" in processor) {
             collectCompletedCompositeChildIds(
@@ -535,6 +537,7 @@ function collectCompletedCompositeChildIds(
               }],
               nodeStates,
               target,
+              context,
             );
           }
         }
@@ -542,7 +545,16 @@ function collectCompletedCompositeChildIds(
       continue;
     }
     if (node.config.type === "loop" && Array.isArray(node.config.steps)) {
-      collectExecutedCompositeNodeIds(node.config.steps, nodeStates, target);
+      collectExecutedCompositeNodeIds(node.config.steps, nodeStates, target, context);
+    } else if (node.config.type === "loop" && context) {
+      const loopState = context[`${node.id}_loop_state`];
+      const iterationNodeStates = typeof loopState === "object" && loopState !== null &&
+          "iterationNodeStates" in loopState
+        ? (loopState as { iterationNodeStates?: unknown }).iterationNodeStates
+        : undefined;
+      if (typeof iterationNodeStates === "object" && iterationNodeStates !== null) {
+        for (const childId of Object.keys(iterationNodeStates)) target.add(childId);
+      }
     }
   }
 }
@@ -551,11 +563,12 @@ function collectExecutedCompositeNodeIds(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
   target: Set<string>,
+  context?: WorkflowContext,
 ): void {
   for (const node of nodes) {
     if (nodeStates[node.id] === undefined) continue;
     target.add(node.id);
-    collectCompletedCompositeChildIds([node], nodeStates, target);
+    collectCompletedCompositeChildIds([node], nodeStates, target, context);
   }
 }
 
@@ -721,7 +734,16 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
   nodeStates: Record<string, NodeState>,
   scope: ExecutionScope,
 ): Set<string> {
-  const producedNodeIds = new Set(scope.completedCompositeChildIds);
+  const producedNodeIds = new Set<string>();
+  const currentReservations = scope.subWorkflowNodeReservations.get(ownerPath) ?? new Set<string>();
+  const currentOwnerIsActive = scope.resumedSubWorkflowOwnerPaths.has(ownerPath);
+  for (const nodeId of scope.completedCompositeChildIds) {
+    if (
+      currentOwnerIsActive && currentReservations.has(nodeId) &&
+      nodeStates[nodeId]?._subWorkflowOwnerPath === undefined
+    ) continue;
+    producedNodeIds.add(nodeId);
+  }
   for (const [owner, ids] of scope.subWorkflowNodeIds) {
     if (isSubWorkflowDescendant(owner, ownerPath)) continue;
     for (const id of ids) producedNodeIds.add(id);
@@ -870,6 +892,7 @@ export class DAGExecutor {
       completedCompositeChildIds: new Set(),
       subWorkflowNodeReservations: new Map(),
       subWorkflowReservationOwners: new Map(),
+      resumedSubWorkflowOwnerPaths: new Set(),
       subWorkflowPath: "",
       rootKeyspace: true,
       ownership,
@@ -916,7 +939,12 @@ export class DAGExecutor {
       nodeStates,
       branchOwnerPaths,
     );
-    collectCompletedCompositeChildIds(nodes, nodeStates, scope.completedCompositeChildIds);
+    collectCompletedCompositeChildIds(
+      nodes,
+      nodeStates,
+      scope.completedCompositeChildIds,
+      context,
+    );
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -980,6 +1008,11 @@ export class DAGExecutor {
         // Re-enter it so the child resumes; nothing crashed, so it spends no
         // recovery budget.
         if (resumingWait && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) {
+          if (node.config.type === "subWorkflow") {
+            scope.resumedSubWorkflowOwnerPaths.add(
+              subWorkflowOwnerPath(scope.subWorkflowPath, node.id),
+            );
+          }
           resumableComposites.push(nodeId);
           continue;
         }
@@ -1270,6 +1303,7 @@ export class DAGExecutor {
           [nodeMap.get(nodeId)!],
           nodeStates,
           scope.completedCompositeChildIds,
+          context,
         );
 
         if (nodeResult.waiting) {

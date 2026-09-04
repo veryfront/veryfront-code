@@ -52,6 +52,8 @@ export interface ExecutionScope {
   subWorkflowNodeReservations: Map<string, Set<string>>;
   /** Sub-workflow node owning each reservation path. */
   subWorkflowReservationOwners: Map<string, string>;
+  /** Owner paths already running when this wait-resume pass began. */
+  resumedSubWorkflowOwnerPaths: Set<string>;
   /** Slash-safe encoded owner path of the graph currently being executed. */
   subWorkflowPath: string;
   /**
