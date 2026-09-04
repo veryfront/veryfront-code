@@ -1545,9 +1545,12 @@ describe("pruneSupersededJsxArtifacts", () => {
     const originalReadTextFile = localFs.readTextFile;
     const originalWriteTextFile = localFs.writeTextFile;
     const originalRename = localFs.rename;
+    const createExclusive = localFs.createFileBytesExclusive;
     if (!originalRename) throw new Error("the test runtime must support atomic rename");
+    if (!createExclusive) throw new Error("the test runtime must support exclusive create");
     let lockReads = 0;
     let replacementInjected = false;
+    let thirdOwnerInjected = false;
     try {
       await writeTextFile(artifactPath, "export const v = 0;");
       localFs.readTextFile = async (path) => {
@@ -1562,7 +1565,15 @@ describe("pruneSupersededJsxArtifacts", () => {
           replacementInjected = true;
           await originalWriteTextFile(leasePath, "replacement-owner");
         }
-        return await originalRename(from, to);
+        await originalRename(from, to);
+        if (from === leasePath && to.includes(".release-") && !thirdOwnerInjected) {
+          thirdOwnerInjected = true;
+          await createExclusive(leasePath, new TextEncoder().encode("third-owner"));
+          setTimeout(() => {
+            void localFs.remove(leasePath).catch(() => undefined);
+          }, 0);
+        }
+        return;
       };
 
       await withJsxArtifactLock(artifactPath, async () => {});
@@ -2323,16 +2334,20 @@ describe("normalized module memo", () => {
 });
 
 describe("scheduled prune bound", () => {
+  const persistedTestPrefix = "/tmp/vf-jsx-sweep-persisted/";
   const {
     cancelScheduledJsxCachePrunes,
+    clearPersistedJsxCachePruneRequestsForTests,
     hasScheduledJsxCachePrune,
+    hasPersistedJsxCachePrune,
     MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
     queuedJsxCachePruneCount,
     scheduledJsxCachePruneCount,
   } = __jsxCacheInternals;
 
-  afterEach(() => {
+  afterEach(async () => {
     cancelScheduledJsxCachePrunes();
+    await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
   });
 
   it("queues overflow directories without canceling active cleanup timers", () => {
@@ -2353,6 +2368,24 @@ describe("scheduled prune bound", () => {
     );
     assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
     assertEquals(queuedJsxCachePruneCount(), 1);
+  });
+
+  it("persists directories beyond the bounded in-memory backlog", async () => {
+    await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
+    for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES * 2; entry++) {
+      ensureJsxCacheSweepArmed(`${persistedTestPrefix}${entry}`);
+    }
+    const overflow = `${persistedTestPrefix}overflow`;
+    ensureJsxCacheSweepArmed(overflow);
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (await hasPersistedJsxCachePrune(overflow)) break;
+      await Promise.resolve();
+    }
+
+    assertEquals(await hasPersistedJsxCachePrune(overflow), true);
+    assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
+    assertEquals(queuedJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
   });
 });
 
