@@ -113,6 +113,8 @@ type GlobToken =
 
 const MAX_IGNORE_PATTERN_LENGTH = 4_096;
 const MAX_IGNORE_PATTERN_SEGMENTS = 128;
+const MAX_IGNORE_RULES = 1_024;
+const MAX_IGNORE_FILE_LENGTH = 256 * 1_024;
 
 /**
  * Load ignore patterns from .vfignore file
@@ -141,6 +143,9 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
 
   try {
     const content = await fs.readTextFile(ignorePath);
+    if (content.length > MAX_IGNORE_FILE_LENGTH) {
+      throw new Error(`.vfignore must not exceed ${MAX_IGNORE_FILE_LENGTH} characters.`);
+    }
     const customPatterns = content
       .split("\n")
       .map((line) => line.trim())
@@ -256,6 +261,9 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
 }
 
 function toRules(patterns: readonly string[], caseInsensitive = false): IgnoreRule[] {
+  if (patterns.length > MAX_IGNORE_RULES) {
+    throw new Error(`.vfignore must not contain more than ${MAX_IGNORE_RULES} rules.`);
+  }
   return patterns.flatMap((pattern) => {
     const rule = patternToRule(pattern, caseInsensitive);
     return rule ? [rule] : [];

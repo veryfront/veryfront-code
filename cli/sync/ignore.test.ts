@@ -366,6 +366,11 @@ describe("cli/sync/ignore", () => {
         Error,
         ".vfignore patterns must not exceed",
       );
+      assertThrows(
+        () => createIgnoreChecker(Array.from({ length: 1_025 }, (_, index) => `file-${index}`)),
+        Error,
+        "1024 rules",
+      );
     });
   });
 
