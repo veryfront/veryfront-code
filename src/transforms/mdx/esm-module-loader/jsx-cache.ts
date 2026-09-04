@@ -11,6 +11,7 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import { isAlreadyExistsError, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
@@ -112,6 +113,9 @@ export async function ensureCachedJsxModulePatched(
  * in-flight artifact survives when that ceiling is raised.
  */
 export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 32;
+
+/** Hard count ceiling for JSX artifacts in one cache directory. */
+export const MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY = MAX_MDX_MODULE_IMPORTS_PER_FILE;
 
 /**
  * Age an artifact must reach before it can be retired.
@@ -215,6 +219,8 @@ function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): b
  * however long the render's HTTP-caching and bundle-recovery phases run.
  */
 const jsxArtifactActiveRefs = new Map<string, number>();
+const lazyJsxArtifactPaths = new Set<string>();
+let lazyJsxArtifactHeartbeat: ReturnType<typeof setInterval> | undefined;
 
 function retainJsxArtifact(artifactPath: string): void {
   jsxArtifactActiveRefs.set(artifactPath, (jsxArtifactActiveRefs.get(artifactPath) ?? 0) + 1);
@@ -225,6 +231,23 @@ function releaseJsxArtifact(artifactPath: string): void {
   if (count === undefined) return;
   if (count <= 1) jsxArtifactActiveRefs.delete(artifactPath);
   else jsxArtifactActiveRefs.set(artifactPath, count - 1);
+}
+
+function ensureLazyJsxArtifactHeartbeat(): void {
+  if (lazyJsxArtifactHeartbeat !== undefined) return;
+  lazyJsxArtifactHeartbeat = setInterval(() => {
+    for (const artifactPath of lazyJsxArtifactPaths) {
+      void withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0)).catch(
+        () => undefined,
+      );
+    }
+  }, JSX_CACHE_MTIME_REFRESH_INTERVAL_MS);
+  unrefTimer(lazyJsxArtifactHeartbeat);
+}
+
+function retainLazyJsxArtifact(artifactPath: string): void {
+  lazyJsxArtifactPaths.add(artifactPath);
+  ensureLazyJsxArtifactHeartbeat();
 }
 
 /**
@@ -315,11 +338,16 @@ export async function retainJsxArtifactsReferencedIn(
   esmCacheDir: string,
 ): Promise<() => void> {
   const artifactPaths: string[] = [];
+  const staticArtifactPaths: string[] = [];
   for (const imported of await parseImports(code)) {
     const artifactPath = resolveOwnedJsxArtifactPath(imported.n, esmCacheDir);
     if (artifactPath === undefined) continue;
     artifactPaths.push(artifactPath);
-    retainJsxArtifact(artifactPath);
+    if (imported.d > -1) retainLazyJsxArtifact(artifactPath);
+    else {
+      staticArtifactPaths.push(artifactPath);
+      retainJsxArtifact(artifactPath);
+    }
   }
   if (artifactPaths.length === 0) return () => {};
 
@@ -329,7 +357,9 @@ export async function retainJsxArtifactsReferencedIn(
   const uniqueArtifactPaths = [...new Set(artifactPaths)];
   const refreshAll = async () => {
     await Promise.all(
-      uniqueArtifactPaths.map((artifactPath) => refreshJsxArtifactMtime(artifactPath, 0)),
+      uniqueArtifactPaths.map((artifactPath) =>
+        withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0))
+      ),
     );
   };
   await refreshAll();
@@ -347,8 +377,8 @@ export async function retainJsxArtifactsReferencedIn(
       // fresh cache hit: the served mark bridges the release and any
       // immediately following prune pass.
       markJsxArtifactServed(artifactPath, nowMs);
-      releaseJsxArtifact(artifactPath);
     }
+    for (const artifactPath of staticArtifactPaths) releaseJsxArtifact(artifactPath);
   };
 }
 
@@ -357,6 +387,45 @@ export async function retainJsxArtifactsReferencedIn(
  * settles, so the map holds only paths with an operation in flight.
  */
 const jsxArtifactLocks = new Map<string, Promise<void>>();
+const JSX_ARTIFACT_LEASE_RETRY_MS = 10;
+const JSX_ARTIFACT_LEASE_ATTEMPTS = 500;
+const EMPTY_LEASE = new Uint8Array();
+
+async function withFilesystemLease<T>(
+  lockPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const localFs = getLocalFs();
+  const createExclusive = localFs.createFileBytesExclusive;
+  if (!createExclusive) throw new Error("Atomic JSX cache leases are unavailable");
+
+  let acquired = false;
+  for (let attempt = 0; attempt < JSX_ARTIFACT_LEASE_ATTEMPTS; attempt++) {
+    try {
+      await createExclusive(lockPath, EMPTY_LEASE);
+      acquired = true;
+      break;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+    }
+  }
+  if (!acquired) throw new Error("Timed out waiting for a JSX cache lease");
+
+  try {
+    return await operation();
+  } finally {
+    try {
+      await localFs.remove(lockPath);
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+}
 
 /**
  * Serialize the operations on one artifact path that must not interleave: a
@@ -370,7 +439,7 @@ export async function withJsxArtifactLock<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const previous = jsxArtifactLocks.get(artifactPath) ?? Promise.resolve();
-  const run = previous.then(operation);
+  const run = previous.then(() => withFilesystemLease(`${artifactPath}.lock`, operation));
   const settled = run.then(
     () => undefined,
     () => undefined,
@@ -430,11 +499,7 @@ function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void 
     if (pending.fireAtMs <= fireAtMs) return;
     clearTimeout(pending.timer);
   } else if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
-    const oldest = scheduledJsxCachePrunes.entries().next().value;
-    if (oldest) {
-      clearTimeout(oldest[1].timer);
-      scheduledJsxCachePrunes.delete(oldest[0]);
-    }
+    throw new Error("JSX cache cleanup capacity is exhausted");
   }
   const timer = setTimeout(() => {
     scheduledJsxCachePrunes.delete(esmCacheDir);
@@ -472,6 +537,45 @@ export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
 function cancelScheduledJsxCachePrunes(): void {
   for (const pending of scheduledJsxCachePrunes.values()) clearTimeout(pending.timer);
   scheduledJsxCachePrunes.clear();
+  if (lazyJsxArtifactHeartbeat !== undefined) {
+    clearInterval(lazyJsxArtifactHeartbeat);
+    lazyJsxArtifactHeartbeat = undefined;
+  }
+  lazyJsxArtifactPaths.clear();
+}
+
+export class JsxCacheCapacityError extends Error {
+  override name = "JsxCacheCapacityError";
+}
+
+function isJsxArtifactName(name: string): boolean {
+  return name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) && name.endsWith(".mjs");
+}
+
+async function countJsxArtifacts(esmCacheDir: string): Promise<number> {
+  let count = 0;
+  for await (const entry of getLocalFs().readDir(esmCacheDir)) {
+    if (entry.isFile && isJsxArtifactName(entry.name)) count++;
+  }
+  return count;
+}
+
+/** Reserve one directory-wide artifact slot and hold it through the write. */
+export function withJsxArtifactWriteCapacity<T>(
+  esmCacheDir: string,
+  artifactPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withJsxArtifactLock(join(esmCacheDir, ".jsx-directory-quota"), async () => {
+    if (await getLocalFs().exists(artifactPath)) return await operation();
+    if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
+      await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
+    }
+    if (await countJsxArtifacts(esmCacheDir) >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
+      throw new JsxCacheCapacityError("JSX cache artifact quota is exhausted");
+    }
+    return await operation();
+  });
 }
 
 /** Outcome of one removal attempt; a preserved artifact names its retry time. */
@@ -494,7 +598,7 @@ async function removeJsxArtifactUnlessServed(
 ): Promise<JsxArtifactRemoval> {
   return await withJsxArtifactLock(artifactPath, async () => {
     const checkedAtMs = Math.max(nowMs, Date.now());
-    if (jsxArtifactActiveRefs.has(artifactPath)) {
+    if (jsxArtifactActiveRefs.has(artifactPath) || lazyJsxArtifactPaths.has(artifactPath)) {
       // Release time is the parent import settling, which has no schedule of
       // its own; poll again one grace period out.
       return { removed: false, retryAtMs: checkedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
@@ -516,8 +620,17 @@ async function removeJsxArtifactUnlessServed(
     }
     try {
       await getLocalFs().remove(artifactPath);
-    } catch (_) {
-      /* expected: a concurrent transform may have removed the variant already */
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to remove JSX cache artifact`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          removed: false,
+          retryAtMs: checkedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS,
+        };
+      }
+      // A concurrent transform already removed the artifact.
     }
     mtimeRefreshTimestamps.delete(artifactPath);
     return { removed: true };
@@ -575,9 +688,12 @@ async function collectExcessJsxArtifacts(
 
   const variantsByPrefix = new Map<string, string[]>();
   const strandedNamespaceArtifacts: string[] = [];
+  const allArtifactNames: string[] = [];
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
+      if (!entry.name.endsWith(".mjs")) continue;
+      if (isJsxArtifactName(entry.name)) allArtifactNames.push(entry.name);
       if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
         if (entry.name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX)) {
           strandedNamespaceArtifacts.push(entry.name);
@@ -597,6 +713,12 @@ async function collectExcessJsxArtifacts(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
       error: error instanceof Error ? error.message : String(error),
     });
+    if (!isNotFoundError(error)) {
+      scheduleJsxCachePruneRetry(
+        esmCacheDir,
+        JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      );
+    }
     return;
   }
 
@@ -606,7 +728,38 @@ async function collectExcessJsxArtifacts(
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
 
+  const quotaHandled = new Set<string>();
+  let directoryExcess = Math.max(
+    0,
+    allArtifactNames.length - MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
+  );
+  if (directoryExcess > 0) {
+    const protectedNames = new Set(currentByPrefix.values());
+    const datedArtifacts = await Promise.all(
+      allArtifactNames
+        .filter((name) => !protectedNames.has(name))
+        .map(async (name) => ({
+          name,
+          modifiedAtMs: await readArtifactModifiedAtMs(join(esmCacheDir, name)),
+        })),
+    );
+    datedArtifacts.sort((left, right) => left.modifiedAtMs - right.modifiedAtMs);
+    for (const { name, modifiedAtMs } of datedArtifacts) {
+      if (directoryExcess === 0) break;
+      const collectableAtMs = modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS;
+      if (collectableAtMs > nowMs) {
+        noteRetry(collectableAtMs);
+        continue;
+      }
+      const removal = await removeJsxArtifactUnlessServed(join(esmCacheDir, name), nowMs);
+      quotaHandled.add(name);
+      if (removal.removed) directoryExcess--;
+      else noteRetry(removal.retryAtMs);
+    }
+  }
+
   for (const name of strandedNamespaceArtifacts) {
+    if (quotaHandled.has(name)) continue;
     const artifactPath = join(esmCacheDir, name);
     // The grace period still applies, and cache hits refresh mtime, so during
     // a rolling deploy a draining process on the previous namespace keeps the
@@ -633,6 +786,7 @@ async function collectExcessJsxArtifacts(
     dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
 
     for (const [index, { name, modifiedAtMs }] of dated.entries()) {
+      if (quotaHandled.has(name)) continue;
       const artifactPath = join(esmCacheDir, name);
       const servedAtMs = servedArtifactTimestamps.get(artifactPath) ?? 0;
       const lastUsedMs = Math.max(modifiedAtMs, servedAtMs);
@@ -675,6 +829,7 @@ export const __jsxCacheInternals = {
     scheduledJsxCachePrunes.has(esmCacheDir),
   isModuleRemembered: (transformedPath: string): boolean =>
     normalizedModulePaths.has(transformedPath),
+  isLazyArtifactRetained: (artifactPath: string): boolean => lazyJsxArtifactPaths.has(artifactPath),
   jsxArtifactActiveRefCount: (artifactPath: string): number =>
     jsxArtifactActiveRefs.get(artifactPath) ?? 0,
   MAX_NORMALIZED_MODULE_MEMO_ENTRIES,

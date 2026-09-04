@@ -17,6 +17,7 @@ import {
   copyFixedUint8ArrayWithinLimit,
 } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { captureFileSystemCapabilities } from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { sanitizePathForDisplay } from "#veryfront/security/path-validation.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
@@ -58,10 +59,13 @@ import {
 import {
   ensureCachedJsxModulePatched,
   ensureJsxCacheSweepArmed,
+  JSX_CACHE_VARIANT_MIN_AGE_MS,
+  JsxCacheCapacityError,
   markJsxArtifactServed,
   pruneSupersededJsxArtifacts,
   refreshJsxArtifactMtime,
   withJsxArtifactLock,
+  withJsxArtifactWriteCapacity,
 } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
 
@@ -470,6 +474,19 @@ export async function transformJsxImports(
 
   /** Source path to the artifact name this pass wrote, for one prune pass. */
   const writtenArtifacts = new Map<string, string>();
+  const selectedArtifacts = new Set<string>();
+  const refreshSelectedArtifacts = async () => {
+    await Promise.all(
+      [...selectedArtifacts].map((artifactPath) =>
+        withJsxArtifactLock(artifactPath, () => refreshJsxArtifactMtime(artifactPath, 0))
+      ),
+    );
+  };
+  const selectedArtifactHeartbeat = setInterval(
+    () => void refreshSelectedArtifacts(),
+    JSX_CACHE_VARIANT_MIN_AGE_MS / 4,
+  );
+  unrefTimer(selectedArtifactHeartbeat);
   /**
    * An oversized source rejects the whole transform, but `parallelMap` runs on
    * `Promise.all`, which does not cancel siblings. Throwing out of the callback
@@ -477,7 +494,7 @@ export async function transformJsxImports(
    * prune pass ever followed, so the failure is carried out instead and rethrown
    * once every callback has settled and the cleanup has run.
    */
-  let admissionFailure: ModuleSourceLimitError | undefined;
+  let admissionFailure: ModuleSourceLimitError | JsxCacheCapacityError | undefined;
 
   type JsxImportTransformResult = {
     specifier: string;
@@ -537,6 +554,7 @@ export async function transformJsxImports(
         }
       });
       if (serveCached) {
+        selectedArtifacts.add(transformedPath);
         return {
           specifier,
           replacement: `file://${transformedPath}`,
@@ -570,11 +588,17 @@ export async function transformJsxImports(
       // incorrectly when cached to a different directory.
       transformed = await rewriteDntImports(transformed, filePath);
 
-      await withJsxArtifactLock(transformedPath, async () => {
-        await getLocalFs().writeTextFile(transformedPath, transformed);
-        markJsxArtifactServed(transformedPath);
-      });
+      await withJsxArtifactWriteCapacity(
+        esmCacheDir,
+        transformedPath,
+        () =>
+          withJsxArtifactLock(transformedPath, async () => {
+            await getLocalFs().writeTextFile(transformedPath, transformed);
+            markJsxArtifactServed(transformedPath);
+          }),
+      );
       writtenArtifacts.set(filePath, transformedFileName);
+      selectedArtifacts.add(transformedPath);
 
       return {
         specifier,
@@ -585,7 +609,7 @@ export async function transformJsxImports(
       // An oversized source is an admission failure, not a transform that can
       // be skipped: surface it the way the other MDX module limits do instead
       // of leaving an untransformed file:// specifier behind.
-      if (error instanceof ModuleSourceLimitError) {
+      if (error instanceof ModuleSourceLimitError || error instanceof JsxCacheCapacityError) {
         admissionFailure ??= error;
         return null;
       }
@@ -594,17 +618,23 @@ export async function transformJsxImports(
     }
   };
 
-  const transformResults = await mapJsxTransformsWithCleanup(
-    importsToProcess,
-    transformOne,
-    () => pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts),
-    { semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY) },
-  );
+  let transformResults: Array<JsxImportTransformResult>;
+  try {
+    transformResults = await mapJsxTransformsWithCleanup(
+      importsToProcess,
+      transformOne,
+      () => pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts),
+      { semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY) },
+    );
 
-  // Runs before the rethrow so the artifacts written by the siblings that kept
-  // going after the admission failure are still covered by a cleanup pass.
-  await pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts);
-  if (admissionFailure) throw admissionFailure;
+    // Runs before the rethrow so the artifacts written by the siblings that kept
+    // going after the admission failure are still covered by a cleanup pass.
+    await pruneSupersededJsxArtifacts(esmCacheDir, writtenArtifacts);
+    await refreshSelectedArtifacts();
+    if (admissionFailure) throw admissionFailure;
+  } finally {
+    clearInterval(selectedArtifactHeartbeat);
+  }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
     total: importsToProcess.length,

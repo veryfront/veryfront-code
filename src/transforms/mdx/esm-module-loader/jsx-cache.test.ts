@@ -6,6 +6,7 @@ import {
   assertExists,
   assertNotEquals,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -36,13 +37,16 @@ import {
   JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
   JSX_CACHE_VARIANT_MIN_AGE_MS,
   markJsxArtifactServed,
+  MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
   MAX_JSX_CACHE_VARIANTS_PER_PATH,
   pruneSupersededJsxArtifacts,
   refreshJsxArtifactMtime,
   retainJsxArtifactsReferencedIn,
   withJsxArtifactLock,
+  withJsxArtifactWriteCapacity,
 } from "./jsx-cache.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
+import { getLocalFs } from "./cache/index.ts";
 
 function limitErrorMessage(error: unknown): string {
   if (!(error instanceof ModuleSourceLimitError)) {
@@ -1014,6 +1018,67 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("re-arms cleanup after an operational directory scan failure", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-scan-retry-test-" });
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    try {
+      localFs.readDir = (path) => {
+        if (path === tempDir) {
+          return {
+            // deno-lint-ignore require-yield
+            async *[Symbol.asyncIterator]() {
+              throw Object.assign(new Error("temporary I/O failure"), { code: "EIO" });
+            },
+          };
+        }
+        return originalReadDir(path);
+      };
+
+      await collectExcessJsxArtifacts(tempDir, new Map(), Date.now());
+
+      assertEquals(
+        hasScheduledJsxCachePrune(tempDir),
+        true,
+        "an operational scan failure must retain a cleanup obligation",
+      );
+    } finally {
+      localFs.readDir = originalReadDir;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("refuses a new artifact when the directory quota is full", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-directory-quota-test-" });
+    const nextSource = "/tmp/source/next.tsx";
+    const nextName = buildMdxJsxCacheFileName(nextSource, "export const next = true;");
+    const nextPath = join(tempDir, nextName);
+    try {
+      for (let index = 0; index < MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY; index++) {
+        const source = `/tmp/source/unique-${index}.tsx`;
+        await writeTextFile(
+          join(tempDir, buildMdxJsxCacheFileName(source, `export const v = ${index};`)),
+          `export const v = ${index};`,
+        );
+      }
+
+      let wrote = false;
+      await assertRejects(
+        () =>
+          withJsxArtifactWriteCapacity(tempDir, nextPath, async () => {
+            wrote = true;
+            await writeTextFile(nextPath, "export const next = true;");
+          }),
+        Error,
+        "JSX cache artifact quota is exhausted",
+      );
+      assertEquals(wrote, false);
+      assertEquals(await getLocalFs().exists(nextPath), false);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("ignores a name too short to carry a path prefix", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-short-name-test-" });
     const sourcePath = "/tmp/source/ShortName.tsx";
@@ -1174,6 +1239,33 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("waits for a filesystem lease held by another process", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-cross-process-lease-test-" });
+    const artifactPath = join(tempDir, "jsx-leased.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    const createExclusive = getLocalFs().createFileBytesExclusive;
+    if (!createExclusive) throw new Error("the test runtime must support exclusive file creation");
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      await createExclusive(leasePath, new Uint8Array());
+      let entered = false;
+      const operation = withJsxArtifactLock(artifactPath, async () => {
+        entered = true;
+      });
+      await Promise.resolve();
+      assertEquals(entered, false);
+
+      await getLocalFs().remove(leasePath);
+      await operation;
+      assertEquals(entered, true);
+    } finally {
+      try {
+        await getLocalFs().remove(leasePath);
+      } catch { /* already released */ }
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reports when a preserved artifact next becomes collectable", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-retry-report-test-" });
     const artifactPath = join(tempDir, "jsx-preserved.mjs");
@@ -1192,6 +1284,36 @@ describe("pruneSupersededJsxArtifacts", () => {
       );
       assertEquals((await readTextFile(artifactPath)).length > 0, true);
     } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("retains and retries an artifact after an operational removal failure", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-remove-retry-test-" });
+    const artifactPath = join(tempDir, "jsx-removal-retry.mjs");
+    const nowMs = afterGracePeriod();
+    const localFs = getLocalFs();
+    const originalRemove = localFs.remove.bind(localFs);
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      localFs.remove = (path, options) => {
+        if (path === artifactPath) {
+          return Promise.reject(Object.assign(new Error("busy"), { code: "EBUSY" }));
+        }
+        return originalRemove(path, options);
+      };
+
+      const failed = await removeJsxArtifactUnlessServed(artifactPath, nowMs);
+      if (failed.removed) throw new Error("an operational failure must retain the artifact");
+      assertEquals(failed.retryAtMs > nowMs, true);
+      assertEquals((await readTextFile(artifactPath)).length > 0, true);
+
+      localFs.remove = originalRemove;
+      assertEquals(await removeJsxArtifactUnlessServed(artifactPath, failed.retryAtMs), {
+        removed: true,
+      });
+    } finally {
+      localFs.remove = originalRemove;
       await remove(tempDir, { recursive: true });
     }
   });
@@ -1338,7 +1460,9 @@ describe("pruneSupersededJsxArtifacts", () => {
 describe("jsx artifact references", () => {
   const {
     cancelScheduledJsxCachePrunes,
+    isLazyArtifactRetained,
     jsxArtifactActiveRefCount,
+    removeJsxArtifactUnlessServed,
     wasJsxArtifactRecentlyServed,
   } = __jsxCacheInternals;
 
@@ -1380,6 +1504,33 @@ describe("jsx artifact references", () => {
       // The release a `finally` runs must stay safe to call more than once.
       release();
       assertEquals(jsxArtifactActiveRefCount(artifactPath), 0);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("retains a lazy artifact after the parent module import settles", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-lazy-retain-test-" });
+    const artifactPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/Lazy.tsx", "export const lazy = true;"),
+    );
+    try {
+      await writeTextFile(artifactPath, "export const lazy = true;");
+      const release = await retainJsxArtifactsReferencedIn(
+        `export const load = () => import("file://${artifactPath}");`,
+        tempDir,
+      );
+
+      release();
+
+      assertEquals(isLazyArtifactRetained(artifactPath), true);
+      const removal = await removeJsxArtifactUnlessServed(
+        artifactPath,
+        Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS + 60_000,
+      );
+      assertEquals(removal.removed, false);
+      assertEquals((await readTextFile(artifactPath)).length > 0, true);
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -1662,25 +1813,25 @@ describe("scheduled prune bound", () => {
     cancelScheduledJsxCachePrunes();
   });
 
-  it("evicts the oldest pending directory instead of growing without bound", () => {
-    // One process can serve many projects, and an idle-horizon follow-up stays
-    // pending for hours, so the set of directories holding a timer needs a
-    // ceiling of its own: a change whose premise is bounding growth must not
-    // add in-process state that grows with the projects ever rendered.
-    const directories = MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES + 4;
-    for (let entry = 0; entry < directories; entry++) {
+  it("refuses new directories without discarding an existing cleanup obligation", () => {
+    for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES; entry++) {
       ensureJsxCacheSweepArmed(`/tmp/vf-jsx-sweep-bound/${entry}`);
     }
 
-    assertEquals(
-      hasScheduledJsxCachePrune(`/tmp/vf-jsx-sweep-bound/${directories - 1}`),
-      true,
-      "the most recently armed directory must keep its pending sweep",
+    assertThrows(
+      () => ensureJsxCacheSweepArmed("/tmp/vf-jsx-sweep-bound/overflow"),
+      Error,
+      "JSX cache cleanup capacity is exhausted",
     );
     assertEquals(
       hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/0"),
+      true,
+      "capacity must never cancel an existing directory's only cleanup timer",
+    );
+    assertEquals(
+      hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/overflow"),
       false,
-      "reaching the ceiling must retire the directory armed longest ago",
+      "an untracked directory must be refused rather than admitted without cleanup",
     );
   });
 });
