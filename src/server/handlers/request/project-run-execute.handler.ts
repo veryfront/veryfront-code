@@ -1414,9 +1414,10 @@ function createEvalAdapterConfig(input: {
   const agentId = getEvalTargetAgentId(input.definition);
   const allowedTools = getStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
   const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
-  const runtimeRestrictions = allowedTools === undefined && maxSteps === undefined ? undefined : {
-    ...(allowedTools === undefined ? {} : { allowedTools }),
-    ...(maxSteps === undefined ? {} : { maxSteps }),
+  const hasMaxSteps = maxSteps != null;
+  const runtimeRestrictions = {
+    allowedTools,
+    ...(hasMaxSteps ? { maxSteps } : {}),
   };
   const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
 
