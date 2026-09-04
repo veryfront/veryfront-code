@@ -479,7 +479,7 @@ export async function transformJsxImports(
   let selectedArtifactRefreshInFlight: Promise<void> | undefined;
   const refreshSelectedArtifacts = (): Promise<void> => {
     if (selectedArtifactRefreshInFlight) return selectedArtifactRefreshInFlight;
-    const run = refreshJsxArtifactsBounded([...selectedArtifacts]);
+    const run = refreshJsxArtifactsBounded([...selectedArtifacts], true);
     selectedArtifactRefreshInFlight = run.finally(() => {
       selectedArtifactRefreshInFlight = undefined;
     });

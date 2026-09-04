@@ -1886,6 +1886,34 @@ describe("jsx artifact references", () => {
     }
   });
 
+  it("rejects retention when shared recency cannot be refreshed", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-retain-recurrency-test-" });
+    const artifactPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/NoUtime.tsx", "export const v = 1;"),
+    );
+    const localFs = getLocalFs();
+    const originalUtime = localFs.utime;
+    try {
+      await writeTextFile(artifactPath, "export const v = 1;");
+      localFs.utime = undefined;
+
+      await assertRejects(
+        () =>
+          retainJsxArtifactsReferencedIn(
+            `import NoUtime from "file://${artifactPath}";`,
+            tempDir,
+          ),
+        Error,
+        "Shared JSX artifact recency refresh is unavailable",
+      );
+      assertEquals(jsxArtifactActiveRefCount(artifactPath), 0);
+    } finally {
+      localFs.utime = originalUtime;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("retires a lazy artifact after its parent retention window", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-lazy-retain-test-" });
     const artifactPath = join(

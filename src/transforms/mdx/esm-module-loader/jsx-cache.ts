@@ -245,7 +245,10 @@ async function withJsxArtifactRefreshSlot<T>(operation: () => Promise<T>): Promi
 }
 
 /** Refresh artifact mtimes through the process-wide bounded filesystem pool. */
-export function refreshJsxArtifactsBounded(artifactPaths: readonly string[]): Promise<void> {
+export function refreshJsxArtifactsBounded(
+  artifactPaths: readonly string[],
+  required = false,
+): Promise<void> {
   let nextIndex = 0;
   const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, artifactPaths.length);
   const workers: Array<Promise<void>> = [];
@@ -257,7 +260,7 @@ export function refreshJsxArtifactsBounded(artifactPaths: readonly string[]): Pr
         await withJsxArtifactRefreshSlot(() =>
           withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
             await assertLeaseOwned();
-            await refreshJsxArtifactMtime(artifactPath, 0);
+            await refreshJsxArtifactMtime(artifactPath, 0, Date.now(), required);
           })
         );
       }
@@ -378,6 +381,7 @@ export async function refreshJsxArtifactMtime(
   artifactPath: string,
   modifiedAtMs: number,
   nowMs: number = Date.now(),
+  required = false,
 ): Promise<void> {
   const lastRefreshedMs = Math.max(
     modifiedAtMs,
@@ -385,11 +389,15 @@ export async function refreshJsxArtifactMtime(
   );
   if (nowMs - lastRefreshedMs < JSX_CACHE_MTIME_REFRESH_INTERVAL_MS) return;
   const localFs = getLocalFs();
-  if (!localFs.utime) return;
+  if (!localFs.utime) {
+    if (required) throw new Error("Shared JSX artifact recency refresh is unavailable");
+    return;
+  }
   try {
     await localFs.utime(artifactPath, new Date(nowMs), new Date(nowMs));
     recordJsxArtifactMtimeRefresh(artifactPath, nowMs);
-  } catch (_) {
+  } catch (error) {
+    if (required) throw error;
     /* expected: a concurrent prune may have removed the artifact already */
   }
 }
@@ -453,7 +461,7 @@ export async function retainJsxArtifactsReferencedIn(
   let refreshInFlight: Promise<void> | undefined;
   const refreshAll = (): Promise<void> => {
     if (refreshInFlight) return refreshInFlight;
-    const run = refreshJsxArtifactsBounded(uniqueArtifactPaths);
+    const run = refreshJsxArtifactsBounded(uniqueArtifactPaths, true);
     refreshInFlight = run.finally(() => {
       refreshInFlight = undefined;
     });
