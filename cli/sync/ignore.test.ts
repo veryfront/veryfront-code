@@ -296,9 +296,20 @@ describe("cli/sync/ignore", () => {
           "a later wildcard that covers a fixed negation cancels the warning",
         );
 
+        const differentlyAnchoredChecker = createIgnoreChecker([
+          "!secret.json",
+          "/secret.json",
+        ]);
+        assertEquals(differentlyAnchoredChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          9,
+          "a root-anchored positive cannot cancel an unanchored descendant negation",
+        );
+
         setJsonMode(true);
         assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
-        assertEquals(warnings.length, 8, "JSON mode must not emit human warning text");
+        assertEquals(warnings.length, 9, "JSON mode must not emit human warning text");
       } finally {
         setJsonMode(false);
         warningStub.restore();

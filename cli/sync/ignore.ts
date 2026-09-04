@@ -366,7 +366,9 @@ function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<Ign
       if (
         laterPositivePatterns.has(signature) ||
         (literalPath.length > 0 &&
-          laterPositiveRules.some((positive) => positive.regex.test(literalPath)))
+          laterPositiveRules.some((positive) =>
+            (rule.anchored || !positive.anchored) && positive.regex.test(literalPath)
+          ))
       ) {
         canceled.add(rule);
       }
