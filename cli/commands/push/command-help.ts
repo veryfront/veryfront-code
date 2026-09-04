@@ -52,6 +52,7 @@ export const pushHelp: CommandHelp = {
     "Use --prune to remove managed remote files that are missing locally",
     "Run veryfront deploy when the preview is ready for an environment",
     ".vfignore excludes matching local files and preserves matching remote files",
+    "With --prune, remote .env, .env.*, .veryfront, and .git paths are always removed",
     "--dry-run previews deletions only when --prune is present",
     "--dry-run never creates a project or branch, changes remote files, or writes a Push receipt",
   ],

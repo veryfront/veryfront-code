@@ -1,9 +1,17 @@
 import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
-  guardedOutboundFetch,
-  OutboundRequestBlockedError,
+  getVeryfrontCloudBootstrap,
+  normalizeVeryfrontApiBaseUrl,
+  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
+} from "#veryfront/platform/cloud/resolver.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  createOriginBoundOutboundFetch,
+  HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
+  isHostAllowedInternalProviderOrigin,
 } from "#veryfront/security/http/outbound-fetch.ts";
+import { isInternalEgressOverrideEnabled } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
@@ -24,7 +32,9 @@ const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const NativeURL = URL;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
 const HeadersDelete = NativeHeaders.prototype.delete;
@@ -32,7 +42,6 @@ const HeadersSet = NativeHeaders.prototype.set;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
 const URLHashSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.set;
 const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
-const URLOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
 const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
 const URLPathnameSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.set;
@@ -113,22 +122,39 @@ function parseVeryfrontCloudApiBaseUrl(value: string): URL {
   return url;
 }
 
+function stripIpv6HostnameBrackets(value: string): string {
+  if (
+    value.length >= 2 &&
+    IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [0]) === 91 &&
+    IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [value.length - 1]) === 93
+  ) {
+    return IntrinsicReflectApply(StringPrototypeSlice, value, [1, -1]) as string;
+  }
+  return value;
+}
+
 function requireSecureInferenceApiBaseUrl(value: string): void {
   const url = parseVeryfrontCloudApiBaseUrl(value);
-  const hostname = IntrinsicReflectApply(
-    StringPrototypeReplace,
+  const hostname = stripIpv6HostnameBrackets(
     IntrinsicReflectApply(
       StringPrototypeToLowerCase,
       readNativeURLString(url, URLHostnameGet),
       [],
-    ),
-    [/^\[|\]$/g, ""],
-  ) as string;
+    ) as string,
+  );
   // 0.0.0.0 binds all interfaces and is intentionally not an HTTP exception.
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  if (readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback) {
+  // Same allowlist -- and the same host-wide override -- the outbound fetch
+  // layer consults, so bootstrap validation and the actual request can never
+  // disagree about which internal origin is trusted.
+  if (
+    readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback &&
+    !isHostAllowedInternalProviderOrigin(url) &&
+    !isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV))
+  ) {
     throw CONFIG_INVALID.create({
-      detail: "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+      detail:
+        `Run-scoped inference credentials require HTTPS, a loopback, or a ${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}-allowed API base URL`,
     });
   }
 }
@@ -210,15 +236,25 @@ export function parseVeryfrontCloudModelId(
   };
 }
 
-export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
+export function requireVeryfrontCloudBootstrap(
+  apiTokenOverride?: string,
+  inferenceApiBaseUrlOverride?: string,
+): {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug?: string;
 } {
   const bootstrap = getVeryfrontCloudBootstrap();
+  const normalizedInferenceApiBaseUrlOverride = inferenceApiBaseUrlOverride === undefined
+    ? undefined
+    : normalizeVeryfrontApiBaseUrl(inferenceApiBaseUrlOverride) ?? inferenceApiBaseUrlOverride;
+  const apiBaseUrl = apiTokenOverride
+    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontPublicApiBaseUrlFromHostEnv() ??
+      bootstrap.apiBaseUrl
+    : bootstrap.apiBaseUrl;
 
   if (apiTokenOverride) {
-    requireSecureInferenceApiBaseUrl(bootstrap.apiBaseUrl);
+    requireSecureInferenceApiBaseUrl(apiBaseUrl);
   }
 
   const apiToken = apiTokenOverride ?? bootstrap.apiToken;
@@ -234,7 +270,7 @@ export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
   }
 
   return {
-    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiBaseUrl,
     apiToken,
     projectSlug: bootstrap.projectSlug,
   };
@@ -272,10 +308,8 @@ export function createVeryfrontCloudFetch(
   const trustedApiToken = options?.inferenceCredential
     ? requireInferenceProviderCredential(apiToken, "Veryfront Cloud API token")
     : requireProviderCredential(apiToken, "Veryfront Cloud API token");
-  const authorizedOrigin = readNativeURLString(
-    parseVeryfrontCloudApiBaseUrl(apiBaseUrl),
-    URLOriginGet,
-  );
+  // Validate the shape eagerly so a malformed apiBaseUrl fails at construction, not on first use.
+  parseVeryfrontCloudApiBaseUrl(apiBaseUrl);
   return (input, init) => {
     options?.assertInferenceCredentialActive?.();
     const request = new NativeRequest(input, init);
@@ -303,18 +337,7 @@ export function createVeryfrontCloudFetch(
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    return guardedOutboundFetch(
-      new NativeRequest(request, { headers }),
-      { redirect: "error" },
-      {
-        authorizeUrl(url) {
-          if (readNativeURLString(url, URLOriginGet) !== authorizedOrigin) {
-            throw new OutboundRequestBlockedError(
-              "Veryfront Cloud request blocked: destination origin is not authorized",
-            );
-          }
-        },
-      },
-    );
+    // Consults the internal-provider-origin allowlist; resolved per call since it snapshots the host transport eagerly.
+    return createOriginBoundOutboundFetch(apiBaseUrl)(new NativeRequest(request, { headers }));
   };
 }

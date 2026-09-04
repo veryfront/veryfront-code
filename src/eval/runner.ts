@@ -19,11 +19,13 @@ import type {
   EvalDefinition,
   EvalMetricResult,
   EvalRecord,
+  EvalReport,
   EvalReportExportConfig,
   EvalToolAdapterResult,
   EvalToolCall,
   EvalTrace,
   EvalUsage,
+  LocalEvalReport,
   RunEvalOptions,
 } from "./types.ts";
 import {
@@ -242,7 +244,7 @@ function recordPassed(record: EvalRecord): boolean {
   return !isBlockingFailure(record);
 }
 
-function emitEvalRuntimeMetrics(report: ReturnType<typeof createEvalReport>): void {
+function emitEvalRuntimeMetrics(report: EvalReport): void {
   const baseAttributes = {
     eval_id: report.definitionId,
     target_kind: report.targetKind,
@@ -424,7 +426,7 @@ function withActiveTraceContext(
 
 async function exportWithSelectedExporter(
   registry: EvalReportExporterRegistry,
-  report: ReturnType<typeof createEvalReport>,
+  report: EvalReport,
   config: EvalReportExportConfig,
   exporterId: string,
 ): Promise<EvalReportExportResult> {
@@ -445,9 +447,15 @@ async function exportWithSelectedExporter(
   }
 }
 
-/** Export an eval report through the configured eval report exporter registry. */
+/**
+ * Export an eval report through the configured eval report exporter registry.
+ *
+ * Takes the wide {@link EvalReport}, not {@link LocalEvalReport}: exporting is the step that
+ * strips the dataset content hash, so it must accept reports that already lack one, such as a
+ * report round-tripped through redaction or one read back from a sanitized artifact.
+ */
 export async function exportEvalReport(
-  report: ReturnType<typeof createEvalReport>,
+  report: EvalReport,
   config?: EvalReportExportConfig,
 ): Promise<EvalReportExportResult[] | undefined> {
   if (!config) return undefined;
@@ -587,7 +595,7 @@ async function runRecord(
 export async function runEval(
   definition: EvalDefinition,
   options: RunEvalOptions,
-) {
+): Promise<LocalEvalReport> {
   if (!isEvalDefinition(definition)) {
     throw createEvalValidationError("runEval requires a valid eval definition");
   }

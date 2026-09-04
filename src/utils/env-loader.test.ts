@@ -2,20 +2,27 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { __resetEnvLoaderForTests, getEnvSource, loadEnv, supportsEnvFiles } from "./env-loader.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  __resetEnvLoaderForTests,
+  __setEnvLoaderOsTypeForTests,
+  getEnvSource,
+  loadEnv,
+  supportsEnvFiles,
+} from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/logger.ts";
 
 describe("env-loader", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir({ prefix: "env-loader-test-" });
+    tempDir = await makeTempDir({ prefix: "env-loader-test-" });
     __resetEnvLoaderForTests();
   });
 
   afterEach(async () => {
     __resetEnvLoaderForTests();
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   function createKey(suffix: string): string {
@@ -23,7 +30,7 @@ describe("env-loader", () => {
   }
 
   async function writeEnvFile(name: string, content: string): Promise<void> {
-    await Deno.writeTextFile(`${tempDir}/${name}`, content);
+    await writeTextFile(`${tempDir}/${name}`, content);
   }
 
   function captureConsoleLog(): {
@@ -51,6 +58,31 @@ describe("env-loader", () => {
 
   function cleanupKeys(...keys: string[]): void {
     for (const key of keys) deleteEnv(key);
+  }
+
+  /**
+   * Run `fn` with the reported OS type replaced.
+   *
+   * The test seam lets one case-sensitive host exercise both provenance rules.
+   * Windows is the case-insensitive one, and it is the host where a lowercase
+   * `.env` key sets the real uppercase variable.
+   */
+  function withOsType<T>(os: string, fn: () => T): T {
+    __setEnvLoaderOsTypeForTests(os);
+    try {
+      return fn();
+    } finally {
+      __setEnvLoaderOsTypeForTests(undefined);
+    }
+  }
+
+  async function withOsTypeAsync<T>(os: string, fn: () => Promise<T>): Promise<T> {
+    __setEnvLoaderOsTypeForTests(os);
+    try {
+      return await fn();
+    } finally {
+      __setEnvLoaderOsTypeForTests(undefined);
+    }
   }
 
   describe("supportsEnvFiles", () => {
@@ -233,7 +265,7 @@ describe("env-loader", () => {
         assertEquals(getEnv(key), "local", ".env.local outranks .env.{NODE_ENV}");
 
         __resetEnvLoaderForTests();
-        await Deno.remove(`${tempDir}/.env.local`);
+        await remove(`${tempDir}/.env.local`);
 
         await loadEnv({ cwd: tempDir, override: true });
         assertEquals(
@@ -385,6 +417,40 @@ describe("env-loader", () => {
         __resetLoggerConfigForTests();
       }
     });
+
+    it("should not log process values expanded into an API URL", async () => {
+      const secretKey = createKey("LOGGED_API_URL_SECRET");
+      const previousValue = getEnv("VERYFRONT_API_BASE_URL");
+      const previousLogFormat = getEnv("LOG_FORMAT");
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        setEnv(secretKey, "highly-sensitive-host-label");
+        setEnv("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+        await writeEnvFile(
+          ".env",
+          `VERYFRONT_API_BASE_URL=https://$${secretKey}.example.test/api`,
+        );
+
+        await loadEnv({ cwd: tempDir, override: true });
+
+        const output = getOutput();
+        assertEquals(output.includes("highly-sensitive-host-label"), false);
+        assertEquals(
+          JSON.parse(output).message,
+          "VERYFRONT_API_BASE_URL loaded from an expanded project env value",
+        );
+      } finally {
+        restore();
+        cleanupKeys(secretKey);
+        if (previousValue === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", previousValue);
+        if (previousLogFormat === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 
   describe("getEnvSource", () => {
@@ -395,7 +461,7 @@ describe("env-loader", () => {
       await loadEnv({ cwd: tempDir, override: true });
       assertEquals(
         getEnvSource(key),
-        { source: "env-file", file: `${tempDir}/.env` },
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
         "a value loaded from .env must be attributed to the file",
       );
 
@@ -412,11 +478,141 @@ describe("env-loader", () => {
       // trusted origin, so a project .env must never be reported as one.
       assertEquals(
         getEnvSource(key),
-        { source: "env-file", file: `${tempDir}/.env` },
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
         "a project .env value must outrank the process env in provenance",
       );
 
       cleanupKeys(key);
+    });
+
+    it("should flag a value expanded from the process environment", async () => {
+      const secretKey = createKey("SOURCE_SHELL_SECRET");
+      const key = createKey("SOURCE_EXPANDED");
+      setEnv(secretKey, "shell-secret-value");
+      await writeEnvFile(".env", `${key}=$${secretKey}`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "shell-secret-value", "the shell value must be substituted in");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: true },
+        "a value the file copied out of the shell is not purely repository content",
+      );
+
+      cleanupKeys(key, secretKey);
+    });
+
+    it("should propagate expansion provenance through an in-file reference", async () => {
+      const secretKey = createKey("SOURCE_CHAIN_SECRET");
+      const middleKey = createKey("SOURCE_CHAIN_MIDDLE");
+      const key = createKey("SOURCE_CHAIN_LEAF");
+      setEnv(secretKey, "chained-shell-secret");
+      await writeEnvFile(".env", `${middleKey}=$${secretKey}\n${key}=\${${middleKey}}`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "chained-shell-secret", "the chained value must resolve");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: true },
+        "referencing a tainted entry must taint the referring value too",
+      );
+
+      cleanupKeys(key, middleKey, secretKey);
+    });
+
+    it("should not flag a value expanded only from entries in the same file", async () => {
+      const baseKey = createKey("SOURCE_LOCAL_BASE");
+      const key = createKey("SOURCE_LOCAL_LEAF");
+      await writeEnvFile(".env", `${baseKey}=local\n${key}=\${${baseKey}}-suffix`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "local-suffix", "the in-file reference must resolve");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+        "a value assembled entirely from the file stays repository content",
+      );
+
+      cleanupKeys(key, baseKey);
+    });
+
+    it("should preserve file provenance through references across env files", async () => {
+      const baseKey = createKey("SOURCE_EARLIER_FILE_BASE");
+      const key = createKey("SOURCE_LATER_FILE_LEAF");
+      await writeEnvFile(".env", `${baseKey}=repository-value`);
+      await writeEnvFile(".env.local", `${key}=\${${baseKey}}`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "repository-value");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env.local`, expandedFromProcessEnv: false },
+        "a later env file that references repository content must not be attributed to the shell",
+      );
+
+      cleanupKeys(key, baseKey);
+    });
+
+    it("case-folds prior file references on Windows", async () => {
+      const baseKey = createKey("SOURCE_WINDOWS_PRIOR");
+      const lowerBaseKey = baseKey.toLowerCase();
+      const key = createKey("SOURCE_WINDOWS_LEAF");
+      setEnv(baseKey, "repository-value");
+      await writeEnvFile(".env", `${lowerBaseKey}=repository-value`);
+      await writeEnvFile(".env.local", `${key}=\${${baseKey}}`);
+
+      await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir, override: true }));
+
+      assertEquals(getEnv(key), "repository-value");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env.local`, expandedFromProcessEnv: false },
+      );
+
+      cleanupKeys(key, baseKey, lowerBaseKey);
+    });
+
+    it("should attribute a differently-cased env-file entry to the file", async () => {
+      const key = createKey("SOURCE_CASE");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${lowerKey}=https://project-controlled.example/api`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      // Windows aliases the differently-cased names, so there the lowercase
+      // line above sets the real uppercase variable. The alias is stubbed
+      // because this host is case-sensitive, and both rules are asserted so a
+      // case-sensitive runner still proves the case-insensitive one.
+      setEnv(key, "https://project-controlled.example/api");
+
+      assertEquals(
+        withOsType("windows", () => getEnvSource(key)),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+        "a case-insensitive host must not launder repository content into a process value",
+      );
+      assertEquals(
+        withOsType("linux", () => getEnvSource(key)),
+        { source: "process" },
+        "a case-sensitive host keeps the explicitly set uppercase value independent",
+      );
+
+      cleanupKeys(key, lowerKey);
+    });
+
+    it("should keep a distinct differently-cased process value as process", async () => {
+      const key = createKey("SOURCE_CASE_DISTINCT");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${lowerKey}=from-file`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      setEnv(key, "from-shell");
+
+      assertEquals(
+        getEnvSource(key),
+        { source: "process" },
+        "a case-sensitive host keeps the two names apart, so the shell value stays the shell's",
+      );
+
+      cleanupKeys(key, lowerKey);
     });
 
     it("should report a key present only in the process env as process", async () => {

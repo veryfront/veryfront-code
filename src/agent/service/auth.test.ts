@@ -227,6 +227,25 @@ describe("agent/agent-service-auth", () => {
     assertEquals(getHostedServiceTokenFromRequest(request), "bearer-token");
   });
 
+  it("does not expose request headers through a replaced prototype getter", () => {
+    const request = new Request("https://agent.test/run", {
+      headers: {
+        authorization: "Bearer bearer-token",
+        "x-veryfront-inference-token": "private-inference-token",
+      },
+    });
+    let replacementCalled = false;
+    Object.defineProperty(request, "headers", {
+      configurable: true,
+      get() {
+        replacementCalled = true;
+        throw new Error("project getter must not receive the request");
+      },
+    });
+    assertEquals(getHostedServiceTokenFromRequest(request), "bearer-token");
+    assertEquals(replacementCalled, false);
+  });
+
   it("returns null when no auth token exists", () => {
     const request = new Request("https://agent.test/run");
     assertStrictEquals(getHostedServiceTokenFromRequest(request), null);

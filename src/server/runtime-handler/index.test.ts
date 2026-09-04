@@ -16,7 +16,11 @@ import {
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
-import { runWithProjectEnv } from "../project-env/storage.ts";
+import {
+  getTrustedProjectEnvIdentity,
+  runWithProjectEnv,
+  type TrustedProjectEnvIdentity,
+} from "../project-env/storage.ts";
 import {
   createVeryfrontHandler,
   prepareOptionsBeforeProjectMiddleware,
@@ -29,7 +33,10 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
-import { ProjectMiddlewareRuntime } from "#veryfront/server/runtime-handler/project-middleware.ts";
+import {
+  ProjectMiddlewareRuntime,
+  projectMiddlewareRuntime,
+} from "#veryfront/server/runtime-handler/project-middleware.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   createSnapshot,
@@ -1782,6 +1789,102 @@ describe("server/runtime-handler/index", () => {
     } finally {
       Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
     }
+  });
+
+  it("binds the trusted project identity to the request project env overlay", async () => {
+    const observed: Array<TrustedProjectEnvIdentity | undefined> = [];
+    injectIsolationDepsForTests({
+      checkRequest: () => ({ allowed: true }),
+      startRequest: () => {},
+      completeRequest: () => {},
+    });
+    const projectDir = "/tmp/trusted-identity-project";
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(`${projectDir}/veryfront.config.ts`, "export default {};");
+    const fs = adapter.fs as typeof adapter.fs & {
+      isVeryfrontAdapter: () => boolean;
+      getUnderlyingAdapter: () => typeof adapter.fs;
+      isMultiProjectMode: () => boolean;
+      isContextualMode: () => boolean;
+      runWithContext: <T>(
+        slug: string,
+        token: string,
+        operation: () => Promise<T>,
+        projectId?: string,
+        options?: { branch?: string | null },
+      ) => Promise<T>;
+      sourceSnapshotFreshnessOptionsVersion: 1;
+      ensureSourceSnapshotFresh: () => Promise<void>;
+      getSourceSnapshotIdentity: () => string;
+      getSourceSnapshotVersion: () => number;
+    };
+    fs.isVeryfrontAdapter = () => true;
+    fs.getUnderlyingAdapter = () => fs;
+    fs.isMultiProjectMode = () => true;
+    fs.isContextualMode = () => true;
+    fs.runWithContext = (slug, token, operation, projectId, options) =>
+      runWithRequestContext({ projectSlug: slug, token, projectId, ...options }, operation);
+    fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    fs.getSourceSnapshotIdentity = () => "branch:trusted-identity:main";
+    fs.getSourceSnapshotVersion = () => 1;
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: { fs: { veryfront: { proxyMode: true } } } as any,
+      allowHostProjectCodeExecution: true,
+    });
+    // Project middleware dispatch is the first project-owned step inside the
+    // request env overlay, so it observes what project code observes.
+    const originalExecute = ProjectMiddlewareRuntime.prototype.execute;
+    Object.defineProperty(projectMiddlewareRuntime, "execute", {
+      configurable: true,
+      value: function (context: Parameters<typeof originalExecute>[0]) {
+        observed.push(getTrustedProjectEnvIdentity());
+        return originalExecute.call(projectMiddlewareRuntime, context);
+      },
+    });
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test/api");
+
+    try {
+      const response = await withMockFetch(
+        (() => Promise.resolve(Response.json({ data: [] }))) as typeof fetch,
+        () =>
+          handler(
+            new Request("http://localhost/page", {
+              headers: {
+                "x-project-slug": "my-project",
+                "x-project-id": "project-123",
+                "x-environment-id": "environment-456",
+                "x-environment-name": "Preview",
+                "x-environment": "preview",
+                "x-token": "proxy-token",
+                "x-forwarded-host": "my-project.preview.veryfront.com",
+              },
+            }),
+          ),
+      );
+
+      assertEquals(
+        response.status,
+        404,
+        "the request must reach project route execution rather than fail admission",
+      );
+    } finally {
+      Reflect.deleteProperty(projectMiddlewareRuntime, "execute");
+      Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+    }
+
+    assertEquals(
+      observed,
+      [{
+        projectId: "project-123",
+        projectSlug: "my-project",
+        environmentId: "environment-456",
+      }],
+      "project code must run under the runtime-owned identity that scopes metric quotas",
+    );
   });
 
   it("returns 502 when trust-sensitive proxy context headers are present but untrusted", async () => {

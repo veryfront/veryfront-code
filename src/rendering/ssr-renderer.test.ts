@@ -51,6 +51,23 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
   }
 }
 
+/**
+ * Read the script nonce React was handed, whichever shape its types use.
+ *
+ * React's streaming options accept either a bare nonce string or a
+ * `{ script, style }` pair, and which one the installed `@types/react-dom`
+ * declares varies by version. Taking the value as `unknown` keeps this
+ * assertion working across both without loosening what it checks.
+ */
+function readScriptNonce(nonce: unknown): string | undefined {
+  if (typeof nonce === "string") return nonce;
+  if (typeof nonce === "object" && nonce !== null && "script" in nonce) {
+    const { script } = nonce as { script?: unknown };
+    return typeof script === "string" ? script : undefined;
+  }
+  return undefined;
+}
+
 describe("rendering/ssr-renderer", () => {
   afterEach(() => {
     __injectReactDOMServerForTests(null);
@@ -104,7 +121,7 @@ describe("rendering/ssr-renderer", () => {
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
       renderToReadableStream: (_element, options) => {
-        observedNonce = options?.nonce;
+        observedNonce = readScriptNonce(options?.nonce);
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode("<div>streamed</div>"));

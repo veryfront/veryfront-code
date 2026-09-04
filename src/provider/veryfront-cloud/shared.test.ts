@@ -7,6 +7,7 @@ import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
+  requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
@@ -70,6 +71,36 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "mistral"),
       "https://api.veryfront.com/ai/gateway/mistral/v1",
+    );
+  });
+
+  it("routes run-scoped inference credentials to the explicit public API base", () => {
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "http://control-plane.internal.example" },
+      () => {
+        assertEquals(
+          requireVeryfrontCloudBootstrap(
+            "run-scoped-inference-token",
+            "https://api.staging.veryfront.example",
+          ).apiBaseUrl,
+          "https://api.staging.veryfront.example",
+        );
+      },
+    );
+  });
+
+  it("allows bracketed IPv6 loopback for run-scoped inference credentials", () => {
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "https://control-plane.example" },
+      () => {
+        assertEquals(
+          requireVeryfrontCloudBootstrap(
+            "run-scoped-inference-token",
+            "http://[::1]:4000",
+          ).apiBaseUrl,
+          "http://[::1]:4000",
+        );
+      },
     );
   });
 
@@ -138,6 +169,34 @@ describe("provider/veryfront-cloud/shared", () => {
         TypeError,
         expectedMessage,
       );
+    }
+  });
+
+  it("still rejects an arbitrary plain-HTTP API base URL for run-scoped inference credentials", () => {
+    assertThrows(
+      () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "http://evil.example.com", apiToken: "vf_scoped_token" },
+          () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+        ),
+      Error,
+      "HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
+    );
+  });
+
+  it("still accepts HTTPS and loopback API base URLs for run-scoped inference credentials", () => {
+    for (
+      const apiBaseUrl of [
+        "https://api.veryfront.com",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
+      ]
+    ) {
+      const bootstrap = runWithVeryfrontCloudContext(
+        { apiBaseUrl, apiToken: "vf_scoped_token" },
+        () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+      );
+      assertEquals(bootstrap.apiBaseUrl, apiBaseUrl);
     }
   });
 
