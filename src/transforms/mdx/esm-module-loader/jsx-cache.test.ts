@@ -1477,6 +1477,45 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("does not remove a replacement lease during stale-owner release", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-release-owner-test-" });
+    const artifactPath = join(tempDir, "jsx-release-owner.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    const localFs = getLocalFs();
+    const originalReadTextFile = localFs.readTextFile;
+    const originalWriteTextFile = localFs.writeTextFile;
+    const originalRename = localFs.rename;
+    if (!originalRename) throw new Error("the test runtime must support atomic rename");
+    let lockReads = 0;
+    let replacementInjected = false;
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      localFs.readTextFile = async (path) => {
+        const value = await originalReadTextFile(path);
+        if (path === leasePath && ++lockReads === 2) {
+          await originalWriteTextFile(leasePath, "replacement-owner");
+        }
+        return value;
+      };
+      localFs.rename = async (from, to) => {
+        if (from === leasePath && to.includes(".release-") && !replacementInjected) {
+          replacementInjected = true;
+          await originalWriteTextFile(leasePath, "replacement-owner");
+        }
+        return await originalRename(from, to);
+      };
+
+      await withJsxArtifactLock(artifactPath, async () => {});
+
+      assertEquals(await originalReadTextFile(leasePath), "replacement-owner");
+    } finally {
+      localFs.readTextFile = originalReadTextFile;
+      localFs.writeTextFile = originalWriteTextFile;
+      localFs.rename = originalRename;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("recovers a stale filesystem lease left by a terminated process", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-stale-lease-test-" });
     const artifactPath = join(tempDir, "jsx-stale.mjs");
@@ -1869,6 +1908,61 @@ describe("jsx artifact references", () => {
       await first;
     } finally {
       releaseUtime?.();
+      localFs.utime = originalUtime;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("bounds filesystem refreshes for actively retained artifacts", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-active-heartbeat-test-" });
+    const localFs = getLocalFs();
+    const originalUtime = localFs.utime;
+    if (!originalUtime) throw new Error("the test runtime must support file timestamps");
+    const releaseUtime = Promise.withResolvers<void>();
+    const artifactPaths: string[] = [];
+    let retained: Promise<() => void> | undefined;
+    let active = 0;
+    let maximumActive = 0;
+    try {
+      for (let index = 0; index < 12; index++) {
+        const artifactPath = join(
+          tempDir,
+          buildMdxJsxCacheFileName(
+            `/tmp/source/Active-${index}.tsx`,
+            `export const value = ${index};`,
+          ),
+        );
+        artifactPaths.push(artifactPath);
+        await writeTextFile(artifactPath, `export const value = ${index};`);
+      }
+      localFs.utime = async (...args) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        try {
+          await releaseUtime.promise;
+          return await originalUtime(...args);
+        } finally {
+          active -= 1;
+        }
+      };
+      retained = retainJsxArtifactsReferencedIn(
+        artifactPaths.map((path, index) => `import * as m${index} from "file://${path}";`).join(
+          "\n",
+        ),
+        tempDir,
+      );
+      for (let attempt = 0; attempt < 200 && active < 8; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      assertEquals(active, __jsxCacheInternals.JSX_ARTIFACT_REFRESH_CONCURRENCY);
+      assertEquals(maximumActive, __jsxCacheInternals.JSX_ARTIFACT_REFRESH_CONCURRENCY);
+      releaseUtime.resolve();
+      const release = await retained;
+      release();
+    } finally {
+      releaseUtime.resolve();
+      await retained?.catch(() => undefined);
       localFs.utime = originalUtime;
       await remove(tempDir, { recursive: true });
     }

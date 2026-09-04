@@ -224,9 +224,25 @@ function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): b
 const jsxArtifactActiveRefs = new Map<string, number>();
 const LAZY_JSX_ARTIFACT_RETENTION_MS = 10 * 60_000;
 const LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY = 8;
+const JSX_ARTIFACT_REFRESH_CONCURRENCY = 8;
 const lazyJsxArtifactExpirations = new Map<string, number>();
 let lazyJsxArtifactHeartbeat: ReturnType<typeof setInterval> | undefined;
 let lazyJsxArtifactHeartbeatInFlight: Promise<void> | undefined;
+let activeJsxArtifactRefreshes = 0;
+const jsxArtifactRefreshWaiters: Array<() => void> = [];
+
+async function withJsxArtifactRefreshSlot<T>(operation: () => Promise<T>): Promise<T> {
+  if (activeJsxArtifactRefreshes >= JSX_ARTIFACT_REFRESH_CONCURRENCY) {
+    await new Promise<void>((resolve) => jsxArtifactRefreshWaiters.push(resolve));
+  }
+  activeJsxArtifactRefreshes += 1;
+  try {
+    return await operation();
+  } finally {
+    activeJsxArtifactRefreshes -= 1;
+    jsxArtifactRefreshWaiters.shift()?.();
+  }
+}
 
 function retainJsxArtifact(artifactPath: string): void {
   jsxArtifactActiveRefs.set(artifactPath, (jsxArtifactActiveRefs.get(artifactPath) ?? 0) + 1);
@@ -262,10 +278,12 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
         while (nextIndex < artifactPaths.length) {
           const artifactPath = artifactPaths[nextIndex++];
           if (artifactPath === undefined) continue;
-          await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-            await assertLeaseOwned();
-            await refreshJsxArtifactMtime(artifactPath, 0);
-          }).catch(() => undefined);
+          await withJsxArtifactRefreshSlot(() =>
+            withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+              await assertLeaseOwned();
+              await refreshJsxArtifactMtime(artifactPath, 0);
+            })
+          ).catch(() => undefined);
         }
       })();
     }
@@ -410,15 +428,31 @@ export async function retainJsxArtifactsReferencedIn(
   // refresh per artifact is what "last use" needs, so the duplicates stay
   // only in the reference counts, which release symmetrically below.
   const uniqueArtifactPaths = [...new Set(artifactPaths)];
-  const refreshAll = async () => {
-    await Promise.all(
-      uniqueArtifactPaths.map((artifactPath) =>
-        withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-          await assertLeaseOwned();
-          await refreshJsxArtifactMtime(artifactPath, 0);
-        })
-      ),
-    );
+  let refreshInFlight: Promise<void> | undefined;
+  const refreshAll = (): Promise<void> => {
+    if (refreshInFlight) return refreshInFlight;
+    let nextIndex = 0;
+    const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, uniqueArtifactPaths.length);
+    const workers: Array<Promise<void>> = [];
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+      workers[workers.length] = (async () => {
+        while (nextIndex < uniqueArtifactPaths.length) {
+          const artifactPath = uniqueArtifactPaths[nextIndex++];
+          if (artifactPath === undefined) continue;
+          await withJsxArtifactRefreshSlot(() =>
+            withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+              await assertLeaseOwned();
+              await refreshJsxArtifactMtime(artifactPath, 0);
+            })
+          );
+        }
+      })();
+    }
+    const run = Promise.all(workers).then(() => undefined);
+    refreshInFlight = run.finally(() => {
+      refreshInFlight = undefined;
+    });
+    return refreshInFlight;
   };
   try {
     await refreshAll();
@@ -465,7 +499,7 @@ const JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME = ".jsx-directory-quota";
 
 /** Tail a stale-lease recovery gives the lock file it renames aside. */
 const JSX_LEASE_TOMBSTONE_PATTERN =
-  /\.lock\.stale-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  /\.lock\.(?:stale|release)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Recognize a `.stale-<uuid>` tombstone this loader's lease recovery left.
@@ -555,7 +589,8 @@ async function withFilesystemLease<T>(
 ): Promise<T> {
   const localFs = getLocalFs();
   const createExclusive = localFs.createFileBytesExclusive;
-  if (!createExclusive) throw new Error("Atomic JSX cache leases are unavailable");
+  const rename = localFs.rename;
+  if (!createExclusive || !rename) throw new Error("Atomic JSX cache leases are unavailable");
 
   const leaseOwner = cryptoRandomUUID();
   const leaseBytes = leaseEncoder.encode(leaseOwner);
@@ -595,15 +630,24 @@ async function withFilesystemLease<T>(
     return await operation(assertLeaseOwned);
   } finally {
     if (heartbeat !== undefined) clearInterval(heartbeat);
+    const releasePath = `${lockPath}.release-${cryptoRandomUUID()}`;
     try {
-      if (await localFs.readTextFile(lockPath) === leaseOwner) {
-        await localFs.remove(lockPath);
+      await localFs.rename!(lockPath, releasePath);
+      const releasedOwner = await localFs.readTextFile(releasePath);
+      if (releasedOwner !== leaseOwner) {
+        try {
+          await createExclusive(lockPath, leaseEncoder.encode(releasedOwner));
+        } catch (error) {
+          if (!isAlreadyExistsError(error)) throw error;
+        }
       }
+      await localFs.remove(releasePath);
     } catch (error) {
       if (!isNotFoundError(error)) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease`, {
           error: error instanceof Error ? error.message : String(error),
         });
+        scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
       }
     }
   }
@@ -1097,6 +1141,7 @@ export const __jsxCacheInternals = {
     normalizedModulePaths.has(transformedPath),
   isLazyArtifactRetained: isLazyJsxArtifactRetained,
   JSX_ARTIFACT_LEASE_STALE_MS,
+  JSX_ARTIFACT_REFRESH_CONCURRENCY,
   LAZY_JSX_ARTIFACT_RETENTION_MS,
   LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY,
   jsxArtifactActiveRefCount: (artifactPath: string): number =>
