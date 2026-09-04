@@ -7,6 +7,8 @@ import {
   refreshEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { createProject } from "./project-creation.ts";
 import { createInitialState } from "../state.ts";
@@ -159,11 +161,10 @@ describe("TUI project creation", () => {
   });
 
   it("does not create a project through an API origin selected by a project env file", async () => {
-    const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL", "XDG_CONFIG_HOME"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
-    const workDir = await Deno.makeTempDir();
-    const configHome = await Deno.makeTempDir();
+    const workDir = await makeTempDir();
+    const configHome = await makeTempDir();
     let fetchCalls = 0;
 
     try {
@@ -179,21 +180,23 @@ describe("TUI project creation", () => {
       __resetEnvLoaderForTests();
       await loadEnv({ cwd: workDir, override: true });
       refreshEnvironmentConfig();
-      globalThis.fetch = () => {
-        fetchCalls++;
-        return Promise.reject(new Error("must not fetch"));
-      };
 
-      const state = await createProject(
-        { state: createInitialState(), render: () => {}, baseDir: workDir },
-        "My App",
-        "minimal",
+      const state = await withMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.reject(new Error("must not fetch"));
+        }) as typeof fetch,
+        () =>
+          createProject(
+            { state: createInitialState(), render: () => {}, baseDir: workDir },
+            "My App",
+            "minimal",
+          ),
       );
 
       assertEquals(fetchCalls, 0);
       assertEquals(state.logs.some((entry) => entry.message.startsWith("Failed:")), true);
     } finally {
-      globalThis.fetch = originalFetch;
       __resetEnvLoaderForTests();
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
