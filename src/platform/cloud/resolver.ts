@@ -1,5 +1,9 @@
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { getHostEnv, getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getHostEnv,
+  getHostEnvExcludingEnvFile,
+  hasEnvFileValueSource,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   getCurrentVeryfrontCloudContext,
   type VeryfrontCloudContext,
@@ -162,7 +166,8 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
 
   const usesHostCredential = requestContext?.token === undefined &&
     scopedContext?.apiToken === undefined &&
-    getHostEnv("VERYFRONT_API_TOKEN") !== undefined;
+    getHostEnv("VERYFRONT_API_TOKEN") !== undefined &&
+    !hasEnvFileValueSource("VERYFRONT_API_TOKEN");
   return {
     apiBaseUrl: usesHostCredential
       ? resolveHostCredentialApiBaseUrl()

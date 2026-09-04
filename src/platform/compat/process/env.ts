@@ -81,6 +81,11 @@ export function clearEnvFileValueSources(): void {
   apply(setClear, envFileValueKeys, []);
 }
 
+/** @internal Report whether the current process value was copied from a project env file. */
+export function hasEnvFileValueSource(key: string): boolean {
+  return apply(setHas, envFileValueKeys, [key]);
+}
+
 export type EnvOverlayStorage = {
   getStore: () => unknown;
   run?: <T>(store: unknown, fn: () => T) => T;
@@ -190,7 +195,7 @@ export function getHostEnv(key: string): string | undefined {
 
 /** Read host environment while excluding values copied from project env files. */
 export function getHostEnvExcludingEnvFile(key: string): string | undefined {
-  if (apply(setHas, envFileValueKeys, [key])) return getHostSecret(key);
+  if (hasEnvFileValueSource(key)) return getHostSecret(key);
   return getHostEnv(key);
 }
 

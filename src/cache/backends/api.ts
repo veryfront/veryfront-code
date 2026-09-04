@@ -11,6 +11,7 @@ import {
 } from "#veryfront/cache/request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -51,6 +52,7 @@ type CacheRequestOptions = {
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
   private apiBaseUrl: string;
+  private readonly hostApiBaseUrl: string;
   private readonly apiOrigin: string;
   private readonly hasExplicitApiBaseUrl: boolean;
   private readonly explicitApiToken?: string;
@@ -73,6 +75,8 @@ export class ApiCacheBackend implements CacheBackend {
     this.hasExplicitApiBaseUrl = options.apiBaseUrl !== undefined;
     this.apiBaseUrl = options.apiBaseUrl ??
       getHostEnv("VERYFRONT_API_BASE_URL") ??
+      "https://api.veryfront.com";
+    this.hostApiBaseUrl = getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
     this.apiOrigin = new URL(this.apiBaseUrl).origin;
     this.explicitApiToken = options.apiToken;
@@ -175,7 +179,11 @@ export class ApiCacheBackend implements CacheBackend {
     try {
       return await this.circuitBreaker.execute(async () => {
         const encodedProjectRef = encodeURIComponent(projectRef);
-        const url = `${this.apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
+        const apiBaseUrl = this.hasExplicitApiBaseUrl || tokenSource === "env-file"
+          ? this.apiBaseUrl
+          : this.hostApiBaseUrl;
+        const apiOrigin = new URL(apiBaseUrl).origin;
+        const url = `${apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
         const spanUrl = sanitizeUrlForSpan(url);
         const cacheOperation = sanitizeUrlForSpan(path);
         const controller = new AbortController();
@@ -199,7 +207,7 @@ export class ApiCacheBackend implements CacheBackend {
                 },
                 {
                   authorizeUrl: (target) => {
-                    if (target.origin !== this.apiOrigin) {
+                    if (target.origin !== apiOrigin) {
                       throw new OutboundRequestBlockedError(
                         "Cache API request blocked: destination origin is not authorized",
                       );
@@ -210,7 +218,7 @@ export class ApiCacheBackend implements CacheBackend {
             {
               "http.method": method,
               "http.url": spanUrl,
-              "http.host": new URL(this.apiBaseUrl).host,
+              "http.host": new URL(apiBaseUrl).host,
               "cache.operation": cacheOperation,
               "cache.project_slug": projectRef,
             },

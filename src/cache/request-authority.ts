@@ -11,6 +11,7 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { hasEnvFileValueSource } from "#veryfront/platform/compat/process/env.ts";
 import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -75,6 +76,8 @@ export function resolveCacheRequestAuthority(
     ? "request"
     : hasRequestSelectedTenant
     ? "none"
+    : hostToken && hasEnvFileValueSource("VERYFRONT_API_TOKEN")
+    ? "env-file"
     : hostToken
     ? "host-env"
     : envToken

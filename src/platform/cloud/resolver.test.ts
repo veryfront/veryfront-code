@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { deleteHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  deleteHostSecret,
+  markEnvFileValue,
+  setHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   _resetRuntimeConfig,
   _setRuntimeConfigForTesting,
@@ -200,6 +204,25 @@ describe("platform/cloud/resolver", () => {
       resolveVeryfrontApiBaseUrlFromHostEnv(),
       "http://veryfront-api.veryfront-staging.svc",
     );
+  });
+
+  it("keeps a project env-file token paired with its API URL", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_project_token");
+    setEnv("VERYFRONT_API_URL", "https://project-api.example/graphql");
+    markEnvFileValue("VERYFRONT_API_TOKEN");
+    markEnvFileValue("VERYFRONT_API_URL");
+
+    assertEquals(getVeryfrontCloudBootstrap().apiToken, "vf_project_token");
+    assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://project-api.example/api");
+  });
+
+  it("does not pair a stored login token with a project env-file API URL", () => {
+    setEnv("VERYFRONT_API_URL", "https://project-api.example");
+    markEnvFileValue("VERYFRONT_API_URL");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    assertEquals(getVeryfrontCloudBootstrap().apiToken, "stored-login-token");
+    assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://api.veryfront.com");
   });
 
   it("treats scoped cloud context as sufficient runtime context even without projectSlug", () => {

@@ -1,6 +1,7 @@
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { hasEnvFileValueSource } from "#veryfront/platform/compat/process/env.ts";
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
@@ -59,9 +60,22 @@ export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
   // host login credentials can be reused only for the host API. A credential
   // already bound to the current request remains caller-owned.
   const selectedApiUrl = resolveSandboxApiUrl(options);
+  const requestToken = trimString(getCurrentRequestContext()?.token);
+  if (requestToken) return requestToken;
+
+  if (options.apiUrl === undefined) {
+    const environmentToken = trimString(getHostEnv("VERYFRONT_API_TOKEN"));
+    if (environmentToken) {
+      const tokenFromEnvFile = hasEnvFileValueSource("VERYFRONT_API_TOKEN");
+      const urlFromEnvFile = hasEnvFileValueSource("VERYFRONT_API_URL");
+      if (tokenFromEnvFile === urlFromEnvFile) return environmentToken;
+      throw CONFIG_INVALID.create({
+        detail: "Sandbox API URL and auth token must come from matching environment sources.",
+      });
+    }
+  }
+
   if (!isHostApiOrigin(selectedApiUrl)) {
-    const requestToken = trimString(getCurrentRequestContext()?.token);
-    if (requestToken) return requestToken;
     throw CONFIG_INVALID.create({
       detail: "Sandbox auth must be provided explicitly for a custom API URL.",
     });

@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  deleteHostSecret,
+  markEnvFileValue,
+  setHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   type FetchCall,
   headerValue,
@@ -169,6 +173,39 @@ describe("Sandbox", () => {
 
       assertStringIncludes(fetchCalls[0]!.url, "https://api.test.com/sandbox-sessions");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
+    });
+
+    it("pairs project env-file sandbox credentials with their API URL", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_project_token");
+      setEnv("VERYFRONT_API_URL", "https://project-api.example");
+      markEnvFileValue("VERYFRONT_API_TOKEN");
+      markEnvFileValue("VERYFRONT_API_URL");
+      mockFetch([
+        jsonResponse({
+          id: "session-project-env",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create();
+
+      assertEquals(sandbox.id, "session-project-env");
+      assertEquals(fetchCalls[0]?.url, "https://project-api.example/sandbox-sessions");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_project_token");
+    });
+
+    it("rejects a stored login token paired with a project env-file sandbox URL", async () => {
+      setEnv("VERYFRONT_API_URL", "https://project-api.example");
+      markEnvFileValue("VERYFRONT_API_URL");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      await assertRejects(
+        () => Sandbox.create(),
+        VeryfrontError,
+        "Sandbox API URL and auth token must come from matching environment sources",
+      );
+      assertEquals(fetchCalls, []);
     });
 
     it("should prefer request-scoped credentials over VERYFRONT_API_TOKEN", async () => {
