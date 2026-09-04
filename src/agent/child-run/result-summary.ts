@@ -143,9 +143,15 @@ function addPatternMatches(
   text: string,
   pattern: RegExp,
   group = 0,
+  trailingSourceCharacter?: string,
 ): void {
   pattern.lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
+    if (
+      match.index + match[0].length === text.length &&
+      trailingSourceCharacter !== undefined &&
+      /[A-Za-z0-9_@./:+-]/.test(trailingSourceCharacter)
+    ) continue;
     const value = match[group];
     if (typeof value === "string") {
       addContractFact(target, value);
@@ -632,14 +638,6 @@ function boundedContractFactWindows(text: string): string[] {
   if (text.length <= CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT) return [text];
 
   const windowLength = CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2;
-  let headEnd = windowLength;
-  while (
-    headEnd > 0 && isContractFactTokenCharacter(text[headEnd - 1]) &&
-    isContractFactTokenCharacter(text[headEnd])
-  ) {
-    headEnd -= 1;
-  }
-
   let tailStart = text.length - windowLength;
   while (
     tailStart < text.length && isContractFactTokenCharacter(text[tailStart - 1]) &&
@@ -648,7 +646,7 @@ function boundedContractFactWindows(text: string): string[] {
     tailStart += 1;
   }
 
-  return [text.slice(0, headEnd), text.slice(tailStart)];
+  return [text.slice(0, windowLength), text.slice(tailStart)];
 }
 
 function windowStartsAtFieldBoundary(text: string, window: string): boolean {
@@ -687,6 +685,9 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
   const importPaths: string[] = [];
 
   const windows = boundedContractFactWindows(text);
+  const headTrailingCharacter = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
+    ? text[CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT / 2]
+    : undefined;
   // Structured array parsing validates its own token boundaries. Keep a raw
   // head so trimming cannot hide malformed syntax after an id, and devote the
   // remaining bounded budget to the tail so a long declaration can retain its
@@ -710,10 +711,17 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
       windows[index]!,
       fieldPattern,
       1,
+      index === 0 ? headTrailingCharacter : undefined,
     );
   }
-  for (const boundedText of windows) {
-    addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
+  for (let index = 0; index < windows.length; index++) {
+    addPatternMatches(
+      modelIds,
+      windows[index]!,
+      MODEL_ID_PATTERN,
+      0,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
   }
   for (let index = 0; index < toolWindows.length; index++) {
     const fieldPattern = index === 0 || windowStartsAtFieldBoundary(text, toolWindows[index]!)
@@ -736,17 +744,41 @@ export function extractChildRunContractFacts(text: string): ChildRunContractFact
       fieldPattern,
     );
   }
-  for (const boundedText of windows) {
-    addPatternMatches(toolIds, boundedText, INTEGRATION_TOOL_ID_PATTERN);
+  for (let index = 0; index < windows.length; index++) {
+    addPatternMatches(
+      toolIds,
+      windows[index]!,
+      INTEGRATION_TOOL_ID_PATTERN,
+      0,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
   }
-  for (const boundedText of windows) {
-    addPatternMatches(importPaths, boundedText, IMPORT_FROM_PATTERN, 1);
+  for (let index = 0; index < windows.length; index++) {
+    addPatternMatches(
+      importPaths,
+      windows[index]!,
+      IMPORT_FROM_PATTERN,
+      1,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
   }
-  for (const boundedText of windows) {
-    addPatternMatches(importPaths, boundedText, BARE_IMPORT_PATTERN, 1);
+  for (let index = 0; index < windows.length; index++) {
+    addPatternMatches(
+      importPaths,
+      windows[index]!,
+      BARE_IMPORT_PATTERN,
+      1,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
   }
-  for (const boundedText of windows) {
-    addPatternMatches(importPaths, boundedText, DYNAMIC_IMPORT_PATTERN, 1);
+  for (let index = 0; index < windows.length; index++) {
+    addPatternMatches(
+      importPaths,
+      windows[index]!,
+      DYNAMIC_IMPORT_PATTERN,
+      1,
+      index === 0 ? headTrailingCharacter : undefined,
+    );
   }
 
   return contractFactsOrUndefined({

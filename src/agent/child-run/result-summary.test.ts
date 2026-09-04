@@ -205,6 +205,14 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("preserves a complete fact before a long token crosses the head boundary", () => {
+      const text = `openai/gpt-4.1,${"x".repeat(140_000)}`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { modelIds: ["openai/gpt-4.1"] });
+    });
+
     it("does not return an at-sign fact cut at a bounded-window edge", () => {
       const partial = 'model: "foo@';
       const text = `${"x".repeat(64_000 - partial.length)}${partial}bar"${"x".repeat(130_000)}`;
