@@ -3661,6 +3661,71 @@ describe("DAGExecutor", () => {
       assertEquals(resumed.nodeStates["choose/then"]?.status, "completed");
     });
 
+    it("does not import an unstarted historical sibling into a resumed parallel", async () => {
+      const priorApprovals = ["group/a", "group/b"].map((id) =>
+        waitForApproval(id, { message: `Prior ${id}` })
+      );
+      const nodes: WorkflowNode[] = [
+        {
+          id: "prior",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: priorApprovals,
+            else: [],
+          } as any,
+        },
+        {
+          ...parallel("group", [
+            waitForApproval("a", { message: "Current A" }),
+            { ...waitForApproval("b", { message: "Current B" }), dependsOn: ["group/a"] },
+          ]),
+          dependsOn: ["prior"],
+        },
+      ];
+      const completed = (nodeId: string): NodeState => ({
+        nodeId,
+        status: "completed",
+        attempt: 1,
+        completedAt: new Date(),
+      });
+      const first = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            prior: {
+              ...completed("prior"),
+              output: { branch: "then" },
+            },
+            "group/a": completed("group/a"),
+            "group/b": completed("group/b"),
+          },
+        }),
+      );
+      assertEquals(first.waitingNode, "group/a");
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "group/a": {
+              ...first.nodeStates["group/a"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "group/b");
+      assertEquals(resumed.nodeStates["group/b"]?.status, "running");
+    });
+
     it("resumes an active static producer before a newly ready callback sibling", async () => {
       const nodes: WorkflowNode[] = [
         {

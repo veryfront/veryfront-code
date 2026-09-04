@@ -681,8 +681,8 @@ function createCompositeNodeStateView(
     allowedOwnerPaths,
   );
   const claimedLegacyIds = new Set<string>(scope.completedCompositeChildIds);
-  const currentCompositeIsResumed = scope.resumedCompositePaths.has(
-    subWorkflowOwnerPath(parentPath, compositeNodeId),
+  const activeCompositeChildIds = new Set(
+    nodeStates[compositeNodeId]?._activeCompositeChildIds ?? [],
   );
   for (const [ownerPath, ownerNodeId] of scope.subWorkflowReservationOwners) {
     if (
@@ -706,7 +706,7 @@ function createCompositeNodeStateView(
     }
     if (
       declaredIds.has(nodeId) &&
-      (currentCompositeIsResumed || !claimedLegacyIds.has(nodeId))
+      (activeCompositeChildIds.has(nodeId) || !claimedLegacyIds.has(nodeId))
     ) visible[nodeId] = state;
   }
   return visible;
@@ -1029,7 +1029,6 @@ export class DAGExecutor {
       subWorkflowNodeReservations: new Map(),
       subWorkflowReservationOwners: new Map(),
       resumedSubWorkflowOwnerPaths: new Set(),
-      resumedCompositePaths: new Set(),
       subWorkflowPath: "",
       rootKeyspace: true,
       ownership,
@@ -1147,9 +1146,6 @@ export class DAGExecutor {
         // recovery budget.
         if (resumingWait && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) {
           resumableCompositeIds.add(nodeId);
-          scope.resumedCompositePaths.add(
-            subWorkflowOwnerPath(scope.subWorkflowPath, node.id),
-          );
           if (node.config.type === "subWorkflow") {
             scope.resumedSubWorkflowOwnerPaths.add(
               subWorkflowOwnerPath(scope.subWorkflowPath, node.id),
@@ -1936,6 +1932,9 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
+      ...(waitingNodes === undefined
+        ? {}
+        : { _activeCompositeChildIds: waitingNodes.map(({ nodeId }) => nodeId) }),
     };
 
     this.config.onNodeComplete?.(node.id, state);
@@ -2033,6 +2032,9 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
+      ...(waitingNodes === undefined
+        ? {}
+        : { _activeCompositeChildIds: waitingNodes.map(({ nodeId }) => nodeId) }),
     };
 
     this.config.onNodeComplete?.(node.id, state);

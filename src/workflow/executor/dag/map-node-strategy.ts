@@ -179,6 +179,9 @@ export async function executeMapNodeStrategy(
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: result.completed ? new Date() : undefined,
+    ...(waitingNodes === undefined
+      ? {}
+      : { _activeCompositeChildIds: waitingNodes.map(({ nodeId }) => nodeId) }),
   };
 
   runtime.onNodeComplete?.(node.id, state);
