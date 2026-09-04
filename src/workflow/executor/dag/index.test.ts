@@ -3603,6 +3603,142 @@ describe("DAGExecutor", () => {
       assertEquals(third.nodeStates["release-2"]?.status, "completed");
     });
 
+    it("preserves a resumed parallel decision after an earlier branch reused its child id", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "choose",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [waitForApproval("choose/then/review", { message: "Branch review" })],
+            else: [],
+          } as any,
+        },
+        {
+          ...parallel("choose/then", [
+            waitForApproval("review", { message: "Parallel review" }),
+          ]),
+          dependsOn: ["choose"],
+        },
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+      const second = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "choose/then/review": {
+              ...first.nodeStates["choose/then/review"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+      assertEquals(second.nodeStates.choose?.status, "completed");
+      assertEquals(second.nodeStates["choose/then"]?.status, "running");
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...second.nodeStates,
+            "choose/then/review": {
+              ...second.nodeStates["choose/then/review"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.completed, true);
+      assertEquals(resumed.waiting, false);
+      assertEquals(resumed.nodeStates["choose/then"]?.status, "completed");
+    });
+
+    it("resumes an active static producer before a newly ready callback sibling", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          ...subWorkflow("active", {
+            workflow: {
+              id: "active-workflow",
+              steps: [waitForApproval("review", { message: "Active review" })],
+            },
+          }),
+          dependsOn: [],
+        },
+        { id: "unlock", dependsOn: [], config: { type: "step" } as any },
+        {
+          ...subWorkflow("newly-ready", {
+            workflow: {
+              id: "newly-ready-workflow",
+              steps: () => [waitForApproval("review", { message: "New review" })],
+            },
+          }),
+          dependsOn: ["unlock"],
+        },
+      ];
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            active: { nodeId: "active", status: "running", attempt: 1 },
+            unlock: { nodeId: "unlock", status: "completed", attempt: 1 },
+            review: {
+              nodeId: "review",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.nodeStates.active?.status, "completed");
+      assertEquals(result.nodeStates["newly-ready"]?.status, "running");
+    });
+
+    it("records children from a completed callback loop before a dependent sub-workflow", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        loop("loop", {
+          while: (_context, loopContext) => loopContext.iteration < 1,
+          maxIterations: 1,
+          steps: () => [{ id: "review", config: { type: "step" } as any }],
+        }),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("loop/review", { message: "Release review" })],
+            },
+          }),
+          dependsOn: ["loop"],
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(executed, ["loop/review"]);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "loop/review");
+      assertEquals(result.nodeStates.release?.status, "running");
+      assertEquals(result.nodeStates["loop/review"]?.status, "running");
+    });
+
     it("prefers an active callback-defined sibling's legacy state", async () => {
       const release = (id: string): WorkflowNode => ({
         ...subWorkflow(id, {

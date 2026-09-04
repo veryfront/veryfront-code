@@ -59,6 +59,7 @@ interface PersistedLoopState {
   iteration: number;
   previousResults: unknown[];
   iterationNodeStates?: Record<string, PersistedNodeState>;
+  completedNodeIds?: string[];
 }
 
 /**
@@ -355,6 +356,15 @@ export async function executeLoopNodeStrategy(
     state,
     contextPatch: createSetContextPatch({
       [node.id]: output,
+      ...(typeof config.steps === "function"
+        ? {
+          [`${node.id}_loop_state`]: {
+            iteration,
+            previousResults,
+            completedNodeIds: Object.keys(exposedIterationNodeStates),
+          },
+        }
+        : {}),
       ...completionUpdates,
     }),
     waiting: false,

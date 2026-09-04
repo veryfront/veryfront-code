@@ -54,6 +54,8 @@ export interface ExecutionScope {
   subWorkflowReservationOwners: Map<string, string>;
   /** Owner paths already running when this wait-resume pass began. */
   resumedSubWorkflowOwnerPaths: Set<string>;
+  /** Composite paths already running when this wait-resume pass began. */
+  resumedCompositePaths: Set<string>;
   /** Slash-safe encoded owner path of the graph currently being executed. */
   subWorkflowPath: string;
   /**

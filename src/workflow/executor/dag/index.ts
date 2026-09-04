@@ -603,6 +603,13 @@ function collectCompletedCompositeChildIds(
       if (typeof iterationNodeStates === "object" && iterationNodeStates !== null) {
         for (const childId of Object.keys(iterationNodeStates)) target.add(childId);
       }
+      const completedNodeIds = typeof loopState === "object" && loopState !== null &&
+          "completedNodeIds" in loopState && Array.isArray(loopState.completedNodeIds)
+        ? loopState.completedNodeIds
+        : [];
+      for (const childId of completedNodeIds) {
+        if (typeof childId === "string") target.add(childId);
+      }
     }
   }
 }
@@ -658,6 +665,7 @@ function createCompositeNodeStateView(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
   parentPath: string,
+  compositeNodeId: string,
   context: WorkflowContext,
   scope: ExecutionScope,
 ): Record<string, NodeState> {
@@ -673,6 +681,9 @@ function createCompositeNodeStateView(
     allowedOwnerPaths,
   );
   const claimedLegacyIds = new Set<string>(scope.completedCompositeChildIds);
+  const currentCompositeIsResumed = scope.resumedCompositePaths.has(
+    subWorkflowOwnerPath(parentPath, compositeNodeId),
+  );
   for (const [ownerPath, ownerNodeId] of scope.subWorkflowReservationOwners) {
     if (
       ownerPath === parentPath ||
@@ -693,7 +704,10 @@ function createCompositeNodeStateView(
       if (allowed) visible[nodeId] = state;
       continue;
     }
-    if (declaredIds.has(nodeId) && !claimedLegacyIds.has(nodeId)) visible[nodeId] = state;
+    if (
+      declaredIds.has(nodeId) &&
+      (currentCompositeIsResumed || !claimedLegacyIds.has(nodeId))
+    ) visible[nodeId] = state;
   }
   return visible;
 }
@@ -714,6 +728,14 @@ function collectCompositeLoopStateEvidence(
           .iterationNodeStates;
         if (typeof iterationNodeStates === "object" && iterationNodeStates !== null) {
           for (const nodeId of Object.keys(iterationNodeStates)) declaredIds.add(nodeId);
+        }
+      }
+      if (
+        typeof loopState === "object" && loopState !== null &&
+        "completedNodeIds" in loopState && Array.isArray(loopState.completedNodeIds)
+      ) {
+        for (const nodeId of loopState.completedNodeIds) {
+          if (typeof nodeId === "string") declaredIds.add(nodeId);
         }
       }
       if (Array.isArray(node.config.steps)) {
@@ -1007,6 +1029,7 @@ export class DAGExecutor {
       subWorkflowNodeReservations: new Map(),
       subWorkflowReservationOwners: new Map(),
       resumedSubWorkflowOwnerPaths: new Set(),
+      resumedCompositePaths: new Set(),
       subWorkflowPath: "",
       rootKeyspace: true,
       ownership,
@@ -1091,6 +1114,7 @@ export class DAGExecutor {
     const recoveryQueued = new Set<string>();
 
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
+    const resumableCompositeIds = new Set<string>();
     if (!startFromNode) {
       // A node recorded as running means different things depending on why the
       // run stopped, and the two must not be confused.
@@ -1122,6 +1146,10 @@ export class DAGExecutor {
         // Re-enter it so the child resumes; nothing crashed, so it spends no
         // recovery budget.
         if (resumingWait && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) {
+          resumableCompositeIds.add(nodeId);
+          scope.resumedCompositePaths.add(
+            subWorkflowOwnerPath(scope.subWorkflowPath, node.id),
+          );
           if (node.config.type === "subWorkflow") {
             scope.resumedSubWorkflowOwnerPaths.add(
               subWorkflowOwnerPath(scope.subWorkflowPath, node.id),
@@ -1214,7 +1242,23 @@ export class DAGExecutor {
         else resolvedProducerIds.push(nodeId);
       }
       let batch = candidateBatch;
+      const resumedProducerIds = candidateBatch.filter((nodeId) =>
+        resumableCompositeIds.has(nodeId) &&
+        nodeMayProduceSharedChildState(nodeMap.get(nodeId)!)
+      );
       if (
+        resumedProducerIds.length > 0 &&
+        resumedProducerIds.length < unresolvedNodeIds.length + resolvedProducerIds.length
+      ) {
+        // A producer that already owns a parked decision must consume it before
+        // a newly ready producer can overwrite the shared child-state key.
+        const resumed = new Set(resumedProducerIds);
+        const deferred = new Set(
+          [...unresolvedNodeIds, ...resolvedProducerIds].filter((nodeId) => !resumed.has(nodeId)),
+        );
+        batch = candidateBatch.filter((nodeId) => !deferred.has(nodeId));
+        ready = [...candidateBatch.filter((nodeId) => deferred.has(nodeId)), ...ready];
+      } else if (
         unresolvedNodeIds.length > 0 && unresolvedNodeIds.length + resolvedProducerIds.length > 1
       ) {
         // Admit the first unresolved producer before any known producer. Its
@@ -1710,6 +1754,7 @@ export class DAGExecutor {
                     nodes,
                     states,
                     scope.subWorkflowPath,
+                    node.id,
                     context,
                     scope,
                   ),
@@ -1839,6 +1884,7 @@ export class DAGExecutor {
       config.nodes,
       nodeStates,
       scope.subWorkflowPath,
+      node.id,
       context,
       scope,
     );
@@ -1936,6 +1982,7 @@ export class DAGExecutor {
       branchNodes,
       nodeStates,
       scope.subWorkflowPath,
+      node.id,
       context,
       scope,
     );
