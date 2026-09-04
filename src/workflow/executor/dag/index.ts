@@ -412,6 +412,16 @@ function collectNodeSharedChildIds(
         collectNodeSharedChildIds(child, parentPath, scope, childIds);
       }
       break;
+    case "branch":
+      for (const child of node.config.then) {
+        childIds.add(child.id);
+        collectNodeSharedChildIds(child, parentPath, scope, childIds);
+      }
+      for (const child of node.config.else ?? []) {
+        childIds.add(child.id);
+        collectNodeSharedChildIds(child, parentPath, scope, childIds);
+      }
+      break;
     case "loop":
       if (Array.isArray(node.config.steps)) {
         for (const child of node.config.steps) {
@@ -449,15 +459,40 @@ function nodeHasUnknownSharedChildReservations(node: WorkflowNode): boolean {
     case "parallel":
       return node.config.nodes.some(nodeHasUnknownSharedChildReservations);
     case "branch":
-      // The selected arm is resolved only at execution, so the child ids this
-      // node reserves are unknown until it runs.
-      return true;
+      for (const child of node.config.then) {
+        if (nodeHasUnknownSharedChildReservations(child)) return true;
+      }
+      for (const child of node.config.else ?? []) {
+        if (nodeHasUnknownSharedChildReservations(child)) return true;
+      }
+      return false;
     case "loop":
       if (!Array.isArray(node.config.steps)) return true;
       return node.config.steps.some(nodeHasUnknownSharedChildReservations);
     case "map":
       // Item count and generated namespaces resolve only at execution.
       return true;
+    default:
+      return false;
+  }
+}
+
+function nodeHasConditionalSharedChildReservations(node: WorkflowNode): boolean {
+  if (node.config.skip) return false;
+  switch (node.config.type) {
+    case "branch":
+      return true;
+    case "subWorkflow":
+      if (
+        typeof node.config.workflow === "string" ||
+        !Array.isArray(node.config.workflow.steps)
+      ) return false;
+      return node.config.workflow.steps.some(nodeHasConditionalSharedChildReservations);
+    case "parallel":
+      return node.config.nodes.some(nodeHasConditionalSharedChildReservations);
+    case "loop":
+      return Array.isArray(node.config.steps) &&
+        node.config.steps.some(nodeHasConditionalSharedChildReservations);
     default:
       return false;
   }
@@ -1269,7 +1304,27 @@ export class DAGExecutor {
       // only the nodes actually admitted together: an unresolved producer was
       // serialized above precisely because its final reservation set cannot be
       // known until it runs.
-      const childCollision = findConcurrentChildStateCollision(batch, nodeMap, scope);
+      let childCollision = findConcurrentChildStateCollision(batch, nodeMap, scope);
+      if (childCollision) {
+        const firstNode = nodeMap.get(childCollision.firstNodeId);
+        const secondNode = nodeMap.get(childCollision.secondNodeId);
+        const conditionalNodeId = firstNode && nodeHasConditionalSharedChildReservations(firstNode)
+          ? firstNode.id
+          : secondNode && nodeHasConditionalSharedChildReservations(secondNode)
+          ? secondNode.id
+          : undefined;
+        if (conditionalNodeId !== undefined) {
+          const deferredProducerIds = batch.filter((nodeId) => {
+            const candidate = nodeMap.get(nodeId);
+            return nodeId !== conditionalNodeId && candidate !== undefined &&
+              nodeMayProduceSharedChildState(candidate);
+          });
+          const deferred = new Set(deferredProducerIds);
+          batch = batch.filter((nodeId) => !deferred.has(nodeId));
+          ready = [...deferredProducerIds, ...ready];
+          childCollision = findConcurrentChildStateCollision(batch, nodeMap, scope);
+        }
+      }
       if (childCollision) {
         const detail = `Concurrent nodes "${childCollision.firstNodeId}" and ` +
           `"${childCollision.secondNodeId}" both declare child id ` +

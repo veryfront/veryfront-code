@@ -1351,6 +1351,32 @@ describe("DAGExecutor", () => {
   });
 
   describe("loop node sibling isolation", () => {
+    it("rejects a sibling node that collides with loop bookkeeping", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "repeat",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: () => false,
+            steps: () => [],
+          } as any,
+        },
+        {
+          id: "repeat_loop_state",
+          dependsOn: ["repeat"],
+          config: { type: "step" } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertStringIncludes(result.error ?? "", 'reserves internal context key "repeat_loop_state"');
+      assertEquals(result.errorCause instanceof VeryfrontError, true);
+      assertEquals(result.context.repeat_loop_state, undefined);
+    });
+
     it("does not re-execute a step declared before the loop", async () => {
       const executed: string[] = [];
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
@@ -6126,6 +6152,48 @@ describe("DAGExecutor", () => {
       const result = await exec.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
     });
+  });
+
+  it("runs dependency-free static branches concurrently", async () => {
+    let activeSteps = 0;
+    let maxActiveSteps = 0;
+    const exec = new DAGExecutor({
+      maxConcurrency: 2,
+      stepExecutor: new MockStepExecutor(new Map(), async (node) => {
+        activeSteps += 1;
+        maxActiveSteps = Math.max(maxActiveSteps, activeSteps);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activeSteps -= 1;
+        return { success: true, output: node.id, executionTime: 5 };
+      }),
+    });
+    const nodes: WorkflowNode[] = [
+      {
+        id: "first-branch",
+        dependsOn: [],
+        config: {
+          type: "branch",
+          condition: () => true,
+          then: [{ id: "first-child", config: { type: "step" } as any }],
+          else: [{ id: "first-alternate", config: { type: "step" } as any }],
+        } as any,
+      },
+      {
+        id: "second-branch",
+        dependsOn: [],
+        config: {
+          type: "branch",
+          condition: () => true,
+          then: [{ id: "second-child", config: { type: "step" } as any }],
+          else: [{ id: "second-alternate", config: { type: "step" } as any }],
+        } as any,
+      },
+    ];
+
+    const result = await exec.execute(nodes, createTestRun());
+
+    assertEquals(result.completed, true);
+    assertEquals(maxActiveSteps, 2);
   });
 
   describe("composite node execution policy", () => {

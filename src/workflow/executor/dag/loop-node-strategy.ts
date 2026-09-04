@@ -125,6 +125,13 @@ export async function executeLoopNodeStrategy(
 ): Promise<NodeExecutionResult> {
   const { node, config, context, nodeStates, parentNodeIds, runtime } = input;
   runtime.abortSignal?.throwIfAborted();
+  const loopStateKey = `${node.id}_loop_state`;
+  if (parentNodeIds.has(loopStateKey)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Loop node "${node.id}" reserves internal context key "${loopStateKey}", ` +
+        "which collides with a declared node in the parent graph",
+    });
+  }
   const startTime = Date.now();
   const previousResults: unknown[] = [];
   let iteration = 0;
@@ -136,7 +143,7 @@ export async function executeLoopNodeStrategy(
   // "maxIterations" below.
   let exitedViaCondition = false;
 
-  const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
+  const existingLoopState = context[loopStateKey] as PersistedLoopState | undefined;
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).
@@ -279,7 +286,7 @@ export async function executeLoopNodeStrategy(
         contextPatch: mergeContextPatches(
           result.contextPatch,
           createSetContextPatch({
-            [`${node.id}_loop_state`]: {
+            [loopStateKey]: {
               iteration,
               previousResults,
               // Persist the in-flight iteration's child states so completed
@@ -361,7 +368,7 @@ export async function executeLoopNodeStrategy(
       [node.id]: output,
       ...(typeof config.steps === "function"
         ? {
-          [`${node.id}_loop_state`]: {
+          [loopStateKey]: {
             iteration,
             previousResults,
             completedNodeIds: Object.keys(exposedIterationNodeStates),
