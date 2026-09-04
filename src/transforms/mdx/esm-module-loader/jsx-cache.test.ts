@@ -1536,6 +1536,41 @@ describe("jsx artifact references", () => {
     }
   });
 
+  it("rolls back active references when initial refresh fails", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-retain-rollback-test-" });
+    const artifactPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/Rollback.tsx", "export const v = 1;"),
+    );
+    const localFs = getLocalFs();
+    const createExclusive = localFs.createFileBytesExclusive;
+    const leasePath = `${artifactPath}.lock`;
+    const originalSetTimeout = globalThis.setTimeout;
+    if (!createExclusive) throw new Error("the test runtime must support exclusive creation");
+    try {
+      await writeTextFile(artifactPath, "export const v = 1;");
+      await createExclusive(leasePath, new TextEncoder().encode("active-owner"));
+      globalThis.setTimeout = ((handler: TimerHandler) => {
+        queueMicrotask(typeof handler === "function" ? handler : () => undefined);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout;
+
+      await assertRejects(
+        () =>
+          retainJsxArtifactsReferencedIn(
+            `import Rollback from "file://${artifactPath}";`,
+            tempDir,
+          ),
+        Error,
+        "Timed out waiting for a JSX cache lease",
+      );
+      assertEquals(jsxArtifactActiveRefCount(artifactPath), 0);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("retires a lazy artifact after its parent retention window", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-lazy-retain-test-" });
     const artifactPath = join(

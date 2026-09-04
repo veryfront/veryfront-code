@@ -116,7 +116,7 @@ export async function ensureCachedJsxModulePatched(
 export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 32;
 
 /** Hard count ceiling for JSX artifacts in one cache directory. */
-export const MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY = MAX_MDX_MODULE_IMPORTS_PER_FILE;
+export const MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY = 4 * MAX_MDX_MODULE_IMPORTS_PER_FILE;
 
 /**
  * Age an artifact must reach before it can be retired.
@@ -384,8 +384,16 @@ export async function retainJsxArtifactsReferencedIn(
       ),
     );
   };
-  await refreshAll();
-  const heartbeat = setInterval(() => void refreshAll(), JSX_CACHE_MTIME_REFRESH_INTERVAL_MS);
+  try {
+    await refreshAll();
+  } catch (error) {
+    for (const artifactPath of staticArtifactPaths) releaseJsxArtifact(artifactPath);
+    throw error;
+  }
+  const heartbeat = setInterval(
+    () => void refreshAll().catch(() => undefined),
+    JSX_CACHE_MTIME_REFRESH_INTERVAL_MS,
+  );
   unrefTimer(heartbeat);
 
   let released = false;
