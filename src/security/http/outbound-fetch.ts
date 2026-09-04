@@ -73,6 +73,30 @@ export interface OutboundFetchBoundary {
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
+// Captured like capturedHostFetch: origin-bound provider transports read URL/Request properties on every credentialed request.
+const NativeURL = URL;
+const NativeRequest = Request;
+const IntrinsicReflectApply = Reflect.apply;
+const nativeHasInstance = Function.prototype[Symbol.hasInstance];
+const URLProtocolGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")?.get;
+const URLUsernameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")?.get;
+const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
+const URLOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
+
+function readNativeURLString<T>(target: T, getter: ((this: T) => string) | undefined): string {
+  if (!getter) {
+    throw new TypeError("URL/Request accessors are unavailable");
+  }
+  return IntrinsicReflectApply(getter, target, []) as string;
+}
+
+// Runs the un-replaceable %Function.prototype%[Symbol.hasInstance] against the
+// captured constructor, so a redefined global's own hasInstance is never invoked.
+function isNativeInstance(value: unknown, ctor: typeof NativeURL | typeof NativeRequest): boolean {
+  return IntrinsicReflectApply(nativeHasInstance, ctor, [value]) as boolean;
+}
 let outboundFetchTransportForTests: Readonly<TrustedHostTransport> | undefined;
 
 function getTrustedHostTransport(): TrustedHostTransport {
@@ -197,10 +221,11 @@ function parseAllowedInternalProviderOrigins(value: string | undefined): Readonl
   return origins;
 }
 
-function isHostAllowedInternalProviderOrigin(base: URL): boolean {
+/** Whether `base.origin` is on the host-owned internal-provider allowlist ({@link HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}). */
+export function isHostAllowedInternalProviderOrigin(base: URL): boolean {
   return parseAllowedInternalProviderOrigins(
     getHostEnv(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
-  ).has(base.origin);
+  ).has(readNativeURLString(base, URLOriginGet));
 }
 
 function snapshotOutboundFetchTransport(
@@ -252,27 +277,34 @@ function createOriginBoundFetchWithTransport(
   baseUrl: string,
   transport: OutboundFetchTransport,
 ): typeof fetch {
-  const base = new URL(baseUrl);
-  if (base.protocol !== "http:" && base.protocol !== "https:") {
+  const base = new NativeURL(baseUrl);
+  const baseProtocol = readNativeURLString(base, URLProtocolGet);
+  if (baseProtocol !== "http:" && baseProtocol !== "https:") {
     throw new TypeError("Provider base URL must use http: or https:");
   }
-  if (base.username || base.password) {
+  if (readNativeURLString(base, URLUsernameGet) || readNativeURLString(base, URLPasswordGet)) {
     throw new TypeError("Provider base URL must not include credentials");
   }
+  const baseOrigin = readNativeURLString(base, URLOriginGet);
   const allowInternalEgress = isHostAllowedInternalProviderOrigin(base);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
-    const target = new URL(raw, base);
+    const isRequestInput = isNativeInstance(input, NativeRequest);
+    const raw = isRequestInput
+      ? readNativeURLString(input as Request, RequestUrlGet)
+      : isNativeInstance(input, NativeURL)
+      ? readNativeURLString(input as URL, URLHrefGet)
+      : input as string;
+    const target = new NativeURL(raw, base);
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
-    const guardedInput: RequestInfo | URL = input instanceof Request ? input : target;
+    const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
     return await fetchWithBoundaryErrors(
       guardedInput,
       { ...init, redirect: "error" },
       {
         authorizeUrl(url) {
-          if (url.origin !== base.origin) {
+          if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
             throw new OutboundRequestBlockedError(
               "Provider request blocked: destination origin is not authorized",
             );

@@ -1135,7 +1135,7 @@ describe("run-scoped inference credential", () => {
     );
   });
 
-  it("requires HTTPS, a loopback, or an internal cluster API base URL for run-scoped inference credentials", () => {
+  it("requires HTTPS, a loopback, or a host-allowed internal provider origin for run-scoped inference credentials", () => {
     const error = assertThrows(
       () =>
         runWithVeryfrontCloudContext(
@@ -1143,7 +1143,7 @@ describe("run-scoped inference credential", () => {
           () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
         ),
       VeryfrontError,
-      'Run-scoped inference credentials require HTTPS, a loopback, or a ".svc.cluster.local" API base URL',
+      "Run-scoped inference credentials require HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
     );
     if (!(error instanceof VeryfrontError)) {
       throw new Error("Expected a registered VeryfrontError");

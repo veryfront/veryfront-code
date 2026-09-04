@@ -142,15 +142,6 @@ describe("provider/veryfront-cloud/shared", () => {
     }
   });
 
-  it("trusts an internal cluster hostname as an API base URL for run-scoped inference credentials", () => {
-    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local";
-    const bootstrap = runWithVeryfrontCloudContext(
-      { apiBaseUrl, apiToken: "vf_scoped_token" },
-      () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
-    );
-    assertEquals(bootstrap.apiBaseUrl, apiBaseUrl);
-  });
-
   it("still rejects an arbitrary plain-HTTP API base URL for run-scoped inference credentials", () => {
     assertThrows(
       () =>
@@ -159,7 +150,7 @@ describe("provider/veryfront-cloud/shared", () => {
           () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
         ),
       Error,
-      'HTTPS, a loopback, or a ".svc.cluster.local" API base URL',
+      "HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
     );
   });
 
