@@ -18,6 +18,7 @@ import { randomSuffix } from "#cli/shared/slug";
 
 import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
 import { resolveApiCredentialCandidatesForAuth } from "#cli/shared/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -34,7 +35,9 @@ async function apiRequest<T>(
   // Remote file tools send to apiBaseUrl, not the higher-precedence apiUrl
   // used by GraphQL/auth calls. Classify the actual destination on its own so
   // a trusted API_URL cannot mask a repository-steered API_BASE_URL.
-  const requestEnv = { ...env, apiUrl: undefined };
+  const requestEnv = getEnvSource("VERYFRONT_API_BASE_URL").source === "unset"
+    ? env
+    : { ...env, apiUrl: undefined };
   const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv);
   const candidate = options.token
     ? candidates.find((entry) => entry.apiToken === options.token)
