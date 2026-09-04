@@ -103,7 +103,12 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
     assertEquals(restricted.tools, { web_search: true });
     assertEquals(restricted.providerTools, []);
     assertEquals(restricted.delegates, ["writer"]);
-    assertEquals(restricted.mcpServers, []);
+    // The configured MCP source survives, but its tool policy is stamped down
+    // to the run allowlist: the hostile `Set.prototype.has`, `Array.prototype`
+    // and `Object` replacements cannot widen it back to `delete_project`.
+    assertEquals(restricted.mcpServers, [
+      { kind: "veryfront-api", toolPolicy: { allow: ["web_search"] } },
+    ]);
     assertEquals(restricted.skills, false);
     assertEquals(
       Object.keys(rebuiltTools as Record<string, unknown>).sort(),

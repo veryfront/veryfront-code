@@ -226,7 +226,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       toolPolicy: { allow: ["search_docs"] },
     }]);
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["search_docs"]);
-    assertEquals(getRuntimeRemoteToolSources(restricted).length, 1);
+    assertEquals(getRuntimeRemoteToolSources(restricted)?.length, 1);
   });
 
   it("does not add generic delegation to a tools-true source agent", () => {
