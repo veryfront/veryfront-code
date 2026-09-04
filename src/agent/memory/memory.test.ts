@@ -2,6 +2,7 @@ import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BufferMemory,
+  captureMemoryRollback,
   ConversationMemory,
   createAgentMemory,
   createMemory,
@@ -212,5 +213,30 @@ describe("SummaryMemory", () => {
 
     await memory.clear();
     assertEquals(await memory.getMessages(), []);
+  });
+
+  it("restores the private summary state without replaying its projection", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    await memory.add(userMessage("1", "first topic"));
+    await memory.add(userMessage("2", "second topic"));
+    await memory.add(userMessage("3", "third topic"));
+    const before = await memory.getMessages();
+    const rollback = captureMemoryRollback(memory, before);
+
+    await memory.add(userMessage("4", "fourth topic"));
+    await memory.add(userMessage("5", "fifth topic"));
+    await rollback();
+
+    const after = await memory.getMessages();
+    assertEquals(
+      after.map((message) => ({ id: message.id, role: message.role, parts: message.parts })),
+      before.map((message) => ({ id: message.id, role: message.role, parts: message.parts })),
+    );
+    await memory.add(userMessage("4", "fourth topic"));
+    assertEquals(
+      (await memory.getMessages()).filter((message) => message.id === "summary").length,
+      1,
+      "the restored projection must remain private summary state",
+    );
   });
 });

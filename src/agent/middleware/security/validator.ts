@@ -895,18 +895,27 @@ export function securityMiddleware(
     // already-persisted history cannot be rewritten here, so rejecting over it
     // would brick the conversation on every later turn (`extractMergedRunTexts`).
     registerTurnMessageValidator(context, async (history, turnInput) => {
+      const individualValues = history.length === 0
+        ? {
+          texts: turnInput.flatMap(extractMessageInputText),
+          assembled: turnInput.flatMap(extractMessageAssembledTexts),
+        }
+        : { texts: [], assembled: [] };
       const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
       // Merged runs are synthetic assemblies, so they are pattern-checked but
       // never length-checked (`InputValidationOptions.checkMaxLength`).
       await assertInputTextsValid(
         inputValidator,
-        { texts: [], assembled: runTexts },
+        {
+          texts: individualValues.texts,
+          assembled: [...individualValues.assembled, ...runTexts],
+        },
         config.onViolation,
       );
       assertTextsNeedNoSanitization(
         inputValidator,
-        runTexts,
-        "Merged messages assemble content sanitization removes",
+        [...individualValues.texts, ...individualValues.assembled, ...runTexts],
+        "Provider-visible messages contain content sanitization removes",
         config.onViolation,
       );
     });

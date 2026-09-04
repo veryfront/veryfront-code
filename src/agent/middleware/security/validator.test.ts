@@ -1245,6 +1245,21 @@ describe("securityMiddleware", () => {
       "Input validation failed",
     );
 
+    await assertRejects(
+      () =>
+        validateTurn([], [{
+          id: "summary",
+          role: "system",
+          parts: [{
+            type: "text",
+            text:
+              "Previous conversation summary: Discussed: <script; Discussed: >alert(1)</script>",
+          }],
+        }]),
+      Error,
+      "Input validation failed",
+    );
+
     // A user turn between the halves does not help: the Anthropic and Google
     // request builders hoist every system message in the conversation into one
     // instruction, so the payload still reassembles there.

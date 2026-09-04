@@ -9,6 +9,32 @@ import {
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 type BasicMemoryType = "conversation" | "buffer";
+type MemoryRollback = () => Promise<void>;
+const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
+
+function registerMemoryRollbackFactory(
+  memory: object,
+  factory: () => MemoryRollback,
+): void {
+  memoryRollbackFactories.set(memory, factory);
+}
+
+/** @internal Capture an exact built-in memory state before a transactional write. */
+export function captureMemoryRollback<M extends MinimalMessage>(
+  memory: Memory<M>,
+  fallbackMessages: readonly M[],
+): MemoryRollback {
+  const factory = memoryRollbackFactories.get(memory);
+  if (factory) return factory();
+
+  // Preserve compatibility with custom Memory implementations. Built-in
+  // stores use exact private-state snapshots registered in their constructors.
+  const snapshot = [...fallbackMessages];
+  return async () => {
+    await memory.clear();
+    for (const message of snapshot) await memory.add(message);
+  };
+}
 
 function getMessagesWithTrace<M extends MinimalMessage>(
   messages: M[],
@@ -60,6 +86,16 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   protected messages: M[] = [];
   protected abstract readonly memoryType: BasicMemoryType;
   protected abstract readonly spanPrefix: string;
+
+  constructor() {
+    registerMemoryRollbackFactory(this, () => {
+      const messages = [...this.messages];
+      return () => {
+        this.messages = [...messages];
+        return Promise.resolve();
+      };
+    });
+  }
 
   abstract add(message: M): Promise<void>;
 
@@ -171,6 +207,15 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       1,
       Math.min(DEFAULT_SUMMARY_MAX_CHARS, Math.floor((config.maxTokens ?? 1_000) * 4)),
     );
+    registerMemoryRollbackFactory(this, () => {
+      const messages = [...this.messages];
+      const summary = this.summary;
+      return () => {
+        this.messages = [...messages];
+        this.summary = summary;
+        return Promise.resolve();
+      };
+    });
   }
 
   add(message: M): Promise<void> {
