@@ -1332,13 +1332,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               throw attachProtectedDeleteContext(error, protectedDeleteContext());
             }
             if (project) {
-              await writeSyncTarget(projectDir, {
-                controlPlane: config.apiUrl,
-                projectId: project.id,
-                projectSlug: project.slug,
-                branch: branchName,
-                files: pushedSyncFiles,
-              });
+              try {
+                await writeSyncTarget(projectDir, {
+                  controlPlane: config.apiUrl,
+                  projectId: project.id,
+                  projectSlug: project.slug,
+                  branch: branchName,
+                  files: pushedSyncFiles,
+                });
+              } catch (error) {
+                throw attachProtectedDeleteContext(error, protectedDeleteContext());
+              }
             }
           }
         } finally {
