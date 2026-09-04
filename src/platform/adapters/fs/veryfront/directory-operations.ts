@@ -16,6 +16,7 @@ interface DirNode {
 export class DirectoryOperations extends VeryfrontOperationsBase {
   private dirTree: Map<string, DirNode> | null = null;
   private buildingTree: Promise<void> | null = null;
+  private treeGeneration = 0;
 
   readdir(path: string): Promise<DirectoryEntry[]> {
     return withSpan(
@@ -75,16 +76,24 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     if (this.dirTree) return;
 
     if (this.buildingTree) {
-      await this.buildingTree;
-      return;
+      const building = this.buildingTree;
+      await building;
+      if (this.dirTree) return;
+      if (this.buildingTree === building) this.buildingTree = null;
+      return await this.ensureTreeBuilt();
     }
 
-    this.buildingTree = this.buildTree();
-    await this.buildingTree;
-    this.buildingTree = null;
+    const generation = this.treeGeneration;
+    const building = this.buildTree(generation);
+    this.buildingTree = building;
+    try {
+      await building;
+    } finally {
+      if (this.buildingTree === building) this.buildingTree = null;
+    }
   }
 
-  private buildTree(): Promise<void> {
+  private buildTree(generation: number): Promise<void> {
     return withSpan(
       "fs.veryfront.buildTree",
       async () => {
@@ -138,6 +147,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           dirNode.files.set(fileName, file);
         }
 
+        if (generation !== this.treeGeneration) return;
         this.dirTree = tree;
         logger.debug("Tree built", { directories: tree.size });
       },
@@ -146,6 +156,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   }
 
   clearTree(): void {
+    this.treeGeneration += 1;
     this.dirTree = null;
   }
 

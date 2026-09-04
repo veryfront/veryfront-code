@@ -1175,6 +1175,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
             await this.cache.deleteAsync(effectiveCacheKey);
             return false;
           }
+          // A successful warmup is a newly observed source snapshot even when
+          // no poke advanced the generation. Publish that generation before
+          // retaining the list so in-memory indexes rebuild from these bytes.
+          this.markSourceSnapshotChanged(files, warmupIdentity);
           this.retainFileList(effectiveCacheKey, files);
           return true;
         });

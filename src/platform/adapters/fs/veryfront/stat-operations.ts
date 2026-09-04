@@ -46,6 +46,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
+  private indexGeneration = 0;
   private indexBuiltAt = 0;
 
   private indexBuildLockResolver: (() => void) | null = null;
@@ -182,18 +183,22 @@ export class StatOperations extends VeryfrontOperationsBase {
     if (this.buildingIndex) {
       logger.debug("ensureIndexBuilt - waiting for concurrent build");
       const waitStart = performance.now();
-      await this.buildingIndex;
+      const building = this.buildingIndex;
+      await building;
       logger.debug("ensureIndexBuilt - concurrent build done", {
         waitMs: Math.round(performance.now() - waitStart),
       });
-      return;
+      if (this.fileIndex && this.directoryIndex) return;
+      if (this.buildingIndex === building) this.buildingIndex = null;
+      return await this.ensureIndexBuilt();
     }
 
     if (this.indexBuildLockPromise) {
       logger.debug("ensureIndexBuilt - waiting for lock");
       await this.indexBuildLockPromise;
       if (this.buildingIndex) await this.buildingIndex;
-      return;
+      if (this.fileIndex && this.directoryIndex) return;
+      return await this.ensureIndexBuilt();
     }
 
     this.indexBuildLockPromise = new Promise((resolve) => {
@@ -203,8 +208,10 @@ export class StatOperations extends VeryfrontOperationsBase {
     try {
       if (this.fileIndex && this.directoryIndex) return;
 
-      this.buildingIndex = this.buildIndex();
-      await this.buildingIndex;
+      const generation = this.indexGeneration;
+      const building = this.buildIndex(generation);
+      this.buildingIndex = building;
+      await building;
     } finally {
       this.buildingIndex = null;
       this.indexBuildLockResolver?.();
@@ -213,7 +220,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
   }
 
-  private async buildIndex(): Promise<void> {
+  private async buildIndex(generation: number): Promise<void> {
     const buildStart = performance.now();
     logger.debug("buildIndex START");
 
@@ -247,6 +254,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
+    if (generation !== this.indexGeneration) return;
     this.fileIndex = fileIdx;
     this.directoryIndex = dirIdx;
     this.pathMapping = pathMap;
@@ -265,6 +273,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   clearIndex(): void {
+    this.indexGeneration += 1;
     this.fileIndex = null;
     this.directoryIndex = null;
     this.pathMapping.clear();
