@@ -48,11 +48,16 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, 
 const HeadersGet = Headers.prototype.get;
 const StringTrim = String.prototype.trim;
 
-function readRequestHeader(request: Request, name: string): string | undefined {
+function readRequestHeaderRaw(request: Request, name: string): string | undefined {
   if (!RequestHeadersGetter) return undefined;
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
   const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
-  if (value === null) return undefined;
+  return value === null ? undefined : value;
+}
+
+function readRequestHeader(request: Request, name: string): string | undefined {
+  const value = readRequestHeaderRaw(request, name);
+  if (value === undefined) return undefined;
   return IntrinsicReflectApply(StringTrim, value, []) as string;
 }
 
@@ -65,9 +70,14 @@ function readRequestHeader(request: Request, name: string): string | undefined {
  * `requireInferenceProviderCredential` at the point the credential is
  * actually used -- potentially after the run has already been durably
  * accepted.
+ *
+ * Reads the raw, untrimmed value: trimming first would let edge whitespace
+ * (including non-ASCII whitespace such as U+00A0) silently disappear before
+ * the visible-ASCII check runs, turning a malformed header into a validated
+ * one instead of a 400.
  */
 function readInferenceTokenHeader(request: Request): string | undefined | Response {
-  const value = readRequestHeader(request, INFERENCE_TOKEN_HEADER);
+  const value = readRequestHeaderRaw(request, INFERENCE_TOKEN_HEADER);
   if (value === undefined) return undefined;
   try {
     return requireInferenceProviderCredential(value, "Inference token header");

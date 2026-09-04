@@ -1978,7 +1978,16 @@ describe("agent/hosted-chat-request", () => {
   });
 
   it("rejects blank and non-visible-ASCII inference headers after writer verification", async () => {
-    for (const inferenceToken of ["", "token with a space"]) {
+    for (
+      const inferenceToken of [
+        "",
+        "token with a space",
+        // U+00A0 (non-breaking space) is whitespace under String.prototype.trim,
+        // so a naive trim-then-validate order would silently strip it and bind
+        // an unintended credential instead of rejecting the malformed header.
+        " padded-token ",
+      ]
+    ) {
       const response = await parseHostedChatRequestFromRequest(
         new Request("https://agent.example.test/api/runs", {
           method: "POST",
