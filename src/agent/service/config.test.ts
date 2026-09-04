@@ -6,6 +6,7 @@ import {
   agentServiceConfigSchema,
   parseAgentServiceConfig,
   parseHostedAgentServiceConfig,
+  resolveAgentServiceInferenceApiBaseUrl,
 } from "./config.ts";
 
 describe("agent/agent-service-config", () => {
@@ -28,6 +29,25 @@ describe("agent/agent-service-config", () => {
 
     assertEquals(config.VERYFRONT_API_URL, "https://api.veryfront.com");
     assertEquals(config.VERYFRONT_PUBLIC_API_BASE_URL, undefined);
+  });
+
+  it("keeps inference routing inside the parsed service environment", () => {
+    const isolated = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "http://isolated-control-plane.internal",
+    });
+    assertEquals(
+      resolveAgentServiceInferenceApiBaseUrl(isolated),
+      "http://isolated-control-plane.internal",
+    );
+
+    const publicRoute = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "http://isolated-control-plane.internal",
+      VERYFRONT_PUBLIC_API_BASE_URL: "https://isolated-public-api.example",
+    });
+    assertEquals(
+      resolveAgentServiceInferenceApiBaseUrl(publicRoute),
+      "https://isolated-public-api.example",
+    );
   });
 
   it("exposes agent service aliases without the hosted prefix", () => {

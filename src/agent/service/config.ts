@@ -51,6 +51,13 @@ export type AgentServiceConfig = {
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;
 };
 
+/** Resolve inference egress from one parsed service-environment snapshot. */
+export function resolveAgentServiceInferenceApiBaseUrl(
+  config: Pick<AgentServiceConfig, "VERYFRONT_API_URL" | "VERYFRONT_PUBLIC_API_BASE_URL">,
+): string {
+  return config.VERYFRONT_PUBLIC_API_BASE_URL ?? config.VERYFRONT_API_URL;
+}
+
 /** Input payload for agent service config. */
 export type AgentServiceConfigInput = Record<string, string | number | undefined>;
 
