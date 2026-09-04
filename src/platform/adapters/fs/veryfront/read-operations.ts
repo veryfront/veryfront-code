@@ -37,6 +37,25 @@ const logger = baseLogger.component("read-operations");
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 const IN_FLIGHT_CLEANUP_INTERVAL_MS = 1_000;
+const inFlightAuthoritySalt = crypto.randomUUID();
+
+function foldAuthority(value: string): string {
+  const FNV_OFFSET_BASIS = 14695981039346656037n;
+  const FNV_PRIME = 1099511628211n;
+  const MASK_64 = (1n << 64n) - 1n;
+  let hash = FNV_OFFSET_BASIS;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = (hash * FNV_PRIME) & MASK_64;
+  }
+  return hash.toString(36);
+}
+
+function requestAuthorityFingerprint(token: string): string {
+  return `${foldAuthority(`read-authority:a:${inFlightAuthoritySalt}:${token}`)}${
+    foldAuthority(`read-authority:b:${inFlightAuthoritySalt}:${token}`)
+  }`;
+}
 
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
@@ -45,8 +64,6 @@ export class ReadOperations {
     cleanupIntervalMs: IN_FLIGHT_CLEANUP_INTERVAL_MS,
   });
   private readonly fileListIndex: FileListIndex;
-  private readonly inFlightAuthorityScopes = new Map<string, number>();
-  private nextInFlightAuthorityScope = 1;
   /** Caches extensionless base paths → resolved full paths to avoid repeated API resolution calls */
   private readonly extensionResolutionCache = new Map<string, string>();
   private requestBranchScope: string | null | undefined;
@@ -61,11 +78,11 @@ export class ReadOperations {
       cacheKey?: string,
       contentContext?: ResolvedContentContext | null,
     ) => Promise<Array<{ path: string; content?: string }> | undefined>,
-    getFileListSnapshotVersion?: () => number,
+    private readonly getSourceSnapshotVersion?: () => number,
   ) {
     this.fileListIndex = new FileListIndex(
       this.getFileListCache,
-      getFileListSnapshotVersion,
+      getSourceSnapshotVersion,
       (contentContext) => {
         const context = contentContext ?? this.contextProvider?.getContentContext();
         return context
@@ -86,19 +103,15 @@ export class ReadOperations {
     this.extensionResolutionCache.clear();
   }
 
-  private getInFlightKey(cacheKey: string): string {
+  private getInFlightKey(
+    cacheKey: string,
+    snapshotVersion: number | undefined,
+    invalidated: boolean,
+  ): string {
     const token = currentRequestContext()?.token;
-    if (!token) return `${cacheKey}:authority:adapter`;
-    let scope = this.inFlightAuthorityScopes.get(token);
-    if (scope === undefined) {
-      if (this.inFlightAuthorityScopes.size >= MAX_IN_FLIGHT_REQUESTS) {
-        const oldest = this.inFlightAuthorityScopes.keys().next().value;
-        if (oldest !== undefined) this.inFlightAuthorityScopes.delete(oldest);
-      }
-      scope = this.nextInFlightAuthorityScope++;
-      this.inFlightAuthorityScopes.set(token, scope);
-    }
-    return `${cacheKey}:authority:${scope}`;
+    const authority = token ? requestAuthorityFingerprint(token) : "adapter";
+    return `${cacheKey}:authority:${authority}:snapshot:${snapshotVersion ?? "unknown"}:` +
+      `invalidated:${invalidated ? "yes" : "no"}`;
   }
 
   private syncRequestBranchScope(): string | null | undefined {
@@ -375,7 +388,12 @@ export class ReadOperations {
       logger.warn("Cleaned up in-flight requests", cleanupResult);
     }
 
-    const inFlightKey = this.getInFlightKey(cacheKey);
+    const snapshotVersion = this.getSourceSnapshotVersion?.();
+    const fileCachePrefix = ctx ? buildFileCacheKeyPrefix(ctx) : undefined;
+    const isInvalidated = () =>
+      fileCachePrefix !== undefined &&
+      (this.contextProvider?.isPersistentCacheInvalidated?.(fileCachePrefix) ?? false);
+    const inFlightKey = this.getInFlightKey(cacheKey, snapshotVersion, isInvalidated());
     const existingEntry = this.inFlightRequests.get(inFlightKey);
     if (existingEntry) {
       logger.debug("Deduplicating request - joining existing fetch", {
@@ -410,6 +428,9 @@ export class ReadOperations {
       sourceType: ctx?.sourceType ?? "null/undefined",
     });
 
+    const shouldCache = () =>
+      isProduction && !isInvalidated() &&
+      (snapshotVersion === undefined || this.getSourceSnapshotVersion?.() === snapshotVersion);
     const fetchStartTime = performance.now();
     const fetchPromise = (async () => {
       try {
@@ -420,14 +441,14 @@ export class ReadOperations {
             cacheKey,
             ctx?.releaseId ?? null,
             ctx?.environmentName ?? null,
-            isProduction,
+            shouldCache,
             expectedMissing,
           )
           : await this.fetchDraftContent(
             normalizedPath,
             apiPath,
             cacheKey,
-            isProduction,
+            shouldCache,
             expectedMissing,
             ctx?.branch,
           );
@@ -600,9 +621,11 @@ export class ReadOperations {
   private storeFetchedContent(
     cacheKey: string,
     content: string,
-    shouldCache: boolean,
+    shouldCache: boolean | (() => boolean),
   ): string {
-    if (shouldCache) this.cache.set(cacheKey, content);
+    if (typeof shouldCache === "function" ? shouldCache() : shouldCache) {
+      this.cache.set(cacheKey, content);
+    }
     setRequestScopedFile(cacheKey, content);
     return content;
   }
@@ -828,7 +851,7 @@ export class ReadOperations {
     cacheKey: string,
     releaseId: string | null,
     environmentName: string | null,
-    shouldCache: boolean,
+    shouldCache: boolean | (() => boolean),
     expectedMissing = false,
   ): Promise<string> {
     logger.debug("Fetching published content", {
@@ -894,7 +917,7 @@ export class ReadOperations {
   private async tryFallbackExtensions(
     apiPath: string,
     cacheKey: string,
-    shouldCache: boolean,
+    shouldCache: boolean | (() => boolean),
     releaseId: string | null,
     environmentName?: string | null,
   ): Promise<string | null> {
@@ -942,7 +965,7 @@ export class ReadOperations {
     originalExt: string,
     basePath: string,
     cacheKey: string,
-    shouldCache: boolean,
+    shouldCache: boolean | (() => boolean),
     releaseId: string | null,
     environmentName?: string | null,
   ): Promise<string | null> {
@@ -997,7 +1020,7 @@ export class ReadOperations {
     normalizedPath: string,
     apiPath: string,
     cacheKey: string,
-    shouldCache: boolean,
+    shouldCache: boolean | (() => boolean),
     expectedMissing = false,
     branch = "main",
   ): Promise<string> {
@@ -1016,7 +1039,7 @@ export class ReadOperations {
     logger.debug("API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
-      willCache: shouldCache,
+      willCache: typeof shouldCache === "function" ? shouldCache() : shouldCache,
     });
 
     return this.storeFetchedContent(cacheKey, content, shouldCache);

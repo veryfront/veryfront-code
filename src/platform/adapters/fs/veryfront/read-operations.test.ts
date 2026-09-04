@@ -63,6 +63,7 @@ function createReadOps(
     contentContext?: ResolvedContentContext | null,
   ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   pathNormalizer = new PathNormalizer(),
+  getFileListSnapshotVersion?: () => number,
 ): ReadOperations {
   return new ReadOperations(
     client,
@@ -71,6 +72,7 @@ function createReadOps(
     contextProvider,
     pathResolver,
     getFileListCache,
+    getFileListSnapshotVersion,
   );
 }
 
@@ -84,6 +86,7 @@ function createReadyReadOps(
     contentContext?: ResolvedContentContext | null,
   ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   pathNormalizer = new PathNormalizer(),
+  getFileListSnapshotVersion?: () => number,
 ): ReadOperations {
   const readOps = createReadOps(
     client,
@@ -92,6 +95,7 @@ function createReadyReadOps(
     pathResolver,
     getFileListCache,
     pathNormalizer,
+    getFileListSnapshotVersion,
   );
   readOps.setFileListReadyPromise(Promise.resolve());
   return readOps;
@@ -1019,6 +1023,39 @@ describe("ReadOperations", () => {
   });
 
   describe("readOptionalTextFile", () => {
+    it("does not join or cache a fetch from a superseded source snapshot", async () => {
+      const oldFetch = Promise.withResolvers<string>();
+      let fetchCount = 0;
+      let snapshotVersion = 1;
+      const client = createMockClient({
+        getPublishedFileContent: () => {
+          fetchCount++;
+          return fetchCount === 1 ? oldFetch.promise : Promise.resolve("new content");
+        },
+      });
+      const readOps = createReadyReadOps(
+        client,
+        true,
+        createReleaseContext("release-snapshot"),
+        undefined,
+        undefined,
+        new PathNormalizer(),
+        () => snapshotVersion,
+      );
+
+      const oldRead = readOps.readOptionalTextFile("globals.css");
+      for (let attempt = 0; attempt < 100 && fetchCount === 0; attempt++) await Promise.resolve();
+      assertEquals(fetchCount, 1);
+      snapshotVersion = 2;
+      const newRead = readOps.readOptionalTextFile("globals.css");
+      assertEquals(await newRead, "new content");
+      oldFetch.resolve("old content");
+      assertEquals(await oldRead, "old content");
+
+      assertEquals(await readOps.readOptionalTextFile("globals.css"), "new content");
+      assertEquals(fetchCount, 2);
+    });
+
     it("does not deduplicate optional reads across request credentials", async () => {
       const firstFetch = Promise.withResolvers<string>();
       let fetchCount = 0;
