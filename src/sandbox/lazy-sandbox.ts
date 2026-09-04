@@ -1,7 +1,12 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
-import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
+import {
+  fetchSandboxRuntimeUrl,
+  fetchSandboxUrl,
+  resolveSandboxApiUrl,
+  resolveSandboxAuthToken,
+} from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import { readExecStreamEvents } from "./exec-stream.ts";
 import {
@@ -75,6 +80,9 @@ const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
   "EHOSTUNREACH",
 ]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+const stringReplace = String.prototype.replace;
 
 /** Resolves default sandbox runtime endpoint. */
 export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }): string {
@@ -99,7 +107,8 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
 }
 
 function normalizeDataPlaneBaseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, "");
+  const trimmed = applyIntrinsic(stringTrim, url, []) as string;
+  return applyIntrinsic(stringReplace, trimmed, [/\/+$/, ""]) as string;
 }
 
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
@@ -220,12 +229,14 @@ export class LazySandbox {
 
   async readFile(path: string): Promise<string> {
     await this.touchSession();
+    const route = this.resolveDataPlaneRoute();
 
     const res = await this.fetchControl(
-      `${this.resolveDataPlaneRoute().baseUrl}/file?path=${encodeURIComponent(path)}`,
+      `${route.baseUrl}/file?path=${encodeURIComponent(path)}`,
       {
         headers: this.authHeaders(),
       },
+      route.kind,
     );
 
     if (!res.ok) {
@@ -237,12 +248,17 @@ export class LazySandbox {
 
   async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
     await this.touchSession();
+    const route = this.resolveDataPlaneRoute();
 
-    const res = await this.fetchControl(`${this.resolveDataPlaneRoute().baseUrl}/files`, {
-      method: "POST",
-      headers: this.jsonHeaders(),
-      body: JSON.stringify({ files }),
-    });
+    const res = await this.fetchControl(
+      `${route.baseUrl}/files`,
+      {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({ files }),
+      },
+      route.kind,
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -256,11 +272,15 @@ export class LazySandbox {
     const route = this.resolveDataPlaneRoute();
 
     const commandsUrl = backgroundCommandsUrl(route);
-    const res = await this.fetchControl(commandsUrl, {
-      method: "POST",
-      headers: this.jsonHeaders(),
-      body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
-    });
+    const res = await this.fetchControl(
+      commandsUrl,
+      {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
+      },
+      route.kind,
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -284,6 +304,7 @@ export class LazySandbox {
       {
         headers: this.authHeaders(),
       },
+      route.routeKind,
     );
 
     if (!res.ok) {
@@ -305,6 +326,7 @@ export class LazySandbox {
       {
         headers: this.authHeaders(),
       },
+      route.routeKind,
     );
 
     if (!res.ok) {
@@ -327,10 +349,13 @@ export class LazySandbox {
 
   async listBackgroundCommands(): Promise<BackgroundCommand[]> {
     await this.ensure();
+    const route = this.resolveDataPlaneRoute();
 
-    const res = await this.fetchControl(backgroundCommandsUrl(this.resolveDataPlaneRoute()), {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      backgroundCommandsUrl(route),
+      { headers: this.authHeaders() },
+      route.kind,
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -352,6 +377,7 @@ export class LazySandbox {
         method: "POST",
         headers: this.authHeaders(),
       },
+      route.routeKind,
     );
 
     if (!res.ok) {
@@ -614,7 +640,7 @@ export class LazySandbox {
 
     while (Date.now() - start < this.startupTimeoutMs) {
       try {
-        const res = await this.fetchControl(`${runtimeEndpoint}/readyz`);
+        const res = await this.fetchControl(`${runtimeEndpoint}/readyz`, {}, "internal");
 
         if (res.ok) {
           return;
@@ -770,11 +796,15 @@ export class LazySandbox {
 
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
       try {
-        const res = await this.fetchExecStart(commandStreamUrl(route), {
-          method: "POST",
-          headers: this.jsonHeaders(),
-          body,
-        });
+        const res = await this.fetchExecStart(
+          commandStreamUrl(route),
+          {
+            method: "POST",
+            headers: this.jsonHeaders(),
+            body,
+          },
+          route.kind,
+        );
 
         if (res.ok) {
           return res;
@@ -798,12 +828,20 @@ export class LazySandbox {
     throw new Error("Sandbox exec failed before a request was made");
   }
 
-  private async fetchExecStart(url: string, init: RequestInit): Promise<Response> {
-    return fetchWithTimeout(url, this.execStartTimeoutMs, init);
+  private async fetchExecStart(
+    url: string,
+    init: RequestInit,
+    routeKind: DataPlaneRoute["kind"],
+  ): Promise<Response> {
+    return fetchWithTimeout(url, this.execStartTimeoutMs, init, routeKind === "internal");
   }
 
-  private async fetchControl(url: string, init: RequestInit = {}): Promise<Response> {
-    return fetchWithTimeout(url, this.controlRequestTimeoutMs, init);
+  private async fetchControl(
+    url: string,
+    init: RequestInit = {},
+    routeKind: DataPlaneRoute["kind"] = "proxy",
+  ): Promise<Response> {
+    return fetchWithTimeout(url, this.controlRequestTimeoutMs, init, routeKind === "internal");
   }
 
   private waitForExecStartRetry(): Promise<void> {
@@ -940,16 +978,18 @@ async function fetchWithTimeout(
   url: string,
   timeoutMs: number,
   init: RequestInit = {},
+  allowInternalRuntime = false,
 ): Promise<Response> {
+  const fetchUrl = allowInternalRuntime ? fetchSandboxRuntimeUrl : fetchSandboxUrl;
   if (timeoutMs <= 0) {
-    return await fetchSandboxUrl(url, init);
+    return await fetchUrl(url, init);
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetchSandboxUrl(url, { ...init, signal: controller.signal });
+    return await fetchUrl(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }

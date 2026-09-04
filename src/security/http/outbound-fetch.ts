@@ -267,6 +267,7 @@ async function fetchWithBoundaryErrors(
 function createOriginBoundFetchWithTransport(
   baseUrl: string,
   transport: OutboundFetchTransport,
+  allowHostInternalEgress = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
   const baseProtocol = readUrlString(urlProtocolGetter, base, "protocol");
@@ -279,7 +280,7 @@ function createOriginBoundFetchWithTransport(
   ) {
     throw new TypeError("Provider base URL must not include credentials");
   }
-  const allowInternalEgress = isHostAllowedInternalProviderOrigin(base);
+  const allowInternalEgress = allowHostInternalEgress || isHostAllowedInternalProviderOrigin(base);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const raw = input instanceof Request
@@ -451,6 +452,11 @@ export async function guardedExactHttpLoopbackOutboundFetch(
  */
 export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
   return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport());
+}
+
+/** @internal Bind a host-selected sandbox runtime origin while allowing private service DNS. */
+export function createHostInternalOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
+  return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), true);
 }
 
 function requestUrl(input: RequestInfo | URL): URL {

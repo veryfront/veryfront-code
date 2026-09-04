@@ -3,7 +3,10 @@ import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.t
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createHostInternalOriginBoundOutboundFetch,
+  createOriginBoundOutboundFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import type { SandboxOptions } from "./types.ts";
 
 const NativeURL = URL;
@@ -30,6 +33,11 @@ function isHostApiOrigin(value: string): boolean {
 /** @internal Send sandbox traffic through the host transport and reject cross-origin redirects. */
 export function fetchSandboxUrl(url: string, init?: RequestInit): Promise<Response> {
   return createOriginBoundOutboundFetch(url)(url, init);
+}
+
+/** @internal Fetch a host-selected sandbox runtime route, including private Kubernetes DNS. */
+export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise<Response> {
+  return createHostInternalOriginBoundOutboundFetch(url)(url, init);
 }
 
 export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
