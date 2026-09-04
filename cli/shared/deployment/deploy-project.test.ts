@@ -21,7 +21,11 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
-import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
+import {
+  computeSourceDigest,
+  resolveGitSource,
+  writePushReceipt,
+} from "../deployment-provenance.ts";
 import { capturePushSourceSnapshot } from "../../commands/push/command.ts";
 import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import {
@@ -1092,6 +1096,37 @@ describe("pushed source provenance", () => {
           ),
           "refresh",
         );
+      })
+    );
+  });
+
+  it("rejects an ignored source edit during the closing Git probe", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        await Deno.writeTextFile(`${projectDir}/.gitignore`, "generated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
+        await commitProject(projectDir);
+        let gitProbe = 0;
+
+        const observed = await observeLocalSource(projectDir, {
+          resolveGitSource: async (dir) => {
+            const result = await resolveGitSource(dir);
+            gitProbe += 1;
+            if (gitProbe === 4) {
+              await Deno.writeTextFile(
+                `${projectDir}/generated.ts`,
+                "export const generated = 2;\n",
+              );
+            }
+            return result;
+          },
+        });
+
+        assertEquals(gitProbe, 4);
+        assertEquals(observed.gitSource.commitSha, null);
+        assertEquals(observed.gitSource.clean, false);
+        assertEquals(observed.gitSource.indeterminate, true);
       })
     );
   });

@@ -523,19 +523,29 @@ export interface LocalSourceObservation {
   sourceDigest: string | null;
 }
 
-export async function observeLocalSource(projectDir: string): Promise<LocalSourceObservation> {
+export async function observeLocalSource(
+  projectDir: string,
+  dependencies: { resolveGitSource?: typeof resolveGitSource } = {},
+): Promise<LocalSourceObservation> {
+  const readGitSource = dependencies.resolveGitSource ?? resolveGitSource;
   // Bracket two matching source scans with Git probes. Git fences committed
   // and visible worktree changes, while the repeated digest also catches a
   // supported file hidden by .gitignore changing during either Git command.
-  const firstGit = await resolveGitSource(projectDir);
+  const firstGit = await readGitSource(projectDir);
   const firstDigest = await computeLocalSourceDigest(projectDir);
-  const middleGit = await resolveGitSource(projectDir);
+  const middleGit = await readGitSource(projectDir);
   const middleDigest = await computeLocalSourceDigest(projectDir);
-  const finalGit = await resolveGitSource(projectDir);
+  const finalGit = await readGitSource(projectDir);
   // Git does not report supported files hidden by .gitignore. Re-read the
   // managed source after the final Git probe so a hidden-file write during
   // that probe cannot leave an earlier digest looking stable.
   const sourceDigest = await computeLocalSourceDigest(projectDir);
+  const postDigestGit = await readGitSource(projectDir);
+  // Re-read managed source after the closing Git probe. A Git-ignored source
+  // file can change while Git is running without affecting its observation.
+  // A change after this final read is a new edit after the gate, equivalent to
+  // one made immediately after this function returns.
+  const postGitSourceDigest = await computeLocalSourceDigest(projectDir);
   const gitStable = (left: GitSource, right: GitSource) =>
     left.commitSha === right.commitSha &&
     left.clean === right.clean &&
@@ -543,15 +553,16 @@ export async function observeLocalSource(projectDir: string): Promise<LocalSourc
     left.indeterminate === right.indeterminate;
   const gitSource = gitStable(firstGit, middleGit) &&
       gitStable(middleGit, finalGit) && firstDigest === middleDigest &&
-      middleDigest === sourceDigest
-    ? finalGit
+      gitStable(finalGit, postDigestGit) && middleDigest === sourceDigest &&
+      sourceDigest === postGitSourceDigest
+    ? postDigestGit
     : {
-      ...finalGit,
+      ...postDigestGit,
       commitSha: null,
       clean: false,
       indeterminate: true as const,
     };
-  return { gitSource, sourceDigest };
+  return { gitSource, sourceDigest: postGitSourceDigest };
 }
 
 async function computeLocalSourceDigest(projectDir: string): Promise<string | null> {

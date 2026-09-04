@@ -124,9 +124,11 @@ path.
 `veryfront up` makes the current directory live rather than promoting a reviewed
 Push, so it refreshes a stale receipt with a quiet Push instead of refusing. That
 refresh is an ordinary push: it keeps the remote-conflict checks that `--force`
-would waive, and it prunes only files the checkout deleted from Git, so
-remote-only files stay in place. Do not use `veryfront up` as a CI promotion
-step.
+would waive. In a Git checkout, it prunes only files the checkout deleted from
+Git, so remote-only files stay in place. In a non-Git directory whose source
+digest changed, the refresh performs a full prune and removes remote-only files
+because the local directory is authoritative. Do not use `veryfront up` as a CI
+promotion step.
 
 If no receipt exists, Deploy bootstraps one with a quiet Push. That first Push
 has no receipt to check the checkout against, so it uploads the working tree as
