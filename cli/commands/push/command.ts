@@ -1195,6 +1195,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           throw attachProtectedDeleteContext(error, protectedDeleteContext());
         }
       };
+      const computeVerifiedSourceDigest = async (files: readonly RemoteFile[]) => {
+        try {
+          return await computePushedSourceDigest(ops, files);
+        } catch (error) {
+          throw attachProtectedDeleteContext(error, protectedDeleteContext());
+        }
+      };
       // Protected paths are planner input only. The sync baseline must never
       // record them, because `plan.nextFiles` excludes them and no later pull or
       // push would ever reconcile such an entry away.
@@ -1263,7 +1270,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts);
               }
-              pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+              pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
             } else if (pruneRemoteMissing) {
               spinner.update("Verifying push target...");
               let latestRemoteFiles = await listAllFiles(
@@ -1318,14 +1325,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts, protectedDeleteContext());
               }
-              pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+              pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
             } else {
               const latestRemoteFiles = await listAllFiles(
                 client,
                 projectApiReference(config),
                 target.source,
               );
-              pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+              pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
               pushedSyncFiles = await buildSyncFilesAfterAppliedChanges(
                 latestRemoteFiles.filter((file) =>
                   ignoreChecker.isSupportedExtension(file.path) &&
@@ -1631,7 +1638,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             }
             throw pushConflictError(conflicts, protectedDeleteContext());
           }
-          pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+          pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
         } else if (pruneRemoteMissing) {
           const latestRemoteFiles = await listAllFilesForVerification();
           let repaired = false;
@@ -1714,9 +1721,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               await writeVerifiedAppliedSyncTarget(repairedRemoteFiles);
               throw pushConflictError(repairedConflicts, protectedDeleteContext());
             }
-            pushedSourceDigest = await computePushedSourceDigest(ops, repairedRemoteFiles);
+            pushedSourceDigest = await computeVerifiedSourceDigest(repairedRemoteFiles);
           } else {
-            pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+            pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
           }
         } else {
           let latestRemoteFiles = await listAllFilesForVerification();
@@ -1771,7 +1778,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             await writeVerifiedAppliedSyncTarget(latestRemoteFiles);
             throw pushConflictError(conflicts, protectedDeleteContext());
           }
-          pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+          pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
           pushedSyncFiles = await buildSyncFilesAfterAppliedChanges(
             latestRemoteFiles.filter((file) =>
               ignoreChecker.isSupportedExtension(file.path) &&

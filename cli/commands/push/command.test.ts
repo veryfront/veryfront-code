@@ -4774,6 +4774,70 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("keeps protected deletion context when a preserved remote file lacks content", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let uploadedApp = false;
+        let protectedDeleted = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: uploadedApp ? "export const value = 1;\n" : "stale app",
+                },
+                ...(!protectedDeleted
+                  ? [{ path: ".env.production", content: "SECRET=<REDACTED>\n" }]
+                  : [{ path: "assets/logo.png" }]),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            uploadedApp = true;
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            protectedDeleted = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true }),
+          Error,
+          "Push finalization failed after remote files were deleted",
+        );
+
+        assertEquals(protectedDeleted, true);
+        assertEquals(
+          (error as Error & { context?: Record<string, unknown> }).context?.protectedDeleted,
+          [".env.production"],
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("uses refreshed preserved remote bytes in normal push receipts", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
