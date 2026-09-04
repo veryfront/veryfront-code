@@ -167,6 +167,52 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       );
     });
 
+    it("re-reads a listing that spans a snapshot change", async () => {
+      let snapshotVersion = 1;
+      let reads = 0;
+      const index = new FileListIndex(
+        () => {
+          reads++;
+          if (reads === 1) {
+            // The snapshot advances while this read is open, so the listing it
+            // returns describes the superseded snapshot.
+            snapshotVersion += 1;
+            return Promise.resolve([{ path: "old.css", content: "old" }]);
+          }
+          return Promise.resolve([{ path: "new.css", content: "new" }]);
+        },
+        () => snapshotVersion,
+      );
+
+      assertEquals(
+        await index.match("old.css"),
+        { status: "missing", fresh: true },
+        "a listing superseded during the read must not be republished as the index",
+      );
+      assertEquals(reads, 2, "the superseded read must be retried against the settled snapshot");
+      assertEquals(await index.lookup("new.css"), "new");
+    });
+
+    it("discards the listing when the snapshot keeps changing during the read", async () => {
+      let snapshotVersion = 1;
+      let reads = 0;
+      const index = new FileListIndex(
+        () => {
+          reads++;
+          snapshotVersion += 1;
+          return Promise.resolve([{ path: "a.css", content: "a" }]);
+        },
+        () => snapshotVersion,
+      );
+
+      assertEquals(
+        await index.match("a.css"),
+        { status: "unavailable", fresh: false },
+        "a listing that never settles must be discarded rather than marked fresh",
+      );
+      assertEquals(reads, 2, "the read is retried a bounded number of times");
+    });
+
     it("rebuilds when a refreshed listing changes inline content", async () => {
       let callCount = 0;
       const entry = { path: "a.ts", content: "v1" };

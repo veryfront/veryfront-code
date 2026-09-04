@@ -1157,36 +1157,45 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // answer back to the older draft, so the write is serialized against
         // snapshot mutations and stands down when one won the race.
         const applied = await this.#runSourceSnapshotMutation(async () => {
-          if (
+          const isSnapshotSuperseded = () =>
             this.contentContext !== warmupBaseContext ||
             this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
-            this.sourceSnapshotVersion !== warmupSnapshotVersion
-          ) {
+            this.sourceSnapshotVersion !== warmupSnapshotVersion;
+          if (isSnapshotSuperseded()) {
             return false;
+          }
+
+          const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
+          if (sourceChanged) {
+            // Route discovery reads the persistent `stat:` and `dir:` tiers
+            // before either in-memory structure is rebuilt, so clearing memory
+            // alone would leave a stale listing -- or a negative
+            // `stat:...:resolve` sentinel -- answering with the pre-edit file
+            // set until those entries expired. Drop them before the new
+            // snapshot is published rather than after, so no read can observe
+            // the new generation while the old derived entries still stand.
+            await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
+              this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(warmupContext)),
+              this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(warmupContext)),
+            ]]);
+            if (isSnapshotSuperseded()) {
+              return false;
+            }
           }
 
           await this.cache.setAsync(effectiveCacheKey, files);
           // A poke can advance the generation while a distributed cache write
           // is pending. Remove the value that just landed before releasing the
           // mutation lock, so neither this waiter nor a later read sees it.
-          if (
-            this.contentContext !== warmupBaseContext ||
-            this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
-            this.sourceSnapshotVersion !== warmupSnapshotVersion
-          ) {
+          if (isSnapshotSuperseded()) {
             await this.cache.deleteAsync(effectiveCacheKey);
             return false;
           }
           // A successful warmup is a newly observed source snapshot even when
           // no poke advanced the generation. Publish that generation before
           // retaining the list so in-memory indexes rebuild from these bytes.
-          const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
           this.markSourceSnapshotChanged(files, warmupIdentity);
           if (sourceChanged) {
-            await Promise.all([
-              this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(warmupContext)),
-              this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(warmupContext)),
-            ]);
             this.statOps.clearIndex();
             this.dirOps.clearTree();
           }

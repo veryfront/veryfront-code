@@ -9,7 +9,12 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
-import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
+} from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import {
@@ -3171,6 +3176,110 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(listAllFilesCalls, 2);
+    });
+
+    it("evicts persistent derived caches when a warmup observes a changed listing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+
+      let files: Array<{ path: string; content?: string }> = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return null }",
+      }];
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => Promise.resolve(files);
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      await adapter.initialize();
+
+      const context = adapter.getContentContext();
+      const cacheKey = buildFileListCacheKey(context);
+      const statResolveKey = `${buildStatCacheKeyPrefix(context)}:resolve:pages/about`;
+      const dirKey = `${buildDirCacheKeyPrefix(context)}:pages`;
+      const internals = adapter as unknown as {
+        cache: {
+          set: (key: string, value: unknown) => void;
+          delete: (key: string) => boolean;
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+          deleteByPrefixAsync: (prefix: string) => Promise<void>;
+        };
+        sourceSnapshotVersion: number;
+        clearRetainedFileList: () => void;
+      };
+      const cache = internals.cache;
+
+      // Route discovery reads both of these before either in-memory structure
+      // is rebuilt, so a warmup that observes an edit must drop them too.
+      cache.set(statResolveKey, "__VF_NOT_FOUND__");
+      cache.set(dirKey, [{ name: "index.tsx", isFile: true, isDirectory: false }]);
+
+      const versionBeforeWarmup = internals.sourceSnapshotVersion;
+      const versionsAtEviction: number[] = [];
+      const deleteByPrefixAsync = cache.deleteByPrefixAsync.bind(cache);
+      cache.deleteByPrefixAsync = (prefix: string) => {
+        versionsAtEviction.push(internals.sourceSnapshotVersion);
+        return deleteByPrefixAsync(prefix);
+      };
+
+      // The next warmup observes a listing with a file the cached negative
+      // resolve entry says is absent.
+      files = [
+        ...files,
+        { path: "pages/about.tsx", content: "export default function About() { return null }" },
+      ];
+      assertEquals(cache.delete(cacheKey), true);
+      internals.clearRetainedFileList();
+
+      await adapter.getAllSourceFiles();
+
+      await waitFor(async () => {
+        const cached = await cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        return Array.isArray(cached) && cached.length === 2;
+      });
+
+      assertEquals(
+        await cache.getAsync(statResolveKey),
+        undefined,
+        "a changed warmup must evict persistent stat resolve entries",
+      );
+      assertEquals(
+        await cache.getAsync(dirKey),
+        undefined,
+        "a changed warmup must evict persistent directory listings",
+      );
+      assertEquals(versionsAtEviction.length, 2, "both derived tiers must be evicted");
+      assertEquals(
+        versionsAtEviction.every((version) => version === versionBeforeWarmup),
+        true,
+        "the eviction must complete before the new snapshot generation is published",
+      );
     });
   });
 });

@@ -183,6 +183,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private async ensureIndexBuilt(
     contentContext: ResolvedContentContext | null | undefined,
+    rebuildsLeft = 1,
   ): Promise<StatIndexSnapshot> {
     const scopeKey = buildStatCacheKeyPrefix(contentContext);
     if (this.fileIndex && this.directoryIndex && this.indexScopeKey === scopeKey) {
@@ -205,19 +206,33 @@ export class StatOperations extends VeryfrontOperationsBase {
         waitMs: Math.round(performance.now() - waitStart),
       });
       if (buildingScopeKey === scopeKey) return snapshot;
-      return await this.ensureIndexBuilt(contentContext);
+      return await this.ensureIndexBuilt(contentContext, rebuildsLeft);
     }
 
     const generation = this.indexGeneration;
     const building = this.buildIndex(generation, contentContext, scopeKey);
     this.buildingIndex = building;
     this.buildingIndexScopeKey = scopeKey;
+    let snapshot: StatIndexSnapshot;
     try {
-      return await building;
+      snapshot = await building;
     } finally {
       this.buildingIndex = null;
       this.buildingIndexScopeKey = null;
     }
+
+    // A warmup that publishes the very listing this build asked for bumps the
+    // index generation while the fetch is open, so `buildIndex` discards its
+    // result instead of retaining it. Returning that orphan leaves
+    // `isIndexAuthoritative()` false, and every later miss then pays an API
+    // probe the listing could have answered. Rebuild once from the settled
+    // snapshot; the listing is cached by then, so the retry costs no request.
+    if (rebuildsLeft > 0 && this.indexScopeKey !== scopeKey) {
+      logger.debug("ensureIndexBuilt - build superseded, rebuilding", { scopeKey });
+      return await this.ensureIndexBuilt(contentContext, rebuildsLeft - 1);
+    }
+
+    return snapshot;
   }
 
   private async buildIndex(
