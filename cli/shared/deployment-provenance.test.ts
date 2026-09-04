@@ -546,6 +546,33 @@ describe("resolveGitSource", () => {
     }
   });
 
+  it("detects a staged addition deleted from the working tree", async () => {
+    const projectDir = await makeTempDir();
+    const runGit = async (...args: string[]) => {
+      await new Deno.Command("git", {
+        args,
+        cwd: projectDir,
+        stdout: "null",
+        stderr: "null",
+      }).output();
+    };
+    try {
+      await runGit("init", "--quiet");
+      await runGit("config", "user.email", "test@veryfront.com");
+      await runGit("config", "user.name", "Veryfront Test");
+      await Deno.writeTextFile(`${projectDir}/base.ts`, "export {};\n");
+      await runGit("add", "base.ts");
+      await runGit("commit", "--quiet", "-m", "base");
+      await Deno.writeTextFile(`${projectDir}/staged.ts`, "export const staged = true;\n");
+      await runGit("add", "staged.ts");
+      await Deno.remove(`${projectDir}/staged.ts`);
+
+      assertEquals(await resolveDeletedGitSourcePaths(projectDir), ["staged.ts"]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("distinguishes non-Git directories from unborn repositories", async () => {
     const nonGitDir = await makeTempDir();
     const unbornDir = await makeTempDir();

@@ -325,33 +325,60 @@ export async function resolveDeletedGitSourcePaths(projectDir: string): Promise<
     if (key.startsWith("GIT_")) delete gitEnv[key];
   }
 
-  let result;
+  let results;
   try {
-    result = await runCommand("git", {
-      args: [
-        "diff",
-        "--no-renames",
-        "--name-only",
-        "--diff-filter=D",
-        "-z",
-        "--relative",
-        "HEAD",
-        "--",
-        ".",
-      ],
-      cwd: projectDir,
-      clearEnv: true,
-      env: gitEnv,
-      capture: true,
-      timeoutMs: 5_000,
-    });
+    results = await Promise.all([
+      runCommand("git", {
+        args: [
+          "diff",
+          "--no-renames",
+          "--name-only",
+          "--diff-filter=D",
+          "-z",
+          "--relative",
+          "HEAD",
+          "--",
+          ".",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+      runCommand("git", {
+        // HEAD cannot see an index-only addition that was then deleted from
+        // the working tree (`AD`), so compare the index to the worktree too.
+        args: [
+          "diff",
+          "--no-renames",
+          "--name-only",
+          "--diff-filter=D",
+          "-z",
+          "--relative",
+          "--",
+          ".",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+    ]);
   } catch {
     throw deletedGitSourcePathsUnavailable();
   }
-  if (!result.success) {
+  if (results.some((result) => !result.success)) {
     throw deletedGitSourcePathsUnavailable();
   }
-  return (result.stdout ?? "").split("\0").filter((path) => path.length > 0);
+  return [
+    ...new Set(
+      results.flatMap((result) =>
+        (result.stdout ?? "").split("\0").filter((path) => path.length > 0)
+      ),
+    ),
+  ];
 }
 
 export async function areSourceFilesTracked(
