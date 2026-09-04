@@ -3281,5 +3281,86 @@ describe("VeryfrontFSAdapter", () => {
         "the eviction must complete before the new snapshot generation is published",
       );
     });
+
+    it("warms the branch the cache key was derived from, not a later request branch", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: unknown,
+            context?: { type: string; name?: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+        cache: {
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+          delete: (key: string) => boolean;
+        };
+        clearRetainedFileList: () => void;
+        wsManager: { connect: (_projectId: string) => void };
+      };
+
+      const branchListings: Record<string, Array<{ path: string; content: string }>> = {
+        main: [{ path: "main.css", content: "main" }],
+        feature: [{ path: "feature.css", content: "feature" }],
+      };
+      const warmedBranches: string[] = [];
+      internals.client.initialize = () => Promise.resolve();
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "project-123";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = (_options, context) => {
+        const branch = context?.name ?? "main";
+        warmedBranches.push(branch);
+        return Promise.resolve(branchListings[branch] ?? []);
+      };
+      internals.wsManager.connect = () => {};
+
+      await adapter.initialize();
+
+      const mainContext = adapter.getContentContext();
+      const mainCacheKey = buildFileListCacheKey(mainContext);
+      internals.cache.delete(mainCacheKey);
+      internals.clearRetainedFileList();
+      warmedBranches.length = 0;
+
+      // The request branch switches while the awaited file-list cache read for
+      // `main` is still open, exactly as a second request would do it.
+      const getAsync = internals.cache.getAsync.bind(internals.cache);
+      let switched = false;
+      internals.cache.getAsync = async <T>(key: string): Promise<T | undefined> => {
+        const result = await getAsync<T>(key);
+        if (!switched && key === mainCacheKey) {
+          switched = true;
+          adapter.setRequestBranch("feature");
+        }
+        return result;
+      };
+
+      await adapter.getAllSourceFiles({ waitForWarmup: true });
+
+      assertEquals(
+        warmedBranches,
+        ["main"],
+        "the warmup must fetch the branch its cache key was derived from",
+      );
+      assertEquals(
+        await internals.cache.getAsync<Array<{ path: string }>>(mainCacheKey),
+        undefined,
+        "a listing must never be published under another branch's file-list key",
+      );
+    });
   });
 });

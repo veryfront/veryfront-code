@@ -526,7 +526,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contentContext?: ResolvedContentContext | null;
     } = {},
   ): Promise<{ cacheKey: string; files: T[] | undefined } | undefined> {
-    const cacheKey = options.cacheKey ?? this.getCurrentFileListCacheKey();
+    // Capture the context and its cache key as one pair, before the awaited
+    // cache read below. Leaving the warmup to re-read the context afterwards
+    // let a `setRequestBranch` landing during that read pair branch B's
+    // listing with branch A's key: the warmup fetched B and wrote it under A.
+    const effectiveContext = options.contentContext ?? this.getEffectiveContentContext();
+    const cacheKey = options.cacheKey ??
+      (effectiveContext ? buildFileListCacheKey(effectiveContext) : undefined);
     if (!cacheKey) {
       logger.debug(noContextMessage);
       return undefined;
@@ -547,7 +553,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     if (files === undefined) {
-      this.scheduleFileListWarmup(missReason, cacheKey, options.contentContext);
+      this.scheduleFileListWarmup(missReason, cacheKey, effectiveContext);
       if (options.waitForWarmup) {
         files = await this.awaitFileListWarmup<T>(cacheKey) ?? files;
       }
@@ -1159,6 +1165,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const applied = await this.#runSourceSnapshotMutation(async () => {
           const isSnapshotSuperseded = () =>
             this.contentContext !== warmupBaseContext ||
+            // The warmup fetched `warmupContext`, which the caller paired with
+            // `effectiveCacheKey`. A request-branch switch moves the current
+            // key without touching the base context, so publish only while
+            // this pair is still the one a read would ask for.
+            this.getCurrentFileListCacheKey() !== effectiveCacheKey ||
             this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
             this.sourceSnapshotVersion !== warmupSnapshotVersion;
           if (isSnapshotSuperseded()) {
