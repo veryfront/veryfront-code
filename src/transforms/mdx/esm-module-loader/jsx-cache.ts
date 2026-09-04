@@ -10,7 +10,7 @@
  * @module transforms/mdx/esm-module-loader/jsx-cache
  */
 
-import { join } from "#veryfront/compat/path";
+import { dirname, join } from "#veryfront/compat/path";
 import { isAlreadyExistsError, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -480,7 +480,10 @@ async function recoverStaleFilesystemLease(
   try {
     await localFs.remove(stalePath);
   } catch (_) {
-    /* best effort: the uniquely renamed stale lease no longer blocks the lock */
+    // The uniquely renamed lease no longer blocks this lock. Schedule the
+    // normal directory sweep so a transient EBUSY/permission race cannot
+    // strand one tombstone per recovery forever.
+    scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
   }
   return true;
 }
@@ -825,9 +828,17 @@ async function collectExcessJsxArtifacts(
   const variantsByPrefix = new Map<string, string[]>();
   const strandedNamespaceArtifacts: string[] = [];
   const allArtifactNames: string[] = [];
+  const staleLeaseTombstones: string[] = [];
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
+      if (
+        entry.name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
+        entry.name.includes(".mjs.lock.stale-")
+      ) {
+        staleLeaseTombstones.push(entry.name);
+        continue;
+      }
       if (!entry.name.endsWith(".mjs")) continue;
       if (isJsxArtifactName(entry.name)) allArtifactNames.push(entry.name);
       if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
@@ -863,6 +874,16 @@ async function collectExcessJsxArtifacts(
   const noteRetry = (readyAtMs: number) => {
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
+
+  for (const name of staleLeaseTombstones) {
+    try {
+      await localFs.remove(join(esmCacheDir, name));
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        noteRetry(nowMs + JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      }
+    }
+  }
 
   const quotaHandled = new Set<string>();
   let directoryExcess = Math.max(
