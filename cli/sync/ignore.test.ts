@@ -213,8 +213,11 @@ describe("cli/sync/ignore", () => {
           "warning text must not carry terminal controls",
         );
 
+        assertEquals(createIgnoreChecker(["!keep.ts"]).isIgnored(".env.production.json"), true);
+        assertEquals(warnings.length, 1, "a protected file must not be treated as a directory");
+
         const descendantChecker = createIgnoreChecker([".env*", "!.env/**"]);
-        assertEquals(descendantChecker.isIgnored(".env"), true);
+        assertEquals(descendantChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(
           warnings.length,
           2,
@@ -222,7 +225,7 @@ describe("cli/sync/ignore", () => {
         );
 
         const divergentDescendantChecker = createIgnoreChecker(["!.env**", ".env*"]);
-        assertEquals(divergentDescendantChecker.isIgnored(".env"), true);
+        assertEquals(divergentDescendantChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(
           warnings.length,
           3,
@@ -230,37 +233,40 @@ describe("cli/sync/ignore", () => {
         );
 
         const wildcardChecker = createIgnoreChecker([".env*", "!**/.env/**"]);
-        assertEquals(wildcardChecker.isIgnored(".env"), true);
+        assertEquals(wildcardChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(warnings.length, 4, "a recursive prefix must not hide the warning");
 
         const internalWildcardChecker = createIgnoreChecker([
           "src/.env*",
           "!src/**/.env/**",
         ]);
-        assertEquals(internalWildcardChecker.isIgnored("src/.env"), true);
+        assertEquals(internalWildcardChecker.isIgnored("src/.env", { isDirectory: true }), true);
         assertEquals(warnings.length, 5, "an internal wildcard must not hide the warning");
 
         const anchoredRootFileChecker = createIgnoreChecker([".git", "!/*.ts"]);
-        assertEquals(anchoredRootFileChecker.isIgnored(".git"), true);
+        assertEquals(anchoredRootFileChecker.isIgnored(".git", { isDirectory: true }), true);
         assertEquals(warnings.length, 5, "a root file rule must not warn for protected children");
 
         const anchoredRecursiveFileChecker = createIgnoreChecker([".env*", "!/**.json"]);
-        assertEquals(anchoredRecursiveFileChecker.isIgnored(".env"), true);
+        assertEquals(anchoredRecursiveFileChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(warnings.length, 6, "an anchored double-star must retain its warning");
 
         const unanchoredNestedChecker = createIgnoreChecker([".env*", "!foo/bar.json"]);
-        assertEquals(unanchoredNestedChecker.isIgnored(".env"), true);
+        assertEquals(unanchoredNestedChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(warnings.length, 7, "an unanchored nested rule must retain its warning");
 
         const anchoredOtherPrefixChecker = createIgnoreChecker([".env*", "!/foo**.json"]);
-        assertEquals(anchoredOtherPrefixChecker.isIgnored(".env"), true);
+        assertEquals(anchoredOtherPrefixChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(warnings.length, 7, "an unrelated anchored prefix must not warn");
 
         const embeddedDoubleStarChecker = createIgnoreChecker([
           ".env*",
           "!/foo**/bar.json",
         ]);
-        assertEquals(embeddedDoubleStarChecker.isIgnored("foo/.env"), true);
+        assertEquals(
+          embeddedDoubleStarChecker.isIgnored("foo/.env", { isDirectory: true }),
+          true,
+        );
         assertEquals(warnings.length, 8, "an embedded double-star must retain its warning");
 
         const canceledNegationChecker = createIgnoreChecker([
@@ -268,11 +274,11 @@ describe("cli/sync/ignore", () => {
           "!.env/**",
           ".env/**",
         ]);
-        assertEquals(canceledNegationChecker.isIgnored(".env"), true);
+        assertEquals(canceledNegationChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(warnings.length, 8, "a later matching ignore rule cancels the warning");
 
         const broadlyCanceledChecker = createIgnoreChecker(["!.env/**", ".env"]);
-        assertEquals(broadlyCanceledChecker.isIgnored(".env"), true);
+        assertEquals(broadlyCanceledChecker.isIgnored(".env", { isDirectory: true }), true);
         assertEquals(
           warnings.length,
           8,

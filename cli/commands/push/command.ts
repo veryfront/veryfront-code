@@ -210,7 +210,7 @@ export async function scanLocalFiles(
       const entryPath = join(currentDir, entry.name);
       const relativePath = relative(projectDir, entryPath);
 
-      if (ignoreChecker.isIgnored(relativePath)) continue;
+      if (ignoreChecker.isIgnored(relativePath, { isDirectory: entry.isDirectory })) continue;
 
       if (entry.isSymlink) {
         if (ignoreChecker.isSupportedExtension(entry.name)) {

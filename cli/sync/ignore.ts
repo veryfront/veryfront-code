@@ -88,7 +88,7 @@ const SUPPORTED_EXTENSIONS = new Set([
 
 export interface IgnoreChecker {
   /** Check if a path should be ignored */
-  isIgnored(relativePath: string): boolean;
+  isIgnored(relativePath: string, options?: { isDirectory?: boolean }): boolean;
 
   /** Check if a path is protected even when a project ignore rule negates it. */
   isProtected(relativePath: string): boolean;
@@ -373,7 +373,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
   // tested many times during a single scan.
   const warnedOverrides = new Set<string>();
 
-  function isIgnored(relativePath: string): boolean {
+  function isIgnored(relativePath: string, options: { isDirectory?: boolean } = {}): boolean {
     const normalizedPath = normalizeIgnorePath(relativePath);
     let ignored = false;
     let lastMatchedRule: IgnoreRule | undefined;
@@ -386,7 +386,8 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
 
     if (isProtectedPath(normalizedPath)) {
       const droppedNegation = lastMatchedRule?.negated ||
-        hasEffectiveDescendantNegation(rules, normalizedPath, canceledNegations);
+        (options.isDirectory === true &&
+          hasEffectiveDescendantNegation(rules, normalizedPath, canceledNegations));
       if (droppedNegation && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
         warnedOverrides.add(normalizedPath);
         logWarning(

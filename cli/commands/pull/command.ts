@@ -407,7 +407,7 @@ async function listManagedLocalFiles(
       const path = join(currentDir, entry.name);
       const relativePath = relative(projectDir, path).replace(/\\/g, "/");
 
-      if (ignoreChecker.isIgnored(relativePath)) continue;
+      if (ignoreChecker.isIgnored(relativePath, { isDirectory: entry.isDirectory })) continue;
       if (entry.isSymlink) {
         if (ignoreChecker.isSupportedExtension(entry.name)) {
           throw new Error(
