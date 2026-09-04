@@ -9,6 +9,7 @@ import type { ToolDefinition } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
 import { prepareAgentRuntimeStep } from "#veryfront/agent/runtime/agent-runtime-step.ts";
 import { getRuntimeProviderTools } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import { convertToolsToRuntimeTools } from "#veryfront/agent/runtime/model-tool-converter.ts";
 
 function createConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
@@ -151,6 +152,7 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
       Array.prototype[Symbol.iterator] = function* (): ArrayIterator<unknown> {
         yield* Reflect.apply(originalIterator, this, []);
         if ((this[0] as { name?: string } | undefined)?.name === allowed.name) {
+          this[this.length] = denied;
           yield denied;
         }
         if (this[0] === "web_search") yield "web_fetch";
@@ -193,11 +195,16 @@ describe("agent ag-ui runtime-restriction intrinsics", () => {
         systemPrompt: "Answer directly.",
         toolContextBase: undefined,
       });
+      const runtimeTools = convertToolsToRuntimeTools(prepared.tools, {
+        model: "anthropic/claude-sonnet-4-6",
+        providerTools: validatedProviderTools,
+      });
 
       assertEquals(
         prepared.toolExposurePlan.authorized.map((definition) => definition.name),
         ["allowed_lookup", "web_search"],
       );
+      assertEquals(Object.keys(runtimeTools ?? {}), ["allowed_lookup", "web_search"]);
       assertEquals(providerTools, ["web_search"]);
     } finally {
       Array.prototype[Symbol.iterator] = originalIterator;

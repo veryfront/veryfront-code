@@ -37,6 +37,14 @@ const MOONSHOT_MAX_INLINED_SCHEMA_BYTES = 512 * 1024;
 const MOONSHOT_MAX_INLINED_TOOL_SET_NODES = 200_000;
 /** Serialized-byte budget for `$ref` inlining across one tool-set conversion pass. */
 const MOONSHOT_MAX_INLINED_TOOL_SET_BYTES = 8 * 1024 * 1024;
+const IntrinsicMap = Map;
+const IntrinsicSet = Set;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicMapGet = Map.prototype.get;
+const IntrinsicMapHas = Map.prototype.has;
+const IntrinsicMapSet = Map.prototype.set;
+const IntrinsicSetAdd = Set.prototype.add;
+const IntrinsicSetHas = Set.prototype.has;
 const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {},
@@ -96,13 +104,14 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
 }
 
 function uniqueInOrder(values: readonly string[]): string[] {
-  const seen = new Set<string>();
+  const seen = new IntrinsicSet<string>();
   const result: string[] = [];
 
-  for (const value of values) {
-    if (seen.has(value)) continue;
-    seen.add(value);
-    result.push(value);
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    if (value === undefined || IntrinsicReflectApply(IntrinsicSetHas, seen, [value])) continue;
+    IntrinsicReflectApply(IntrinsicSetAdd, seen, [value]);
+    result[result.length] = value;
   }
 
   return result;
@@ -120,20 +129,39 @@ export function selectProviderCompatibleToolNames(
     return orderedToolNames;
   }
 
-  const available = new Set(orderedToolNames);
-  const requiredToolNames = uniqueInOrder(options.requiredToolNames ?? [])
-    .filter((toolName) => available.has(toolName));
-  const selected = [...requiredToolNames];
-  const selectedSet = new Set(selected);
-
-  for (const toolName of orderedToolNames) {
-    if (selected.length >= profile.maxTools) break;
-    if (selectedSet.has(toolName)) continue;
-    selected.push(toolName);
-    selectedSet.add(toolName);
+  const available = new IntrinsicSet<string>();
+  for (let index = 0; index < orderedToolNames.length; index++) {
+    const toolName = orderedToolNames[index];
+    if (toolName !== undefined) IntrinsicReflectApply(IntrinsicSetAdd, available, [toolName]);
+  }
+  const requiredCandidates = uniqueInOrder(options.requiredToolNames ?? []);
+  const selected: string[] = [];
+  const selectedSet = new IntrinsicSet<string>();
+  for (let index = 0; index < requiredCandidates.length; index++) {
+    const toolName = requiredCandidates[index];
+    if (
+      toolName !== undefined && IntrinsicReflectApply(IntrinsicSetHas, available, [toolName])
+    ) {
+      selected[selected.length] = toolName;
+      IntrinsicReflectApply(IntrinsicSetAdd, selectedSet, [toolName]);
+    }
   }
 
-  return selected.slice(0, profile.maxTools);
+  for (let index = 0; index < orderedToolNames.length; index++) {
+    const toolName = orderedToolNames[index];
+    if (toolName === undefined) continue;
+    if (selected.length >= profile.maxTools) break;
+    if (IntrinsicReflectApply(IntrinsicSetHas, selectedSet, [toolName])) continue;
+    selected[selected.length] = toolName;
+    IntrinsicReflectApply(IntrinsicSetAdd, selectedSet, [toolName]);
+  }
+
+  const bounded: string[] = [];
+  for (let index = 0; index < selected.length && index < profile.maxTools; index++) {
+    const toolName = selected[index];
+    if (toolName !== undefined) bounded[bounded.length] = toolName;
+  }
+  return bounded;
 }
 
 /** Select provider compatible tools helper. */
@@ -141,19 +169,32 @@ export function selectProviderCompatibleTools(
   tools: readonly ToolDefinition[],
   options: ProviderToolCompatOptions = {},
 ): ToolDefinition[] {
-  const toolsByName = new Map<string, ToolDefinition>();
-  for (const tool of tools) {
-    if (!toolsByName.has(tool.name)) toolsByName.set(tool.name, tool);
+  const toolsByName = new IntrinsicMap<string, ToolDefinition>();
+  const orderedToolNames: string[] = [];
+  for (let index = 0; index < tools.length; index++) {
+    const tool = tools[index];
+    if (tool === undefined || IntrinsicReflectApply(IntrinsicMapHas, toolsByName, [tool.name])) {
+      continue;
+    }
+    IntrinsicReflectApply(IntrinsicMapSet, toolsByName, [tool.name, tool]);
+    orderedToolNames[orderedToolNames.length] = tool.name;
   }
 
   const selectedToolNames = selectProviderCompatibleToolNames(
-    [...toolsByName.keys()],
+    orderedToolNames,
     options,
   );
 
-  return selectedToolNames
-    .map((toolName) => toolsByName.get(toolName))
-    .filter((tool): tool is ToolDefinition => tool !== undefined);
+  const selectedTools: ToolDefinition[] = [];
+  for (let index = 0; index < selectedToolNames.length; index++) {
+    const toolName = selectedToolNames[index];
+    if (toolName === undefined) continue;
+    const tool = IntrinsicReflectApply(IntrinsicMapGet, toolsByName, [toolName]) as
+      | ToolDefinition
+      | undefined;
+    if (tool !== undefined) selectedTools[selectedTools.length] = tool;
+  }
+  return selectedTools;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
