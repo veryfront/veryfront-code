@@ -1144,7 +1144,7 @@ describe("run-scoped inference credential", () => {
     );
   });
 
-  it("requires HTTPS or loopback for run-scoped inference credentials", () => {
+  it("requires HTTPS, a loopback, or a host-allowed internal provider origin for run-scoped inference credentials", () => {
     const error = assertThrows(
       () =>
         runWithVeryfrontCloudContext(
@@ -1152,7 +1152,7 @@ describe("run-scoped inference credential", () => {
           () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
         ),
       VeryfrontError,
-      "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+      "Run-scoped inference credentials require HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
     );
     if (!(error instanceof VeryfrontError)) {
       throw new Error("Expected a registered VeryfrontError");
@@ -1213,7 +1213,8 @@ describe("run-scoped inference credential", () => {
               ),
           ),
         VeryfrontError,
-        "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+        "Run-scoped inference credentials require HTTPS, a loopback, or a " +
+          "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
       );
     } finally {
       RegExp.prototype[Symbol.replace] = originalReplace;

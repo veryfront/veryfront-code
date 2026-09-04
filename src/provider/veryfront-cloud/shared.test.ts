@@ -172,6 +172,34 @@ describe("provider/veryfront-cloud/shared", () => {
     }
   });
 
+  it("still rejects an arbitrary plain-HTTP API base URL for run-scoped inference credentials", () => {
+    assertThrows(
+      () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "http://evil.example.com", apiToken: "vf_scoped_token" },
+          () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+        ),
+      Error,
+      "HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
+    );
+  });
+
+  it("still accepts HTTPS and loopback API base URLs for run-scoped inference credentials", () => {
+    for (
+      const apiBaseUrl of [
+        "https://api.veryfront.com",
+        "http://localhost:4000",
+        "http://127.0.0.1:4000",
+      ]
+    ) {
+      const bootstrap = runWithVeryfrontCloudContext(
+        { apiBaseUrl, apiToken: "vf_scoped_token" },
+        () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+      );
+      assertEquals(bootstrap.apiBaseUrl, apiBaseUrl);
+    }
+  });
+
   it("rewrites auth headers for the gateway fetch wrapper", async () => {
     let capturedRequest: Request | undefined;
 

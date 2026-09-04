@@ -4,10 +4,14 @@ import {
   normalizeVeryfrontApiBaseUrl,
   resolveVeryfrontPublicApiBaseUrlFromHostEnv,
 } from "#veryfront/platform/cloud/resolver.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
-  guardedOutboundFetch,
-  OutboundRequestBlockedError,
+  createOriginBoundOutboundFetch,
+  HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
+  isHostAllowedInternalProviderOrigin,
 } from "#veryfront/security/http/outbound-fetch.ts";
+import { isInternalEgressOverrideEnabled } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
@@ -38,7 +42,6 @@ const HeadersSet = NativeHeaders.prototype.set;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
 const URLHashSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.set;
 const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
-const URLOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
 const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
 const URLPathnameSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.set;
@@ -141,9 +144,17 @@ function requireSecureInferenceApiBaseUrl(value: string): void {
   );
   // 0.0.0.0 binds all interfaces and is intentionally not an HTTP exception.
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  if (readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback) {
+  // Same allowlist -- and the same host-wide override -- the outbound fetch
+  // layer consults, so bootstrap validation and the actual request can never
+  // disagree about which internal origin is trusted.
+  if (
+    readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback &&
+    !isHostAllowedInternalProviderOrigin(url) &&
+    !isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV))
+  ) {
     throw CONFIG_INVALID.create({
-      detail: "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+      detail:
+        `Run-scoped inference credentials require HTTPS, a loopback, or a ${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}-allowed API base URL`,
     });
   }
 }
@@ -297,10 +308,8 @@ export function createVeryfrontCloudFetch(
   const trustedApiToken = options?.inferenceCredential
     ? requireInferenceProviderCredential(apiToken, "Veryfront Cloud API token")
     : requireProviderCredential(apiToken, "Veryfront Cloud API token");
-  const authorizedOrigin = readNativeURLString(
-    parseVeryfrontCloudApiBaseUrl(apiBaseUrl),
-    URLOriginGet,
-  );
+  // Validate the shape eagerly so a malformed apiBaseUrl fails at construction, not on first use.
+  parseVeryfrontCloudApiBaseUrl(apiBaseUrl);
   return (input, init) => {
     options?.assertInferenceCredentialActive?.();
     const request = new NativeRequest(input, init);
@@ -328,18 +337,7 @@ export function createVeryfrontCloudFetch(
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    return guardedOutboundFetch(
-      new NativeRequest(request, { headers }),
-      { redirect: "error" },
-      {
-        authorizeUrl(url) {
-          if (readNativeURLString(url, URLOriginGet) !== authorizedOrigin) {
-            throw new OutboundRequestBlockedError(
-              "Veryfront Cloud request blocked: destination origin is not authorized",
-            );
-          }
-        },
-      },
-    );
+    // Consults the internal-provider-origin allowlist; resolved per call since it snapshots the host transport eagerly.
+    return createOriginBoundOutboundFetch(apiBaseUrl)(new NativeRequest(request, { headers }));
   };
 }
