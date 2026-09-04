@@ -515,9 +515,11 @@ function collectCompletedCompositeChildIds(
             Array.isArray(processor.steps)
           ) {
             const namespaced = namespaceWorkflowDefinition(`${wrapperId}/`, processor);
-            for (const childId of collectWorkflowNodeIds(namespaced.steps as WorkflowNode[])) {
-              target.add(childId);
-            }
+            collectExecutedCompositeNodeIds(
+              namespaced.steps as WorkflowNode[],
+              nodeStates,
+              target,
+            );
           }
         }
       }
@@ -579,8 +581,10 @@ function createCompositeNodeStateView(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
   parentPath: string,
+  context: WorkflowContext,
 ): Record<string, NodeState> {
   const declaredIds = collectWorkflowNodeIds([...nodes]);
+  collectCompositeLoopStateEvidence(nodes, context, declaredIds);
   const allowedOwnerPaths = new Set<string>();
   collectCompositeSubWorkflowOwnerPaths(nodes, parentPath, allowedOwnerPaths);
   collectCompositeMapStateEvidence(
@@ -602,6 +606,39 @@ function createCompositeNodeStateView(
     if (declaredIds.has(nodeId)) visible[nodeId] = state;
   }
   return visible;
+}
+
+function collectCompositeLoopStateEvidence(
+  nodes: readonly WorkflowNode[],
+  context: WorkflowContext,
+  declaredIds: Set<string>,
+): void {
+  for (const node of nodes) {
+    if (node.config.type === "loop") {
+      const loopState = context[`${node.id}_loop_state`];
+      if (
+        typeof loopState === "object" && loopState !== null &&
+        "iterationNodeStates" in loopState
+      ) {
+        const iterationNodeStates = (loopState as { iterationNodeStates?: unknown })
+          .iterationNodeStates;
+        if (typeof iterationNodeStates === "object" && iterationNodeStates !== null) {
+          for (const nodeId of Object.keys(iterationNodeStates)) declaredIds.add(nodeId);
+        }
+      }
+      if (Array.isArray(node.config.steps)) {
+        collectCompositeLoopStateEvidence(node.config.steps, context, declaredIds);
+      }
+    } else if (node.config.type === "parallel") {
+      collectCompositeLoopStateEvidence(node.config.nodes, context, declaredIds);
+    } else if (node.config.type === "branch") {
+      collectCompositeLoopStateEvidence(
+        [...node.config.then, ...(node.config.else ?? [])],
+        context,
+        declaredIds,
+      );
+    }
+  }
 }
 
 function collectCompositeMapStateEvidence(
@@ -1505,7 +1542,7 @@ export class DAGExecutor {
                 executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(nodes, run, scope, options, attemptSignal),
                 selectChildNodeStates: (nodes, states) =>
-                  createCompositeNodeStateView(nodes, states, scope.subWorkflowPath),
+                  createCompositeNodeStateView(nodes, states, scope.subWorkflowPath, context),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -1632,6 +1669,7 @@ export class DAGExecutor {
       config.nodes,
       nodeStates,
       scope.subWorkflowPath,
+      context,
     );
 
     const result = await this.executeUnwrapped(
@@ -1727,6 +1765,7 @@ export class DAGExecutor {
       branchNodes,
       nodeStates,
       scope.subWorkflowPath,
+      context,
     );
 
     const result = await this.executeUnwrapped(
