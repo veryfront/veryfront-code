@@ -16,6 +16,7 @@ import type {
   DependencyArtifactBuildResultBody,
   DependencyArtifactContentType,
 } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
 const IntrinsicObjectDefineProperty = Object.defineProperty;
@@ -63,6 +64,8 @@ export class VeryfrontApiClient {
     this.config = { ...config, retry: retryConfig };
 
     const tokenProvider: TokenProvider = () => {
+      const contextualToken = currentRequestContext()?.token;
+      if (contextualToken) return contextualToken;
       if (this.requestToken) return this.requestToken;
       if (this.config.apiToken) return this.config.apiToken;
       throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
