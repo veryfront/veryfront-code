@@ -4389,16 +4389,63 @@ describe("push deletion ownership", () => {
     }
   });
 
-  it("deletes descendant paths when a selected path is a deleted gitlink parent", async () => {
+  it("deletes only previously local descendants of an automatically deleted gitlink", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
     try {
-      await withGitProject(async ({ projectDir }) => {
+      await withGitProject(async ({ projectDir, runGit }) => {
         Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
         Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
         Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
         _resetEnvironmentConfig();
+        const gitlinkSha = await runGit("rev-parse", "HEAD");
+        await runGit("update-index", "--add", "--cacheinfo", `160000,${gitlinkSha},vendor/pkg`);
+        await runGit("commit", "--quiet", "-m", "track gitlink");
+        const commitSha = await runGit("rev-parse", "HEAD");
+        await runGit("update-index", "--force-remove", "vendor/pkg");
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha,
+          sourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "vendor/pkg/index.ts", content: "export const old = 1;\n" },
+            { path: "vendor/pkg/subdir/child.ts", content: "export const child = 2;\n" },
+            { path: "vendor/pkg/studio.ts", content: "export const studio = true;\n" },
+          ]),
+          localSourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "vendor/pkg/index.ts", content: "export const old = 1;\n" },
+            { path: "vendor/pkg/subdir/child.ts", content: "export const child = 2;\n" },
+          ]),
+          localPaths: ["app.ts", "vendor/pkg/index.ts", "vendor/pkg/subdir/child.ts"],
+          clean: true,
+        });
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            "vendor/pkg/index.ts": {
+              digest: await computeContentDigest("export const old = 1;\n"),
+            },
+            "vendor/pkg/subdir/child.ts": {
+              digest: await computeContentDigest("export const child = 2;\n"),
+            },
+            "vendor/pkg/studio.ts": {
+              digest: await computeContentDigest("export const studio = true;\n"),
+            },
+            "vendorx/index.ts": {
+              digest: await computeContentDigest("export const sibling = 3;\n"),
+            },
+            "remote-only.ts": { digest: await computeContentDigest("remote\n") },
+          },
+        });
 
         const deleted: string[] = [];
         const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
@@ -4408,8 +4455,17 @@ describe("push deletion ownership", () => {
             return Response.json({
               data: [
                 { path: "app.ts", content: "export const value = 1;\n" },
-                { path: "vendor/pkg/index.ts", content: "export const old = 1;\n" },
-                { path: "vendor/pkg/subdir/child.ts", content: "export const child = 2;\n" },
+                {
+                  path: "vendor/pkg/index.ts",
+                  content: "export const old = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000001",
+                },
+                {
+                  path: "vendor/pkg/subdir/child.ts",
+                  content: "export const child = 2;\n",
+                  version_id: "00000000-0000-4000-8000-000000000002",
+                },
+                { path: "vendor/pkg/studio.ts", content: "export const studio = true;\n" },
                 { path: "vendorx/index.ts", content: "export const sibling = 3;\n" },
                 { path: "remote-only.ts", content: "remote\n" },
               ].filter((file) => !deleted.includes(file.path)),
@@ -4430,7 +4486,7 @@ describe("push deletion ownership", () => {
           pushCommand({
             projectDir,
             branch: "main",
-            prunePaths: ["vendor/pkg"],
+            discoverDeletedGitPaths: true,
             quiet: true,
           }));
 
@@ -4441,6 +4497,7 @@ describe("push deletion ownership", () => {
           receipt.sourceDigest,
           await computeSourceDigest([
             { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "vendor/pkg/studio.ts", content: "export const studio = true;\n" },
             { path: "vendorx/index.ts", content: "export const sibling = 3;\n" },
             { path: "remote-only.ts", content: "remote\n" },
           ]),
@@ -4451,6 +4508,128 @@ describe("push deletion ownership", () => {
             { path: "app.ts", content: "export const value = 1;\n" },
           ]),
         );
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("discovers a deleted file inside a modified submodule from the prior local manifest", async () => {
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const submoduleDir = `${projectDir}/vendor/pkg`;
+        await Deno.mkdir(submoduleDir, { recursive: true });
+        const runSubmoduleGit = async (...args: string[]) => {
+          const result = await new Deno.Command("git", {
+            args,
+            cwd: submoduleDir,
+            stdout: "piped",
+            stderr: "piped",
+          }).output();
+          assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+          return new TextDecoder().decode(result.stdout).trim();
+        };
+        await runSubmoduleGit("init", "--quiet");
+        await runSubmoduleGit("config", "user.email", "test@veryfront.com");
+        await runSubmoduleGit("config", "user.name", "Veryfront Test");
+        await Deno.writeTextFile(`${submoduleDir}/kept.ts`, "export const kept = true;\n");
+        await Deno.writeTextFile(`${submoduleDir}/removed.ts`, "export const removed = true;\n");
+        await runSubmoduleGit("add", ".");
+        await runSubmoduleGit("commit", "--quiet", "-m", "submodule source");
+        const submoduleSha = await runSubmoduleGit("rev-parse", "HEAD");
+        await runGit(
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `160000,${submoduleSha},vendor/pkg`,
+        );
+        await runGit("commit", "--quiet", "-m", "track submodule");
+        const commitSha = await runGit("rev-parse", "HEAD");
+        await Deno.remove(`${submoduleDir}/removed.ts`);
+
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha,
+          sourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "vendor/pkg/kept.ts", content: "export const kept = true;\n" },
+            { path: "vendor/pkg/removed.ts", content: "export const removed = true;\n" },
+          ]),
+          localSourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "vendor/pkg/kept.ts", content: "export const kept = true;\n" },
+            { path: "vendor/pkg/removed.ts", content: "export const removed = true;\n" },
+          ]),
+          localPaths: ["app.ts", "vendor/pkg/kept.ts", "vendor/pkg/removed.ts"],
+          clean: true,
+        });
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            "vendor/pkg/kept.ts": {
+              digest: await computeContentDigest("export const kept = true;\n"),
+            },
+            "vendor/pkg/removed.ts": {
+              digest: await computeContentDigest("export const removed = true;\n"),
+            },
+          },
+        });
+
+        const deleted: string[] = [];
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "export const value = 1;\n" },
+                { path: "vendor/pkg/kept.ts", content: "export const kept = true;\n" },
+                ...(!deleted.includes("vendor/pkg/removed.ts")
+                  ? [{
+                    path: "vendor/pkg/removed.ts",
+                    content: "export const removed = true;\n",
+                    version_id: "00000000-0000-4000-8000-000000000003",
+                  }]
+                  : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(fetchHandler, () =>
+          pushCommand({
+            projectDir,
+            branch: "main",
+            discoverDeletedGitPaths: true,
+            quiet: true,
+          }));
+
+        assertEquals(deleted, ["vendor/pkg/removed.ts"]);
       });
     } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));

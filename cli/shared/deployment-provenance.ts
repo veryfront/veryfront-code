@@ -38,6 +38,8 @@ export interface PushReceipt {
    * loads and falls back to the Git observation.
    */
   localSourceDigest?: string;
+  /** Repo-relative source paths included in the local file set for this push. */
+  localPaths?: string[];
   clean: boolean;
   pushedAt: string;
 }
@@ -156,6 +158,10 @@ function isPushReceipt(value: unknown): value is PushReceipt {
     (receipt.localSourceDigest === undefined ||
       (typeof receipt.localSourceDigest === "string" &&
         SOURCE_DIGEST_PATTERN.test(receipt.localSourceDigest))) &&
+    (receipt.localPaths === undefined ||
+      (Array.isArray(receipt.localPaths) &&
+        receipt.localPaths.every((path) => typeof path === "string" && path.length > 0) &&
+        new Set(receipt.localPaths).size === receipt.localPaths.length)) &&
     typeof receipt.clean === "boolean" &&
     typeof receipt.pushedAt === "string";
 }
@@ -423,6 +429,7 @@ export async function writePushReceipt(
     ...receipt,
     controlPlane: normalizeControlPlane(receipt.controlPlane),
     commitSha: receipt.commitSha?.toLowerCase() ?? null,
+    ...(receipt.localPaths ? { localPaths: [...new Set(receipt.localPaths)].sort() } : {}),
     pushedAt: receipt.pushedAt ?? new Date().toISOString(),
   };
 

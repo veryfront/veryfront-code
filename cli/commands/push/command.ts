@@ -53,6 +53,7 @@ import {
   type GitSource,
   normalizeControlPlane,
   type ProjectTarget,
+  readPushReceipt,
   resolveDeletedGitSourcePaths,
   resolveGitSource,
   writePushReceipt,
@@ -763,6 +764,18 @@ function isSelectedForPrune(path: string, selectedPrunePaths: ReadonlySet<string
   return false;
 }
 
+function isSelectedGitDeletion(
+  path: string,
+  deletedGitPaths: ReadonlySet<string>,
+  previousLocalPaths: ReadonlySet<string> | undefined,
+): boolean {
+  for (const deletedPath of deletedGitPaths) {
+    if (path === deletedPath) return true;
+    if (previousLocalPaths?.has(path) && path.startsWith(`${deletedPath}/`)) return true;
+  }
+  return false;
+}
+
 function requirePreservedRemoteContent(
   remoteFiles: readonly RemoteFile[],
   localPaths: ReadonlySet<string>,
@@ -928,6 +941,7 @@ export async function recordPushReceipt(
     // digest so deploy can recompute it from the directory and prove the source
     // is still the one that was pushed.
     localSourceDigest: snapshot.sourceDigest,
+    localPaths: snapshot.files.map((file) => file.path),
     clean: snapshot.gitSource.clean,
   });
 }
@@ -1071,7 +1085,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         throw error;
       }
       const ops = sourceSnapshot.files;
-      for (const path of sourceSnapshot.deletedGitPaths ?? []) selectedPrunePaths.add(path);
+      const deletedGitPaths = new Set(sourceSnapshot.deletedGitPaths ?? []);
       const localPaths = new Set(ops.map((op) => op.path));
 
       let target: PushRemoteTarget = projectExists
@@ -1131,21 +1145,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
-      const remoteFilesMissingLocally = findRemoteFilesMissingLocally(
-        target.remoteFiles,
-        localPaths,
-        ignoreChecker,
-      );
-      const toDelete = pruneRemoteMissing
-        ? remoteFilesMissingLocally
-        : remoteFilesMissingLocally.filter((path) => isSelectedForPrune(path, selectedPrunePaths));
-      // Preflight: fail before any remote mutation if a preserved remote file
-      // is missing content, so the digest computations after upload/delete
-      // cannot be the first to discover it.
-      const deletePaths = new Set(toDelete);
-      requirePreservedRemoteContent(target.remoteFiles, localPaths, deletePaths);
-      let pushedSourceDigest: string;
-
       const project = outcome.kind === "planned-create" ? null : outcome.project;
       const baseline = project
         ? await readSyncTarget(projectDir, {
@@ -1154,6 +1153,46 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           branch: branchName,
         })
         : null;
+      let previousLocalPaths: Set<string> | undefined;
+      if (project && options.discoverDeletedGitPaths) {
+        try {
+          const receipt = await readPushReceipt(projectDir);
+          if (
+            receipt?.projectId === project.id &&
+            receipt.projectSlug === project.slug &&
+            receipt.branch === branchName &&
+            normalizeControlPlane(receipt.controlPlane) === normalizeControlPlane(config.apiUrl) &&
+            receipt.localPaths !== undefined
+          ) {
+            previousLocalPaths = new Set(receipt.localPaths);
+            for (const path of previousLocalPaths) {
+              if (!localPaths.has(path)) deletedGitPaths.add(path);
+            }
+          }
+        } catch {
+          // Push replaces invalid or unreadable receipt state. It must not use
+          // that state as evidence for an automatic remote deletion.
+        }
+      }
+
+      const remoteFilesMissingLocally = findRemoteFilesMissingLocally(
+        target.remoteFiles,
+        localPaths,
+        ignoreChecker,
+      );
+      const toDelete = pruneRemoteMissing
+        ? remoteFilesMissingLocally
+        : remoteFilesMissingLocally.filter((path) =>
+          isSelectedForPrune(path, selectedPrunePaths) ||
+          isSelectedGitDeletion(path, deletedGitPaths, previousLocalPaths)
+        );
+      // Preflight: fail before any remote mutation if a preserved remote file
+      // is missing content, so the digest computations after upload/delete
+      // cannot be the first to discover it.
+      const deletePaths = new Set(toDelete);
+      requirePreservedRemoteContent(target.remoteFiles, localPaths, deletePaths);
+      let pushedSourceDigest: string;
+
       const managedRemoteFiles = target.remoteFiles.filter((file) =>
         ignoreChecker.isSupportedExtension(file.path) && !ignoreChecker.isIgnored(file.path)
       );
