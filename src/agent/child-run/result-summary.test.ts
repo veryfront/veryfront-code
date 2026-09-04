@@ -309,6 +309,28 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
     });
 
+    it("does not charge short arrays against a later extended tool scan", () => {
+      const text = `${"tools: []\n".repeat(50)}tools: [{"description":"${
+        "a".repeat(2_500)
+      }","id":"critical_tool"}]`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
+    it("scans complete provider ID arrays beyond the fast prefix", () => {
+      const padding = Array.from(
+        { length: 20 },
+        (_, index) => `provider_tool_${index}_${"x".repeat(100)}`,
+      );
+      const text = `provider_tool_ids: ${JSON.stringify([...padding, "web_fetch"])}`;
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts?.providerToolIds?.includes("web_fetch"), true);
+    });
+
     it("does not scan object text after a malformed tool element", () => {
       const text = 'tools: [ invalid, {"id":"bogus_tool"}';
 

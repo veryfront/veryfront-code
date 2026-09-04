@@ -450,7 +450,7 @@ function addToolArrayFieldValues(
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromFieldBody(target, fieldBody, fieldName === "tools");
     if (
-      fieldName === "tools" && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT &&
+      closingBracket === -1 && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT &&
       extendedScans < CHILD_RUN_CONTRACT_FACT_LIMIT
     ) {
       // Full parsing stays bounded to a fixed number of fields in the already
@@ -465,9 +465,11 @@ function addToolArrayFieldValues(
         parseCompleteLeadingArrayValues(
           windowClosingBracket === -1 ? windowBody : windowBody.slice(0, windowClosingBracket),
         ),
-        true,
+        fieldName === "tools",
       );
-      if (windowClosingBracket === -1 && allowIncompleteLeadingObject) {
+      if (
+        fieldName === "tools" && windowClosingBracket === -1 && allowIncompleteLeadingObject
+      ) {
         addToolIdsFromIncompleteLeadingObject(target, windowBody);
       }
     }
@@ -481,6 +483,7 @@ function addProviderToolArrayFieldValues(
   pattern: RegExp,
 ): void {
   pattern.lastIndex = 0;
+  let extendedScans = 0;
   for (const match of text.matchAll(pattern)) {
     const bodyStart = match.index + match[0].length;
     const boundedBody = text.slice(
@@ -490,6 +493,21 @@ function addProviderToolArrayFieldValues(
     const closingBracket = findOuterArrayClosingBracket(boundedBody);
     const fieldBody = closingBracket === -1 ? boundedBody : boundedBody.slice(0, closingBracket);
     addToolIdsFromParsedArray(target, parseCompleteLeadingArrayValues(fieldBody), false);
+    if (
+      closingBracket === -1 && target.length < CHILD_RUN_CONTRACT_FACT_LIMIT &&
+      extendedScans < CHILD_RUN_CONTRACT_FACT_LIMIT
+    ) {
+      extendedScans += 1;
+      const windowBody = text.slice(bodyStart);
+      const windowClosingBracket = findOuterArrayClosingBracket(windowBody);
+      if (windowClosingBracket !== -1) {
+        addToolIdsFromParsedArray(
+          target,
+          parseCompleteLeadingArrayValues(windowBody.slice(0, windowClosingBracket)),
+          false,
+        );
+      }
+    }
     if (target.length >= CHILD_RUN_CONTRACT_FACT_LIMIT) return;
   }
 }
