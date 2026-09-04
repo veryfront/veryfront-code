@@ -53,7 +53,7 @@ function readRequestHeader(request: Request, name: string): string | undefined {
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
   const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
   if (value === null) return undefined;
-  return (IntrinsicReflectApply(StringTrim, value, []) as string) || undefined;
+  return IntrinsicReflectApply(StringTrim, value, []) as string;
 }
 
 /**
@@ -225,7 +225,7 @@ async function withVerifiedRunEventAppendToken(
     ChatRequestContext,
     "runtimeTargetKind" | "runtimeTargetEnvironmentId"
   >,
-  inferenceAuthToken?: string,
+  bindInferenceTokenHeader = false,
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
   if (!token) {
@@ -264,6 +264,13 @@ async function withVerifiedRunEventAppendToken(
       { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
       { status: 403 },
     );
+  }
+
+  const inferenceAuthToken = bindInferenceTokenHeader
+    ? readInferenceTokenHeader(request)
+    : undefined;
+  if (inferenceAuthToken !== undefined && typeof inferenceAuthToken !== "string") {
+    return inferenceAuthToken;
   }
 
   // The grant rides on the verified token, so it is trusted on every path that
@@ -653,11 +660,6 @@ export async function parseHostedChatRequestFromRequest(
     });
   }
 
-  const inferenceAuthToken = readInferenceTokenHeader(request);
-  if (inferenceAuthToken !== undefined && typeof inferenceAuthToken !== "string") {
-    return inferenceAuthToken;
-  }
-
   const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: authenticatedRequest.userId,
@@ -674,7 +676,7 @@ export async function parseHostedChatRequestFromRequest(
     options.verifyRunEventAppendToken,
     false,
     undefined,
-    inferenceAuthToken,
+    true,
   );
 }
 

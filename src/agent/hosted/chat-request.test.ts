@@ -1958,13 +1958,13 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
   });
 
-  it("ignores a default-chat inference header without a verified run-event token", async () => {
+  it("ignores a malformed inference header without a verified run-event token", async () => {
     const parsed = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.test/api/runs", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "X-Veryfront-Inference-Token": "unverified-inference-token",
+          "X-Veryfront-Inference-Token": "unverified inference token",
         },
         body: JSON.stringify({
           messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
@@ -2020,32 +2020,34 @@ describe("agent/hosted-chat-request", () => {
     assertStringIncludes(body.message, "16");
   });
 
-  it("rejects a non-visible-ASCII default-chat inference header before binding it", async () => {
-    const response = await parseHostedChatRequestFromRequest(
-      new Request("https://agent.example.test/api/runs", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-Veryfront-Run-Event-Token": "run-event-service-token",
-          "X-Veryfront-Inference-Token": "token with a space",
-        },
-        body: JSON.stringify({
-          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
-          context: { conversationId, projectId, branchId },
-          durableRootRun: { runId: "run_root_1", messageId },
+  it("rejects blank and non-visible-ASCII inference headers after writer verification", async () => {
+    for (const inferenceToken of ["", "token with a space"]) {
+      const response = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.test/api/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "X-Veryfront-Run-Event-Token": "run-event-service-token",
+            "X-Veryfront-Inference-Token": inferenceToken,
+          },
+          body: JSON.stringify({
+            messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+            context: { conversationId, projectId, branchId },
+            durableRootRun: { runId: "run_root_1", messageId },
+          }),
         }),
-      }),
-      {
-        authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
-        verifyProjectAccess: () => Promise.resolve({ success: true as const }),
-        verifyRunEventAppendToken: () => Promise.resolve(true),
-      },
-    );
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+        },
+      );
 
-    if (!(response instanceof Response)) {
-      throw new Error("Expected a validation error response");
+      if (!(response instanceof Response)) {
+        throw new Error("Expected a validation error response");
+      }
+      assertEquals(response.status, 400);
     }
-    assertEquals(response.status, 400);
   });
 
   it("does not trust runtime environment targets from public hosted chat requests", async () => {
@@ -2434,7 +2436,7 @@ describe("agent/hosted-chat-request", () => {
         method: "POST",
         headers: {
           "X-Veryfront-Run-Event-Token": "forged-run-event-token",
-          "X-Veryfront-Inference-Token": "unverified-inference-token",
+          "X-Veryfront-Inference-Token": "unverified inference token",
         },
         body: JSON.stringify({
           messages: [],
