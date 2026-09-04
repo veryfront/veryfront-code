@@ -1434,7 +1434,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       target: "eval:deep-research",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-      config: { allowed_tools: ["eval_allowed_lookup", "web_fetch"], max_steps: 2 },
+      config: { allowedTools: ["eval_allowed_lookup", "web_fetch"], max_steps: 2 },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_restricted_tools/execute",
@@ -1469,7 +1469,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     globalThis.Request = replacementRequest;
     const originalArrayFilter = Array.prototype.filter;
     const originalJsonStringify = JSON.stringify;
+    const originalObjectKeys = Object.keys;
     const originalObjectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const originalInheritedAllowedTools = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "allowed_tools",
+    );
     let replacementSawEvalSerialization = false;
     let objectToJsonSawEvalBody = false;
     Array.prototype.filter = function <T>(
@@ -1502,6 +1507,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       }
       return Reflect.apply(originalJsonStringify, JSON, [value, ...args]);
     }) as typeof JSON.stringify;
+    Object.keys = ((value: object) => {
+      if (
+        Object.hasOwn(value, "eval_allowed_lookup") &&
+        !Object.hasOwn(value, "eval_denied_delete")
+      ) {
+        (value as Record<string, unknown>).eval_denied_delete = true;
+      }
+      return originalObjectKeys(value);
+    }) as typeof Object.keys;
+    Object.defineProperty(Object.prototype, "allowed_tools", {
+      configurable: true,
+      value: ["eval_denied_delete"],
+    });
     Object.defineProperty(Object.prototype, "toJSON", {
       configurable: true,
       value(this: Record<string, unknown>) {
@@ -1546,6 +1564,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       } else {
         delete (Object.prototype as { toJSON?: unknown }).toJSON;
       }
+      if (originalInheritedAllowedTools) {
+        Object.defineProperty(Object.prototype, "allowed_tools", originalInheritedAllowedTools);
+      } else {
+        delete (Object.prototype as { allowed_tools?: unknown }).allowed_tools;
+      }
+      Object.keys = originalObjectKeys;
       JSON.stringify = originalJsonStringify;
       Array.prototype.filter = originalArrayFilter;
       globalThis.Request = nativeRequest;

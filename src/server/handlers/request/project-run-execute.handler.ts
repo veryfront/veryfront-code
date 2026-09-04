@@ -74,6 +74,7 @@ const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
 const NumberParseInt = Number.parseInt;
 const MathTrunc = Math.trunc;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeTrim = String.prototype.trim;
@@ -81,6 +82,11 @@ const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
 const ParseHostedChatRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse;
+
+function getOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -1097,7 +1103,7 @@ function getStringArrayConfig(
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
     const key = keys[keyIndex];
     if (key === undefined) continue;
-    const value = config[key];
+    const value = getOwnDataProperty(config, key);
     if (ArrayIsArray(value)) {
       const strings: string[] = [];
       for (let valueIndex = 0; valueIndex < value.length; valueIndex++) {
@@ -1118,7 +1124,7 @@ function getStringConfig(
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
     const key = keys[keyIndex];
     if (key === undefined) continue;
-    const value = config[key];
+    const value = getOwnDataProperty(config, key);
     if (typeof value === "string" && value.length > 0) return value;
   }
 
@@ -1324,7 +1330,7 @@ function getNumberConfig(
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
     const key = keys[keyIndex];
     if (key === undefined) continue;
-    const value = config[key];
+    const value = getOwnDataProperty(config, key);
     if (typeof value === "number" && NumberIsFinite(value)) return value;
     if (
       typeof value === "string" &&

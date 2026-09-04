@@ -74,6 +74,7 @@ import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicArrayFilter = Array.prototype.filter;
 const IntrinsicObjectEntries = Object.entries;
+const IntrinsicObjectKeys = Object.keys;
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -386,7 +387,7 @@ function resolveToolsConfiguration(input: {
         resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
       });
     }
-    const hasConfiguredTools = Object.keys(configuredTools).length > 0;
+    const hasConfiguredTools = IntrinsicObjectKeys(configuredTools).length > 0;
     merged = hasConfiguredTools || config.tools !== undefined ? configuredTools : undefined;
   }
 
@@ -399,7 +400,7 @@ function resolveToolsConfiguration(input: {
     }
     if (delegates.length > 0) {
       const delegateTools = buildAgentDelegateTools({ delegates, selfId: id });
-      for (const toolName of Object.keys(delegateTools)) {
+      for (const toolName of IntrinsicObjectKeys(delegateTools)) {
         if (merged?.[toolName] === false) {
           delete delegateTools[toolName];
         }
