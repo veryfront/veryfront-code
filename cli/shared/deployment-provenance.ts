@@ -280,12 +280,22 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   const normalizedHeadSha = headSha && COMMIT_SHA_PATTERN.test(headSha)
     ? headSha.toLowerCase()
     : null;
-  const sourcesAgree = (!envSha || normalizedEnvSha !== null) &&
-    (!normalizedEnvSha || !normalizedHeadSha || normalizedEnvSha === normalizedHeadSha);
   const gitMetadataPresent = !head.success && !status.success
     ? await hasGitMetadata(projectDir)
     : false;
   const repositoryAvailable = head.success || status.success || gitMetadataPresent;
+  // A directory with no repository around it has no HEAD for an environment
+  // SHA to agree or disagree with: GITHUB_SHA names the checkout the process
+  // happens to run under, not this source. Reading it as evidence about this
+  // directory would refuse every push of a non-Git project from inside a CI
+  // job, so it is ignored here and the non-Git fallback below — no commit, not
+  // clean, digest-only provenance — stands, exactly as it does off CI. Nothing
+  // is vouched for either way: `commitSha` never adopts an environment SHA
+  // that no local commit confirmed.
+  const envShaDescribesCheckout = repositoryAvailable && envSha !== undefined;
+  const sourcesAgree = !envShaDescribesCheckout ||
+    (normalizedEnvSha !== null &&
+      (!normalizedHeadSha || normalizedEnvSha === normalizedHeadSha));
   const probesIndeterminate = (head.success && normalizedHeadSha === null) ||
     (head.success && !status.success) ||
     (!head.success && !status.success && gitMetadataPresent) ||
@@ -296,9 +306,11 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
     // the same SHA pass validation against a checkout that can no longer
     // prove it. Only a CI SHA is affected: with no environment SHA there is
     // nothing to vouch for, so that case keeps its existing behaviour.
-    (!head.success && normalizedEnvSha !== null);
+    (!head.success && envShaDescribesCheckout);
   const indeterminate = !sourcesAgree || probesIndeterminate;
-  const commitSha = indeterminate ? null : normalizedEnvSha ?? normalizedHeadSha;
+  const commitSha = indeterminate || !repositoryAvailable
+    ? null
+    : normalizedEnvSha ?? normalizedHeadSha;
 
   return {
     commitSha,

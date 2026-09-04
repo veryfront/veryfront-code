@@ -573,6 +573,29 @@ describe("resolveGitSource", () => {
     }
   });
 
+  it("keeps a directory outside any repository non-Git while CI names a commit", async () => {
+    // A CI job exports GITHUB_SHA for its own checkout. A project directory
+    // that is not inside a repository cannot confirm or contradict it, so the
+    // SHA is not evidence about this source: the directory must read exactly
+    // as it does off CI rather than becoming unverifiable Git provenance,
+    // which would refuse every push of a non-Git project running under CI.
+    const projectDir = await makeTempDir();
+    const originalGithubSha = getEnv("GITHUB_SHA");
+    try {
+      setEnv("GITHUB_SHA", "90719c01c1dded95a6b6df46b0fb17ea37d3ace8");
+
+      assertEquals(await resolveGitSource(projectDir), {
+        commitSha: null,
+        clean: false,
+        repositoryAvailable: false,
+      });
+    } finally {
+      if (originalGithubSha === undefined) deleteEnv("GITHUB_SHA");
+      else setEnv("GITHUB_SHA", originalGithubSha);
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("distinguishes non-Git directories from unborn repositories", async () => {
     const nonGitDir = await makeTempDir();
     const unbornDir = await makeTempDir();
