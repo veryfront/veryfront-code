@@ -1390,6 +1390,80 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(await adapter.getAllSourceFiles(), files);
     });
+
+    it("keeps a delayed cache miss bound to its original request branch", async () => {
+      const adapter = createAdapter({
+        projectDir: "/project/root",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      (adapter as unknown as { initialized: boolean }).initialized = true;
+
+      const mainContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const mainCacheKey = buildFileListCacheKey(mainContext);
+      const cache = (adapter as unknown as {
+        cache: {
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+        };
+      }).cache;
+      const originalGetAsync = cache.getAsync.bind(cache);
+      let releaseLookup: (() => void) | undefined;
+      const lookupBlocked = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      let markLookupStarted: (() => void) | undefined;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      let blockNextMainLookup = true;
+      cache.getAsync = async <T>(key: string): Promise<T | undefined> => {
+        if (blockNextMainLookup && key === mainCacheKey) {
+          blockNextMainLookup = false;
+          markLookupStarted?.();
+          await lookupBlocked;
+        }
+        return await originalGetAsync<T>(key);
+      };
+
+      const requestedBranches: string[] = [];
+      const client = (adapter as unknown as {
+        client: {
+          listAllFiles: (
+            params: Record<string, never>,
+            source: { type: "branch"; name: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+      client.listAllFiles = (_params, source) => {
+        requestedBranches.push(source.name);
+        return Promise.resolve([{
+          path: `${source.name}.ts`,
+          content: `export const branch = "${source.name}";`,
+        }]);
+      };
+
+      const pending = adapter.getAllSourceFiles({ waitForWarmup: true });
+      await lookupStarted;
+      adapter.setRequestBranch("draft");
+      releaseLookup?.();
+
+      assertEquals(await pending, []);
+      assertEquals(requestedBranches, ["main"]);
+      assertEquals(await originalGetAsync(mainCacheKey), undefined);
+    });
   });
 
   describe("getEntityIdForPath", () => {
