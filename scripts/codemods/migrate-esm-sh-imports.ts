@@ -614,6 +614,9 @@ async function writeTextFileInsideProjectOnWindows(
       if (bytesWritten === 0) throw new Error(`Could not finish writing ${path}`);
       offset += bytesWritten;
     }
+    if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
+      throw new Error("Refusing to finish a write because the destination path changed.");
+    }
   } finally {
     await file.close();
   }
@@ -705,6 +708,9 @@ export async function writeTextFileInsideProject(
       const written = await file.write(bytes.subarray(offset));
       if (written === 0) throw new Error(`Could not finish writing ${path}`);
       offset += written;
+    }
+    if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
+      throw new Error("Refusing to finish a write because the destination path changed.");
     }
   } finally {
     file.close();

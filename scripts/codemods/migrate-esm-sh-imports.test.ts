@@ -1063,7 +1063,12 @@ Deno.test("project writes stay bound to the file opened before a path swap", asy
       await Reflect.apply(originalTruncate, this, [len]);
     };
 
-    await writeTextFileInsideProject(target, await Deno.realPath(project), "updated");
+    const projectRoot = await Deno.realPath(project);
+    await assertRejects(
+      () => writeTextFileInsideProject(target, projectRoot, "updated"),
+      Error,
+      "destination path changed",
+    );
 
     assertEquals(await Deno.readTextFile(outsideFile), "outside");
     assertEquals(await Deno.readTextFile(originalEntry), "updated");
