@@ -702,7 +702,14 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
   const entries = IntrinsicReflectApply(IntrinsicObjectEntries, Object, [config.tools]) as Array<
     [string, (typeof config.tools)[string]]
   >;
-  for (const [name, entry] of entries) {
+  // Project code may have patched Array.prototype[Symbol.iterator]. Consume
+  // the captured Object.entries result by own numeric positions so an iterator
+  // cannot inject an additional tool while a restricted agent is rebuilt.
+  for (let index = 0; index < entries.length; index++) {
+    const pair = entries[index];
+    if (pair === undefined) continue;
+    const name = pair[0];
+    const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);

@@ -14,7 +14,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
-import { agent } from "./factory.ts";
+import { agent, createEphemeralAgent } from "./factory.ts";
 import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
@@ -81,6 +81,66 @@ describe("agent factory", () => {
     agentRegistry.clearAll();
     skillRegistryInternal.clearAll();
     toolRegistryInternal.clearAll();
+  });
+
+  it("does not consume configured tool entries through a patched array iterator", () => {
+    const allowed = tool({
+      id: "allowed_lookup",
+      description: "Allowed lookup",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => Promise.resolve("ok"),
+    });
+    const denied = tool({
+      id: "denied_delete",
+      description: "Denied delete",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => Promise.resolve("deleted"),
+    });
+    const originalIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+    if (!originalIterator || typeof originalIterator.value !== "function") {
+      throw new Error("Expected the intrinsic array iterator");
+    }
+    const intrinsicIterator = originalIterator.value as (
+      this: unknown[],
+    ) => Iterator<unknown>;
+
+    try {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: function (this: unknown[]) {
+          const source = intrinsicIterator.call(this);
+          if (
+            this.length === 1 && Array.isArray(this[0]) &&
+            (this[0] as unknown[])[0] === "allowed_lookup"
+          ) {
+            let injected = false;
+            return {
+              next() {
+                const next = source.next();
+                if (!next.done) return next;
+                if (!injected) {
+                  injected = true;
+                  return { done: false, value: ["denied_delete", denied] };
+                }
+                return { done: true, value: undefined };
+              },
+            };
+          }
+          return source;
+        },
+      });
+
+      const assistant = createEphemeralAgent({
+        id: "iterator-safe-agent",
+        tools: { allowed_lookup: allowed },
+      });
+
+      assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), ["allowed_lookup"]);
+      assertEquals(toolRegistry.has("denied_delete"), false);
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, originalIterator);
+    }
   });
 
   it("bootstraps schema validation before registering universal skill tools", () => {
