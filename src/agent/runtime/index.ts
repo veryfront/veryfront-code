@@ -370,6 +370,34 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
   return clone(value) as T;
 }
 
+function cloneMessagePartForCommit(part: MessagePart): MessagePart {
+  const descriptors = ObjectGetOwnPropertyDescriptors(part);
+  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+  for (const key of ObjectKeys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) continue;
+    detached[key] = cloneStructuredValuePreservingOpaque(descriptor.value);
+  }
+  return detached as MessagePart;
+}
+
+function cloneMessageForCommit(message: Message): Message {
+  const parts: MessagePart[] = [];
+  for (let index = 0; index < message.parts.length; index++) {
+    const part = message.parts[index];
+    if (part !== undefined) parts[parts.length] = cloneMessagePartForCommit(part);
+  }
+  return {
+    id: message.id,
+    role: message.role,
+    parts,
+    ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
+    ...(message.metadata === undefined
+      ? {}
+      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata) }),
+  };
+}
+
 function providerValuesEqual(
   left: unknown,
   right: unknown,
@@ -1553,7 +1581,7 @@ export class AgentRuntime {
       ? captureMemoryRollback(this.memory, history)
       : undefined;
     const committedInputMessages = inputMessages.map((message) => {
-      const cloned = cloneStructuredValuePreservingOpaque(message);
+      const cloned = cloneMessageForCommit(message);
       propagateSyntheticMessageMarks(message, cloned);
       return isRuntimeGeneratedUserMessage(message)
         ? markRuntimeGeneratedUserMessage(cloned)
