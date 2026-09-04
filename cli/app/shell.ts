@@ -15,6 +15,7 @@ import { cursor, screen } from "../ui/ansi.ts";
 import { dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
 import { formatError } from "../utils/string.ts";
+import { assertApiUrlAcceptsNewCredential } from "../shared/config.ts";
 
 import type { App, AppConfig } from "./types.ts";
 import {
@@ -99,6 +100,12 @@ export function createApp(config: AppConfig): App {
     try {
       const token = await readToken();
       if (!token) return;
+
+      // A cloned repository can select the API host through its own
+      // `veryfront.json` or `.env`. Sending the operator's stored login token
+      // there would hand their credential to whoever authored the clone, so
+      // this background check refuses before the token leaves the machine.
+      await assertApiUrlAcceptsNewCredential();
 
       const user = await validateToken(token);
       if (!user) return;

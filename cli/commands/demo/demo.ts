@@ -43,7 +43,11 @@ import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
-import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
+import {
+  assertApiUrlAcceptsNewCredential,
+  createApiClient,
+  type ResolvedConfig,
+} from "#cli/shared/config";
 import { resolveOrCreateProject } from "#cli/shared/project-resolution";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
@@ -177,6 +181,9 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
       return false;
     }
 
+    // Validating against a repository-selected host would send a freshly
+    // entered token to whoever authored the clone.
+    await assertApiUrlAcceptsNewCredential();
     const userInfo = await validateToken(tokenInput);
     if (!userInfo) {
       console.log();
@@ -230,6 +237,8 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
       return false;
     }
 
+    // Same guard for the OAuth callback token.
+    await assertApiUrlAcceptsNewCredential();
     const userInfo = await validateToken(result.token);
     if (!userInfo) {
       console.log();

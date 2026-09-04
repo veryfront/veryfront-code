@@ -24,6 +24,18 @@ function getExplicitApiBaseUrl(env: EnvironmentConfig): string | undefined {
 /** Environment variables that can steer the CLI at a different API host. */
 export type ApiUrlEnvKey = "VERYFRONT_API_URL" | "VERYFRONT_API_BASE_URL";
 
+/**
+ * Every environment key that can move the CLI to another API host.
+ *
+ * Trust decisions must neutralise all of them together: `apiBaseUrl` derives
+ * from `apiUrl` when unset, so removing one still leaves the other pointing at
+ * a repository-supplied host.
+ */
+export const API_URL_ENV_KEYS: readonly ApiUrlEnvKey[] = [
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_BASE_URL",
+];
+
 /** Which input supplied the effective API URL. */
 export type ApiUrlOrigin =
   | { source: "env"; key: ApiUrlEnvKey }

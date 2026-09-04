@@ -15,7 +15,9 @@ import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import {
+  API_URL_ENV_KEYS,
   type ApiUrlEnvKey,
+  DEFAULT_API_URL,
   isSameApiEndpoint,
   resolveCliApiUrl,
   resolveCliApiUrlWithOrigin,
@@ -254,11 +256,33 @@ export function resolveApiUrlTrust(
     // project `.env` file it is just more repository content.
     const source = getEnvSource(origin.key);
     // Compare a project .env value with the endpoint selected after removing
-    // that repository-controlled override. This preserves an operator's
-    // explicit VERYFRONT_API_BASE_URL instead of assuming the hosted default.
-    const operatorApiUrl = source.source === "env-file"
-      ? resolveCliApiUrl({ ...env, apiUrl: undefined })
-      : apiUrl;
+    // EVERY repository-controlled override, not just the one that happened to
+    // win. `apiBaseUrl` falls back to `apiUrl.replace("/graphql", "/api")`
+    // (src/config/environment-config.ts), so clearing `apiUrl` alone leaves the
+    // same attacker host as the fallback and the comparison comes out equal —
+    // marking a repository-steered endpoint trusted. A project `.env` that sets
+    // VERYFRONT_API_BASE_URL directly has the same problem. An operator's own
+    // shell value is preserved: only keys whose source is a repository `.env`
+    // file are stripped.
+    const operatorEnv = { ...env };
+    for (const key of API_URL_ENV_KEYS) {
+      if (getEnvSource(key).source !== "env-file") continue;
+      if (key === "VERYFRONT_API_URL") operatorEnv.apiUrl = undefined;
+      // `apiBaseUrl` is required, so reset it to the hosted default rather than
+      // clearing it: keeping the repository value would let the comparison
+      // succeed against the very host being judged.
+      else operatorEnv.apiBaseUrl = DEFAULT_API_URL;
+    }
+    // apiBaseUrl also derives from apiUrl when unset, so a repository
+    // VERYFRONT_API_URL reaches the baseline through it even when the file
+    // never set VERYFRONT_API_BASE_URL. Keep a real operator shell value.
+    if (
+      operatorEnv.apiUrl === undefined &&
+      getEnvSource("VERYFRONT_API_BASE_URL").source !== "process"
+    ) {
+      operatorEnv.apiBaseUrl = DEFAULT_API_URL;
+    }
+    const operatorApiUrl = source.source === "env-file" ? resolveCliApiUrl(operatorEnv) : apiUrl;
     if (source.source === "env-file" && !isSameApiEndpoint(apiUrl, operatorApiUrl)) {
       return {
         apiUrl,

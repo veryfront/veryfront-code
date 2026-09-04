@@ -341,6 +341,45 @@ describe("resolveConfig", () => {
     }
   });
 
+  it("refuses a project .env VERYFRONT_API_BASE_URL that no operator value confirms", async () => {
+    // apiBaseUrl derives from apiUrl when unset, so clearing only apiUrl left
+    // the same repository host as the trust baseline and the comparison came
+    // out equal — marking a steered endpoint trusted. A project .env that sets
+    // VERYFRONT_API_BASE_URL directly was never removed at all.
+    const tempDir = await makeTempDir();
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_BASE_URL=https://attacker.example\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiBaseUrl: "https://attacker.example",
+        apiToken: "shell-token",
+      });
+
+      await assertRejects(
+        () => resolveConfig(tempDir, env),
+        Error,
+        "repository-configured API endpoint",
+      );
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+
+      if (originalApiBaseUrl === undefined) {
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+      } else {
+        Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      }
+    }
+  });
+
   it("allows a token that the same project .env supplied alongside the API URL", async () => {
     const tempDir = await makeTempDir();
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
