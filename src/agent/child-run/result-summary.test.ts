@@ -357,6 +357,15 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("rejects an invalid escape in a quoted member cut by the head window", () => {
+      const text = 'tools: [{"id":"bogus_tool","description":"bad\\q' +
+        "x".repeat(40_000) + "\n" + "z".repeat(100_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("does not treat a tail window cut as a tool field boundary", () => {
       const opener = "tools:['bogus_tool']";
       const text = `${"p".repeat(70_000)}z"${opener}${"y".repeat(96_000 - opener.length)}`;

@@ -177,6 +177,26 @@ function scanQuotedValueEnd(text: string, start: number, quote: string): number 
   return undefined;
 }
 
+function hasValidQuotedValuePrefix(text: string, start: number, quote: string): boolean {
+  for (let index = start + 1; index < text.length; index++) {
+    const character = text[index]!;
+    if (character.charCodeAt(0) < 0x20) return false;
+    if (character !== "\\") continue;
+    const escaped = text[++index];
+    if (escaped === undefined) return true;
+    if (escaped === "u") {
+      const availableHex = text.slice(index + 1, Math.min(index + 5, text.length));
+      if (!/^[0-9a-f]*$/i.test(availableHex)) return false;
+      if (availableHex.length < 4) return true;
+      index += 4;
+      continue;
+    }
+    if (`\\"/bfnrt${quote === "'" ? "'" : ""}`.includes(escaped)) continue;
+    return false;
+  }
+  return true;
+}
+
 function findOuterArrayClosingBracket(text: string): number {
   let depth = 1;
   for (let index = 0; index < text.length; index++) {
@@ -433,7 +453,10 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
     const opening = fieldBody[index];
     if (opening === '"' || opening === "'") {
       const valueEnd = scanQuotedValueEnd(fieldBody, index, opening);
-      if (valueEnd === undefined) break;
+      if (valueEnd === undefined) {
+        if (!hasValidQuotedValuePrefix(fieldBody, index, opening)) return undefined;
+        break;
+      }
       // Every completed quoted member is parsed, not just ids, so an invalid
       // escape anywhere in the object withdraws the ids it contributed.
       const value = parseQuotedScalar(fieldBody, index, valueEnd, opening);
