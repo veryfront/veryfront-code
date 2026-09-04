@@ -74,6 +74,36 @@ describe("provider/veryfront-cloud/shared", () => {
     );
   });
 
+  it("routes run-scoped inference credentials to the explicit public API base", () => {
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "http://control-plane.internal.example" },
+      () => {
+        assertEquals(
+          requireVeryfrontCloudBootstrap(
+            "run-scoped-inference-token",
+            "https://api.staging.veryfront.example",
+          ).apiBaseUrl,
+          "https://api.staging.veryfront.example",
+        );
+      },
+    );
+  });
+
+  it("allows bracketed IPv6 loopback for run-scoped inference credentials", () => {
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "https://control-plane.example" },
+      () => {
+        assertEquals(
+          requireVeryfrontCloudBootstrap(
+            "run-scoped-inference-token",
+            "http://[::1]:4000",
+          ).apiBaseUrl,
+          "http://[::1]:4000",
+        );
+      },
+    );
+  });
+
   it("preserves base URL query parameters and removes fragments", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl(

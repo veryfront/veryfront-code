@@ -1,5 +1,9 @@
 import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudBootstrap,
+  normalizeVeryfrontApiBaseUrl,
+  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
+} from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   createOriginBoundOutboundFetch,
@@ -28,7 +32,9 @@ const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const NativeURL = URL;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
 const HeadersDelete = NativeHeaders.prototype.delete;
@@ -116,17 +122,26 @@ function parseVeryfrontCloudApiBaseUrl(value: string): URL {
   return url;
 }
 
+function stripIpv6HostnameBrackets(value: string): string {
+  if (
+    value.length >= 2 &&
+    IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [0]) === 91 &&
+    IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [value.length - 1]) === 93
+  ) {
+    return IntrinsicReflectApply(StringPrototypeSlice, value, [1, -1]) as string;
+  }
+  return value;
+}
+
 function requireSecureInferenceApiBaseUrl(value: string): void {
   const url = parseVeryfrontCloudApiBaseUrl(value);
-  const hostname = IntrinsicReflectApply(
-    StringPrototypeReplace,
+  const hostname = stripIpv6HostnameBrackets(
     IntrinsicReflectApply(
       StringPrototypeToLowerCase,
       readNativeURLString(url, URLHostnameGet),
       [],
-    ),
-    [/^\[|\]$/g, ""],
-  ) as string;
+    ) as string,
+  );
   // 0.0.0.0 binds all interfaces and is intentionally not an HTTP exception.
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
   // Same allowlist -- and the same host-wide override -- the outbound fetch
@@ -221,15 +236,25 @@ export function parseVeryfrontCloudModelId(
   };
 }
 
-export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
+export function requireVeryfrontCloudBootstrap(
+  apiTokenOverride?: string,
+  inferenceApiBaseUrlOverride?: string,
+): {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug?: string;
 } {
   const bootstrap = getVeryfrontCloudBootstrap();
+  const normalizedInferenceApiBaseUrlOverride = inferenceApiBaseUrlOverride === undefined
+    ? undefined
+    : normalizeVeryfrontApiBaseUrl(inferenceApiBaseUrlOverride) ?? inferenceApiBaseUrlOverride;
+  const apiBaseUrl = apiTokenOverride
+    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontPublicApiBaseUrlFromHostEnv() ??
+      bootstrap.apiBaseUrl
+    : bootstrap.apiBaseUrl;
 
   if (apiTokenOverride) {
-    requireSecureInferenceApiBaseUrl(bootstrap.apiBaseUrl);
+    requireSecureInferenceApiBaseUrl(apiBaseUrl);
   }
 
   const apiToken = apiTokenOverride ?? bootstrap.apiToken;
@@ -245,7 +270,7 @@ export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
   }
 
   return {
-    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiBaseUrl,
     apiToken,
     projectSlug: bootstrap.projectSlug,
   };
