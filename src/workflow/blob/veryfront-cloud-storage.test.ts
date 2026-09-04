@@ -217,6 +217,11 @@ function createMockUploadService(
 }
 
 describe("VeryfrontCloudBlobStorage", () => {
+  it("does not expose ambient credential resolution as a runtime method", () => {
+    const storage = new VeryfrontCloudBlobStorage();
+    assertEquals((storage as unknown as Record<string, unknown>).resolveConfig, undefined);
+  });
+
   afterEach(() => {
     restoreMockFetch();
   });

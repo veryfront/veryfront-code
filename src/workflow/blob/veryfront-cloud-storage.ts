@@ -470,7 +470,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     data: string | Uint8Array | Blob | ReadableStream,
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     const scope = createRequestScope(resolved.requestTimeoutMs);
     try {
       const optionSnapshot = snapshotStoreBlobOptions(options);
@@ -563,7 +563,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     return this.downloadUpload(this.getDataPath(id, resolved.prefix), resolved);
   }
 
@@ -580,7 +580,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   async delete(id: string): Promise<void> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     await Promise.all([
       this.deleteUpload(this.getMetadataPath(id, resolved.prefix), resolved, {
         ignoreNotFound: true,
@@ -594,7 +594,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   async stat(id: string): Promise<BlobRef | null> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     const dataPath = this.getDataPath(id, resolved.prefix);
     const metadataPath = this.getMetadataPath(id, resolved.prefix);
     const metadataJson = await this.downloadUploadText(metadataPath, resolved);
@@ -630,7 +630,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
    * one page, pagination will need wiring here.
    */
   async list(): Promise<BlobRef[]> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     const raw = await this.requestJson(
       "GET",
       `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads`,
@@ -656,7 +656,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
-  private resolveConfig(): ResolvedConfig {
+  #resolveConfig(): ResolvedConfig {
     const bootstrap = getVeryfrontCloudBootstrap();
     const hostBootstrap = getVeryfrontCloudHostBootstrap();
     if (this.config.apiBaseUrl && !this.config.apiToken) {

@@ -164,7 +164,10 @@ declare global {
 
 // Register globally for lazy access from cache-key-builder to avoid circular dependency.
 globalThis.__vf_multi_project_adapter = {
-  getCurrentRequestContext,
+  getCurrentRequestContext: () => {
+    const context = getCurrentRequestContext();
+    return context === null ? null : { ...context, token: "" };
+  },
   getRequestScopedFile,
   setRequestScopedFile,
   clearRequestScopedFileCache,
