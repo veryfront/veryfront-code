@@ -265,7 +265,7 @@ export class LazySandbox {
     const res = await this.fetchControl(
       `${route.baseUrl}/file?path=${encodeURIComponent(path)}`,
       {
-        headers: this.authHeaders(),
+        headers: this.#authHeaders(),
       },
       route.kind,
     );
@@ -285,7 +285,7 @@ export class LazySandbox {
       `${route.baseUrl}/files`,
       {
         method: "POST",
-        headers: this.jsonHeaders(),
+        headers: this.#jsonHeaders(),
         body: JSON.stringify({ files }),
       },
       route.kind,
@@ -307,7 +307,7 @@ export class LazySandbox {
       commandsUrl,
       {
         method: "POST",
-        headers: this.jsonHeaders(),
+        headers: this.#jsonHeaders(),
         body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
       },
       route.kind,
@@ -333,7 +333,7 @@ export class LazySandbox {
     const res = await this.fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}`,
       {
-        headers: this.authHeaders(),
+        headers: this.#authHeaders(),
       },
       route.routeKind,
     );
@@ -355,7 +355,7 @@ export class LazySandbox {
     const res = await this.fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}/output`,
       {
-        headers: this.authHeaders(),
+        headers: this.#authHeaders(),
       },
       route.routeKind,
     );
@@ -384,7 +384,7 @@ export class LazySandbox {
 
     const res = await this.fetchControl(
       backgroundCommandsUrl(route),
-      { headers: this.authHeaders() },
+      { headers: this.#authHeaders() },
       route.kind,
     );
 
@@ -406,7 +406,7 @@ export class LazySandbox {
       `${route.commandsUrl}/${encodeURIComponent(commandId)}/cancel`,
       {
         method: "POST",
-        headers: this.authHeaders(),
+        headers: this.#authHeaders(),
       },
       route.routeKind,
     );
@@ -446,7 +446,7 @@ export class LazySandbox {
           }/heartbeat`,
           {
             method: "POST",
-            headers: this.authHeaders(),
+            headers: this.#authHeaders(),
           },
         );
 
@@ -558,7 +558,7 @@ export class LazySandbox {
       `${getLazySandboxPrivateState(this).apiUrl}/sandbox-sessions`,
       {
         method: "POST",
-        headers: this.jsonHeaders(),
+        headers: this.#jsonHeaders(),
         body: JSON.stringify(projectId ? { project_id: projectId } : {}),
       },
     );
@@ -623,7 +623,7 @@ export class LazySandbox {
         encodeURIComponent(sessionId)
       }`,
       {
-        headers: this.authHeaders(),
+        headers: this.#authHeaders(),
       },
     );
 
@@ -647,7 +647,7 @@ export class LazySandbox {
           encodeURIComponent(sessionId)
         }`,
         {
-          headers: this.authHeaders(),
+          headers: this.#authHeaders(),
         },
       );
 
@@ -753,7 +753,7 @@ export class LazySandbox {
       }`,
       {
         method: "DELETE",
-        headers: this.authHeaders(),
+        headers: this.#authHeaders(),
       },
     );
   }
@@ -842,7 +842,7 @@ export class LazySandbox {
           commandStreamUrl(route),
           {
             method: "POST",
-            headers: this.jsonHeaders(),
+            headers: this.#jsonHeaders(),
             body,
           },
           route.kind,
@@ -956,13 +956,13 @@ export class LazySandbox {
     return this.sessionId;
   }
 
-  private authHeaders(): HeadersInit {
+  #authHeaders(): HeadersInit {
     return { Authorization: `Bearer ${getLazySandboxAuthToken(this)}` };
   }
 
-  private jsonHeaders(): HeadersInit {
+  #jsonHeaders(): HeadersInit {
     return {
-      ...this.authHeaders(),
+      ...this.#authHeaders(),
       "Content-Type": "application/json",
     };
   }

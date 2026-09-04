@@ -142,6 +142,14 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(client instanceof VeryfrontRunsClient, true);
   });
 
+  it("does not expose ambient connection resolution as a runtime method", () => {
+    const client = createRunsClient();
+    assertEquals(
+      (client as unknown as Record<string, unknown>).resolveConnection,
+      undefined,
+    );
+  });
+
   it("creates task runs through canonical /runs", async () => {
     mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
 

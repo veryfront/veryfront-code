@@ -1206,6 +1206,8 @@ describe("Sandbox", () => {
 
       assertEquals(Object.hasOwn(sandbox, "authToken"), false);
       assertEquals("authToken" in sandbox, false);
+      assertEquals((sandbox as unknown as Record<string, unknown>).authHeaders, undefined);
+      assertEquals((sandbox as unknown as Record<string, unknown>).jsonHeaders, undefined);
     });
 
     it("rejects a caller runtime endpoint when authentication is ambient", async () => {

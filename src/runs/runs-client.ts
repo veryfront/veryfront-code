@@ -434,7 +434,7 @@ export class VeryfrontRunsClient {
     });
   }
 
-  private resolveConnection(): { apiUrl: string; authToken: string } {
+  #resolveConnection(): { apiUrl: string; authToken: string } {
     if (this.config.apiUrl && !this.config.authToken) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -487,7 +487,7 @@ export class VeryfrontRunsClient {
       body?: Record<string, unknown>;
     } = {},
   ): Promise<T> {
-    const { apiUrl, authToken } = this.resolveConnection();
+    const { apiUrl, authToken } = this.#resolveConnection();
     const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
     const apiOrigin = readUrlOrigin(new NativeURL(normalizedApiUrl));
     const raw = await requestWithRetry(
