@@ -331,6 +331,15 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("rejects an ID after malformed nested metadata in an incomplete object", () => {
+      const text = 'tools: [{"schema":[}],"id":"bogus_tool","description":"' +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("resumes the incomplete object scan at the element crossing the cutoff", () => {
       const text = 'tools: [{"id":"first_tool"},{"id":"critical_tool","description":"' +
         "y ".repeat(70_000);

@@ -205,7 +205,7 @@ function parseCompleteArrayValue(
     const value = decodeSingleQuotedString(candidate.slice(1, -1));
     return value === undefined ? { ok: false } : { ok: true, value };
   }
-  if (text[start] === "{") {
+  if (text[start] === "{" || text[start] === "[") {
     const normalized = normalizeSingleQuotedJson(candidate);
     try {
       return { ok: true, value: JSON.parse(normalized) };
@@ -363,7 +363,10 @@ function scanCompleteLeadingArrayValues(
   return { values, nextIndex };
 }
 
-function scanNestedArrayOrObjectEnd(fieldBody: string, start: number): number | undefined {
+function scanNestedArrayOrObjectEnd(
+  fieldBody: string,
+  start: number,
+): number | null | undefined {
   const closings = [fieldBody[start] === "{" ? "}" : "]"];
   let index = start + 1;
 
@@ -378,10 +381,14 @@ function scanNestedArrayOrObjectEnd(fieldBody: string, start: number): number | 
     index += 1;
     if (character === "{") closings.push("}");
     else if (character === "[") closings.push("]");
-    else if (character === closings[closings.length - 1]) closings.pop();
+    else if (character === "}" || character === "]") {
+      if (character !== closings[closings.length - 1]) return null;
+      closings.pop();
+    }
   }
 
-  return closings.length > 0 ? undefined : index;
+  if (closings.length > 0) return undefined;
+  return parseCompleteArrayValue(fieldBody, start, index, fieldBody[start]).ok ? index : null;
 }
 
 /**
@@ -428,6 +435,7 @@ function scanIncompleteLeadingObjectToolIds(fieldBody: string): string[] | undef
     } else if (opening === "{" || opening === "[") {
       const valueEnd = scanNestedArrayOrObjectEnd(fieldBody, index);
       if (valueEnd === undefined) break;
+      if (valueEnd === null) return undefined;
       index = valueEnd;
     } else {
       while (
