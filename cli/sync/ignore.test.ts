@@ -30,6 +30,20 @@ describe("cli/sync/ignore", () => {
       }
     });
 
+    it("allows the advertised number of project rules in addition to defaults", async () => {
+      await withTempDir(async (projectDir) => {
+        await Deno.writeTextFile(
+          `${projectDir}/.vfignore`,
+          Array.from({ length: 1_024 }, (_, index) => `generated-${index}`).join("\n"),
+        );
+
+        const patterns = await loadIgnorePatterns(projectDir);
+        const checker = createIgnoreChecker(patterns);
+
+        assertEquals(checker.isIgnored("generated-1023"), true);
+      });
+    });
+
     it("reports the size limit for an oversized .vfignore", async () => {
       await withTempDir(async (projectDir) => {
         await Deno.writeTextFile(`${projectDir}/.vfignore`, "x".repeat(256 * 1_024 + 1));
@@ -316,6 +330,17 @@ describe("cli/sync/ignore", () => {
           warnings.length,
           9,
           "a root-anchored positive cannot cancel an unanchored descendant negation",
+        );
+
+        const anchoredSubtreeChecker = createIgnoreChecker([
+          "!keep.ts",
+          "/.env/**",
+        ]);
+        assertEquals(anchoredSubtreeChecker.isIgnored(".env", { isDirectory: true }), true);
+        assertEquals(
+          warnings.length,
+          9,
+          "an anchored ignore covering the protected subtree cancels its earlier negation",
         );
 
         const parentOnlyChecker = createIgnoreChecker([

@@ -157,6 +157,9 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
+  if (customPatterns.length > MAX_IGNORE_RULES) {
+    throw new Error(`.vfignore must not contain more than ${MAX_IGNORE_RULES} rules.`);
+  }
   patterns.push(...customPatterns);
 
   return patterns;
@@ -260,8 +263,12 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
   };
 }
 
-function toRules(patterns: readonly string[], caseInsensitive = false): IgnoreRule[] {
-  if (patterns.length > MAX_IGNORE_RULES) {
+function toRules(
+  patterns: readonly string[],
+  caseInsensitive = false,
+  maxRules = MAX_IGNORE_RULES,
+): IgnoreRule[] {
+  if (patterns.length > maxRules) {
     throw new Error(`.vfignore must not contain more than ${MAX_IGNORE_RULES} rules.`);
   }
   return patterns.flatMap((pattern) => {
@@ -326,6 +333,38 @@ function anchoredGlobCanMatchDescendant(
   return states.size > 0;
 }
 
+function anchoredGlobCoversEveryDescendant(
+  tokens: readonly GlobToken[],
+  normalizedPath: string,
+): boolean {
+  let states = epsilonClosure(tokens, new Set([0]));
+  const prefix = `${normalizedPath}/`;
+  for (let pathIndex = 0; pathIndex < prefix.length; pathIndex++) {
+    const character = prefix[pathIndex]!;
+    const nextStates = new Set<number>();
+    for (const state of states) {
+      const token = tokens[state];
+      if (token?.type === "literal" && token.value === character) {
+        nextStates.add(state + 1);
+      } else if (token?.type === "single" && character !== "/") {
+        nextStates.add(state + 1);
+      } else if (token?.type === "star" && character !== "/") {
+        nextStates.add(state);
+      } else if (token?.type === "double-star") {
+        nextStates.add(state);
+      }
+    }
+    states = epsilonClosure(tokens, nextStates);
+    if (states.size === 0) return false;
+  }
+
+  for (const state of states) {
+    if (tokens[state]?.type !== "double-star") continue;
+    if (epsilonClosure(tokens, new Set([state + 1])).has(tokens.length)) return true;
+  }
+  return false;
+}
+
 function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
   if (!rule.negated) return false;
   // An unanchored rule can begin at any descendant segment below this
@@ -344,7 +383,11 @@ function hasEffectiveDescendantNegation(
   let lastBroadIgnoreIndex = -1;
   for (let index = 0; index < rules.length; index++) {
     const rule = rules[index]!;
-    if (!rule.negated && rule.implicitDescendants && rule.regex.test(normalizedPath)) {
+    if (
+      !rule.negated &&
+      (rule.implicitDescendants && rule.regex.test(normalizedPath) ||
+        rule.anchored && anchoredGlobCoversEveryDescendant(rule.globTokens, normalizedPath))
+    ) {
       lastBroadIgnoreIndex = index;
     }
   }
@@ -396,7 +439,14 @@ function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<Ign
  * Create an ignore checker with loaded patterns
  */
 export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
-  const rules = toRules(patterns);
+  const hasDefaultPrefix = DEFAULT_IGNORE_PATTERNS.every(
+    (pattern, index) => patterns[index] === pattern,
+  );
+  const rules = toRules(
+    patterns,
+    false,
+    hasDefaultPrefix ? MAX_IGNORE_RULES + DEFAULT_IGNORE_PATTERNS.length : MAX_IGNORE_RULES,
+  );
   const canceledNegations = collectCanceledNegations(rules);
   // A dropped negation silently changes what push and pull reconcile, so warn
   // at the default log level. Deduplicated per checker because every path is
