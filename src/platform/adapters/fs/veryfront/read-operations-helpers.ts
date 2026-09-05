@@ -17,6 +17,7 @@ interface ReadContextProviderLike {
 interface ReadFetchState {
   apiPath: string;
   cacheKeyPrefix: string;
+  scopedCacheKeyPrefix: string;
   cacheKey: string;
   isProduction: boolean;
   hasKnownExtension: boolean;
@@ -26,6 +27,7 @@ interface ReadFetchState {
   isPrefixInvalidated: boolean;
   isReleaseInvalidated: boolean | undefined;
   skipPersistentCaches: boolean;
+  effectiveContentContext: ResolvedContentContext | null;
 }
 
 interface BuildReadFetchStateOptions {
@@ -33,6 +35,8 @@ interface BuildReadFetchStateOptions {
   contentContext: ResolvedContentContext | null;
   contextProvider?: ReadContextProviderLike;
   getOriginalApiPath?: (path: string) => string;
+  requestBranch?: string | null;
+  cacheVariant?: string;
 }
 
 export function assertProjectSourcePath(normalizedPath: string): void {
@@ -45,13 +49,26 @@ export function assertProjectSourcePath(normalizedPath: string): void {
 }
 
 export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFetchState {
-  const { normalizedPath, contentContext, contextProvider, getOriginalApiPath } = options;
+  const {
+    normalizedPath,
+    contentContext,
+    contextProvider,
+    getOriginalApiPath,
+    requestBranch,
+    cacheVariant,
+  } = options;
 
   const apiPath = getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
-  const cacheKeyPrefix = buildFileCacheKeyPrefix(contentContext);
-  const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
+  const effectiveContentContext = contentContext?.sourceType === "branch" && requestBranch
+    ? { ...contentContext, branch: requestBranch }
+    : contentContext;
+  const cacheKeyPrefix = buildFileCacheKeyPrefix(effectiveContentContext);
+  const scopedCacheKeyPrefix = cacheVariant
+    ? `${cacheKeyPrefix}|${cacheVariant.length}:${cacheVariant}`
+    : cacheKeyPrefix;
+  const cacheKey = `${scopedCacheKeyPrefix}:${normalizedPath}`;
   const isProduction = contextProvider?.isProductionMode() ?? false;
-  const releaseId = contentContext?.releaseId;
+  const releaseId = effectiveContentContext?.releaseId;
   const isPrefixInvalidated = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ??
     false;
   const isReleaseInvalidated = isProduction && releaseId
@@ -61,15 +78,17 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
   return {
     apiPath,
     cacheKeyPrefix,
+    scopedCacheKeyPrefix,
     cacheKey,
     isProduction,
     hasKnownExtension: READ_OPERATION_EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext)),
-    isPreviewMode: contentContext?.sourceType === "branch",
-    isPublished: contentContext?.sourceType !== "branch",
+    isPreviewMode: effectiveContentContext?.sourceType === "branch",
+    isPublished: effectiveContentContext?.sourceType !== "branch",
     releaseId,
     isPrefixInvalidated,
     isReleaseInvalidated,
     skipPersistentCaches: !!(isPrefixInvalidated || isReleaseInvalidated),
+    effectiveContentContext,
   };
 }
 

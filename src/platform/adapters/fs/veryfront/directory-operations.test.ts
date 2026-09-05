@@ -2,9 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileCache } from "../cache/file-cache.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildDirCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
 
 describe("DirectoryOperations", () => {
   it("should export DirectoryOperations class", () => {
@@ -163,6 +164,153 @@ describe("DirectoryOperations", () => {
         ["added.tsx", "index.tsx"],
         "clearing the cache must let the new listing through",
       );
+    });
+
+    it("bypasses stale directory state while its branch cache is being cleared", async () => {
+      let files = [{ path: "stale.ts" }];
+      let invalidated = false;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => Promise.resolve(files),
+          listPublishedFiles: () => Promise.resolve(files),
+        } as any,
+        cache,
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          getFileList: () => Promise.resolve(files),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+      );
+
+      assertEquals((await dirOps.readdir("")).map((entry) => entry.name), ["stale.ts"]);
+      files = [{ path: "fresh.ts" }];
+      invalidated = true;
+
+      assertEquals(
+        (await dirOps.readdir("")).map((entry) => entry.name),
+        ["fresh.ts"],
+      );
+      assertEquals(
+        cache.get<Array<{ name: string }>>(`${buildDirCacheKeyPrefix(contentContext)}:`)?.map(
+          (entry) => entry.name,
+        ),
+        ["stale.ts"],
+        "a read during invalidation must not repopulate the persistent directory cache",
+      );
+    });
+
+    it("scopes directory trees to the request authority", async () => {
+      let listCalls = 0;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => {
+            listCalls++;
+            return Promise.resolve([{ path: `${getCurrentRequestContext()?.token}.ts` }]);
+          },
+          listPublishedFiles: () => Promise.resolve([]),
+        } as any,
+        new FileCache({ enabled: false, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      const tokenA = await runWithRequestContext(
+        { projectSlug: "test-project", token: "token-a", branch: "main" },
+        () => dirOps.readdir(""),
+      );
+      const tokenB = await runWithRequestContext(
+        { projectSlug: "test-project", token: "token-b", branch: "main" },
+        () => dirOps.readdir(""),
+      );
+
+      assertEquals(tokenA.map((entry) => entry.name), ["token-a.ts"]);
+      assertEquals(tokenB.map((entry) => entry.name), ["token-b.ts"]);
+      assertEquals(listCalls, 2);
+    });
+
+    it("does not publish a directory cache entry after its generation is cleared", async () => {
+      const listing = Promise.withResolvers<Array<{ path: string }>>();
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const contextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => null,
+        getFileList: () => listing.promise,
+      };
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => Promise.resolve([]),
+          listPublishedFiles: () => Promise.resolve([]),
+        } as any,
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+      );
+
+      const pending = dirOps.readdir("");
+      await Promise.resolve();
+      dirOps.clearTree();
+      listing.resolve([{ path: "stale.ts" }]);
+
+      assertEquals((await pending).map((entry) => entry.name), ["stale.ts"]);
+      assertEquals(cache.get(`${buildDirCacheKeyPrefix(null)}:`), undefined);
+    });
+
+    it("rebuilds a same-scope waiter after an in-flight tree is cleared", async () => {
+      const firstListing = Promise.withResolvers<Array<{ path: string }>>();
+      let listingCalls = 0;
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => Promise.resolve([]),
+          listPublishedFiles: () => Promise.resolve([]),
+        } as any,
+        new FileCache({ enabled: false, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => null,
+          getFileList: () => {
+            listingCalls++;
+            return listingCalls === 1
+              ? firstListing.promise
+              : Promise.resolve([{ path: "new.ts" }]);
+          },
+        },
+      );
+
+      const oldRead = dirOps.readdir("");
+      await Promise.resolve();
+      dirOps.clearTree();
+      const newRead = dirOps.readdir("");
+      firstListing.resolve([{ path: "old.ts" }]);
+
+      assertEquals((await oldRead).map((entry) => entry.name), ["old.ts"]);
+      assertEquals((await newRead).map((entry) => entry.name), ["new.ts"]);
+      assertEquals(listingCalls, 2);
     });
 
     it("should clear tree on clearTree call", async () => {

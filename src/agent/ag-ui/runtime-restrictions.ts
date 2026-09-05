@@ -1,0 +1,420 @@
+import type {
+  AgentConfig,
+  AgentMcpServerConfig,
+  AgentMcpToolPolicy,
+} from "#veryfront/agent/types.ts";
+import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "#veryfront/agent/runtime/agent-delegation-names.ts";
+import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
+import { DEFAULT_MAX_STEPS } from "#veryfront/agent/runtime/constants.ts";
+import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import {
+  resolveRuntimeToolLoading,
+  type RuntimeToolFilterConfig,
+} from "#veryfront/agent/runtime/runtime-tool-config.ts";
+
+const SKILL_LOADER_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
+
+// The full skill infrastructure family the factory injects whenever skills stay
+// enabled. Kept as a local literal so this security boundary cannot be widened
+// by mutating the public `SKILL_TOOL_IDS` compatibility set.
+const SKILL_INFRASTRUCTURE_TOOL_NAMES = [
+  "load_skill",
+  "load_skill_reference",
+  "execute_skill_script",
+] as const;
+
+// Reflection intrinsics captured at module evaluation, before any project
+// module loaded for a local eval can run in this realm and replace them. The
+// intersection below invokes only these captured references plus syntax-level
+// operations (index loops, property access, object literals and spreads), so
+// replacing globals or prototype methods such as `Object.entries`,
+// `Object.fromEntries`, `Set.prototype.has`, `Array.prototype.filter`, or the
+// iteration protocol cannot preserve or inject a denied tool.
+const ObjectKeys = Object.keys;
+const createNullPrototypeObject = Object.create;
+const reflectApply = Reflect.apply;
+const mapForEach = Map.prototype.forEach;
+
+/** Name allowlist as a null-prototype lookup so `Object.prototype` names never read as allowlisted. */
+type ToolNameLookup = Record<string, true>;
+
+function toToolNameLookup(names: readonly string[]): ToolNameLookup {
+  const lookup = createNullPrototypeObject(null) as ToolNameLookup;
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (name === undefined) continue;
+    lookup[name] = true;
+  }
+  return lookup;
+}
+
+function filterAllowedNames(
+  names: readonly string[],
+  allowedTools: ToolNameLookup,
+  toolNamePrefix = "",
+): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    if (name === undefined) continue;
+    if (allowedTools[toolNamePrefix + name] === true) {
+      kept[kept.length] = name;
+    }
+  }
+  return kept;
+}
+
+function restrictConfiguredMcpServers(
+  servers: readonly AgentMcpServerConfig[] | undefined,
+  allowedToolNames: readonly string[],
+): AgentMcpServerConfig[] {
+  if (servers === undefined) return [];
+  const restricted: AgentMcpServerConfig[] = [];
+  for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+    const server = servers[serverIndex];
+    if (server === undefined) continue;
+    const policy: AgentMcpToolPolicy = { ...(server.toolPolicy ?? {}) };
+    const allowedByServer = policy.allow === undefined ? undefined : toToolNameLookup(policy.allow);
+    const deniedByServer = policy.deny === undefined ? undefined : toToolNameLookup(policy.deny);
+    const allow: string[] = [];
+    for (let toolIndex = 0; toolIndex < allowedToolNames.length; toolIndex++) {
+      const toolName = allowedToolNames[toolIndex];
+      if (
+        toolName !== undefined &&
+        toolName !== INVOKE_AGENT_TOOL_ID &&
+        (allowedByServer === undefined || allowedByServer[toolName] === true) &&
+        deniedByServer?.[toolName] !== true
+      ) {
+        allow[allow.length] = toolName;
+      }
+    }
+    policy.allow = allow;
+    restricted[restricted.length] = { ...server, toolPolicy: policy };
+  }
+  return restricted;
+}
+
+function getConfiguredMcpToolNames(
+  servers: readonly AgentMcpServerConfig[] | undefined,
+  allowedToolNames: readonly string[],
+): ToolNameLookup {
+  const configured = createNullPrototypeObject(null) as ToolNameLookup;
+  if (servers === undefined) return configured;
+  for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+    const server = servers[serverIndex];
+    if (server === undefined) continue;
+    // Every entry here is an explicitly configured source. Its discovered
+    // catalog remains a candidate and the run allowlist is stamped into the
+    // retained policy below, including policy-free first-party sources.
+    const allowedByServer = server.toolPolicy?.allow === undefined
+      ? undefined
+      : toToolNameLookup(server.toolPolicy.allow);
+    const deniedByServer = server.toolPolicy?.deny === undefined
+      ? undefined
+      : toToolNameLookup(server.toolPolicy.deny);
+    for (let toolIndex = 0; toolIndex < allowedToolNames.length; toolIndex++) {
+      const toolName = allowedToolNames[toolIndex];
+      if (
+        toolName !== undefined &&
+        toolName !== INVOKE_AGENT_TOOL_ID &&
+        (allowedByServer === undefined || allowedByServer[toolName] === true) &&
+        deniedByServer?.[toolName] !== true
+      ) {
+        configured[toolName] = true;
+      }
+    }
+  }
+  return configured;
+}
+
+/**
+ * Ceiling a trusted server caller applies to one AG-UI run.
+ *
+ * The caller owns these values (a control-plane eval run resolves them before
+ * dispatch), so they narrow the agent for that run only. A request body never
+ * supplies them directly, and they can never widen the agent's configuration.
+ */
+export interface AgUiRuntimeRestrictions {
+  /** Tool names the run may use. An empty list authorizes no tools at all. */
+  allowedTools?: string[];
+  /** Upper bound on agent loop steps. It never raises a configured bound. */
+  maxSteps?: number;
+}
+
+/** Whether a restriction set narrows anything. */
+export function hasAgUiRuntimeRestrictions(
+  restrictions: AgUiRuntimeRestrictions | undefined,
+): restrictions is AgUiRuntimeRestrictions {
+  return restrictions !== undefined &&
+    (restrictions.allowedTools !== undefined || restrictions.maxSteps !== undefined);
+}
+
+function restrictConfiguredTools(
+  tools: AgentConfig["tools"],
+  allowedToolNames: readonly string[],
+  allowedTools: ToolNameLookup,
+  providerToolNames: ToolNameLookup,
+  visibleLocalTools: ToolNameLookup,
+  sourceAgentId: string | undefined,
+): AgentConfig["tools"] {
+  if (tools === undefined) return undefined;
+  if (tools === true) {
+    // `true` authorizes the whole scoped catalog. An explicit allowlist replaces
+    // it with registry lookups for exactly the allowlisted names.
+    //
+    // Provider-native tools stay out of this selector: the runtime resolves
+    // every `true` entry against the local and remote tool registries and
+    // throws `Unknown tool reference` for a name that only exists as a
+    // provider-native definition. Those names travel in `providerTools` alone.
+    const selected: Exclude<AgentConfig["tools"], true | undefined> = {};
+    for (let index = 0; index < allowedToolNames.length; index++) {
+      const toolName = allowedToolNames[index];
+      if (toolName === undefined) continue;
+      if (
+        providerToolNames[toolName] !== true &&
+        visibleLocalTools[toolName] === true
+      ) {
+        if (toolName === INVOKE_AGENT_TOOL_ID && visibleLocalTools[toolName] === true) {
+          const localTool = resolveVisibleLocalTool(toolName, sourceAgentId);
+          if (localTool) selected[toolName] = localTool;
+        } else {
+          selected[toolName] = true;
+        }
+      }
+    }
+    return selected;
+  }
+  const intersected: Exclude<AgentConfig["tools"], true | undefined> = {};
+  const configuredToolNames = ObjectKeys(tools);
+  for (let index = 0; index < configuredToolNames.length; index++) {
+    const toolName = configuredToolNames[index];
+    if (toolName === undefined) continue;
+    const configuredTool = tools[toolName];
+    const canonicalRemoteName = getRemoteToolProvenance(configuredTool);
+    if (
+      configuredTool !== undefined &&
+      (allowedTools[toolName] === true ||
+        (canonicalRemoteName !== undefined && allowedTools[canonicalRemoteName] === true))
+    ) {
+      intersected[toolName] = configuredTool;
+    }
+  }
+  return intersected;
+}
+
+function getVisibleLocalToolNames(agentId: string | undefined): ToolNameLookup {
+  const visible = createNullPrototypeObject(null) as ToolNameLookup;
+  const addVisible = (tool: ReturnType<typeof toolRegistry.get>, name: string): void => {
+    if (!tool || !isToolVisibleTo(tool, { agentId })) return;
+    visible[name] = true;
+    if (
+      agentId !== undefined && tool.ownerAgentId === agentId &&
+      typeof tool.shortName === "string" && tool.shortName.length > 0
+    ) {
+      visible[tool.shortName] = true;
+    }
+  };
+  reflectApply(mapForEach, toolRegistry.getAll(), [addVisible]);
+  return visible;
+}
+
+function resolveVisibleLocalTool(name: string, agentId: string | undefined) {
+  const exact = toolRegistry.get(name);
+  if (exact && isToolVisibleTo(exact, { agentId })) return exact;
+  if (agentId === undefined) return undefined;
+  let matched: typeof exact;
+  reflectApply(mapForEach, toolRegistry.getAll(), [
+    (tool: NonNullable<typeof exact>) => {
+      if (
+        matched === undefined && tool.ownerAgentId === agentId && tool.shortName === name &&
+        isToolVisibleTo(tool, { agentId })
+      ) matched = tool;
+    },
+  ]);
+  return matched;
+}
+
+function getRetainedRemoteToolNames(
+  tools: AgentConfig["tools"],
+  visibleLocalTools: ToolNameLookup,
+  providerToolNames: ToolNameLookup,
+): string[] {
+  if (tools === undefined || tools === true) return [];
+  const names: string[] = [];
+  const seen = createNullPrototypeObject(null) as ToolNameLookup;
+  const toolNames = ObjectKeys(tools);
+  for (let index = 0; index < toolNames.length; index++) {
+    const toolName = toolNames[index];
+    if (toolName === undefined) continue;
+    const canonicalName = getRemoteToolProvenance(tools[toolName]);
+    const retainedName = canonicalName ??
+      (tools[toolName] === true && visibleLocalTools[toolName] !== true &&
+          providerToolNames[toolName] !== true
+        ? toolName
+        : undefined);
+    if (retainedName !== undefined && seen[retainedName] !== true) {
+      seen[retainedName] = true;
+      names[names.length] = retainedName;
+    }
+  }
+  return names;
+}
+
+/**
+ * Narrow an agent configuration to a restriction ceiling.
+ *
+ * Every branch only removes capability: tools, provider tools, and delegates
+ * are intersected with the allowlist, and the step bound keeps the lower of
+ * the requested value and the configured bound (or the runtime default when
+ * the agent configures none).
+ */
+export function applyAgUiRuntimeRestrictions(
+  config: AgentConfig,
+  restrictions: AgUiRuntimeRestrictions,
+): AgentConfig {
+  return applyAgUiRuntimeRestrictionsForModel(config, restrictions);
+}
+
+/** @internal Apply a ceiling using the effective request model for provider collisions. */
+export function applyAgUiRuntimeRestrictionsForModel(
+  config: AgentConfig,
+  restrictions: AgUiRuntimeRestrictions,
+  modelOverride?: string,
+  sourceAgentId: string | undefined = config.id,
+): AgentConfig {
+  const restricted: AgentConfig = { ...config };
+
+  if (restrictions.maxSteps !== undefined) {
+    // An agent that configures no bound still runs at the runtime default, so
+    // the ceiling intersects with that effective bound too. A restriction can
+    // narrow the default but never raise it.
+    const configuredMaxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
+    restricted.maxSteps = restrictions.maxSteps < configuredMaxSteps
+      ? restrictions.maxSteps
+      : configuredMaxSteps;
+    // `computeMaxSteps` prefers an enabled edge limit over the top-level
+    // bound, so narrow that limit too -- otherwise an edge-enabled agent
+    // would run its full edge step budget past the ceiling.
+    if (config.edge?.enabled && config.edge.maxSteps !== undefined) {
+      restricted.edge = {
+        ...config.edge,
+        maxSteps: restrictions.maxSteps < config.edge.maxSteps
+          ? restrictions.maxSteps
+          : config.edge.maxSteps,
+      };
+    }
+  }
+
+  if (restrictions.allowedTools === undefined) {
+    return restricted;
+  }
+
+  const allowedToolNames = restrictions.allowedTools;
+  const allowedTools = toToolNameLookup(allowedToolNames);
+  const supportedProviderTools = toToolNameLookup(getProviderNativeToolNames({
+    model: modelOverride ?? config.model,
+  }));
+  const configuredProviderToolNames = config.providerTools === undefined
+    ? []
+    : filterAllowedNames(config.providerTools, supportedProviderTools);
+  const providerToolNames = toToolNameLookup(configuredProviderToolNames);
+  const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
+  const configuredMcpTools = config.tools === true
+    ? getConfiguredMcpToolNames(config.mcpServers, allowedToolNames)
+    : createNullPrototypeObject(null) as ToolNameLookup;
+  restricted.tools = restrictConfiguredTools(
+    config.tools,
+    allowedToolNames,
+    allowedTools,
+    providerToolNames,
+    visibleLocalTools,
+    sourceAgentId,
+  );
+  if (config.tools === true) {
+    // Replacing the authored `tools: true` selector with an explicit map would
+    // flip `resolveRuntimeToolLoading` from deferred to eager, sending every
+    // allowlisted schema on the first provider call instead of exposing
+    // `tool_search`. Pin the source configuration's resolved mode so the
+    // intersection only narrows which tools exist, never how they load.
+    (restricted as RuntimeToolFilterConfig).__vfToolLoadingMode =
+      resolveRuntimeToolLoading(config).mode;
+  }
+  restricted.providerTools = config.providerTools === undefined
+    ? undefined
+    : filterAllowedNames(config.providerTools, allowedTools);
+  restricted.delegates = config.delegates === undefined
+    ? undefined
+    : filterAllowedNames(config.delegates, allowedTools, AGENT_DELEGATE_TOOL_PREFIX);
+  // Preserve explicitly configured MCP sources, but stamp the run allowlist
+  // into every server policy before the rebuilt agent can connect. The list
+  // stays explicitly empty when no source was configured: an absent
+  // `mcpServers` makes `getRuntimeRemoteToolSources` treat allowlisted boolean
+  // tool references that no local registry resolves as a request for an
+  // implicit Veryfront API MCP server, and it lets ambient runtime remote
+  // sources be inherited. Injected remote-source fields are cleared for the
+  // same reason.
+  const remoteToolConfig = restricted as AgentConfig & RuntimeRemoteToolConfig;
+  remoteToolConfig.__vfRemoteToolSources = [];
+  const retainedRemoteToolNames = getRetainedRemoteToolNames(
+    restricted.tools,
+    visibleLocalTools,
+    providerToolNames,
+  );
+  const retainedRemoteToolLookup = toToolNameLookup(retainedRemoteToolNames);
+  for (let index = 0; index < allowedToolNames.length; index++) {
+    const toolName = allowedToolNames[index];
+    const configuredTool = config.tools === true || config.tools === undefined ||
+        toolName === undefined
+      ? undefined
+      : config.tools[toolName];
+    const configuredConcreteLocalTool = typeof configuredTool === "object" &&
+      configuredTool !== null && getRemoteToolProvenance(configuredTool) === undefined;
+    if (
+      config.tools === true && toolName !== undefined && configuredMcpTools[toolName] === true &&
+      visibleLocalTools[toolName] !== true && providerToolNames[toolName] !== true &&
+      !configuredConcreteLocalTool &&
+      retainedRemoteToolLookup[toolName] !== true
+    ) {
+      retainedRemoteToolLookup[toolName] = true;
+      retainedRemoteToolNames[retainedRemoteToolNames.length] = toolName;
+    }
+  }
+  restricted.mcpServers = retainedRemoteToolNames.length === 0
+    ? []
+    : restrictConfiguredMcpServers(config.mcpServers, retainedRemoteToolNames);
+  remoteToolConfig.__vfAllowedRemoteTools = retainedRemoteToolNames;
+  // Skills reach further instructions and tools through the skill loader, so
+  // they stay out unless the loader itself is allowlisted.
+  let skillLoaderAllowed = false;
+  for (let index = 0; index < SKILL_LOADER_TOOL_NAMES.length; index++) {
+    const loaderToolName = SKILL_LOADER_TOOL_NAMES[index];
+    if (loaderToolName !== undefined && allowedTools[loaderToolName] === true) {
+      skillLoaderAllowed = true;
+      break;
+    }
+  }
+  if (!skillLoaderAllowed) {
+    restricted.skills = false;
+  } else {
+    // With skills enabled, the factory injects the whole skill infrastructure
+    // family into the rebuilt agent's tool map unless an entry is explicitly
+    // `false`. The intersection above only removes names, so stamp an explicit
+    // `false` for every family member outside the allowlist -- otherwise a
+    // ceiling naming only `load_skill` would also grant `execute_skill_script`.
+    const tools = restricted.tools === undefined || restricted.tools === true
+      ? {}
+      : { ...restricted.tools };
+    for (let index = 0; index < SKILL_INFRASTRUCTURE_TOOL_NAMES.length; index++) {
+      const toolName = SKILL_INFRASTRUCTURE_TOOL_NAMES[index];
+      if (toolName !== undefined && allowedTools[toolName] !== true) {
+        tools[toolName] = false;
+      }
+    }
+    restricted.tools = tools;
+  }
+
+  return restricted;
+}

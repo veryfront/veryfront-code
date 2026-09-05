@@ -2,7 +2,8 @@ import { env } from "#cli/process-env";
 import { createFileSystem, getEnv } from "veryfront/platform";
 import { runCommand } from "#cli/process-command";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
-import { join, relative } from "veryfront/platform/path";
+import { dirname, isAbsolute, join, relative } from "veryfront/platform/path";
+import { DEPLOYMENT_ERROR } from "veryfront/errors";
 import type { ApiClient } from "./config.ts";
 
 const RECEIPT_VERSION = 2 as const;
@@ -25,6 +26,20 @@ export interface PushReceipt {
   branch: string;
   commitSha: string | null;
   sourceDigest: string;
+  /**
+   * Digest of the local file set the push uploaded, before the remote tree it
+   * produced folded in any preserved remote-only file.
+   *
+   * `sourceDigest` describes that remote tree, so it cannot be recomputed from
+   * this directory. This one can: recomputing it is direct evidence about
+   * whether the source still matches the upload, and unlike {@link clean} it
+   * does not inherit Git's blind spot for a file `.gitignore` hides while
+   * `.vfignore` does not. Optional so a receipt written by an earlier CLI still
+   * loads and falls back to the Git observation.
+   */
+  localSourceDigest?: string;
+  /** Repo-relative source paths included in the local file set for this push. */
+  localPaths?: string[];
   clean: boolean;
   pushedAt: string;
 }
@@ -32,6 +47,10 @@ export interface PushReceipt {
 export interface GitSource {
   commitSha: string | null;
   clean: boolean;
+  /** Whether the directory is inside a Git working tree, including an unborn one. */
+  repositoryAvailable?: boolean;
+  /** Git or CI provided contradictory or unreadable provenance evidence. */
+  indeterminate?: boolean;
 }
 
 export interface ProjectTarget {
@@ -45,7 +64,30 @@ interface PushReceiptExpectation {
   projectSlug: string;
   branch: string;
   commitSha?: string | null;
-  clean?: boolean;
+  /** Whether the local checkout is clean right now, from {@link resolveGitSource}. */
+  clean: boolean;
+  /**
+   * Digest of the file set `veryfront push` would upload from this directory
+   * right now, or `null` when the directory could not be scanned.
+   *
+   * Where the receipt carries one too, this settles whether the source still
+   * matches the upload and {@link clean} is not consulted. Anything but a
+   * digest is a refusal there: the proof that receipt promises cannot be
+   * recomputed, so the deploy fails closed instead of quietly dropping back to
+   * the weaker Git observation, and a caller that omits the field entirely
+   * fails closed the same way rather than opting out of the check.
+   */
+  localSourceDigest?: string | null;
+  /**
+   * Whether a clean receipt has to be backed by a clean checkout.
+   *
+   * Only an operation that owns the local source can read the working tree as
+   * evidence about the upload. Promoting a project named by slug never uploads
+   * this directory, so its edits say nothing about what was pushed and must not
+   * refuse the promotion. Omitting this enforces the check, so a caller that
+   * forgets it fails closed; `clean` still reports what was observed either way.
+   */
+  enforceClean?: boolean;
 }
 
 function receiptPath(projectDir: string): string {
@@ -113,6 +155,13 @@ function isPushReceipt(value: unknown): value is PushReceipt {
       (typeof receipt.commitSha === "string" && COMMIT_SHA_PATTERN.test(receipt.commitSha))) &&
     typeof receipt.sourceDigest === "string" &&
     SOURCE_DIGEST_PATTERN.test(receipt.sourceDigest) &&
+    (receipt.localSourceDigest === undefined ||
+      (typeof receipt.localSourceDigest === "string" &&
+        SOURCE_DIGEST_PATTERN.test(receipt.localSourceDigest))) &&
+    (receipt.localPaths === undefined ||
+      (Array.isArray(receipt.localPaths) &&
+        receipt.localPaths.every((path) => typeof path === "string" && path.length > 0) &&
+        new Set(receipt.localPaths).size === receipt.localPaths.length)) &&
     typeof receipt.clean === "boolean" &&
     typeof receipt.pushedAt === "string";
 }
@@ -140,12 +189,172 @@ export function getProjectTarget(
   return client.get<ProjectTarget>(`/projects/${projectReference}`);
 }
 
-export async function resolveGitSource(projectDir: string): Promise<GitSource> {
-  const envSha = getEnv("GITHUB_SHA")?.trim();
+function gitCommandEnvironment(): Record<string, string> {
   const gitEnv = env();
   for (const key of Object.keys(gitEnv)) {
     if (key.startsWith("GIT_")) delete gitEnv[key];
   }
+  return gitEnv;
+}
+
+function normalizeCommitSha(value: string | undefined): string | null {
+  return value && COMMIT_SHA_PATTERN.test(value) ? value.toLowerCase() : null;
+}
+
+type GitCommandResult = Awaited<ReturnType<typeof runCommand>>;
+
+function remoteMatchesGitHubRepository(remote: GitCommandResult | null): boolean {
+  if (!remote?.success) return false;
+  const repository = getEnv("GITHUB_REPOSITORY")?.trim();
+  const server = getEnv("GITHUB_SERVER_URL")?.trim() || "https://github.com";
+  const remoteUrl = remote.stdout?.trim();
+  if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !remoteUrl) {
+    return false;
+  }
+
+  let hostname: string;
+  let pathname: string;
+  const scpRemote = remoteUrl.includes("://")
+    ? null
+    : /^(?:[^@/:]+@)?([^/:]+):(.+)$/.exec(remoteUrl);
+  if (scpRemote) {
+    hostname = scpRemote[1]!;
+    pathname = scpRemote[2]!;
+  } else {
+    try {
+      const parsed = new URL(remoteUrl);
+      if (!parsed.hostname) return false;
+      hostname = parsed.hostname;
+      pathname = parsed.pathname;
+    } catch {
+      return false;
+    }
+  }
+
+  let serverHostname: string;
+  try {
+    serverHostname = new URL(server).hostname;
+  } catch {
+    return false;
+  }
+  const normalizedPath = pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+  return hostname.toLowerCase() === serverHostname.toLowerCase() &&
+    normalizedPath.toLowerCase() === repository.toLowerCase();
+}
+
+function gitSourcesAgree(
+  repositoryAvailable: boolean,
+  envSha: string | undefined,
+  normalizedEnvSha: string | null,
+  normalizedHeadSha: string | null,
+): boolean {
+  if (!repositoryAvailable || envSha === undefined) return true;
+  return normalizedEnvSha !== null &&
+    (normalizedHeadSha === null || normalizedEnvSha === normalizedHeadSha);
+}
+
+function gitProbesAreIndeterminate(
+  head: GitCommandResult,
+  status: GitCommandResult,
+  normalizedHeadSha: string | null,
+  gitMetadataPresent: boolean,
+  envShaDescribesCheckout: boolean,
+): boolean {
+  if (head.success && normalizedHeadSha === null) return true;
+  if (head.success && !status.success) return true;
+  if (!head.success && !status.success && gitMetadataPresent) return true;
+  return !head.success && envShaDescribesCheckout;
+}
+
+async function gitSourceFromProbes(
+  projectDir: string,
+  envSha: string | undefined,
+  head: GitCommandResult,
+  status: GitCommandResult,
+  repositoryRoot: GitCommandResult,
+  remote: GitCommandResult | null,
+): Promise<GitSource> {
+  const workspace = getEnv("GITHUB_WORKSPACE")?.trim();
+  const root = repositoryRoot.success ? repositoryRoot.stdout?.trim() : undefined;
+  let repositoryEnvSha: string | undefined;
+  if (envSha !== undefined && workspace && root) {
+    try {
+      const [canonicalWorkspace, canonicalRoot] = await Promise.all([
+        realPath(workspace),
+        realPath(root),
+      ]);
+      const workspaceRelativeRoot = relative(canonicalWorkspace, canonicalRoot);
+      const insideWorkspace = workspaceRelativeRoot === "." ||
+        (workspaceRelativeRoot !== ".." &&
+          !workspaceRelativeRoot.startsWith("../") &&
+          !isAbsolute(workspaceRelativeRoot));
+      const workspaceIsCheckout = await lstatIfPresent(join(canonicalWorkspace, ".git")) !== null;
+      if (
+        canonicalWorkspace === canonicalRoot ||
+        (insideWorkspace && !workspaceIsCheckout && remoteMatchesGitHubRepository(remote))
+      ) {
+        repositoryEnvSha = envSha;
+      }
+    } catch {
+      // Without a verified checkout boundary, GITHUB_SHA is not evidence about
+      // this repository. The locally resolved HEAD remains authoritative.
+    }
+  }
+  const normalizedEnvSha = normalizeCommitSha(repositoryEnvSha);
+  const normalizedHeadSha = normalizeCommitSha(head.success ? head.stdout?.trim() : undefined);
+  const gitMetadataPresent = !head.success && !status.success
+    ? await hasGitMetadata(projectDir)
+    : false;
+  const repositoryAvailable = head.success || status.success || gitMetadataPresent;
+  const envShaDescribesCheckout = repositoryAvailable && repositoryEnvSha !== undefined;
+  const sourcesAgree = gitSourcesAgree(
+    repositoryAvailable,
+    repositoryEnvSha,
+    normalizedEnvSha,
+    normalizedHeadSha,
+  );
+  const indeterminate = !sourcesAgree || gitProbesAreIndeterminate(
+    head,
+    status,
+    normalizedHeadSha,
+    gitMetadataPresent,
+    envShaDescribesCheckout,
+  );
+  const commitSha = indeterminate || !repositoryAvailable
+    ? null
+    : normalizedEnvSha ?? normalizedHeadSha;
+  return {
+    commitSha,
+    clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
+    repositoryAvailable,
+    ...(indeterminate ? { indeterminate: true } : {}),
+  };
+}
+
+async function hasGitMetadata(projectDir: string): Promise<boolean> {
+  let current: string;
+  try {
+    current = await realPath(projectDir);
+  } catch {
+    return true;
+  }
+
+  while (true) {
+    try {
+      await lstat(join(current, ".git"));
+      return true;
+    } catch (error) {
+      if (!isNotFoundError(error)) return true;
+    }
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+export async function resolveGitSource(projectDir: string): Promise<GitSource> {
+  const envSha = getEnv("GITHUB_SHA")?.trim();
+  const gitEnv = gitCommandEnvironment();
   let commandResults;
   try {
     commandResults = await Promise.all([
@@ -158,7 +367,49 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
         timeoutMs: 5_000,
       }),
       runCommand("git", {
-        args: ["status", "--porcelain=v1", "--untracked-files=all"],
+        // Ask Git to exclude CLI state before it formats porcelain paths.
+        // Porcelain v1 otherwise reports paths relative to the repository root,
+        // so parsing for a leading `.veryfront/` fails when projectDir is a
+        // nested monorepo package.
+        //
+        // The `.` pathspec that carries the exclusion also scopes cleanliness
+        // to projectDir. That is the honest reading for a nested package: only
+        // projectDir is uploaded, so an edit in a sibling package cannot change
+        // the pushed source and must not be reported as a source change. It
+        // narrows the flag every push receipt records, not just deploy's gate.
+        //
+        // Cleanliness stays a proxy for source equality, not a proof of it. A
+        // supported file that `.gitignore` hides but `.vfignore` and
+        // DEFAULT_IGNORE_PATTERNS do not (cli/sync/ignore.ts reads only
+        // `.vfignore`) is uploaded by push yet stays invisible here, so editing
+        // one leaves the checkout clean. `localSourceDigest` is the proof that
+        // closes that gap; this flag is provenance metadata and the fallback
+        // for receipts written before the digest existed.
+        args: [
+          "status",
+          "--porcelain=v1",
+          "--untracked-files=all",
+          "--",
+          ".",
+          ":(exclude).veryfront",
+          ":(exclude).veryfront/**",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+      runCommand("git", {
+        args: ["rev-parse", "--show-toplevel"],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+      envSha === undefined ? Promise.resolve(null) : runCommand("git", {
+        args: ["remote", "get-url", "origin"],
         cwd: projectDir,
         clearEnv: true,
         env: gitEnv,
@@ -167,30 +418,211 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
       }),
     ]);
   } catch {
+    const repositoryAvailable = await hasGitMetadata(projectDir);
     return {
-      commitSha: envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null,
+      commitSha: null,
       clean: false,
+      repositoryAvailable,
+      ...(repositoryAvailable ? { indeterminate: true } : {}),
     };
   }
 
-  const [head, status] = commandResults;
+  const [head, status, repositoryRoot, remote] = commandResults;
+  // A directory with no repository around it has no HEAD for an environment
+  // SHA to agree or disagree with: GITHUB_SHA names the checkout the process
+  // happens to run under, not this source. Reading it as evidence about this
+  // directory would refuse every push of a non-Git project from inside a CI
+  // job, so it is ignored here and the non-Git fallback below (no commit,
+  // digest-only provenance) stands, exactly as it does off CI. Nothing
+  // is vouched for either way: `commitSha` never adopts an environment SHA
+  // that no local commit confirmed.
+  // `git status` can succeed where `git rev-parse HEAD` cannot: an unborn
+  // repository, or a checkout that has lost its Git metadata. The helper
+  // keeps that case indeterminate so an environment SHA cannot stand in for a
+  // local commit that was never verified.
+  return await gitSourceFromProbes(
+    projectDir,
+    envSha,
+    head,
+    status,
+    repositoryRoot,
+    remote,
+  );
+}
 
-  const headSha = head.success ? head.stdout?.trim() : undefined;
-  const normalizedEnvSha = envSha && COMMIT_SHA_PATTERN.test(envSha) ? envSha.toLowerCase() : null;
-  const normalizedHeadSha = headSha && COMMIT_SHA_PATTERN.test(headSha)
-    ? headSha.toLowerCase()
-    : null;
-  const sourcesAgree = (!envSha || normalizedEnvSha !== null) &&
-    (!normalizedEnvSha || !normalizedHeadSha || normalizedEnvSha === normalizedHeadSha);
-  const commitSha = sourcesAgree ? normalizedEnvSha ?? normalizedHeadSha : null;
+/**
+ * Return tracked source paths deleted from the current checkout.
+ *
+ * Git only knows about deletions of files it tracks, so a file that was
+ * uploaded while untracked and then deleted locally is not listed and stays on
+ * the remote through a refresh push. The refresh is therefore a source update,
+ * not a full mirror; `veryfront push --prune` remains the way to reconcile
+ * remote-only files. The digest stays consistent either way, because the
+ * receipt records the remote tree the push produced.
+ */
+function deletedGitSourcePathsUnavailable(): Error {
+  return DEPLOYMENT_ERROR.create({
+    detail:
+      "Could not determine deleted Git source paths for the automatic source refresh. Run veryfront push, then retry the deploy.",
+  });
+}
 
+export interface DeletedGitSourcePaths {
+  /** Paths present in HEAD and absent from the working tree. */
+  head: string[];
+  /** Paths deleted only between the index and working tree. */
+  indexOnly: string[];
+}
+
+export async function resolveDeletedGitSourcePaths(
+  projectDir: string,
+): Promise<DeletedGitSourcePaths> {
+  const gitEnv = env();
+  for (const key of Object.keys(gitEnv)) {
+    if (key.startsWith("GIT_")) delete gitEnv[key];
+  }
+
+  let results;
+  try {
+    results = await Promise.all([
+      runCommand("git", {
+        args: [
+          "diff",
+          "--no-renames",
+          "--name-only",
+          "--diff-filter=D",
+          "-z",
+          "--relative",
+          "HEAD",
+          "--",
+          ".",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+      runCommand("git", {
+        // HEAD cannot see an index-only addition that was then deleted from
+        // the working tree (`AD`), so compare the index to the worktree too.
+        args: [
+          "diff",
+          "--no-renames",
+          "--name-only",
+          "--diff-filter=D",
+          "-z",
+          "--relative",
+          "--",
+          ".",
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      }),
+    ]);
+  } catch {
+    throw deletedGitSourcePathsUnavailable();
+  }
+  if (results.some((result) => !result.success)) {
+    throw deletedGitSourcePathsUnavailable();
+  }
+  const parsePaths = (stdout: string | undefined): string[] => [
+    ...new Set((stdout ?? "").split("\0").filter((path) => path.length > 0)),
+  ];
+  const head = parsePaths(results[0]?.stdout);
+  const headPaths = new Set(head);
   return {
-    commitSha,
-    clean: sourcesAgree && status.success &&
-      !(status.stdout ?? "").split("\n").some((line) =>
-        line !== "" && line !== `?? ${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME}`
-      ),
+    head,
+    indexOnly: parsePaths(results[1]?.stdout).filter((path) => !headPaths.has(path)),
   };
+}
+
+export async function resolveGitTrackedSourcePaths(
+  projectDir: string,
+  commitSha: string | null,
+  paths: readonly string[],
+): Promise<{ files: string[]; gitlinks: Record<string, string> }> {
+  if (commitSha === null || paths.length === 0) return { files: [], gitlinks: {} };
+  const gitEnv = gitCommandEnvironment();
+  let prefixResult: GitCommandResult;
+  try {
+    prefixResult = await runCommand("git", {
+      args: ["rev-parse", "--show-prefix"],
+      cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
+      capture: true,
+      timeoutMs: 5_000,
+    });
+  } catch {
+    throw deletedGitSourcePathsUnavailable();
+  }
+  if (!prefixResult.success) throw deletedGitSourcePathsUnavailable();
+  const projectPrefix = (prefixResult.stdout ?? "").replace(/\r?\n$/, "");
+  const files: string[] = [];
+  const gitlinks: Record<string, string> = {};
+  const uniquePaths = [...new Set(paths)];
+  for (let offset = 0; offset < uniquePaths.length; offset += 64) {
+    const candidates = uniquePaths.slice(offset, offset + 64);
+    const requested = new Set<string>();
+    for (const path of candidates) {
+      const repositoryPath = `${projectPrefix}${path}`;
+      requested.add(repositoryPath);
+      let separator = repositoryPath.lastIndexOf("/");
+      while (separator >= projectPrefix.length) {
+        requested.add(repositoryPath.slice(0, separator));
+        separator = repositoryPath.lastIndexOf("/", separator - 1);
+      }
+    }
+    let result: GitCommandResult;
+    try {
+      result = await runCommand("git", {
+        args: [
+          "ls-tree",
+          "--full-tree",
+          "-z",
+          commitSha,
+          "--",
+          ...[...requested].map((path) => `:(top,literal)${path}`),
+        ],
+        cwd: projectDir,
+        clearEnv: true,
+        env: gitEnv,
+        capture: true,
+        timeoutMs: 5_000,
+      });
+    } catch {
+      throw deletedGitSourcePathsUnavailable();
+    }
+    if (!result.success) throw deletedGitSourcePathsUnavailable();
+    const modes = new Map<string, string>();
+    for (const raw of (result.stdout ?? "").split("\0")) {
+      if (!raw) continue;
+      const match = /^([0-7]{6}) (?:blob|tree|commit) [0-9a-f]{40,64}\t([\s\S]+)$/.exec(raw);
+      if (!match) throw deletedGitSourcePathsUnavailable();
+      modes.set(match[2]!, match[1]!);
+    }
+    for (const path of candidates) {
+      const repositoryPath = `${projectPrefix}${path}`;
+      if (modes.get(repositoryPath)?.startsWith("100")) {
+        files.push(path);
+        continue;
+      }
+      let separator = repositoryPath.lastIndexOf("/");
+      while (separator >= projectPrefix.length) {
+        const ancestor = repositoryPath.slice(0, separator);
+        if (modes.get(ancestor) === "160000") {
+          gitlinks[path] = ancestor.slice(projectPrefix.length);
+          break;
+        }
+        separator = repositoryPath.lastIndexOf("/", separator - 1);
+      }
+    }
+  }
+  return { files, gitlinks };
 }
 
 export async function areSourceFilesTracked(
@@ -235,6 +667,13 @@ export async function writePushReceipt(
     ...receipt,
     controlPlane: normalizeControlPlane(receipt.controlPlane),
     commitSha: receipt.commitSha?.toLowerCase() ?? null,
+    ...(receipt.localPaths
+      ? {
+        localPaths: [...new Set(receipt.localPaths)].sort((left, right) =>
+          left.localeCompare(right)
+        ),
+      }
+      : {}),
     pushedAt: receipt.pushedAt ?? new Date().toISOString(),
   };
 
@@ -265,6 +704,67 @@ export async function clearPushReceipt(projectDir: string): Promise<void> {
   if (inspected.receiptExists) await fs.remove(path);
 }
 
+/**
+ * Refuse a receipt that no longer describes the source in this directory.
+ *
+ * The commit check alone cannot see edits that never reached a commit: they
+ * leave HEAD where the receipt left it. Two kinds of evidence close that gap,
+ * and the stronger one wins.
+ *
+ * A recomputed local source digest is a direct comparison of the file set push
+ * uploads, so it decides the question outright wherever the receipt carries one
+ * too. It sees exactly what push sees, including a file `.gitignore` hides
+ * while `.vfignore` does not, and it clears a working tree that is dirty only
+ * in files no push would upload. A receipt that carries a digest the directory
+ * cannot produce right now is refused rather than downgraded to the Git check:
+ * a directory too broken to scan is also too broken to prove anything.
+ *
+ * Git cleanliness is the fallback for receipts written before that digest
+ * existed. It is a proxy, not a proof: a receipt written from a clean checkout
+ * promises the pushed source was exactly that commit, so a tree that is no
+ * longer clean is provably not what was pushed, while a receipt that was
+ * already dirty proves nothing either way and keeps the push-then-deploy flow
+ * it has always had. That leaves one gap this check cannot close, by
+ * construction: a receipt from a pre-digest CLI carries no digest to compare,
+ * so an edit `.gitignore` hides while `.vfignore` does not stays invisible
+ * until the next `veryfront push` rewrites the receipt with a digest.
+ */
+function assertReceiptDescribesLocalSource(
+  receipt: PushReceipt,
+  expected: PushReceiptExpectation,
+): void {
+  if (receipt.commitSha && expected.commitSha === null) {
+    throw new Error(
+      "The latest push came from a Git commit, but this project no longer resolves to one. " +
+        "Restore the checkout or run veryfront push again from the current source.",
+    );
+  }
+  if (receipt.localSourceDigest !== undefined) {
+    if (expected.localSourceDigest === null || expected.localSourceDigest === undefined) {
+      throw new Error(
+        "Veryfront could not verify that this directory still holds the source the latest push uploaded. " +
+          "Run veryfront push again to deploy the current source.",
+      );
+    }
+    if (receipt.localSourceDigest === expected.localSourceDigest) return;
+    throw new Error(
+      "This directory no longer holds the source the latest push uploaded. " +
+        "Run veryfront push again to deploy the current source.",
+    );
+  }
+  if (!receipt.clean || expected.clean) return;
+  // With no current commit to name, "uncommitted changes" would misdescribe
+  // a project that is no longer a Git checkout at all; the refusal is the
+  // same, only the reason shown to the operator differs.
+  throw new Error(
+    expected.commitSha
+      ? "The latest push came from a clean checkout, but this project has uncommitted changes. " +
+        "Run veryfront push again to deploy them."
+      : "The latest push came from a clean checkout, but this project no longer resolves to a Git commit. " +
+        "Run veryfront push again to deploy the current source.",
+  );
+}
+
 export function validatePushReceipt(
   receipt: PushReceipt,
   expected: PushReceiptExpectation,
@@ -293,5 +793,6 @@ export function validatePushReceipt(
         : "The latest push has no Git commit SHA. Run veryfront push again from the checked-out commit.",
     );
   }
+  if (expected.enforceClean !== false) assertReceiptDescribesLocalSource(receipt, expected);
   return receipt.commitSha;
 }

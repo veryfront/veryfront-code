@@ -462,6 +462,8 @@ jobs:
   sonar:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    # Keep this legacy check name until the repository ruleset requires the
+    # canonical gate below. Removing it earlier would leave `sonar` expected.
     name: sonar
     needs: [coverage-shards]
     if: ${{ needs.coverage-shards.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
@@ -487,6 +489,22 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  sonar-quality-gate:
+    name: SonarQube Cloud quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [sonar]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
+    steps:
+      - name: Require server-side quality gate
+        env:
+          SONAR_RESULT: ${{ needs.sonar.result }}
+        run: |
+          if [ "$SONAR_RESULT" != "success" ]; then
+            echo "::error::Server-side SonarQube Cloud quality gate finished with $SONAR_RESULT"
+            exit 1
+          fi
 
   tests-e2e-rsc-browser:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -548,7 +566,7 @@ jobs:
       - tests-bun
       - tests-binary-e2e
       - tests-e2e-rsc-browser
-      - sonar
+      - sonar-quality-gate
     if: ${{ always() }}
     steps:
       - name: Require merge correctness dependencies
@@ -558,7 +576,7 @@ jobs:
           SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
-          SONAR_RESULT: ${{ needs.sonar.result }}
+          SONAR_RESULT: ${{ needs.sonar-quality-gate.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
           NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
           NODE_SANDBOX_TESTS_RESULT: ${{ needs.tests-node-sandbox.result }}

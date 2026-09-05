@@ -143,7 +143,7 @@ export function fetchFileListForContext(
 ): Promise<Array<{ path: string; content?: string }>> {
   switch (context.sourceType) {
     case "branch":
-      return client.listAllFiles();
+      return client.listAllFiles({}, { type: "branch", name: context.branch ?? "main" });
     case "environment":
       return context.releaseId
         ? client.listPublishedFiles(undefined, context.releaseId)

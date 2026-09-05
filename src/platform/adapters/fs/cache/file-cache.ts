@@ -23,6 +23,7 @@ import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront
 import {
   getCachedWithBatching,
   getRequestCacheContext,
+  parseRequestCachedValue,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
 import {
@@ -372,7 +373,11 @@ export class FileCache {
           // The backend will add its own namespace prefix, so we pass the key as-is
           const raw = await getCachedWithBatching(backend, key, observeReadAuthority);
           if (raw) {
-            const entry = JSON.parse(raw) as CacheEntry<T>;
+            const entry = parseRequestCachedValue(
+              key,
+              raw,
+              (value) => JSON.parse(value) as CacheEntry<T>,
+            );
             if (useL1 && l1 && readToken) {
               const admissionScope = observeReadAuthority === undefined
                 ? l1Scope

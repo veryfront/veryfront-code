@@ -7,6 +7,8 @@ import { FileCache } from "../cache/file-cache.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
+import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
+import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
 
 function createMockClient(overrides: Record<string, unknown> = {}): VeryfrontApiClient {
   return {
@@ -164,9 +166,11 @@ describe("StatOperations", () => {
 
     it("should recover a file missing from a stale index via API search", async () => {
       let searchCalls = 0;
+      let searchedBranch: string | undefined;
       const client = createMockClient({
-        searchFiles: (pattern: string) => {
+        searchFiles: (pattern: string, context?: { type: "branch"; name: string }) => {
           searchCalls++;
+          searchedBranch = context?.name;
           return Promise.resolve(
             pattern === "components/Late.tsx"
               ? [{ id: "late-1", path: "components/Late.tsx" }]
@@ -192,6 +196,7 @@ describe("StatOperations", () => {
       );
       assertEquals(info.isDirectory, false, "the recovered entry is a file, not a directory");
       assertEquals(searchCalls, 1, "the stale index must fall back to exactly one API search");
+      assertEquals(searchedBranch, "main");
 
       await statOps.stat("components/Late.tsx");
       assertEquals(
@@ -253,6 +258,31 @@ describe("StatOperations", () => {
 
       await statOps.stat("pages/blog/index.mdx");
       assertEquals(statOps.getOriginalApiPath("pages/blog/index.mdx"), "pages/blog/");
+    });
+
+    it("keeps a resolved original path scoped to its request snapshot", async () => {
+      let files = [makeFile("pages/blog/", { type: "page" })];
+      const statOps = createStatOps(
+        createMockClient({ listAllFiles: () => Promise.resolve(files) }),
+        new PathNormalizer(),
+        createBranchContextWithFiles(files),
+      );
+
+      await runWithRequestContext(
+        { projectSlug: "test", token: "request-token", branch: "main" },
+        async () => {
+          assertEquals(
+            await statOps.resolveFile("pages/blog/index.mdx"),
+            "pages/blog/index.mdx",
+          );
+
+          files = [makeFile("pages/other/", { type: "page" })];
+          statOps.clearIndex();
+          await statOps.stat("pages/other/index.mdx");
+
+          assertEquals(statOps.getOriginalApiPath("pages/blog/index.mdx"), "pages/blog/");
+        },
+      );
     });
   });
 
@@ -521,6 +551,191 @@ describe("StatOperations", () => {
       assertEquals(listAllFilesCallCount, 0);
     });
 
+    it("keeps API resolution on the context captured before an async lookup", async () => {
+      let currentBranch = "main";
+      let releaseLookup: (() => void) | undefined;
+      const lookupBlocked = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      let markLookupStarted: (() => void) | undefined;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      const searchedBranches: Array<string | undefined> = [];
+      const client = createMockClient({
+        searchFiles: (
+          pattern: string,
+          context?: { type: "branch"; name: string },
+        ) => {
+          searchedBranches.push(context?.name);
+          return Promise.resolve(pattern === "pages/about.*" ? [{ path: "pages/about.tsx" }] : []);
+        },
+      });
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch",
+          projectSlug: "test",
+          branch: currentBranch,
+        }),
+        hasCachedFileList: async () => {
+          markLookupStarted?.();
+          await lookupBlocked;
+          return false;
+        },
+        isPersistentCacheInvalidated: () => false,
+      };
+      const statOps = createStatOps(client, new PathNormalizer(), contextProvider);
+
+      const pending = statOps.resolveFile("pages/about");
+      await lookupStarted;
+      currentBranch = "draft";
+      releaseLookup?.();
+
+      assertEquals(await pending, "pages/about.tsx");
+      assertEquals(searchedBranches, ["main"]);
+    });
+
+    it("does not publish a negative resolution after its generation is cleared", async () => {
+      const lookup = Promise.withResolvers<boolean>();
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch",
+          projectSlug: "test",
+          branch: "main",
+        }),
+        hasCachedFileList: () => lookup.promise,
+        isPersistentCacheInvalidated: () => false,
+      };
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const statOps = new StatOperations(
+        createMockClient(),
+        cache,
+        new PathNormalizer(),
+        contextProvider,
+      );
+      const pending = statOps.resolveFile("pages/missing");
+      await Promise.resolve();
+      statOps.clearIndex();
+      lookup.resolve(false);
+
+      assertEquals(await pending, null);
+      const cacheKey = `${
+        buildStatCacheKeyPrefix(contextProvider.getContentContext())
+      }:resolve:pages/missing`;
+      assertEquals(await cache.getAsync(cacheKey), undefined);
+    });
+
+    it("bypasses stale resolutions while their branch cache is being cleared", async () => {
+      let invalidated = false;
+      let resolvedPath = "pages/about.tsx";
+      let searchCalls = 0;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test",
+        branch: "main",
+      };
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const statOps = new StatOperations(
+        createMockClient({
+          searchFiles: () => {
+            searchCalls++;
+            return Promise.resolve([{ path: resolvedPath }]);
+          },
+        }),
+        cache,
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          hasCachedFileList: () => Promise.resolve(false),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+      );
+      const cacheKey = `${buildStatCacheKeyPrefix(contentContext)}:resolve:pages/about`;
+
+      assertEquals(await statOps.resolveFile("pages/about"), "pages/about.tsx");
+      resolvedPath = "pages/about.mdx";
+      invalidated = true;
+      assertEquals(await statOps.resolveFile("pages/about"), "pages/about.mdx");
+      assertEquals(searchCalls, 2);
+      assertEquals(
+        await cache.getAsync(cacheKey),
+        "pages/about.tsx",
+        "a read during invalidation must not overwrite the persistent stat cache",
+      );
+    });
+
+    it("rebuilds a stale stat index while its branch cache is being cleared", async () => {
+      let invalidated = false;
+      let files = [makeFile("stale.ts")];
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test",
+        branch: "main",
+      };
+      const statOps = new StatOperations(
+        createMockClient({ listAllFiles: () => Promise.resolve(files) }),
+        new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          getFileList: () => Promise.resolve(files),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+      );
+
+      assertEquals((await statOps.stat("stale.ts")).isFile, true);
+      files = [makeFile("fresh.ts")];
+      invalidated = true;
+      assertEquals((await statOps.stat("fresh.ts")).isFile, true);
+      await assertRejects(() => statOps.stat("stale.ts"));
+    });
+
+    it("scopes stat indexes to the request authority", async () => {
+      let listCalls = 0;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test",
+        branch: "main",
+      };
+      const statOps = new StatOperations(
+        createMockClient({
+          listAllFiles: () => {
+            listCalls++;
+            return Promise.resolve([makeFile(`${getCurrentRequestContext()?.token}.ts`)]);
+          },
+        }),
+        new FileCache({ enabled: false, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      const tokenA = await runWithRequestContext(
+        { projectSlug: "test", token: "token-a", branch: "main" },
+        () => statOps.stat("token-a.ts"),
+      );
+      const tokenB = await runWithRequestContext(
+        { projectSlug: "test", token: "token-b", branch: "main" },
+        () => statOps.stat("token-b.ts"),
+      );
+
+      assertEquals(tokenA.isFile, true);
+      assertEquals(tokenB.isFile, true);
+      assertEquals(listCalls, 2);
+    });
+
     it("should retry pages-prefixed API patterns after an incomplete index miss", async () => {
       const patterns: string[] = [];
 
@@ -689,6 +904,36 @@ describe("StatOperations", () => {
       assertEquals(exists2, true);
       assertEquals(exists3, true);
       assertEquals(buildCount, 1);
+    });
+
+    it("rebuilds a same-scope waiter after an in-flight index is cleared", async () => {
+      const firstListing = Promise.withResolvers<ProjectFile[]>();
+      let listingCalls = 0;
+      const contextProvider: ContentContextProvider = {
+        isProductionMode: () => false,
+        getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch",
+          projectSlug: "test",
+          branch: "main",
+        }),
+        getFileList: () => {
+          listingCalls++;
+          return listingCalls === 1 ? firstListing.promise : Promise.resolve([makeFile("new.ts")]);
+        },
+        isPersistentCacheInvalidated: () => false,
+      };
+      const statOps = createStatOps(createMockClient(), new PathNormalizer(), contextProvider);
+
+      const oldStat = statOps.stat("old.ts");
+      await Promise.resolve();
+      statOps.clearIndex();
+      const newStat = statOps.stat("new.ts");
+      firstListing.resolve([makeFile("old.ts")]);
+
+      await oldStat.catch(() => undefined);
+      assertEquals((await newStat).isFile, true);
+      assertEquals(listingCalls, 2);
     });
 
     it("should fall back to API when no file list provider exists", async () => {

@@ -48,6 +48,8 @@ import {
 import { isNotFoundLikeError } from "./read-operations-helpers.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
+import { getCurrentRequestContext } from "./request-context.ts";
+import { scopeToRequestAuthority } from "./request-authority.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -429,14 +431,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | null = null;
   private readonly fileListRetentionMs: number;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
-  private branchMissRecoveryPromise: Promise<void> | null = null;
-  private branchMissRecoveryGeneration = 0;
+  private readonly branchMissRecoveryPromises = new Map<string, Promise<void>>();
   private readonly branchMissRecoveryFailures = new Map<string, number>();
   /** Last successful source check and generation of the materialized snapshot. */
   private sourceSnapshotCheckedAt = 0;
   private sourceSnapshotVersion = nextSourceSnapshotGeneration();
   private sourceSnapshotIdentity: string | undefined;
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
+  private hasAppliedSourceSnapshot = false;
   private sourceSnapshotFingerprint:
     | { version: number; value: Promise<string | undefined> }
     | undefined;
@@ -467,17 +469,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
   /** Whether running in proxy mode (shared adapter with per-request OAuth tokens) */
   private proxyMode: boolean;
 
-  private getCurrentFileListCacheKey(): string | undefined {
-    return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
+  private getEffectiveContentContext(): ResolvedContentContext | null {
+    const context = this.contentContext;
+    if (context?.sourceType !== "branch") return context;
+    const requestContext = getCurrentRequestContext();
+    const branch = requestContext ? requestContext.branch : this.requestBranch;
+    return branch ? { ...context, branch } : context;
   }
 
-  #getCurrentSourceSnapshotIdentity(): string | undefined {
-    const context = this.contentContext;
+  private getCurrentFileListCacheKey(): string | undefined {
+    const context = this.getEffectiveContentContext();
     if (!context) return undefined;
+    return buildFileListCacheKey(context);
+  }
 
+  #getSourceSnapshotIdentity(context: ResolvedContentContext): string {
     switch (context.sourceType) {
       case "branch":
-        return `branch:${context.projectSlug}:${this.requestBranch ?? context.branch ?? "main"}`;
+        return `branch:${context.projectSlug}:${context.branch ?? "main"}`;
       case "environment":
         return `environment:${context.projectSlug}:${context.environmentName ?? ""}:${
           context.releaseId ?? ""
@@ -485,6 +494,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       case "release":
         return `release:${context.projectSlug}:${context.releaseId ?? ""}`;
     }
+  }
+
+  #getCurrentSourceSnapshotIdentity(): string | undefined {
+    const context = this.getEffectiveContentContext();
+    if (!context) return undefined;
+    return this.#getSourceSnapshotIdentity(context);
   }
 
   private syncClientContext(): void {
@@ -511,9 +526,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
     noContextMessage: string,
     lookupLabel: string,
     missReason: string,
-    options: { waitForWarmup?: boolean } = {},
+    options: {
+      waitForWarmup?: boolean;
+      cacheKey?: string;
+      contentContext?: ResolvedContentContext | null;
+    } = {},
   ): Promise<{ cacheKey: string; files: T[] | undefined } | undefined> {
-    const cacheKey = this.getCurrentFileListCacheKey();
+    // Capture the context and its cache key as one pair, before the awaited
+    // cache read below. Leaving the warmup to re-read the context afterwards
+    // let a `setRequestBranch` landing during that read pair branch B's
+    // listing with branch A's key: the warmup fetched B and wrote it under A.
+    const effectiveContext = options.contentContext ?? this.getEffectiveContentContext();
+    const cacheKey = options.cacheKey ??
+      (effectiveContext ? buildFileListCacheKey(effectiveContext) : undefined);
     if (!cacheKey) {
       logger.debug(noContextMessage);
       return undefined;
@@ -534,7 +559,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     if (files === undefined) {
-      this.scheduleFileListWarmup(missReason, cacheKey);
+      this.scheduleFileListWarmup(missReason, cacheKey, effectiveContext);
       if (options.waitForWarmup) {
         files = await this.awaitFileListWarmup<T>(cacheKey) ?? files;
       }
@@ -640,6 +665,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       proxyMode: vf.proxyMode,
       retry: retryConfig,
     });
+    this.client.enableContextualToken();
 
     const cacheConfig = buildFileCacheOptions(vf.cache);
 
@@ -652,8 +678,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const contentContextGetter = {
       isProductionMode: () => this.contentContext?.sourceType !== "branch",
       getReleaseId: () => this.contentContext?.releaseId ?? null,
-      getContentContext: () => this.contentContext,
-      getFileList: async () => {
+      getContentContext: () => this.getEffectiveContentContext(),
+      getFileList: async (requestedContext?: ResolvedContentContext | null) => {
         const cached = await this.getCachedFileListAsync<{
           id?: string;
           path: string;
@@ -663,6 +689,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
           updated_at?: string;
         }>("getFileList: no contentContext", "getFileList", "getFileList miss", {
           waitForWarmup: true,
+          cacheKey: requestedContext ? buildFileListCacheKey(requestedContext) : undefined,
+          contentContext: requestedContext,
         });
         return cached?.files;
       },
@@ -675,6 +703,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
         );
         return Array.isArray(cached?.files);
       },
+      getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
+      getSourceSnapshotIdentity: () => this.#getCurrentSourceSnapshotIdentity(),
       isPersistentCacheInvalidated: (prefix: string) => this.#isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
         this.#isPersistentCacheInvalidated(
@@ -699,15 +729,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.normalizer,
       contentContextGetter,
       (path) => this.statOps.getOriginalApiPath(path),
-      async () => {
+      async (cacheKey, contentContext) => {
         const cached = await this.getCachedFileListAsync<{ path: string; content?: string }>(
           "getFileListCache: no contentContext",
           "getFileListCache",
           "getFileListCache miss",
-          { waitForWarmup: true },
+          { waitForWarmup: true, cacheKey, contentContext },
         );
         return cached?.files;
       },
+      () => this.sourceSnapshotVersion,
     );
 
     this.dirOps = new DirectoryOperations(
@@ -725,9 +756,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       client: this.client,
       invalidationCallbacks: this.invalidationCallbacks,
       getContentContext: () => this.contentContext,
+      getEffectiveContentContext: () => this.getEffectiveContentContext(),
       getContentSource: () => this.contentSource,
       getProjectDir: () => this.normalizer.getProjectDir(),
       clearMemoryCaches: () => this.clearMemoryCaches(),
+      getFileListCacheKey: () => this.getCurrentFileListCacheKey(),
       getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
       replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion) =>
         this.replaceSourceSnapshot(cacheKey, files, expectedSnapshotVersion),
@@ -845,13 +878,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       releaseId: contentContext.releaseId,
     });
 
-    const cacheKey = buildFileListCacheKey(contentContext);
+    const initializationContext = this.getEffectiveContentContext() ?? contentContext;
+    const cacheKey = buildFileListCacheKey(initializationContext);
     const initializationIdentity = this.#getCurrentSourceSnapshotIdentity();
     const initializationSnapshotVersion = this.sourceSnapshotVersion;
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
-      const files = await fetchFileListForContext(this.client, contentContext);
+      const files = await fetchFileListForContext(this.client, initializationContext);
       const fileSummary = summarizeFileList(files);
 
       const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {
@@ -953,10 +987,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return shouldBackgroundPregenerateStyles(this.contentContext);
   }
 
+  #getBranchMissRecoveryScope(): string {
+    const snapshotIdentity = this.#getCurrentSourceSnapshotIdentity() ??
+      `branch:${this.projectSlug}:${this.contentContext?.branch ?? "main"}`;
+    return scopeToRequestAuthority(snapshotIdentity);
+  }
+
+  #getBranchMissRecoveryKeyPrefix(scope = this.#getBranchMissRecoveryScope()): string {
+    return `${scope.length}:${scope}:`;
+  }
+
   #getBranchMissRecoveryKey(path: string): string {
     const normalizedPath = this.normalizer.normalize(path);
-    const branch = this.requestBranch ?? this.contentContext?.branch ?? "main";
-    return `${this.projectSlug}:${branch}:${normalizedPath}`;
+    return `${this.#getBranchMissRecoveryKeyPrefix()}${normalizedPath}`;
   }
 
   #hasRecentBranchMissRecoveryFailure(key: string): boolean {
@@ -997,7 +1040,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!options?.isRecoverableMissResult?.(result)) return false;
     if (
       options.requirePendingSourceInvalidation &&
-      !this.#isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
+      !this.#isPersistentCacheInvalidated(
+        buildFileCacheKeyPrefix(this.getEffectiveContentContext()),
+      )
     ) {
       return false;
     }
@@ -1007,23 +1052,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async #refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
-    let recoveryPromise = this.branchMissRecoveryPromise;
-    let ownsRecovery = false;
-    let recoveryGeneration = this.branchMissRecoveryGeneration;
+    const recoveryScope = this.#getBranchMissRecoveryScope();
+    let recoveryPromise = this.branchMissRecoveryPromises.get(recoveryScope);
 
     if (!recoveryPromise) {
       const normalizedPath = this.normalizer.normalize(path);
       recoveryPromise = this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
-      this.branchMissRecoveryPromise = recoveryPromise;
-      recoveryGeneration = ++this.branchMissRecoveryGeneration;
-      ownsRecovery = true;
+      this.branchMissRecoveryPromises.set(recoveryScope, recoveryPromise);
     }
 
     try {
       await recoveryPromise;
     } finally {
-      if (ownsRecovery && this.branchMissRecoveryGeneration === recoveryGeneration) {
-        this.branchMissRecoveryPromise = null;
+      if (this.branchMissRecoveryPromises.get(recoveryScope) === recoveryPromise) {
+        this.branchMissRecoveryPromises.delete(recoveryScope);
       }
     }
   }
@@ -1084,10 +1126,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
+  private scheduleFileListWarmup(
+    reason: string,
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ): void {
     if (!this.initialized || !this.contentContext) return;
 
-    const effectiveCacheKey = cacheKey ?? buildFileListCacheKey(this.contentContext);
+    const effectiveCacheKey = cacheKey ?? this.getCurrentFileListCacheKey()!;
 
     if (this.fileListWarmupPromise && this.fileListWarmupKey === effectiveCacheKey) {
       logger.debug("File list warmup already in progress", {
@@ -1097,7 +1143,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const warmupContext = this.contentContext;
+    const warmupBaseContext = this.contentContext;
+    const warmupContext = contentContext ?? this.getEffectiveContentContext();
+    if (!warmupContext) return;
+    const warmupIdentity = this.#getSourceSnapshotIdentity(warmupContext);
     const warmupSnapshotVersion = this.sourceSnapshotVersion;
     let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
@@ -1131,23 +1180,55 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // answer back to the older draft, so the write is serialized against
         // snapshot mutations and stands down when one won the race.
         const applied = await this.#runSourceSnapshotMutation(async () => {
-          if (
-            this.contentContext !== warmupContext ||
-            this.sourceSnapshotVersion !== warmupSnapshotVersion
-          ) {
+          const isSnapshotSuperseded = () =>
+            this.contentContext !== warmupBaseContext ||
+            this.#getCurrentSourceSnapshotIdentity() !== warmupIdentity ||
+            this.sourceSnapshotVersion !== warmupSnapshotVersion;
+          if (isSnapshotSuperseded()) {
             return false;
+          }
+
+          const sourceChanged = this.sourceSnapshotFiles === undefined
+            ? this.hasAppliedSourceSnapshot
+            : !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
+          if (sourceChanged) {
+            // Route discovery reads the persistent `stat:` and `dir:` tiers
+            // before either in-memory structure is rebuilt, so clearing memory
+            // alone would leave a stale listing -- or a negative
+            // `stat:...:resolve` sentinel -- answering with the pre-edit file
+            // set until those entries expired. Drop them before the new
+            // snapshot is published rather than after, so no read can observe
+            // the new generation while the old derived entries still stand.
+            await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
+              this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(warmupContext)),
+              this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(warmupContext)),
+              this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(warmupContext)),
+              this.cache.deleteByPrefixAsync(buildFileListCacheKey(warmupContext)),
+            ]]);
+            if (isSnapshotSuperseded()) {
+              return false;
+            }
+            await this.#invalidateDerivedSourceCaches();
+            if (isSnapshotSuperseded()) {
+              return false;
+            }
           }
 
           await this.cache.setAsync(effectiveCacheKey, files);
           // A poke can advance the generation while a distributed cache write
           // is pending. Remove the value that just landed before releasing the
           // mutation lock, so neither this waiter nor a later read sees it.
-          if (
-            this.contentContext !== warmupContext ||
-            this.sourceSnapshotVersion !== warmupSnapshotVersion
-          ) {
+          if (isSnapshotSuperseded()) {
             await this.cache.deleteAsync(effectiveCacheKey);
             return false;
+          }
+          // A successful warmup is a newly observed source snapshot even when
+          // no poke advanced the generation. Publish that generation before
+          // retaining the list so in-memory indexes rebuild from these bytes.
+          this.markSourceSnapshotChanged(files, warmupIdentity);
+          if (sourceChanged) {
+            this.statOps.clearIndex();
+            this.dirOps.clearTree();
           }
           this.retainFileList(effectiveCacheKey, files);
           return true;
@@ -1233,6 +1314,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     identity = this.#getCurrentSourceSnapshotIdentity(),
   ): void {
     this.sourceSnapshotFiles = files;
+    this.hasAppliedSourceSnapshot = true;
     this.sourceSnapshotIdentity = identity;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
     this.sourceSnapshotCheckedAt = currentTime();
@@ -1266,7 +1348,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         !expectedContext ||
         this.contentContext !== expectedContext ||
         this.sourceSnapshotVersion !== expectedSnapshotVersion ||
-        buildFileListCacheKey(expectedContext) !== cacheKey
+        this.getCurrentFileListCacheKey() !== cacheKey
       ) {
         logger.debug("Discarding superseded source snapshot", {
           cacheKey,
@@ -1343,12 +1425,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const cacheKey = buildFileListCacheKey(this.contentContext);
     const refreshContext = this.contentContext;
+    const effectiveRefreshContext = this.getEffectiveContentContext() ?? refreshContext;
+    const cacheKey = buildFileListCacheKey(effectiveRefreshContext);
     const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
-    const files = await fetchFileListForContext(this.client, refreshContext);
+    const files = await fetchFileListForContext(this.client, effectiveRefreshContext);
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
@@ -1368,10 +1451,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.dirOps.clearTree();
 
         await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
-          this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(refreshContext)),
-          this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(refreshContext)),
-          this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
-          this.cache.deleteAsync(cacheKey),
+          this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(effectiveRefreshContext)),
+          this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(effectiveRefreshContext)),
+          this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(effectiveRefreshContext)),
+          this.cache.deleteByPrefixAsync(cacheKey),
         ]]);
         if (isSnapshotSuperseded()) {
           return { applied: false, sourceChanged: false };
@@ -1409,7 +1492,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.statOps.renewIndexAuthority();
       }
 
-      this.branchMissRecoveryFailures.clear();
+      const recoveryKeyPrefix = this.#getBranchMissRecoveryKeyPrefix();
+      for (const key of this.branchMissRecoveryFailures.keys()) {
+        if (key.startsWith(recoveryKeyPrefix)) this.branchMissRecoveryFailures.delete(key);
+      }
       this.retainFileList(cacheKey, files);
 
       return { applied: true, sourceChanged };
@@ -1655,8 +1741,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.clearRetainedFileList();
-    this.branchMissRecoveryPromise = null;
-    this.branchMissRecoveryGeneration++;
+    this.branchMissRecoveryPromises.clear();
     this.branchMissRecoveryFailures.clear();
 
     logger.debug("Disposed");
@@ -1688,28 +1773,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return [];
     }
 
+    const contentContext = this.getEffectiveContentContext();
+    if (!contentContext) return [];
+    const cacheKey = buildFileListCacheKey(contentContext);
     const cached = await this.getCachedFileListAsync<{ path: string; content?: string }>(
       "getAllSourceFiles: no contentContext",
       "getAllSourceFiles",
       "getAllSourceFiles miss",
+      {
+        cacheKey,
+        contentContext,
+        waitForWarmup: options.waitForWarmup,
+      },
     );
-    const cacheKey = cached?.cacheKey;
-    let files = cached?.files;
-
-    // A miss schedules a warmup and returns immediately, which is right for
-    // callers that can proceed without the list. This one cannot: nothing else
-    // populates it for a release-backed context, so returning early meant the
-    // list was empty on every request for the life of the process. Wait for the
-    // fetch this read just started, then look again.
-    if (options.waitForWarmup && cacheKey && files === undefined && this.fileListWarmupPromise) {
-      // Take what the fetch returned rather than re-reading the cache: with
-      // caching disabled, or a failed backend write, the cache keeps nothing
-      // and correctness would depend on a write that never happened.
-      const fetched = await this.fileListWarmupPromise;
-      files = fetched !== null
-        ? fetched
-        : await this.cache.getAsync<{ path: string; content?: string }[]>(cacheKey);
-    }
+    const files = cached?.files;
 
     if (!cacheKey || !files?.length) {
       logger.debug("getAllSourceFiles cache miss or empty", {
@@ -1793,16 +1870,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.wsManager.setApiToken(this.apiToken);
   }
 
-  private invalidateRequestAuthoritySnapshot(): void {
-    this.cache.clear();
+  private invalidateRequestAuthoritySnapshot(clearFileCache = true): void {
+    if (clearFileCache) this.cache.clear();
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
-    this.branchMissRecoveryPromise = null;
-    this.branchMissRecoveryGeneration++;
+    this.branchMissRecoveryPromises.clear();
     this.branchMissRecoveryFailures.clear();
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
@@ -1813,9 +1889,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   setRequestBranch(branch: string | null): void {
     if (branch !== this.requestBranch) {
-      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+      this.requestBranch = branch;
+      // File cache keys already include the effective request branch. Retain
+      // those scoped entries, especially the process-wide immutable release
+      // L1 owned by FileCache, while resetting branch-sensitive indexes.
+      this.invalidateRequestAuthoritySnapshot(false);
+    } else {
+      this.requestBranch = branch;
     }
-    this.requestBranch = branch;
     this.syncClientContext();
   }
 
@@ -1825,9 +1906,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   clearRequestBranch(): void {
     if (this.requestBranch !== null) {
-      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+      this.requestBranch = null;
+      this.invalidateRequestAuthoritySnapshot(false);
+    } else {
+      this.requestBranch = null;
     }
-    this.requestBranch = null;
     this.syncClientContext();
   }
 
@@ -1869,11 +1952,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (contextChanged) {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
+      // The read path's file-list index keys its cached content map on
+      // `length:firstPath:lastPath` and, when the backing cache entry has
+      // expired, keeps serving that map for up to its staleness limit. Neither
+      // guard knows which branch, environment, or release the listing came
+      // from, so without an explicit clear here two contexts whose listings
+      // happen to agree on those three values would serve each other's file
+      // contents -- and cache them under the new context's key.
+      this.readOps.clearFileListIndex();
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
       this.clearRetainedFileList();
-      this.branchMissRecoveryPromise = null;
-      this.branchMissRecoveryGeneration++;
+      this.branchMissRecoveryPromises.clear();
       this.branchMissRecoveryFailures.clear();
       this.sourceSnapshotCheckedAt = 0;
       this.sourceSnapshotVersion = nextSourceSnapshotGeneration();

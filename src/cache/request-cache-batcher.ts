@@ -17,6 +17,7 @@ interface PendingRequest {
 
 interface RequestCacheContext {
   cache: Map<string, string | null>;
+  parsedCache: Map<string, { raw: string; value: unknown }>;
   pending: Map<string, Promise<string | null>>;
   mutationVersions: Map<string, number>;
   batchQueue: PendingRequest[];
@@ -122,6 +123,7 @@ function formatRatio(value: number): string {
 export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
   const context: RequestCacheContext = {
     cache: new IntrinsicMap(),
+    parsedCache: new IntrinsicMap(),
     pending: new IntrinsicMap(),
     mutationVersions: new IntrinsicMap(),
     batchQueue: [],
@@ -139,6 +141,22 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
 
 export function getRequestCacheContext(): RequestCacheContext | undefined {
   return getRequestCacheContextStore();
+}
+
+export function parseRequestCachedValue<T>(
+  key: string,
+  raw: string,
+  parse: (value: string) => T,
+): T {
+  const ctx = getRequestCacheContextStore();
+  if (!ctx) return parse(raw);
+
+  const cached = mapGet(ctx.parsedCache, key);
+  if (cached?.raw === raw) return cached.value as T;
+
+  const value = parse(raw);
+  mapSet(ctx.parsedCache, key, { raw, value });
+  return value;
 }
 
 export async function getCachedWithBatching(

@@ -417,7 +417,7 @@ describe("Up Command", () => {
           branch: "main",
           environment: "preview",
           mode: "apply",
-          source: { kind: "ensure-pushed" },
+          source: { kind: "ensure-pushed", refreshStaleSource: true },
         }]);
 
         const lines = output.map(stripAnsi);
@@ -752,7 +752,7 @@ describe("Up Command", () => {
 
         assertEquals(projectPosts, []);
         assertEquals(requests.length, 1);
-        assertEquals(requests[0]?.source, { kind: "ensure-pushed" });
+        assertEquals(requests[0]?.source, { kind: "ensure-pushed", refreshStaleSource: true });
         assertEquals(await exists(join(projectDir, "veryfront.json")), false);
         assertEquals(output.map(stripAnsi).includes("  ✓ pulled-up is ready"), true);
       } finally {

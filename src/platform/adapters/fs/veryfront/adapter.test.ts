@@ -9,7 +9,12 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
-import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
+} from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import {
@@ -23,6 +28,7 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -93,6 +99,35 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(adapter);
       assertEquals(clearCalled, false);
     });
+  });
+
+  it("prefers the async-local request branch over the shared branch hint", async () => {
+    const adapter = createAdapter();
+    const internals = adapter as unknown as {
+      contentContext: ResolvedContentContext;
+    };
+    internals.contentContext = {
+      sourceType: "branch",
+      projectSlug: "test-project",
+      branch: "main",
+    };
+    adapter.setRequestBranch("shared-branch");
+
+    const identities = await Promise.all([
+      runWithRequestContext(
+        { projectSlug: "test-project", token: "token-a", branch: "branch-a" },
+        async () => adapter.getSourceSnapshotIdentity(),
+      ),
+      runWithRequestContext(
+        { projectSlug: "test-project", token: "token-b", branch: "branch-b" },
+        async () => adapter.getSourceSnapshotIdentity(),
+      ),
+    ]);
+
+    assertEquals(identities, [
+      "branch:test-project:branch-a",
+      "branch:test-project:branch-b",
+    ]);
   });
 
   describe("instance methods", () => {
@@ -764,10 +799,17 @@ describe("VeryfrontFSAdapter", () => {
 
       const statOps = (adapter as unknown as { statOps: { clearIndex: () => void } }).statOps;
       const dirOps = (adapter as unknown as { dirOps: { clearTree: () => void } }).dirOps;
+      // The read path's file-list index caches file contents keyed only on the
+      // listing's length and its first and last path, so two contexts that
+      // agree on those would otherwise serve each other's file contents.
+      const readOps =
+        (adapter as unknown as { readOps: { clearFileListIndex: () => void } }).readOps;
       const originalClearIndex = statOps.clearIndex;
       const originalClearTree = dirOps.clearTree;
+      const originalClearFileListIndex = readOps.clearFileListIndex;
       let indexClears = 0;
       let treeClears = 0;
+      let fileListIndexClears = 0;
       statOps.clearIndex = () => {
         indexClears++;
         originalClearIndex.call(statOps);
@@ -775,6 +817,10 @@ describe("VeryfrontFSAdapter", () => {
       dirOps.clearTree = () => {
         treeClears++;
         originalClearTree.call(dirOps);
+      };
+      readOps.clearFileListIndex = () => {
+        fileListIndexClears++;
+        originalClearFileListIndex.call(readOps);
       };
 
       adapter.setContentContext({
@@ -786,6 +832,7 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(adapter.getContentContext()?.releaseId, "release-new");
       assertEquals(indexClears, 1, "a release switch must clear the stat index");
       assertEquals(treeClears, 1, "a release switch must clear the directory tree");
+      assertEquals(fileListIndexClears, 1, "a release switch must clear the file list index");
 
       adapter.setContentContext({
         sourceType: "release",
@@ -795,6 +842,11 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(indexClears, 1, "an unchanged context must not clear the stat index");
       assertEquals(treeClears, 1, "an unchanged context must not clear the directory tree");
+      assertEquals(
+        fileListIndexClears,
+        1,
+        "an unchanged context must not clear the file list index",
+      );
     });
 
     it("should not clear caches when context is identical", () => {
@@ -891,6 +943,24 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(adapter.getRequestBranch(), null);
     });
 
+    it("retains file-cache tiers when only the request branch changes", () => {
+      const adapter = createAdapter();
+      const cache = (adapter as unknown as { cache: { clear(): void } }).cache;
+      const originalClear = cache.clear.bind(cache);
+      let clearCalls = 0;
+      cache.clear = () => {
+        clearCalls++;
+        originalClear();
+      };
+
+      adapter.setRequestBranch("feature-branch");
+      adapter.clearRequestBranch();
+      assertEquals(clearCalls, 0);
+
+      adapter.setRequestToken("replacement-token");
+      assertEquals(clearCalls, 1, "credential changes still clear the file cache");
+    });
+
     it("names the snapshot identity after the per-request branch", () => {
       const adapter = createAdapter();
       assertEquals(
@@ -913,6 +983,42 @@ describe("VeryfrontFSAdapter", () => {
 
       adapter.clearRequestBranch();
       assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:main");
+    });
+
+    it("reads retained file lists from the per-request branch", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      const mainContext: ResolvedContentContext = {
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const featureContext: ResolvedContentContext = {
+        ...mainContext,
+        branch: "feature",
+      };
+      adapter.setContentContext(mainContext);
+      const cache = (adapter as unknown as {
+        cache: { set(key: string, value: Array<{ path: string; content: string }>): void };
+      }).cache;
+      cache.set(buildFileListCacheKey(mainContext), [{ path: "main.css", content: "main" }]);
+      cache.set(buildFileListCacheKey(featureContext), [{
+        path: "feature.css",
+        content: "feature",
+      }]);
+
+      adapter.setRequestBranch("feature");
+
+      assertEquals(await adapter.getAllSourceFiles(), [{
+        path: "feature.css",
+        content: "feature",
+      }]);
     });
   });
 
@@ -1314,6 +1420,80 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(await adapter.getAllSourceFiles(), files);
     });
+
+    it("keeps a delayed cache miss bound to its original request branch", async () => {
+      const adapter = createAdapter({
+        projectDir: "/project/root",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      (adapter as unknown as { initialized: boolean }).initialized = true;
+
+      const mainContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const mainCacheKey = buildFileListCacheKey(mainContext);
+      const cache = (adapter as unknown as {
+        cache: {
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+        };
+      }).cache;
+      const originalGetAsync = cache.getAsync.bind(cache);
+      let releaseLookup: (() => void) | undefined;
+      const lookupBlocked = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      let markLookupStarted: (() => void) | undefined;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      let blockNextMainLookup = true;
+      cache.getAsync = async <T>(key: string): Promise<T | undefined> => {
+        if (blockNextMainLookup && key === mainCacheKey) {
+          blockNextMainLookup = false;
+          markLookupStarted?.();
+          await lookupBlocked;
+        }
+        return await originalGetAsync<T>(key);
+      };
+
+      const requestedBranches: string[] = [];
+      const client = (adapter as unknown as {
+        client: {
+          listAllFiles: (
+            params: Record<string, never>,
+            source: { type: "branch"; name: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+      client.listAllFiles = (_params, source) => {
+        requestedBranches.push(source.name);
+        return Promise.resolve([{
+          path: `${source.name}.ts`,
+          content: `export const branch = "${source.name}";`,
+        }]);
+      };
+
+      const pending = adapter.getAllSourceFiles({ waitForWarmup: true });
+      await lookupStarted;
+      adapter.setRequestBranch("draft");
+      releaseLookup?.();
+
+      assertEquals(await pending, []);
+      assertEquals(requestedBranches, ["main"]);
+      assertEquals(await originalGetAsync(mainCacheKey), undefined);
+    });
   });
 
   describe("getEntityIdForPath", () => {
@@ -1463,7 +1643,10 @@ describe("VeryfrontFSAdapter", () => {
           getProjectId: () => string;
           getCachedProject: () => { provider: string; layout: string };
           getContext: () => { type: string; name?: string; version?: string };
-          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          listAllFiles: (
+            options?: unknown,
+            context?: { type: string; name?: string; version?: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
         };
       }).client;
 
@@ -1473,8 +1656,8 @@ describe("VeryfrontFSAdapter", () => {
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
 
       let observedContext: ReturnType<typeof client.getContext> | null = null;
-      client.listAllFiles = () => {
-        observedContext = client.getContext();
+      client.listAllFiles = (_options, context) => {
+        observedContext = context ?? client.getContext();
         assertEquals(observedContext, { type: "branch", name: "draft" });
         return Promise.resolve([{
           path: "pages/index.tsx",
@@ -2079,6 +2262,78 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(secondContent, "export const second = true;");
       assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("isolates concurrent branch-miss recoveries by request snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const branchARefresh = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      let branchAListCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: Record<string, unknown>,
+            context?: { type: "branch"; name: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = (_options, context) => {
+        if (context?.name !== "branch-a") return Promise.resolve([]);
+        branchAListCalls++;
+        return branchAListCalls === 2 ? branchARefresh.promise : Promise.resolve([]);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const branchAContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "branch-a",
+      };
+      const branchBContext = { ...branchAContext, branch: "branch-b" };
+      addPendingInvalidation(buildFileCacheKeyPrefix(branchAContext));
+      addPendingInvalidation(buildFileCacheKeyPrefix(branchBContext));
+
+      try {
+        const branchA = runWithRequestContext(
+          { projectSlug: "test-project", token: "token-a", branch: "branch-a" },
+          () => adapter.readdir("new-directory"),
+        );
+        await waitFor(async () => branchAListCalls === 2);
+        const branchB = runWithRequestContext(
+          { projectSlug: "test-project", token: "token-b", branch: "branch-b" },
+          () => adapter.readdir("new-directory"),
+        );
+        const recoveries = (adapter as unknown as {
+          branchMissRecoveryPromises: Map<string, Promise<void>>;
+        }).branchMissRecoveryPromises;
+        await waitFor(async () => recoveries.size === 2);
+
+        assertEquals(recoveries.size, 2);
+        branchARefresh.resolve([]);
+        assertEquals(await Promise.all([branchA, branchB]), [[], []]);
+      } finally {
+        branchARefresh.resolve([]);
+        removePendingInvalidation(buildFileCacheKeyPrefix(branchAContext));
+        removePendingInvalidation(buildFileCacheKeyPrefix(branchBContext));
+        adapter.dispose();
+      }
     });
 
     it("leases an unchanged branch snapshot without relying on the file-list cache", async () => {
@@ -3097,6 +3352,249 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(listAllFilesCalls, 2);
+    });
+
+    it("evicts persistent derived caches when a warmup observes a changed listing", async () => {
+      const derivedInvalidations: string[] = [];
+      const adapter = createAdapter({
+        invalidationCallbacks: {
+          clearSSRModuleCacheForProject: () => void derivedInvalidations.push("ssr"),
+          clearRouterDetectionCacheForProject: () => void derivedInvalidations.push("router"),
+          clearProjectDiscoveryCacheForProject: () => void derivedInvalidations.push("discovery"),
+          clearRendererCacheForProject: () => void derivedInvalidations.push("renderer"),
+          clearModulePathCache: () => void derivedInvalidations.push("module-path"),
+        },
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+
+      let files: Array<{ path: string; content?: string }> = [{
+        path: "pages/index.tsx",
+        content: "export default function Page() { return null }",
+      }];
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => Promise.resolve(files);
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      await adapter.initialize();
+
+      const context = adapter.getContentContext();
+      const cacheKey = buildFileListCacheKey(context);
+      const statResolveKey = `${buildStatCacheKeyPrefix(context)}:resolve:pages/about`;
+      const dirKey = `${buildDirCacheKeyPrefix(context)}:pages`;
+      const fileKey = `${buildFileCacheKeyPrefix(context)}:pages/index.tsx`;
+      const siblingFileListKey = `${cacheKey}|authority:stale`;
+      const internals = adapter as unknown as {
+        cache: {
+          set: (key: string, value: unknown) => void;
+          delete: (key: string) => boolean;
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+          deleteByPrefixAsync: (prefix: string) => Promise<void>;
+        };
+        sourceSnapshotVersion: number;
+        clearRetainedFileList: () => void;
+      };
+      const cache = internals.cache;
+
+      // Route discovery reads both of these before either in-memory structure
+      // is rebuilt, so a warmup that observes an edit must drop them too.
+      cache.set(statResolveKey, "__VF_NOT_FOUND__");
+      cache.set(dirKey, [{ name: "index.tsx", isFile: true, isDirectory: false }]);
+      cache.set(fileKey, "stale source");
+      cache.set(siblingFileListKey, files);
+
+      const versionBeforeWarmup = internals.sourceSnapshotVersion;
+      const versionsAtEviction: number[] = [];
+      const versionsAtDerivedInvalidation: number[] = [];
+      for (
+        const callback of Object.keys(
+          (adapter as unknown as { invalidationCallbacks: Record<string, () => void> })
+            .invalidationCallbacks,
+        )
+      ) {
+        const callbacks = (adapter as unknown as {
+          invalidationCallbacks: Record<string, () => void>;
+        }).invalidationCallbacks;
+        const original = callbacks[callback];
+        callbacks[callback] = () => {
+          versionsAtDerivedInvalidation.push(internals.sourceSnapshotVersion);
+          original!();
+        };
+      }
+      const deleteByPrefixAsync = cache.deleteByPrefixAsync.bind(cache);
+      cache.deleteByPrefixAsync = (prefix: string) => {
+        versionsAtEviction.push(internals.sourceSnapshotVersion);
+        return deleteByPrefixAsync(prefix);
+      };
+
+      // The next warmup observes a listing with a file the cached negative
+      // resolve entry says is absent.
+      files = [
+        ...files,
+        { path: "pages/about.tsx", content: "export default function About() { return null }" },
+      ];
+      assertEquals(cache.delete(cacheKey), true);
+      internals.clearRetainedFileList();
+
+      await adapter.getAllSourceFiles();
+
+      await waitFor(async () => {
+        const cached = await cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        return Array.isArray(cached) && cached.length === 2;
+      });
+
+      assertEquals(
+        await cache.getAsync(fileKey),
+        undefined,
+        "a changed warmup must evict persistent file bodies",
+      );
+      assertEquals(
+        await cache.getAsync(statResolveKey),
+        undefined,
+        "a changed warmup must evict persistent stat resolve entries",
+      );
+      assertEquals(
+        await cache.getAsync(dirKey),
+        undefined,
+        "a changed warmup must evict persistent directory listings",
+      );
+      assertEquals(
+        await cache.getAsync(siblingFileListKey),
+        undefined,
+        "a changed warmup must evict sibling file-list variants",
+      );
+      assertEquals(versionsAtEviction.length, 4, "all persistent source tiers must be evicted");
+      assertEquals(derivedInvalidations, ["ssr", "router", "discovery", "renderer", "module-path"]);
+      assertEquals(
+        versionsAtDerivedInvalidation.every((version) => version === versionBeforeWarmup),
+        true,
+        "derived caches must be invalidated before the new snapshot generation is published",
+      );
+      assertEquals(
+        versionsAtEviction.every((version) => version === versionBeforeWarmup),
+        true,
+        "the eviction must complete before the new snapshot generation is published",
+      );
+    });
+
+    it("binds a warmup to the branch its key came from when the caller supplies neither", async () => {
+      // `hasCachedFileList` (and any caller that passes no explicit pair)
+      // reaches `getCachedFileListAsync` with only `waitForWarmup`, so the
+      // context/key pair has to be captured there rather than re-read by the
+      // warmup after the awaited cache lookup.
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: unknown,
+            context?: { type: string; name?: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+        cache: {
+          getAsync: <T>(key: string) => Promise<T | undefined>;
+          delete: (key: string) => boolean;
+        };
+        clearRetainedFileList: () => void;
+        wsManager: { connect: (_projectId: string) => void };
+        getCachedFileListAsync: (
+          noContextMessage: string,
+          lookupLabel: string,
+          missReason: string,
+          options: { waitForWarmup?: boolean },
+        ) => Promise<unknown>;
+      };
+
+      const branchListings: Record<string, Array<{ path: string; content: string }>> = {
+        main: [{ path: "main.css", content: "main" }],
+        draft: [{ path: "draft.css", content: "draft" }],
+      };
+      const warmedBranches: string[] = [];
+      internals.client.initialize = () => Promise.resolve();
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "project-123";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = (_options, context) => {
+        const branch = context?.name ?? "main";
+        warmedBranches.push(branch);
+        return Promise.resolve(branchListings[branch] ?? []);
+      };
+      internals.wsManager.connect = () => {};
+
+      await adapter.initialize();
+
+      const mainCacheKey = buildFileListCacheKey(adapter.getContentContext());
+      internals.cache.delete(mainCacheKey);
+      internals.clearRetainedFileList();
+      warmedBranches.length = 0;
+
+      // The request branch switches while the awaited file-list cache read for
+      // `main` is still open, exactly as a second request would do it.
+      const getAsync = internals.cache.getAsync.bind(internals.cache);
+      let switched = false;
+      internals.cache.getAsync = async <T>(key: string): Promise<T | undefined> => {
+        const result = await getAsync<T>(key);
+        if (!switched && key === mainCacheKey) {
+          switched = true;
+          adapter.setRequestBranch("draft");
+        }
+        return result;
+      };
+
+      await internals.getCachedFileListAsync(
+        "no contentContext",
+        "lookup",
+        "miss",
+        { waitForWarmup: true },
+      );
+
+      assertEquals(
+        warmedBranches,
+        ["main"],
+        "the warmup must fetch the branch its cache key was derived from",
+      );
+      assertEquals(
+        await getAsync<Array<{ path: string }>>(mainCacheKey),
+        undefined,
+        "a listing must never be published under another branch's file-list key",
+      );
     });
   });
 });
