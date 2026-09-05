@@ -1727,6 +1727,34 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("hands a released metadata slot to the oldest waiter before a barging caller", async () => {
+    const { JSX_ARTIFACT_REFRESH_CONCURRENCY, withJsxArtifactRefreshSlot } = __jsxCacheInternals;
+    const releaseHolders = Promise.withResolvers<void>();
+    let holdersStarted = 0;
+    const holders = Array.from(
+      { length: JSX_ARTIFACT_REFRESH_CONCURRENCY },
+      () =>
+        withJsxArtifactRefreshSlot(async () => {
+          holdersStarted++;
+          await releaseHolders.promise;
+        }),
+    );
+    while (holdersStarted < JSX_ARTIFACT_REFRESH_CONCURRENCY) await Promise.resolve();
+
+    const order: string[] = [];
+    const oldest = withJsxArtifactRefreshSlot(async () => {
+      order.push("oldest");
+    });
+    await Promise.resolve();
+    releaseHolders.resolve();
+    const barger = withJsxArtifactRefreshSlot(async () => {
+      order.push("barger");
+    });
+
+    await Promise.all([...holders, oldest, barger]);
+    assertEquals(order, ["oldest", "barger"]);
+  });
+
   it("reclaims a stale transition only while owning the canonical lease", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-transition-owner-test-" });
     const artifactPath = join(tempDir, "jsx-transition-owner.mjs");
@@ -2700,13 +2728,17 @@ describe("scheduled prune bound", () => {
     MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
     persistJsxCachePruneRequest,
     promotePersistedJsxCachePruneRequest,
+    queueJsxCachePrune,
     queuedJsxCachePruneCount,
     retirePersistedJsxCachePruneRequest,
     scheduleJsxCachePruneRetry,
     scheduledJsxCachePruneCount,
+    waitForJsxCacheMaintenanceForTests,
   } = __jsxCacheInternals;
 
   afterEach(async () => {
+    cancelScheduledJsxCachePrunes();
+    await waitForJsxCacheMaintenanceForTests();
     cancelScheduledJsxCachePrunes();
     await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
   });
@@ -2763,6 +2795,95 @@ describe("scheduled prune bound", () => {
     assertEquals(await hasPersistedJsxCachePrune(overflow), true);
     assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
     assertEquals(queuedJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
+  });
+
+  it("promotes work after persistence completes beyond an empty promotion scan", async () => {
+    const localFs = getLocalFs();
+    const originalWrite = localFs.writeTextFile.bind(localFs);
+    const writeStarted = Promise.withResolvers<void>();
+    const releaseWrite = Promise.withResolvers<void>();
+    const nowMs = Date.now();
+    const urgent = `${persistedTestPrefix}post-persist-promotion`;
+    try {
+      for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES; entry++) {
+        queueJsxCachePrune(`${persistedTestPrefix}queued-${entry}`, nowMs + 60_000);
+      }
+      localFs.writeTextFile = async (path, content) => {
+        if (path.endsWith(".json")) {
+          writeStarted.resolve();
+          await releaseWrite.promise;
+        }
+        return await originalWrite(path, content);
+      };
+
+      queueJsxCachePrune(urgent, nowMs);
+      await writeStarted.promise;
+      await promotePersistedJsxCachePruneRequest();
+      releaseWrite.resolve();
+
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (hasScheduledJsxCachePrune(urgent)) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      assertEquals(
+        hasScheduledJsxCachePrune(urgent),
+        true,
+        "successful persistence must wake promotion after an earlier empty scan",
+      );
+    } finally {
+      releaseWrite.resolve();
+      localFs.writeTextFile = originalWrite;
+    }
+  });
+
+  it("bounds concurrent scheduled directory scans", async () => {
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    const releaseScans = Promise.withResolvers<void>();
+    const directoryPrefix = `${persistedTestPrefix}scheduled-scan-`;
+    let active = 0;
+    let peak = 0;
+    let started = 0;
+    localFs.readDir = (path) => {
+      if (!path.startsWith(directoryPrefix)) return originalReadDir(path);
+      return (async function* () {
+        active++;
+        started++;
+        peak = Math.max(peak, active);
+        try {
+          await releaseScans.promise;
+          for await (const entry of originalReadDir(path)) yield entry;
+        } finally {
+          active--;
+        }
+      })();
+    };
+
+    try {
+      for (let entry = 0; entry < 16; entry++) {
+        scheduleJsxCachePruneRetry(`${directoryPrefix}${entry}`, 0);
+      }
+      for (
+        let attempt = 0;
+        attempt < 100 && started < __jsxCacheInternals.SCHEDULED_JSX_CACHE_PRUNE_CONCURRENCY;
+        attempt++
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assertEquals(started >= __jsxCacheInternals.SCHEDULED_JSX_CACHE_PRUNE_CONCURRENCY, true);
+      assertEquals(
+        peak <= __jsxCacheInternals.SCHEDULED_JSX_CACHE_PRUNE_CONCURRENCY,
+        true,
+        "scheduled maintenance must not scan more than eight directories at once",
+      );
+    } finally {
+      releaseScans.resolve();
+      localFs.readDir = originalReadDir;
+      for (let attempt = 0; attempt < 100 && active > 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+    }
   });
 
   it("retains a persisted request when its prune schedules a follow-up", async () => {
