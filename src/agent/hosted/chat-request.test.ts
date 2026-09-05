@@ -19,6 +19,7 @@ import {
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
 } from "./chat-request.ts";
 import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-event-writer-token.ts";
+import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -1868,6 +1869,153 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
   });
 
+  it("reads the default-chat inference header through captured intrinsics", async () => {
+    const request = new Request("https://agent.example.test/api/runs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Veryfront-Run-Event-Token": "run-event-service-token",
+        "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+      },
+      body: JSON.stringify({
+        messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+        context: { conversationId, projectId, branchId },
+        durableRootRun: { runId: "run_root_1", messageId },
+      }),
+    });
+    const requestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!
+      .get!;
+    const headersGet = Object.getOwnPropertyDescriptor(Headers.prototype, "get")!.value!;
+    const requestHeaders = Reflect.apply(requestHeadersGetter, request, []) as Headers;
+    let exposed = false;
+
+    Object.defineProperty(request, "headers", {
+      configurable: true,
+      get() {
+        exposed = true;
+        return requestHeaders;
+      },
+    });
+    Object.defineProperty(requestHeaders, "get", {
+      configurable: true,
+      value(name: string) {
+        exposed = true;
+        return Reflect.apply(headersGet, requestHeaders, [name]);
+      },
+    });
+
+    const parsed = await parseHostedChatRequestFromRequest(request, {
+      authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+      verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+      verifyRunEventAppendToken: () => Promise.resolve(true),
+    });
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(typeof createHostedInferenceModelResolver(parsed), "function");
+
+    assertEquals(exposed, false);
+  });
+
+  it("ignores a malformed inference header without a verified run-event token", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Inference-Token": "unverified inference token",
+        },
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+        verifyRunEventAppendToken: () => {
+          throw new Error("run-event verification must not run without its token");
+        },
+      },
+    );
+
+    if (parsed instanceof Response) throw new Error("Expected parsed request");
+    assertEquals(createHostedInferenceModelResolver(parsed), undefined);
+  });
+
+  it("rejects an oversized default-chat inference header before binding it", async () => {
+    // credentials.inferenceAuthToken gets a 16 KB byte-size check from its Zod
+    // schema on the runtime-invocation path; the header carrying the same
+    // credential on the default-chat path must reject a value past that bound
+    // instead of registering it and only failing later at point of use.
+    const oversizedToken = "a".repeat(16 * 1024 + 1);
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-service-token",
+          "X-Veryfront-Inference-Token": oversizedToken,
+        },
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: { conversationId, projectId, branchId },
+          durableRootRun: { runId: "run_root_1", messageId },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected a validation error response");
+    }
+    assertEquals(response.status, 400);
+    const body = await response.json();
+    assertStringIncludes(body.message, "16");
+  });
+
+  it("rejects blank and non-visible-ASCII inference headers after writer verification", async () => {
+    for (
+      const inferenceToken of [
+        "",
+        "token with a space",
+        // U+00A0 (non-breaking space) is whitespace under String.prototype.trim,
+        // so a naive trim-then-validate order would silently strip it and bind
+        // an unintended credential instead of rejecting the malformed header.
+        " padded-token ",
+      ]
+    ) {
+      const response = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.test/api/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "X-Veryfront-Run-Event-Token": "run-event-service-token",
+            "X-Veryfront-Inference-Token": inferenceToken,
+          },
+          body: JSON.stringify({
+            messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+            context: { conversationId, projectId, branchId },
+            durableRootRun: { runId: "run_root_1", messageId },
+          }),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "control-plane-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+        },
+      );
+
+      if (!(response instanceof Response)) {
+        throw new Error("Expected a validation error response");
+      }
+      assertEquals(response.status, 400);
+    }
+  });
+
   it("does not trust runtime environment targets from public hosted chat requests", async () => {
     const parsed = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
@@ -2248,12 +2396,13 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.success, false);
   });
 
-  it("rejects a run-event append header that is not cryptographically verified", async () => {
+  it("rejects an inference header when the run-event token is not verified", async () => {
     const response = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
         method: "POST",
         headers: {
           "X-Veryfront-Run-Event-Token": "forged-run-event-token",
+          "X-Veryfront-Inference-Token": "unverified inference token",
         },
         body: JSON.stringify({
           messages: [],

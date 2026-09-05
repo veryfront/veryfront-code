@@ -21,7 +21,10 @@
 
 import { getWorkflowTenant } from "./executor/step-executor.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
+import {
+  setPrivateVeryfrontApiClientRequestToken,
+  VeryfrontApiClient,
+} from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { INITIALIZATION_ERROR, INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
@@ -92,7 +95,9 @@ function getClient(options: { includeCredential?: boolean } = {}): VeryfrontApiC
     projectSlug: tenant.projectSlug,
   });
 
-  if (options.includeCredential !== false) client.setRequestToken(tenant.token);
+  if (options.includeCredential !== false) {
+    setPrivateVeryfrontApiClientRequestToken(client, tenant.token);
+  }
   client.setProjectSlug(tenant.projectSlug);
 
   if (tenant.productionMode && tenant.releaseId) {

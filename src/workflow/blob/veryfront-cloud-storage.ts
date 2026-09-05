@@ -32,6 +32,20 @@ const MAX_BLOB_USER_METADATA_BYTES = 64 * 1024;
 const MAX_BLOB_METADATA_ENVELOPE_BYTES = 4 * 1024;
 const MAX_BLOB_METADATA_SIDECAR_BYTES = 128 * 1024;
 const textEncoder = new TextEncoder();
+// Stored-login credentials are attached after project code may have loaded.
+// Construct and mutate their header container through captured intrinsics.
+const NativeHeaders = Headers;
+const applyIntrinsic = Reflect.apply;
+const headersHas = NativeHeaders.prototype.has;
+const headersSet = NativeHeaders.prototype.set;
+const NativeURL = URL;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+const stringReplace = String.prototype.replace;
+
+function readUrlOrigin(url: URL): string {
+  if (!urlOriginGetter) throw new TypeError("Native URL origin getter is unavailable");
+  return applyIntrinsic(urlOriginGetter, url, []) as string;
+}
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -363,7 +377,9 @@ function normalizePrefix(prefix: string | undefined): string {
 }
 
 function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  const normalizedBase = applyIntrinsic(stringReplace, base, [/\/+$/, ""]) as string;
+  const normalizedPath = applyIntrinsic(stringReplace, path, [/^\/+/, ""]) as string;
+  return `${normalizedBase}/${normalizedPath}`;
 }
 
 function mapBlobMetadataToRef(blob: BlobMetadata): BlobRef {
@@ -758,8 +774,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       ),
     );
 
-    const headers = new Headers(upload.required_headers);
-    if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
+    const headers = new NativeHeaders(upload.required_headers);
+    if (!applyIntrinsic(headersHas, headers, ["Content-Type"])) {
+      applyIntrinsic(headersSet, headers, ["Content-Type", mimeType]);
+    }
 
     const scope = signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
     const requestSignal = signal ?? scope?.signal;
@@ -903,19 +921,20 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       signal?: AbortSignal;
     } = {},
   ): Promise<unknown | null> {
-    const headers = new Headers(options.headers);
-    headers.set("Authorization", `Bearer ${resolved.apiToken}`);
+    const headers = new NativeHeaders(options.headers);
+    applyIntrinsic(headersSet, headers, ["Authorization", `Bearer ${resolved.apiToken}`]);
 
     const scope = options.signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
     const signal = options.signal ?? scope?.signal;
     if (!signal) throw new TypeError("Blob request signal is unavailable");
+    const apiOrigin = readUrlOrigin(new NativeURL(resolved.apiBaseUrl));
     try {
       const response = await guardedOutboundFetch(
         joinUrl(resolved.apiBaseUrl, path),
         { method, headers, body: options.body, redirect: "error", signal },
         {
           authorizeUrl: (target) => {
-            if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
+            if (readUrlOrigin(target) !== apiOrigin) {
               throw new OutboundRequestBlockedError(
                 "Veryfront Cloud Blob request blocked: destination origin is not authorized",
               );

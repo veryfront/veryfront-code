@@ -9,10 +9,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
 import {
   createSelectedProjectPushOptions,
+  loginForDevShortcut,
   preloadDevAuth,
   startDevServerOnFreePort,
 } from "./command.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { UntrustedApiUrlCredentialError } from "#cli/shared/config";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -404,5 +406,42 @@ describe("cli/commands/dev: --port 0", () => {
     } finally {
       console.log = originalLog;
     }
+  });
+});
+
+describe("cli/commands/dev: auth shortcut", () => {
+  it("prints a login refusal instead of rejecting", async () => {
+    const logged: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+
+    try {
+      // The keyboard handler never awaits the shortcut, so a rejection here
+      // escapes as an unhandled rejection and the developer never reads why
+      // Veryfront refused to send a credential to the configured endpoint.
+      const result = await loginForDevShortcut(() =>
+        Promise.reject(
+          new UntrustedApiUrlCredentialError(
+            "veryfront.json selects a repository-configured API endpoint.",
+          ),
+        )
+      );
+
+      assertEquals(result, null);
+      assert(
+        logged.some((line) =>
+          line.includes("veryfront.json selects a repository-configured API endpoint.")
+        ),
+        `expected the refusal on the dev output, got ${JSON.stringify(logged)}`,
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it("returns the identity when login succeeds", async () => {
+    const identity = { authenticated: true, type: "apiKey" } as const;
+
+    assertEquals(await loginForDevShortcut(() => Promise.resolve(identity)), identity);
   });
 });

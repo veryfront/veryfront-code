@@ -2,7 +2,7 @@ import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfr
 import {
   getHostEnv,
   getHostEnvExcludingEnvFile,
-  hasEnvFileValueSource,
+  getHostSecret,
 } from "#veryfront/platform/compat/process/env.ts";
 import {
   getCurrentVeryfrontCloudContext,
@@ -10,18 +10,35 @@ import {
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
-const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 
 function trimString(value: string): string {
   return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
 }
 
-function replaceString(value: string, searchValue: RegExp, replaceValue: string): string {
-  return IntrinsicReflectApply(StringPrototypeReplace, value, [
-    searchValue,
-    replaceValue,
-  ]) as string;
+function charCodeAtString(value: string, index: number): number {
+  return IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function endsWithString(value: string, suffix: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeEndsWith, value, [suffix]) as boolean;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return IntrinsicReflectApply(
+    StringPrototypeSlice,
+    value,
+    end === undefined ? [start] : [start, end],
+  ) as string;
+}
+
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && charCodeAtString(value, end - 1) === 47) end -= 1;
+  return sliceString(value, 0, end);
 }
 
 // ---------------------------------------------------------------------------
@@ -50,24 +67,28 @@ function isRuntimeConfigInitialized(): boolean {
 
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 
-function normalizeApiBaseUrl(value: string | undefined): string | undefined {
+export function normalizeVeryfrontApiBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value === undefined ? undefined : trimString(value);
   if (!trimmed) return undefined;
-  return replaceString(
-    replaceString(trimmed, /\/graphql\/?$/, "/api"),
-    /\/+$/,
-    "",
-  );
+  const withoutTrailingSlashes = stripTrailingSlashes(trimmed);
+  return endsWithString(withoutTrailingSlashes, "/graphql")
+    ? `${sliceString(withoutTrailingSlashes, 0, -"/graphql".length)}/api`
+    : withoutTrailingSlashes;
 }
 
 export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
-  return normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_BASE_URL")) ??
-    normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
+  return normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_API_BASE_URL")) ??
+    normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
+}
+
+/** Resolve the optional public API origin used for bearer-bound inference requests. */
+export function resolveVeryfrontPublicApiBaseUrlFromHostEnv(): string | undefined {
+  return normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_PUBLIC_API_BASE_URL"));
 }
 
 function resolveHostCredentialApiBaseUrl(): string {
-  return normalizeApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")) ??
-    normalizeApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
+  return normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")) ??
+    normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
     DEFAULT_API_BASE_URL;
 }
 
@@ -166,8 +187,7 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
 
   const usesHostCredential = requestContext?.token === undefined &&
     scopedContext?.apiToken === undefined &&
-    getHostEnv("VERYFRONT_API_TOKEN") !== undefined &&
-    !hasEnvFileValueSource("VERYFRONT_API_TOKEN");
+    getHostSecret("VERYFRONT_API_TOKEN") !== undefined;
   return {
     apiBaseUrl: usesHostCredential
       ? resolveHostCredentialApiBaseUrl()
@@ -178,9 +198,14 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
 
 /** Resolve the trusted host identity used by direct server-side platform clients. */
 export function getVeryfrontCloudHostBootstrap(): VeryfrontCloudBootstrap {
+  const apiToken = getHostEnv("VERYFRONT_API_TOKEN");
+  const usesHostPrivateCredential = apiToken !== undefined &&
+    apiToken === getHostSecret("VERYFRONT_API_TOKEN");
   return {
-    apiBaseUrl: resolveHostCredentialApiBaseUrl(),
-    apiToken: getHostEnv("VERYFRONT_API_TOKEN"),
+    apiBaseUrl: usesHostPrivateCredential
+      ? resolveHostCredentialApiBaseUrl()
+      : resolveVeryfrontApiBaseUrlFromHostEnv(),
+    apiToken,
     projectSlug: getHostEnv("VERYFRONT_PROJECT_SLUG"),
     serviceLayer: normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
     hasRequestContext: false,

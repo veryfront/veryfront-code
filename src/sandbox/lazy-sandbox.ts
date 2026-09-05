@@ -95,7 +95,7 @@ const lazySandboxPrivateStates = new WeakMap<object, LazySandboxPrivateState>();
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 
-function getLazySandboxPrivateState(sandbox: object): LazySandboxPrivateState {
+function getLazySandboxPrivateState(sandbox: LazySandbox): LazySandboxPrivateState {
   const state = applyIntrinsic(weakMapGet, lazySandboxPrivateStates, [sandbox]) as
     | LazySandboxPrivateState
     | undefined;
@@ -103,7 +103,7 @@ function getLazySandboxPrivateState(sandbox: object): LazySandboxPrivateState {
   return state;
 }
 
-function getLazySandboxAuthToken(sandbox: object): string {
+function getLazySandboxAuthToken(sandbox: LazySandbox): string {
   return getLazySandboxPrivateState(sandbox).authToken;
 }
 

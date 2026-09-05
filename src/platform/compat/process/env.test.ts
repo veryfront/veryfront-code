@@ -4,12 +4,15 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
 import {
   captureHostApiEnvironment,
+  clearEnvFileValueSources,
   deleteEnv,
   deleteHostSecret,
   env,
   getEnv,
   getHostEnv,
   getHostEnvExcludingEnvFile,
+  hasEnvFileValueSource,
+  markEnvFileValue,
   registerTrustedProjectEnvSnapshot,
   setEnv,
   setHostSecret,
@@ -65,6 +68,27 @@ describe("host environment access", () => {
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       deleteEnv("VERYFRONT_API_URL");
+    }
+  });
+
+  it("recognizes a verified differently cased env-file key alias", () => {
+    const fileKey = "vf_env_file_case_alias";
+    const requestedKey = "VF_ENV_FILE_CASE_ALIAS";
+    setEnv(fileKey, "project-value");
+    markEnvFileValue(fileKey);
+
+    try {
+      setEnv(requestedKey, "shell-value");
+      assertEquals(hasEnvFileValueSource(requestedKey), false);
+
+      // Simulate the value identity a case-insensitive Windows environment
+      // presents when the file used a differently cased spelling.
+      setEnv(requestedKey, "project-value");
+      assertEquals(hasEnvFileValueSource(requestedKey), true);
+    } finally {
+      clearEnvFileValueSources();
+      deleteEnv(fileKey);
+      deleteEnv(requestedKey);
     }
   });
 

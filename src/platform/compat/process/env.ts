@@ -38,11 +38,14 @@ const mapSet = Map.prototype.set;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setClear = Set.prototype.clear;
+const setDelete = Set.prototype.delete;
+const setForEach = Set.prototype.forEach;
 const setHas = Set.prototype.has;
 // Captured before project code runs: `getHostEnv` is on the credential path,
 // so a project that replaces `String.prototype.trim` must not observe — or
 // influence — how a host value is classified as blank.
 const stringTrim = String.prototype.trim;
+const stringToLowerCase = String.prototype.toLowerCase;
 
 /**
  * Host-private credentials, deliberately kept out of the process environment.
@@ -86,6 +89,18 @@ export function markEnvFileValue(key: string): void {
   apply(setAdd, envFileValueKeys, [key]);
 }
 
+/** @internal Record that a non-env-file write replaced prior env-file provenance. */
+export function clearEnvFileValueSource(key: string): void {
+  const foldedKey = apply(stringToLowerCase, key, []) as string;
+  apply(setForEach, envFileValueKeys, [
+    (recordedKey: string) => {
+      if ((apply(stringToLowerCase, recordedKey, []) as string) === foldedKey) {
+        apply(setDelete, envFileValueKeys, [recordedKey]);
+      }
+    },
+  ]);
+}
+
 /** @internal Clear project env provenance alongside the env loader's test reset. */
 export function clearEnvFileValueSources(): void {
   if (!allowHostEnvTestOverlay) return;
@@ -94,7 +109,26 @@ export function clearEnvFileValueSources(): void {
 
 /** @internal Report whether the current process value was copied from a project env file. */
 export function hasEnvFileValueSource(key: string): boolean {
-  return apply(setHas, envFileValueKeys, [key]);
+  if (apply(setHas, envFileValueKeys, [key])) return true;
+
+  // Windows aliases environment names case-insensitively, while the env
+  // loader records the spelling used in the file. Confirm an alias against
+  // the live value before accepting it. Running the verified check on every
+  // host is conservative: on a case-sensitive host it can only classify two
+  // differently cased keys as the same source when their values are equal.
+  const value = readHostProcessEnv(key);
+  if (value === undefined) return false;
+  const foldedKey = apply(stringToLowerCase, key, []) as string;
+  let matchesAlias = false;
+  apply(setForEach, envFileValueKeys, [
+    (recordedKey: string) => {
+      if (matchesAlias || recordedKey === key) return;
+      const foldedRecordedKey = apply(stringToLowerCase, recordedKey, []) as string;
+      if (foldedRecordedKey !== foldedKey) return;
+      matchesAlias = readHostProcessEnv(recordedKey) === value;
+    },
+  ]);
+  return matchesAlias;
 }
 
 export type EnvOverlayStorage = {

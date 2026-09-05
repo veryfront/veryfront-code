@@ -15,6 +15,7 @@ import {
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { deleteToken } from "../auth/token-store.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchRemoteProjects,
   getCurrentUser,
@@ -78,11 +79,10 @@ describe("project-discovery", () => {
     });
 
     it("returns projects for a valid project API key without requiring a user profile", async () => {
-      const originalFetch = globalThis.fetch;
       const authorizations: string[] = [];
 
-      try {
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const result = await withMockFetch(
+        (input, init) => {
           const url = new URL(String(input));
           assertEquals(url.pathname, "/projects");
           authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
@@ -95,20 +95,17 @@ describe("project-discovery", () => {
               { status: 200, headers: { "content-type": "application/json" } },
             ),
           );
-        }) as typeof fetch;
+        },
+        () => fetchRemoteProjects("vf_test_secret"),
+      );
 
-        const result = await fetchRemoteProjects("vf_test_secret");
-
-        assertEquals(authorizations, ["Bearer vf_test_secret"]);
-        assertEquals(result.user, null);
-        assertEquals(result.credentialType, "apiKey");
-        assertEquals(result.error, undefined);
-        assertEquals(result.projects, [
-          { id: "project-123", slug: "test-project", name: "Test Project" },
-        ]);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+      assertEquals(authorizations, ["Bearer vf_test_secret"]);
+      assertEquals(result.user, null);
+      assertEquals(result.credentialType, "apiKey");
+      assertEquals(result.error, undefined);
+      assertEquals(result.projects, [
+        { id: "project-123", slug: "test-project", name: "Test Project" },
+      ]);
     });
   });
 

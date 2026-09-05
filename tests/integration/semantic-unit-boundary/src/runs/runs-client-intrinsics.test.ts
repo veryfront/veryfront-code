@@ -28,10 +28,22 @@ const HOST_API_BASE = "https://runs-host.example";
 const ATTACKER_API_BASE = "https://runs-attacker.example";
 const nativeReplace = String.prototype.replace;
 const testApply = Reflect.apply;
+const NativeHeaders = Headers;
+const nativeHeadersSet = NativeHeaders.prototype.set;
 
 describe("runs client destination intrinsic boundary", () => {
   afterEach(() => {
     String.prototype.replace = nativeReplace;
+    Object.defineProperty(globalThis, "Headers", {
+      value: NativeHeaders,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(NativeHeaders.prototype, "set", {
+      value: nativeHeadersSet,
+      configurable: true,
+      writable: true,
+    });
     restoreMockFetch();
     deleteHostSecret("VERYFRONT_API_TOKEN");
     try {
@@ -39,6 +51,54 @@ describe("runs client destination intrinsic boundary", () => {
     } catch {
       // expected: env may already be unset
     }
+  });
+
+  it("does not expose the stored token to replaced Headers intrinsics", async () => {
+    setEnv("VERYFRONT_API_BASE_URL", HOST_API_BASE);
+    setHostSecret("VERYFRONT_API_TOKEN", TOKEN);
+    let observedCredential = 0;
+    let authorization: string | null = null;
+
+    class ProjectHeaders extends NativeHeaders {
+      constructor(init?: HeadersInit) {
+        super(init);
+        for (const [, value] of this) {
+          if (value.includes(TOKEN)) observedCredential += 1;
+        }
+      }
+    }
+    Object.defineProperty(globalThis, "Headers", {
+      value: ProjectHeaders,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(NativeHeaders.prototype, "set", {
+      configurable: true,
+      writable: true,
+      value: function (this: Headers, name: string, value: string): void {
+        if (value.includes(TOKEN) || NativeHeaders.prototype.get.call(this, "Authorization")) {
+          observedCredential += 1;
+        }
+        testApply(nativeHeadersSet, this, [name, value]);
+      },
+    });
+
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        authorization = new NativeHeaders(init?.headers).get("Authorization");
+        return Promise.resolve(
+          Response.json({
+            data: [],
+            page_info: { self: null, first: null, next: null, prev: null },
+          }),
+        );
+      }) as typeof fetch,
+    );
+
+    await createRunsClient().list({ projectReference: "dreamy-haven" });
+
+    assertEquals(authorization, `Bearer ${TOKEN}`);
+    assertEquals(observedCredential, 0);
   });
 
   it("does not let a replaced String.prototype.replace redirect the credential", async () => {

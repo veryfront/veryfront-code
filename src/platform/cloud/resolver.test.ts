@@ -24,12 +24,14 @@ import {
   getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
   resolveVeryfrontApiBaseUrlFromHostEnv,
+  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
 } from "./resolver.ts";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_URL",
+  "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_DEFAULT_MODEL",
@@ -216,6 +218,16 @@ describe("platform/cloud/resolver", () => {
     assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://project-api.example/api");
   });
 
+  it("keeps the host bootstrap's env-file token paired with its API URL", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_project_token");
+    setEnv("VERYFRONT_API_URL", "https://project-api.example/graphql");
+    markEnvFileValue("VERYFRONT_API_TOKEN");
+    markEnvFileValue("VERYFRONT_API_URL");
+
+    assertEquals(getVeryfrontCloudHostBootstrap().apiToken, "vf_project_token");
+    assertEquals(getVeryfrontCloudHostBootstrap().apiBaseUrl, "https://project-api.example/api");
+  });
+
   it("does not pair a stored login token with a project env-file API URL", () => {
     setEnv("VERYFRONT_API_URL", "https://project-api.example");
     markEnvFileValue("VERYFRONT_API_URL");
@@ -223,6 +235,34 @@ describe("platform/cloud/resolver", () => {
 
     assertEquals(getVeryfrontCloudBootstrap().apiToken, "stored-login-token");
     assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://api.veryfront.com");
+    assertEquals(getVeryfrontCloudHostBootstrap().apiToken, "stored-login-token");
+    assertEquals(getVeryfrontCloudHostBootstrap().apiBaseUrl, "https://api.veryfront.com");
+  });
+
+  it("does not treat a blank project env-file token as the stored token's source", () => {
+    setEnv("VERYFRONT_API_TOKEN", "   ");
+    setEnv("VERYFRONT_API_URL", "https://project-api.example");
+    markEnvFileValue("VERYFRONT_API_TOKEN");
+    markEnvFileValue("VERYFRONT_API_URL");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    assertEquals(getVeryfrontCloudBootstrap().apiToken, "stored-login-token");
+    assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://api.veryfront.com");
+    assertEquals(getVeryfrontCloudHostBootstrap().apiToken, "stored-login-token");
+    assertEquals(getVeryfrontCloudHostBootstrap().apiBaseUrl, "https://api.veryfront.com");
+  });
+
+  it("normalizes the optional public API base URL independently", () => {
+    assertEquals(resolveVeryfrontPublicApiBaseUrlFromHostEnv(), undefined);
+
+    setEnv(
+      "VERYFRONT_PUBLIC_API_BASE_URL",
+      " https://api.staging.veryfront.org/graphql/ ",
+    );
+    assertEquals(
+      resolveVeryfrontPublicApiBaseUrlFromHostEnv(),
+      "https://api.staging.veryfront.org/api",
+    );
   });
 
   it("treats scoped cloud context as sufficient runtime context even without projectSlug", () => {

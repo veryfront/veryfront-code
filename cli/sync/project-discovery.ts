@@ -1,15 +1,11 @@
 import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { guardedOutboundFetch } from "#cli/outbound-fetch";
 
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
-const stringReplace = String.prototype.replace;
-
-interface ProjectDiscoveryOptions {
-  apiBaseUrl?: string;
-  transport?: typeof fetch;
-}
 
 export interface RemoteProject {
   id: string;
@@ -28,7 +24,7 @@ export interface ProjectDiscoveryResult {
 
 export async function fetchRemoteProjects(
   apiToken?: string,
-  options: ProjectDiscoveryOptions = {},
+  env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<ProjectDiscoveryResult> {
   const normalizedToken = apiToken === undefined
     ? undefined
@@ -44,10 +40,9 @@ export async function fetchRemoteProjects(
   }
 
   const apiKeyCredential = isApiKeyToken(token);
-  const user = apiKeyCredential ? null : await validateToken(token, undefined, {
-    apiBaseUrl: options.apiBaseUrl,
-    transport: options.transport,
-  });
+  const user = apiKeyCredential
+    ? null
+    : await validateToken(token, env, { transport: guardedOutboundFetch });
 
   if (!apiKeyCredential && !user) {
     return {
@@ -58,10 +53,7 @@ export async function fetchRemoteProjects(
   }
 
   try {
-    const apiBaseUrl = options.apiBaseUrl ?? getApiUrl();
-    const baseUrl = applyIntrinsic(stringReplace, apiBaseUrl, [/\/$/, ""]) as string;
-    const transport = options.transport ?? fetch;
-    const response = await transport(`${baseUrl}/projects`, {
+    const response = await guardedOutboundFetch(`${getApiUrl(env)}/projects`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

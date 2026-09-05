@@ -4,7 +4,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
-import { classifyCliError, routeCommand } from "./router.ts";
+import { classifyCliError, routeCommand, safeJsonErrorContext } from "./router.ts";
 import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "veryfront/errors";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
@@ -137,6 +137,16 @@ describe("cli/command-definitions integrity", () => {
 });
 
 describe("cli/router helpers", () => {
+  it("bounds oversized protected-deletion error context with truncation metadata", () => {
+    const context = safeJsonErrorContext({
+      protectedDeleted: Array.from({ length: 1_025 }, (_, index) => `.env.secret-${index}`),
+    });
+
+    assertEquals((context?.protectedDeleted as string[]).length, 1_000);
+    assertEquals(context?.protectedDeletedTruncated, true);
+    assertEquals(context?.protectedDeletedOmitted, 25);
+  });
+
   describe("classifyCliError", () => {
     it("uses typed exit metadata instead of message prefixes", () => {
       assertEquals(

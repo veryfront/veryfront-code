@@ -9,8 +9,11 @@ import {
 import {
   getProjectEnv,
   getProjectEnvSnapshot,
+  getTrustedProjectEnvIdentity,
   isProjectEnvActive,
   runWithProjectEnv,
+  runWithTrustedProjectEnv,
+  type TrustedProjectEnvIdentity,
 } from "./storage.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -23,6 +26,70 @@ describe("project-env/storage", () => {
     runWithProjectEnv({ FOO: "bar" }, () => {
       assertEquals(getProjectEnv("FOO"), "bar");
     });
+  });
+
+  it("keeps runtime identity separate from project environment values", () => {
+    runWithProjectEnv({ VERYFRONT_PROJECT_ID: "forged-project" }, () => {
+      assertEquals(getTrustedProjectEnvIdentity(), undefined);
+    });
+
+    runWithTrustedProjectEnv(
+      { VERYFRONT_PROJECT_ID: "forged-project" },
+      { projectId: "trusted-project", environmentId: "trusted-environment" },
+      () => {
+        const identity = getTrustedProjectEnvIdentity();
+        assertEquals(identity, {
+          projectId: "trusted-project",
+          environmentId: "trusted-environment",
+        });
+        assertEquals(Object.isFrozen(identity!), true);
+      },
+    );
+  });
+
+  it("does not inherit a forged identity in an untrusted scope", () => {
+    const prototype = Object.prototype as { identity?: TrustedProjectEnvIdentity };
+    prototype.identity = {
+      projectId: "forged-project",
+      environmentId: "forged-environment",
+    };
+    try {
+      runWithProjectEnv({}, () => {
+        assertEquals(getTrustedProjectEnvIdentity(), undefined);
+      });
+    } finally {
+      delete prototype.identity;
+    }
+  });
+
+  it("does not expose tenant values through inherited descriptor accessors", () => {
+    const observed: unknown[] = [];
+    Object.defineProperty(Object.prototype, "get", {
+      configurable: true,
+      get() {
+        observed.push((this as { value?: unknown }).value);
+        return undefined;
+      },
+    });
+    Object.defineProperty(Object.prototype, "set", {
+      configurable: true,
+      get() {
+        observed.push((this as { value?: unknown }).value);
+        return undefined;
+      },
+    });
+    try {
+      runWithTrustedProjectEnv(
+        { PROVIDER_TOKEN: "private-provider-token" },
+        { projectId: "project-next" },
+        () => assertEquals(getProjectEnv("PROVIDER_TOKEN"), "private-provider-token"),
+      );
+    } finally {
+      delete (Object.prototype as { get?: unknown }).get;
+      delete (Object.prototype as { set?: unknown }).set;
+    }
+
+    assertEquals(observed, []);
   });
 
   it("uses context operations captured before project prototype mutation", () => {

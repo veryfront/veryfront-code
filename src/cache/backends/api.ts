@@ -11,7 +11,7 @@ import {
 } from "#veryfront/cache/request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -37,6 +37,18 @@ const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
 const ERROR_BODY_MAX_LENGTH = 500;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIGURED_RESPONSE_BYTES = 128 * 1024 * 1024;
+const NativeURL = URL;
+const applyIntrinsic = Reflect.apply;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+const urlHostGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "host")?.get;
+
+function readUrlProperty(
+  url: URL,
+  getter: ((this: URL) => string) | undefined,
+): string {
+  if (!getter) throw new TypeError("Native URL accessor is unavailable");
+  return applyIntrinsic(getter, url, []) as string;
+}
 
 type CacheRequestOptions = {
   failOnError?: boolean;
@@ -76,9 +88,8 @@ export class ApiCacheBackend implements CacheBackend {
     this.apiBaseUrl = options.apiBaseUrl ??
       getHostEnv("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
-    this.hostApiBaseUrl = getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL") ??
-      "https://api.veryfront.com";
-    this.apiOrigin = new URL(this.apiBaseUrl).origin;
+    this.hostApiBaseUrl = resolveHostOwnedApiBaseUrl();
+    this.apiOrigin = readUrlProperty(new NativeURL(this.apiBaseUrl), urlOriginGetter);
     this.explicitApiToken = options.apiToken;
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -182,7 +193,8 @@ export class ApiCacheBackend implements CacheBackend {
         const apiBaseUrl = this.hasExplicitApiBaseUrl || tokenSource === "env-file"
           ? this.apiBaseUrl
           : this.hostApiBaseUrl;
-        const apiOrigin = new URL(apiBaseUrl).origin;
+        const parsedApiBaseUrl = new NativeURL(apiBaseUrl);
+        const apiOrigin = readUrlProperty(parsedApiBaseUrl, urlOriginGetter);
         const url = `${apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
         const spanUrl = sanitizeUrlForSpan(url);
         const cacheOperation = sanitizeUrlForSpan(path);
@@ -207,7 +219,7 @@ export class ApiCacheBackend implements CacheBackend {
                 },
                 {
                   authorizeUrl: (target) => {
-                    if (target.origin !== apiOrigin) {
+                    if (readUrlProperty(target, urlOriginGetter) !== apiOrigin) {
                       throw new OutboundRequestBlockedError(
                         "Cache API request blocked: destination origin is not authorized",
                       );
@@ -218,7 +230,7 @@ export class ApiCacheBackend implements CacheBackend {
             {
               "http.method": method,
               "http.url": spanUrl,
-              "http.host": new URL(apiBaseUrl).host,
+              "http.host": readUrlProperty(parsedApiBaseUrl, urlHostGetter),
               "cache.operation": cacheOperation,
               "cache.project_slug": projectRef,
             },

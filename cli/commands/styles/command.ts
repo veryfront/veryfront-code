@@ -1,7 +1,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { INVALID_ARGUMENT } from "veryfront/errors";
-import { getConfig } from "veryfront/config";
+import { getConfig, getEnvironmentConfig } from "veryfront/config";
 import {
   enhanceAdapterWithFS,
   getEnv,
@@ -17,6 +17,7 @@ import {
 import { cliLogger, exitProcess } from "#cli/utils";
 import type { StylesArgs } from "./handler.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
+import { applyQualifiedRuntimeAuth } from "#cli/shared/runtime-auth";
 
 const getStyleArtifactBuildConfigSchema = defineSchema((v) =>
   v.object({
@@ -212,10 +213,11 @@ export async function stylesCommand(options: StylesArgs): Promise<void> {
   const buildConfig = parseStyleArtifactBuildConfig(options.config);
   const selector = resolveStyleArtifactSelector(buildConfig);
   const projectSlug = requireEnv("VERYFRONT_PROJECT_SLUG");
-  const apiToken = requireEnv("VERYFRONT_API_TOKEN");
-  const apiBaseUrl = requireEnv("VERYFRONT_API_BASE_URL");
   const projectId = getEnv("VERYFRONT_PROJECT_ID")?.trim();
   const projectDir = Deno.cwd();
+  const runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
+  const apiToken = runtimeAuth.apiToken ?? requireEnv("VERYFRONT_API_TOKEN");
+  const apiBaseUrl = runtimeAuth.apiBaseUrl ?? getEnvironmentConfig().apiBaseUrl;
 
   const baseAdapter = await runtime.get();
   const adapter = await enhanceAdapterWithFS(

@@ -13,13 +13,25 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
-import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
-import { getHostEnv } from "#cli/process-env";
 import { guardedOutboundFetch } from "#cli/outbound-fetch";
+import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
-import { DEFAULT_LOCAL_API_URL } from "#cli/shared/constants";
+import {
+  DEFAULT_LOCAL_API_URL,
+  resolveRestApiBaseUrl,
+  trimTrailingSlashes,
+} from "#cli/shared/constants";
+import {
+  readConfigJsonFile,
+  resolveApiCredentialCandidatesForAuth,
+  resolveApiUrlTrust,
+} from "#cli/shared/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
+import { getHostSecret } from "#cli/process-env";
+import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -27,55 +39,49 @@ import {
   slugToName,
 } from "./remote-file-tool-helpers.ts";
 
-function getApiBaseUrl(): string {
-  return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
-}
+type ApiResult<T> = { ok: boolean; data?: T; error?: string; status: number };
 
-// Captured before project code runs: `getApiToken` passes the host-private
-// stored login token through this normalizer, so a project that replaces
-// `String.prototype.trim` — or `Reflect.apply` itself — must not observe the
-// credential from the method receiver or the apply arguments.
+const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
-const stringTrim = String.prototype.trim;
+const stringReplace = String.prototype.replace;
+const urlPathnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
+const urlHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
+const urlProtocolGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")?.get;
+const urlHrefGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
 
-function normalizeToken(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const normalized = applyIntrinsic(stringTrim, value, []) as string;
-  return normalized ? normalized : undefined;
+function readUrl(url: URL, getter: ((this: URL) => string) | undefined): string {
+  if (!getter) throw new TypeError("Native URL accessor is unavailable");
+  return applyIntrinsic(getter, url, []) as string;
 }
 
-function getApiAuth(): { baseUrl: string; token: string | undefined } {
-  // The environment snapshot only carries an explicitly exported token; a
-  // stored CLI login token is held host-privately so project code served by
-  // `veryfront dev` cannot read it out of the process environment.
-  //
-  // The snapshot keeps a blank export verbatim (`readEnv(...) || undefined`
-  // only drops the empty string), and the CLI treats a whitespace-only
-  // `VERYFRONT_API_TOKEN` as unset when it registers the stored login token.
-  // Normalizing here keeps an unusable blank export from shadowing that
-  // credential and being sent as a `Bearer   ` header.
-  const config = getEnvironmentConfig();
-  const environmentToken = normalizeToken(config.apiToken);
-  if (environmentToken) return { baseUrl: config.apiBaseUrl, token: environmentToken };
-  return {
-    baseUrl: resolveHostOwnedApiBaseUrl(),
-    token: normalizeToken(getHostEnv("VERYFRONT_API_TOKEN")),
-  };
+function validatedEndpoint(candidateApiBaseUrl: string): URL | ApiResult<never> {
+  const candidate = new NativeURL(candidateApiBaseUrl);
+  const addDefaultRestPath = trimTrailingSlashes(readUrl(candidate, urlPathnameGetter)) === "";
+  const endpoint = new NativeURL(resolveRestApiBaseUrl(candidateApiBaseUrl, addDefaultRestPath));
+  const hostname = readUrl(endpoint, urlHostnameGetter);
+  const protocol = readUrl(endpoint, urlProtocolGetter);
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "[::1]" || hostname === "::1";
+  if (protocol !== "https:" && !(protocol === "http:" && loopback)) {
+    return {
+      ok: false,
+      error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
+      status: 400,
+    };
+  }
+  return endpoint;
 }
 
-async function apiRequest<T>(
+async function sendApiRequest<T>(
+  endpoint: URL,
   method: string,
   path: string,
-  options: { body?: unknown; token?: string } = {},
-): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
-  const auth = getApiAuth();
-  const token = options.token ?? auth.token;
-  if (!token) {
-    return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
-  }
-
-  const url = `${options.token ? getApiBaseUrl() : auth.baseUrl}/api${path}`;
-
+  token: string,
+  body?: unknown,
+): Promise<ApiResult<T>> {
+  const endpointHref = readUrl(endpoint, urlHrefGetter);
+  const normalizedEndpoint = applyIntrinsic(stringReplace, endpointHref, [/\/$/, ""]) as string;
+  const url = `${normalizedEndpoint}${path}`;
   try {
     // The credential may be the host-private stored login token, so the
     // request goes through the host transport rather than `globalThis.fetch`.
@@ -89,29 +95,21 @@ async function apiRequest<T>(
     // the host process can set it, so a project overlay cannot.
     const response = await guardedOutboundFetch(url, {
       method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
     });
-
     if (!response.ok) {
       const errorText = await response.text();
       let errorMessage = errorText || `HTTP ${response.status}`;
-
       try {
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.message || errorJson.error || errorMessage;
       } catch {
-        // ignore JSON parse errors
+        // Keep the response text when the body is not JSON.
       }
-
       return { ok: false, error: errorMessage, status: response.status };
     }
-
     if (response.status === 204) return { ok: true, status: 204 };
-
     return { ok: true, data: (await response.json()) as T, status: response.status };
   } catch (error) {
     return {
@@ -120,6 +118,59 @@ async function apiRequest<T>(
       status: 0,
     };
   }
+}
+
+async function apiRequest<T>(
+  method: string,
+  path: string,
+  options: { body?: unknown; token?: string } = {},
+): Promise<ApiResult<T>> {
+  const env = getEnvironmentConfig();
+  const projectDir = cwd();
+  // Remote file tools send to apiBaseUrl, not the higher-precedence apiUrl
+  // used by GraphQL/auth calls. Classify the actual destination on its own so
+  // a trusted API_URL cannot mask a repository-steered API_BASE_URL.
+  const apiBaseSource = getEnvSource("VERYFRONT_API_BASE_URL");
+  const requestEnv = apiBaseSource.source === "unset" ? env : { ...env, apiUrl: undefined };
+  // Resolve in non-interactive precedence. These tools previously used
+  // `env.apiToken` directly, so a project `.env` VERYFRONT_API_TOKEN outranked
+  // the stored `veryfront login` token. The interactive ordering reverses that
+  // pair, which would silently switch which identity file operations use.
+  const candidates = await resolveApiCredentialCandidatesForAuth(requestEnv, projectDir, false);
+  const candidate = options.token
+    ? candidates.find((entry) => entry.apiToken === options.token)
+    : candidates[0];
+  if (!candidate) {
+    const hostPrivateToken = getHostSecret("VERYFRONT_API_TOKEN");
+    if (hostPrivateToken) {
+      const hostEndpoint = validatedEndpoint(resolveHostOwnedApiBaseUrl());
+      if (!(hostEndpoint instanceof NativeURL)) return hostEndpoint;
+      return await sendApiRequest<T>(hostEndpoint, method, path, hostPrivateToken, options.body);
+    }
+    const configFile = await readConfigJsonFile(projectDir);
+    const trust = resolveApiUrlTrust(requestEnv, configFile, join(projectDir, "veryfront.json"));
+    if (trust.repositorySteered) {
+      return {
+        ok: false,
+        error: `The project configures an untrusted API endpoint. Set ${
+          trust.steeringEnvKey ?? "VERYFRONT_API_BASE_URL"
+        } in your shell to confirm the endpoint before using remote file tools.`,
+        status: 403,
+      };
+    }
+    return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
+  }
+
+  const token = candidate.apiToken;
+  const candidateApiBaseUrl = candidate.validationEnv.apiBaseUrl || DEFAULT_LOCAL_API_URL;
+  let endpoint: URL | ApiResult<never>;
+  try {
+    endpoint = validatedEndpoint(candidateApiBaseUrl);
+  } catch {
+    return { ok: false, error: "The API endpoint must be a valid URL.", status: 400 };
+  }
+  if (!(endpoint instanceof NativeURL)) return endpoint;
+  return await sendApiRequest<T>(endpoint, method, path, token, options.body);
 }
 
 interface RemoteFile {

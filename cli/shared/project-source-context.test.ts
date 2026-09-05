@@ -9,6 +9,7 @@ import {
   setHostSecret,
 } from "#cli/process-env";
 import { saveToken } from "../auth/token-store.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   applyProjectSourceRuntimeAuth,
   getProxyProjectSourceContext,
@@ -116,8 +117,8 @@ describe("project source runtime auth", () => {
   });
 
   it("hydrates runtime auth from fs.veryfront.projectSlug", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-project-source-" });
-    const configHome = await Deno.makeTempDir({ prefix: "vf-project-source-auth-" });
+    const projectDir = await makeTempDir({ prefix: "vf-project-source-" });
+    const configHome = await makeTempDir({ prefix: "vf-project-source-auth-" });
 
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
@@ -145,8 +146,8 @@ describe("project source runtime auth", () => {
   });
 
   it("hydrates runtime auth before invoking project source callbacks", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-project-source-" });
-    const configHome = await Deno.makeTempDir({ prefix: "vf-project-source-auth-" });
+    const projectDir = await makeTempDir({ prefix: "vf-project-source-" });
+    const configHome = await makeTempDir({ prefix: "vf-project-source-auth-" });
 
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
@@ -171,8 +172,8 @@ describe("project source runtime auth", () => {
   });
 
   it("captures host API routing before project config executes", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-project-source-route-" });
-    const configHome = await Deno.makeTempDir({ prefix: "vf-project-source-route-auth-" });
+    const projectDir = await makeTempDir({ prefix: "vf-project-source-route-" });
+    const configHome = await makeTempDir({ prefix: "vf-project-source-route-auth-" });
 
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");

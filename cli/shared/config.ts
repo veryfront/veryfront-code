@@ -7,14 +7,23 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { join } from "veryfront/platform/path";
+import { basename, join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
-import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
-import { resolveCliApiUrl } from "./constants.ts";
+import {
+  API_URL_ENV_KEYS,
+  type ApiUrlEnvKey,
+  DEFAULT_API_URL,
+  isSameApiEndpoint,
+  resolveCliApiUrl,
+  resolveCliApiUrlWithOrigin,
+  resolveRestApiBaseUrl,
+  trimTrailingSlashes,
+} from "./constants.ts";
 import { readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
@@ -253,12 +262,192 @@ export function resolveEnvironmentProjectReference():
   return undefined;
 }
 
+/**
+ * How the effective API host was chosen, and whether the repository chose it.
+ *
+ * `repositorySteered` is true when files that ship with a clone (`veryfront.json`
+ * or a project `.env` file) moved the CLI off the endpoint it would otherwise
+ * have used. Those files are attacker-controlled for any repository the
+ * developer did not write, so ambient credentials must not follow them.
+ */
+export interface ApiUrlTrust {
+  apiUrl: string;
+  repositorySteered: boolean;
+  /** Set when a project `.env` file supplied the host; the file that did. */
+  steeringEnvFile?: string;
+  /** Set when a project `.env` file supplied the host; the variable it set. */
+  steeringEnvKey?: ApiUrlEnvKey;
+  /** Set when the effective endpoint came from this project's veryfront.json. */
+  steeringConfigFile?: string;
+}
+
+/** Classify the effective API URL and who chose it. */
+export function resolveApiUrlTrust(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  configFilePath = "veryfront.json",
+): ApiUrlTrust {
+  const { apiUrl, origin } = resolveCliApiUrlWithOrigin(env, configFile?.apiUrl);
+
+  if (origin.source === "env") {
+    return resolveEnvironmentApiUrlTrust(env, configFile, configFilePath, apiUrl, origin.key);
+  }
+
+  if (origin.source !== "config-file") return { apiUrl, repositorySteered: false };
+
+  // A config file that names the endpoint the CLI would have used anyway, in
+  // any equivalent spelling, steers nothing.
+  return {
+    apiUrl,
+    repositorySteered: !isSameApiEndpoint(apiUrl, resolveCliApiUrl(env)),
+    steeringConfigFile: configFilePath,
+  };
+}
+
+function resolveEnvironmentApiUrlTrust(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  configFilePath: string,
+  apiUrl: string,
+  key: ApiUrlEnvKey,
+): ApiUrlTrust {
+  const source = getEnvSource(key);
+  if (source.source === "config-file") {
+    const configApiUrl = configFile?.apiUrl;
+    const requestBase = configApiUrl === undefined ? undefined : apiBaseUrlForRequest(configApiUrl);
+    const matchesCurrentConfig = source.file === configFilePath && configApiUrl !== undefined &&
+      (isSameApiEndpoint(apiUrl, configApiUrl) ||
+        isSameApiEndpoint(apiUrl, requestBase!) ||
+        isSameApiEndpoint(apiUrl, `${requestBase}/api`));
+    return {
+      apiUrl,
+      repositorySteered: !isSameApiEndpoint(apiUrl, DEFAULT_API_URL),
+      ...(matchesCurrentConfig ? { steeringConfigFile: configFilePath } : {}),
+    };
+  }
+
+  if (source.source !== "env-file") return { apiUrl, repositorySteered: false };
+  const operatorApiUrl = resolveCliApiUrl(withoutRepositoryApiUrls(env));
+  if (isSameApiEndpoint(apiUrl, operatorApiUrl)) return { apiUrl, repositorySteered: false };
+  return {
+    apiUrl,
+    repositorySteered: true,
+    steeringEnvFile: source.file,
+    steeringEnvKey: key,
+  };
+}
+
+function withoutRepositoryApiUrls(env: EnvironmentConfig): EnvironmentConfig {
+  const operatorEnv = { ...env };
+  for (const key of API_URL_ENV_KEYS) {
+    if (getEnvSource(key).source !== "env-file") continue;
+    if (key === "VERYFRONT_API_URL") operatorEnv.apiUrl = undefined;
+    else operatorEnv.apiBaseUrl = DEFAULT_API_URL;
+  }
+  if (
+    operatorEnv.apiUrl === undefined &&
+    getEnvSource("VERYFRONT_API_BASE_URL").source !== "process"
+  ) {
+    operatorEnv.apiBaseUrl = DEFAULT_API_URL;
+  }
+  return operatorEnv;
+}
+
+/**
+ * Raised when a repository-supplied API host would receive a credential the
+ * repository did not also supply.
+ */
+export class UntrustedApiUrlCredentialError extends Error {
+  override readonly name = "UntrustedApiUrlCredentialError";
+}
+
+/** True for the refusal above, which callers must never fall back around. */
+export function isUntrustedApiUrlCredentialError(error: unknown): boolean {
+  return error instanceof UntrustedApiUrlCredentialError ||
+    (error instanceof Error && error.name === "UntrustedApiUrlCredentialError");
+}
+
+/**
+ * Explain the refusal to the developer running the command.
+ *
+ * Repository-controlled URL text is never echoed. Project `.env` values can
+ * expand any process variable, including credentials the resolver does not
+ * know about, and an expanded secret can land in any URL component or in an
+ * unparseable value. Only the env file's name is shown, never its path.
+ */
+function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
+  const steer = trust.steeringEnvFile === undefined
+    ? "veryfront.json selects a repository-configured API endpoint"
+    : `The project ${
+      basename(trust.steeringEnvFile)
+    } file sets ${trust.steeringEnvKey} to a repository-configured API endpoint`;
+
+  const endpointSource = trust.steeringEnvKey ? getEnvSource(trust.steeringEnvKey) : undefined;
+  const endpointExpandedFromProcess = endpointSource?.source === "env-file" &&
+    endpointSource.expandedFromProcessEnv;
+  const repositoryCredential = trust.steeringEnvFile === undefined
+    ? "Add a matching apiToken to the same veryfront.json"
+    : `Add a literal VERYFRONT_API_TOKEN to the same ${basename(trust.steeringEnvFile)} file`;
+  const confirmationKey = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
+  const remedy = endpointExpandedFromProcess
+    ? `Replace ${confirmationKey} with a literal endpoint in the same file, or, if you trust the `
+    : `${repositoryCredential}, or, if you trust the `;
+  return `${steer}. Veryfront does not send credentials from your shell environment or ` +
+    `'veryfront login' to that endpoint. ${remedy}` +
+    `configured endpoint, set ${confirmationKey} in your shell to the complete API endpoint ` +
+    `to confirm it.`;
+}
+
+/**
+ * True when `candidate` may be sent to a repository-steered host.
+ *
+ * Only credentials the same repository supplied qualify: a `veryfront.json`
+ * `apiToken`, or a token read from the very `.env` file that named the host.
+ * A shell token, a stored `veryfront login` token, or a token from a different
+ * `.env` file belongs to the developer, not to the repository.
+ */
+function isRepositorySuppliedCredential(
+  candidate: ApiCredentialCandidate,
+  trust: ApiUrlTrust,
+): boolean {
+  if (candidate.apiTokenSource === "config-file") return trust.steeringConfigFile !== undefined;
+  if (candidate.apiTokenSource !== "env-file" || trust.steeringEnvFile === undefined) return false;
+
+  const endpointSource = trust.steeringEnvKey ? getEnvSource(trust.steeringEnvKey) : undefined;
+  if (endpointSource?.source === "env-file" && endpointSource.expandedFromProcessEnv) return false;
+
+  const tokenSource = getEnvSource("VERYFRONT_API_TOKEN");
+  if (tokenSource.source !== "env-file" || tokenSource.file !== trust.steeringEnvFile) return false;
+
+  // `loadEnv` expands `$NAME` against the real process environment, so an entry
+  // such as `VERYFRONT_API_TOKEN=$GITHUB_TOKEN` looks like it came from the
+  // file while its value is the operator's shell secret. The repository chose
+  // which secret to name; it never owned the secret itself.
+  return !tokenSource.expandedFromProcessEnv;
+}
+
+function apiBaseUrlForRequest(apiUrl: string): string {
+  const normalized = trimTrailingSlashes(apiUrl);
+  if (normalized.endsWith("/graphql")) return normalized.slice(0, -8);
+  if (normalized.endsWith("/api")) return normalized.slice(0, -4);
+  return normalized;
+}
+
 async function resolveApiTokenForMode(
   env: EnvironmentConfig,
   configFile: VeryfrontConfig | null,
   interactive: boolean,
+  trust: ApiUrlTrust,
 ): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
-  const [candidate] = await resolveApiCredentialCandidates(env, configFile, interactive, env);
+  const candidates = await resolveApiCredentialCandidates(env, configFile, interactive, env);
+  // A repository-steered apiUrl must never receive credentials the repository
+  // did not also supply: pairing it with a shell, stored-login, or unrelated
+  // .env token would let a cloned repository exfiltrate the developer's
+  // Veryfront credential to an attacker-controlled host.
+  const eligible = trust.repositorySteered
+    ? candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust))
+    : candidates;
+  const [candidate] = eligible;
   if (candidate) {
     return {
       apiToken: candidate.apiToken,
@@ -288,7 +477,8 @@ async function resolveApiCredentialCandidates(
   const storedToken = await readToken(env);
   const candidates: ApiCredentialCandidate[] = [];
 
-  const shellEnvToken = envToken && envSource.source !== "env-file";
+  const shellEnvToken = envToken && envSource.source !== "env-file" &&
+    envSource.source !== "config-file";
   const projectEnvTokenAfterStored = interactive && envToken && envSource.source === "env-file" &&
     storedToken;
 
@@ -301,7 +491,7 @@ async function resolveApiCredentialCandidates(
     });
   }
 
-  if (configFile?.apiToken) {
+  if (configFile?.apiToken?.trim()) {
     candidates.push({
       apiToken: configFile.apiToken,
       apiTokenSource: "config-file",
@@ -319,10 +509,10 @@ async function resolveApiCredentialCandidates(
     });
   }
 
-  if (envToken && !shellEnvToken) {
+  if (envToken && envSource.source === "env-file") {
     candidates.push({
       apiToken: envToken,
-      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+      apiTokenSource: "env-file",
       validationEnv,
       authoritative: envSource.source !== "env-file",
     });
@@ -346,6 +536,7 @@ export async function resolveApiCredentialCandidatesForAuth(
   interactive = true,
 ): Promise<ApiCredentialCandidate[]> {
   const configFile = await readConfigJsonFile(projectDir);
+  const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
   // A checked-in veryfront.json apiUrl only steers the credential that came
   // from that same file. Shell-environment, .env-file, and token-store
   // credentials validate against the environment-derived API URL, so a
@@ -355,18 +546,129 @@ export async function resolveApiCredentialCandidatesForAuth(
     ...env,
     apiUrl: resolveCliApiUrl(env),
   };
+  const configEndpoint = resolveCliApiUrlWithOrigin(env, configFile?.apiUrl);
   const configFileValidationEnv = {
     ...env,
-    apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+    apiUrl: configEndpoint.apiUrl,
+    ...(configFile?.apiUrl
+      ? {
+        apiBaseUrl: resolveRestApiBaseUrl(configEndpoint.apiUrl, false),
+      }
+      : {}),
   };
 
-  return resolveApiCredentialCandidates(
+  const candidates = await resolveApiCredentialCandidates(
     env,
     configFile,
     interactive,
     validationEnv,
     configFileValidationEnv,
   );
+
+  const apiBaseSource = getEnvSource("VERYFRONT_API_BASE_URL");
+  if (
+    trust.repositorySteered && apiBaseSource.source === "config-file" &&
+    (trust.steeringConfigFile === undefined ||
+      (!configFile?.apiToken?.trim() && isSameApiEndpoint(env.apiBaseUrl, trust.apiUrl)))
+  ) {
+    return [];
+  }
+
+  if (trust.repositorySteered && trust.steeringConfigFile) {
+    const configCandidates = candidates.filter((entry) => entry.apiTokenSource === "config-file");
+    const otherCandidates = candidates.filter((entry) => entry.apiTokenSource !== "config-file");
+    return [...configCandidates, ...otherCandidates];
+  }
+
+  // `login`, `whoami`, and `up` validate a candidate by sending it to
+  // `validationEnv.apiUrl`, so these preflights reach the repository-supplied
+  // host before any call to `resolveConfig`. They need the same rule: a
+  // repository-steered host may only receive credentials the repository itself
+  // supplied, never a shell, stored-login, or unrelated .env token.
+  if (!trust.repositorySteered || trust.steeringEnvFile === undefined) return candidates;
+  return candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust));
+}
+
+/**
+ * Refuse to mint a new credential for a host a project `.env` file chose.
+ *
+ * `login` and `ensureAuthenticated` validate a freshly obtained token against
+ * `env`, whose `apiUrl` is whatever `VERYFRONT_API_URL` holds, and `loadEnv`
+ * fills that variable from a cloned `.env` before any command runs. Filtering
+ * the preflight candidates does not cover this: a brand new token is by
+ * definition the developer's own, so an empty candidate list must stop the
+ * login rather than fall through to one. A `veryfront.json` `apiUrl` does not
+ * reach `env`, so only the env-file case is a live path here.
+ */
+export async function assertApiUrlAcceptsNewCredential(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+): Promise<void> {
+  const configFile = await readConfigJsonFile(projectDir);
+  const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
+  if (!trust.repositorySteered) return;
+  const configEndpointHydrated = getEnvSource("VERYFRONT_API_URL").source === "config-file" ||
+    getEnvSource("VERYFRONT_API_BASE_URL").source === "config-file";
+  if (trust.steeringEnvFile === undefined && !configEndpointHydrated) return;
+
+  throw new UntrustedApiUrlCredentialError(
+    describeUntrustedApiUrl(trust),
+  );
+}
+
+/**
+ * Pick the API host and a credential it may receive, for callers that rebuild
+ * a configuration outside `resolveConfig`.
+ *
+ * `pull` reconstructs a config in its `catch` when `--slug` or a `projects`
+ * list is in play. Checking only for `UntrustedApiUrlCredentialError` there is
+ * not enough: when `veryfront.json` pairs an attacker `apiUrl` with its own
+ * `apiToken` the resolver accepts that pairing, so a later project-link failure
+ * is an ordinary error, and rebuilding with `getApiTokenEnv(env)` would swap
+ * the repository's token for the developer's and send it to that host. This
+ * applies the same trust rule to the rebuild, and refuses when nothing the
+ * repository supplied is available.
+ */
+export async function resolveApiCredentialForFallback(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+): Promise<{ apiUrl: string; apiToken: string | null }> {
+  const trust = resolveApiUrlTrust(env, configFile);
+  const candidates: ApiCredentialCandidate[] = [];
+
+  // Same precedence the fallbacks used before: the environment token first,
+  // then the veryfront.json apiToken.
+  const envToken = getApiTokenEnv(env);
+  if (envToken) {
+    const envSource = getEnvSource("VERYFRONT_API_TOKEN");
+    candidates.push({
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+      validationEnv: env,
+      authoritative: envSource.source !== "env-file",
+    });
+  }
+  if (configFile?.apiToken) {
+    candidates.push({
+      apiToken: configFile.apiToken,
+      apiTokenSource: "config-file",
+      validationEnv: env,
+      authoritative: true,
+    });
+  }
+
+  const eligible = trust.repositorySteered
+    ? candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust))
+    : candidates;
+
+  const [candidate] = eligible;
+  if (!candidate && trust.repositorySteered) {
+    throw new UntrustedApiUrlCredentialError(
+      describeUntrustedApiUrl(trust),
+    );
+  }
+
+  return { apiUrl: trust.apiUrl, apiToken: candidate?.apiToken ?? null };
 }
 
 async function resolveConfigBase(
@@ -379,9 +681,21 @@ async function resolveConfigBase(
   const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
   const configFile = configFileResolution.config;
 
-  const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
+  const trust = resolveApiUrlTrust(env, configFile, join(dir, "veryfront.json"));
+  const apiUrl = trust.apiUrl;
 
-  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
+  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(
+    env,
+    configFile,
+    interactive,
+    trust,
+  );
+
+  if (!apiToken && trust.repositorySteered) {
+    throw new UntrustedApiUrlCredentialError(
+      describeUntrustedApiUrl(trust),
+    );
+  }
 
   if (!apiToken && interactive) {
     const userInfo = await ensureAuthenticated(env, dir);

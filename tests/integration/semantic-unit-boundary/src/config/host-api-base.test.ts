@@ -11,9 +11,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  deleteHostSecret,
+  setHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
+import {
+  __resetEnvLoaderForTests,
+  loadEnv,
+  markEnvFileSource,
+  markProcessEnvSource,
+} from "#veryfront/utils/env-loader.ts";
 import { resolveHostOwnedApiBaseUrl } from "../../../../../src/config/host-api-base.ts";
 
 describe("host API base", () => {
@@ -64,6 +73,52 @@ describe("host API base", () => {
       setEnv("VERYFRONT_API_URL", "https://preferred.example/graphql");
       setEnv("VERYFRONT_API_BASE_URL", "https://fallback.example/api");
       assertEquals(resolveHostOwnedApiBaseUrl(), "https://preferred.example/api");
+    } finally {
+      if (originalBase === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+      else setEnv("VERYFRONT_API_BASE_URL", originalBase);
+      if (originalUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+      else setEnv("VERYFRONT_API_URL", originalUrl);
+    }
+  });
+
+  it("tracks derived env-file API base provenance when a stored login is registered", () => {
+    const originalBase = getEnv("VERYFRONT_API_BASE_URL");
+    try {
+      setEnv("VERYFRONT_API_BASE_URL", "https://project-controlled.example/api");
+      markEnvFileSource("VERYFRONT_API_BASE_URL", ".env");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://api.veryfront.com");
+
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      markProcessEnvSource("VERYFRONT_API_BASE_URL");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      assertEquals(
+        resolveHostOwnedApiBaseUrl(),
+        "https://project-controlled.example/api",
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      __resetEnvLoaderForTests();
+      if (originalBase === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+      else setEnv("VERYFRONT_API_BASE_URL", originalBase);
+    }
+  });
+
+  it("rewrites only a terminal GraphQL API path", () => {
+    const originalBase = getEnv("VERYFRONT_API_BASE_URL");
+    const originalUrl = getEnv("VERYFRONT_API_URL");
+    try {
+      deleteEnv("VERYFRONT_API_BASE_URL");
+      setEnv("VERYFRONT_API_URL", "https://graphql.example/graphql/");
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://graphql.example/api");
+
+      setEnv("VERYFRONT_API_URL", "https://graphql.example/graphql/v2/");
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://graphql.example/graphql/v2");
+
+      deleteEnv("VERYFRONT_API_URL");
+      setEnv("VERYFRONT_API_BASE_URL", "https://api.example/api///");
+      assertEquals(resolveHostOwnedApiBaseUrl(), "https://api.example/api");
     } finally {
       if (originalBase === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
       else setEnv("VERYFRONT_API_BASE_URL", originalBase);

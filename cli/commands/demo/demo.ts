@@ -43,7 +43,12 @@ import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
-import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
+import {
+  assertApiUrlAcceptsNewCredential,
+  createApiClient,
+  isUntrustedApiUrlCredentialError,
+  type ResolvedConfig,
+} from "#cli/shared/config";
 import { resolveOrCreateProject } from "#cli/shared/project-resolution";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
@@ -177,6 +182,9 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
       return false;
     }
 
+    // Validating against a repository-selected host would send a freshly
+    // entered token to whoever authored the clone.
+    await assertApiUrlAcceptsNewCredential();
     const userInfo = await validateToken(tokenInput);
     if (!userInfo) {
       console.log();
@@ -230,6 +238,8 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
       return false;
     }
 
+    // Same guard for the OAuth callback token.
+    await assertApiUrlAcceptsNewCredential();
     const userInfo = await validateToken(result.token);
     if (!userInfo) {
       console.log();
@@ -325,6 +335,7 @@ async function executeStepAction(
     case "login": {
       const existingToken = await readToken();
       if (existingToken) {
+        await assertApiUrlAcceptsNewCredential();
         const userInfo = await validateToken(existingToken);
         if (userInfo) {
           console.log();
@@ -550,6 +561,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   }
 
   write(HIDE_CURSOR);
+  let failed = false;
 
   try {
     write(CLEAR_SCREEN + MOVE_HOME);
@@ -648,9 +660,17 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     console.log();
 
     await waitForEnter("Press Enter to exit...");
+  } catch (error_) {
+    if (!isUntrustedApiUrlCredentialError(error_)) throw error_;
+    failed = true;
+    console.log();
+    const message = error_ instanceof Error
+      ? error_.message
+      : "Veryfront refused to send credentials to the configured API URL.";
+    console.log(`  ${error("✗")} ${message}`);
   } finally {
     write(SHOW_CURSOR);
   }
 
-  exitProcess(0);
+  exitProcess(failed ? 1 : 0);
 }

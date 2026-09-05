@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { getTrustedProjectEnvIdentity } from "#veryfront/server/project-env/storage.ts";
 import { INVALID_ARGUMENT, NETWORK_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
 import {
   __registerLogRecordEmitter,
@@ -3696,6 +3697,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }
       | undefined;
     let observedEnvironmentTargetKeys: string[] = [];
+    let observedTrustedIdentity: ReturnType<typeof getTrustedProjectEnvIdentity>;
 
     const handler = createTestAgentStreamHandler({
       loadAgentSourceEnvironment: (_ctx, source, target, token) => {
@@ -3717,6 +3719,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       sessionManager: new AgentRunSessionManager(),
       createRuntime: () => ({
         stream: async (_messages, _context, callbacks) => {
+          observedTrustedIdentity = getTrustedProjectEnvIdentity();
           callbacks?.onFinish?.({
             text: "resolved from main",
             messages: [],
@@ -3835,6 +3838,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       projectSlug: "demo-project",
     });
     assertEquals(observedCacheCredential, undefined);
+    assertEquals(observedTrustedIdentity, {
+      projectId: "proj-1",
+      projectSlug: "demo-project",
+      environmentId: "10000000-1000-4000-8000-100000000098",
+    });
     assertEquals(observedSourceContextCredentials, [undefined, undefined]);
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });

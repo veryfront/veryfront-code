@@ -218,7 +218,22 @@ describe("Sandbox", () => {
       await assertRejects(
         () => Sandbox.create(),
         VeryfrontError,
-        "Sandbox API URL and auth token must come from matching environment sources",
+        "Sandbox auth must be provided explicitly for a custom API URL",
+      );
+      assertEquals(fetchCalls, []);
+    });
+
+    it("rejects a stored login token when a blank env-file token marks the project URL", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "   ");
+      setEnv("VERYFRONT_API_URL", "https://project-api.example");
+      markEnvFileValue("VERYFRONT_API_TOKEN");
+      markEnvFileValue("VERYFRONT_API_URL");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      await assertRejects(
+        () => Sandbox.create(),
+        VeryfrontError,
+        "Sandbox auth must be provided explicitly for a custom API URL",
       );
       assertEquals(fetchCalls, []);
     });

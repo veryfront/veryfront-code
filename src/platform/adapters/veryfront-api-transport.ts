@@ -32,6 +32,22 @@ const MAX_VERYFRONT_API_ERROR_BODY_BYTES = 8 * 1024;
 export const DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES = 64 * 1024 * 1024;
 export const MAX_VERYFRONT_API_SUCCESS_BODY_BYTES = 128 * 1024 * 1024;
 const NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS = new WeakSet<object>();
+// Requests may originate after project modules have run in the host process.
+// Keep credential-bearing header construction on intrinsics captured at module
+// initialization so replacing `Headers` or its accessors cannot observe a
+// host-private token.
+const NativeHeaders = Headers;
+const IntrinsicReflectApply = Reflect.apply;
+const HeadersPrototypeHas = NativeHeaders.prototype.has;
+const HeadersPrototypeSet = NativeHeaders.prototype.set;
+
+function hasHeader(headers: Headers, name: string): boolean {
+  return IntrinsicReflectApply(HeadersPrototypeHas, headers, [name]) as boolean;
+}
+
+function setHeader(headers: Headers, name: string, value: string): void {
+  IntrinsicReflectApply(HeadersPrototypeSet, headers, [name, value]);
+}
 
 export type TransportRetryConfig = BoundedRetryConfig;
 
@@ -114,7 +130,7 @@ function createValidatedVeryfrontApiTransport<T>(
     afterFetch,
     wrapFetch,
   } = config;
-  const defaultHeaderSnapshot = new Headers(defaultHeaders);
+  const defaultHeaderSnapshot = new NativeHeaders(defaultHeaders);
   const onRetry = config.onRetry;
   const { maxRetries, initialDelay, maxDelay } = retry;
   const onResponse = config.onResponse ??
@@ -145,12 +161,12 @@ function createValidatedVeryfrontApiTransport<T>(
       const url = resolveRequestUrl(pathOrUrl);
       const method = init.method ?? "GET";
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
-      const requestHeaders = new Headers(init.headers);
+      const requestHeaders = new NativeHeaders(init.headers);
       const body = init.body;
       const redirect = requireRedirectPolicy(init.redirect);
       const responseInit: TransportRequestInit = Object.freeze({
         method,
-        headers: new Headers(requestHeaders),
+        headers: new NativeHeaders(requestHeaders),
         body,
         returnText: init.returnText === true,
         maxResponseBytes,
@@ -168,12 +184,15 @@ function createValidatedVeryfrontApiTransport<T>(
       return await retryWithBackoff(
         async (signal, attempt) => {
           const doFetch = async (): Promise<T> => {
-            const headers = new Headers(requestHeaders);
+            const headers = new NativeHeaders(requestHeaders);
             for (const [k, v] of defaultHeaderSnapshot) {
-              if (!headers.has(k)) headers.set(k, v);
+              if (!hasHeader(headers, k)) setHeader(headers, k, v);
             }
-            headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
+            // Attach the credential last: tracing may use the public Headers
+            // prototype, and a replaced method must never receive a container
+            // that already holds the host-private token.
+            setHeader(headers, "Authorization", `Bearer ${token}`);
             const start = performance.now();
             const requestInit: RequestInit = {
               method,

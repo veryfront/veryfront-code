@@ -41,7 +41,7 @@ import {
   getCurrentVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
@@ -597,12 +597,13 @@ export async function hydrateEvalRuntimeAuth(
   projectDir: string,
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
-  return await applyRuntimeAuthContext({
-    linkedProjectSlug: await resolveLinkedProjectSlug(
+  return await applyQualifiedRuntimeAuth(
+    projectDir,
+    await resolveLinkedProjectSlug(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
     ),
-  });
+  );
 }
 
 export function createEvalToolExecutionContext(

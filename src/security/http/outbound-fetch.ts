@@ -26,13 +26,6 @@ export const HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV =
 
 const NODE_EXTRA_CA_CERTS_ENV = "NODE_EXTRA_CA_CERTS";
 const MAX_EXTRA_CA_BYTES = 1024 * 1024;
-const NativeURL = URL;
-const nativeUrlPrototype = NativeURL.prototype;
-const urlHrefGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "href")?.get;
-const urlOriginGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "origin")?.get;
-const urlProtocolGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "protocol")?.get;
-const urlUsernameGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "username")?.get;
-const urlPasswordGetter = Object.getOwnPropertyDescriptor(nativeUrlPrototype, "password")?.get;
 const bunExtraCaFile = isBun ? getHostEnv(NODE_EXTRA_CA_CERTS_ENV)?.trim() : undefined;
 let bunTrustedCaCertificates: Promise<readonly string[]> | undefined;
 
@@ -80,6 +73,78 @@ export interface OutboundFetchBoundary {
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
+// Captured like capturedHostFetch: origin-bound provider transports read URL/Request properties on every credentialed request.
+const NativeURL = URL;
+const NativeRequest = Request;
+const IntrinsicReflectApply = Reflect.apply;
+const nativeHasInstance = Function.prototype[Symbol.hasInstance];
+const URLProtocolGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")?.get;
+const URLUsernameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")?.get;
+const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")?.get;
+const URLOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
+const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
+const URLSearchGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")?.get;
+const URLHashGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.get;
+const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeTrim = String.prototype.trim;
+const NativeSet = Set;
+const SetPrototypeAdd = NativeSet.prototype.add;
+const SetPrototypeHas = NativeSet.prototype.has;
+const ObjectDefineProperty = Object.defineProperty;
+
+// Indexed assignment (parts[parts.length] = ...) still isn't safe: with no own
+// property at that index yet, [[Set]] walks the prototype chain and invokes an
+// inherited accessor there instead of creating an own property. Object.defineProperty
+// uses [[DefineOwnProperty]], which never consults the prototype chain.
+function appendEntry(parts: string[], value: string): void {
+  IntrinsicReflectApply(ObjectDefineProperty, Object, [parts, parts.length, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  }]);
+}
+
+// String.prototype.split(sep) looks up sep[Symbol.split] even for a string
+// literal separator (it boxes the primitive to do so), so a captured .split
+// reference is still steerable by a same-realm String.prototype[Symbol.split].
+// indexOf/slice take no such detour.
+function splitOnCommas(value: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  while (true) {
+    const commaIndex = IntrinsicReflectApply(StringPrototypeIndexOf, value, [
+      ",",
+      start,
+    ]) as number;
+    if (commaIndex === -1) {
+      appendEntry(parts, IntrinsicReflectApply(StringPrototypeSlice, value, [start]) as string);
+      return parts;
+    }
+    appendEntry(
+      parts,
+      IntrinsicReflectApply(StringPrototypeSlice, value, [start, commaIndex]) as string,
+    );
+    start = commaIndex + 1;
+  }
+}
+
+function readNativeURLString<T>(target: T, getter: ((this: T) => string) | undefined): string {
+  if (!getter) {
+    throw new TypeError("URL/Request accessors are unavailable");
+  }
+  return IntrinsicReflectApply(getter, target, []) as string;
+}
+
+// Runs the un-replaceable %Function.prototype%[Symbol.hasInstance] against the
+// captured constructor, so a redefined global's own hasInstance is never invoked.
+function isNativeInstance(value: unknown, ctor: typeof NativeURL | typeof NativeRequest): boolean {
+  return IntrinsicReflectApply(nativeHasInstance, ctor, [value]) as boolean;
+}
 let outboundFetchTransportForTests: Readonly<TrustedHostTransport> | undefined;
 
 function getTrustedHostTransport(): TrustedHostTransport {
@@ -152,12 +217,16 @@ async function fetchWithHostTransport(
     fetchImpl: transport.fetch,
     pinnedFetch: transport.pinnedFetch,
     authorizeUrl: async (url) => {
-      if (url.protocol !== "http:" && url.protocol !== "https:") {
+      const protocol = readNativeURLString(url, URLProtocolGet);
+      if (protocol !== "http:" && protocol !== "https:") {
         throw new OutboundRequestBlockedError(
-          `Outbound request blocked: unsupported URL scheme ${url.protocol}`,
+          `Outbound request blocked: unsupported URL scheme ${protocol}`,
         );
       }
-      if (url.username.length > 0 || url.password.length > 0) {
+      if (
+        readNativeURLString(url, URLUsernameGet).length > 0 ||
+        readNativeURLString(url, URLPasswordGet).length > 0
+      ) {
         throw new OutboundRequestBlockedError(
           "Outbound request blocked: URL credentials are not allowed",
         );
@@ -174,49 +243,54 @@ async function fetchWithHostTransport(
   });
 }
 
+// Routed entirely through intrinsics captured at module load, so tenant code sharing this
+// realm cannot poison the allowlist by replacing String/Set/URL prototype methods.
 function parseAllowedInternalProviderOrigins(value: string | undefined): ReadonlySet<string> {
-  if (!value?.trim()) return new Set();
+  if (typeof value !== "string") return new NativeSet<string>();
+  const trimmedValue = IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+  if (!trimmedValue) return new NativeSet<string>();
 
-  const origins = new Set<string>();
-  for (const entry of value.split(",")) {
+  const origins = new NativeSet<string>();
+  const entries = splitOnCommas(value);
+  // Indexed, not for...of: a replaced Array.prototype[Symbol.iterator] would
+  // otherwise run despite every other intrinsic here being captured.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const trimmedEntry = IntrinsicReflectApply(StringPrototypeTrim, entry, []) as string;
     let url: URL;
     try {
-      url = new URL(entry.trim());
+      url = new NativeURL(trimmedEntry);
     } catch {
       throw new TypeError(
         `${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} must contain comma-separated HTTP origins`,
       );
     }
     if (
-      (url.protocol !== "http:" && url.protocol !== "https:") ||
-      url.username.length > 0 ||
-      url.password.length > 0 ||
-      url.pathname !== "/" ||
-      url.search.length > 0 ||
-      url.hash.length > 0
+      (readNativeURLString(url, URLProtocolGet) !== "http:" &&
+        readNativeURLString(url, URLProtocolGet) !== "https:") ||
+      readNativeURLString(url, URLUsernameGet).length > 0 ||
+      readNativeURLString(url, URLPasswordGet).length > 0 ||
+      readNativeURLString(url, URLPathnameGet) !== "/" ||
+      readNativeURLString(url, URLSearchGet).length > 0 ||
+      readNativeURLString(url, URLHashGet).length > 0
     ) {
       throw new TypeError(
         `${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} entries must be HTTP origins without paths, credentials, query strings, or fragments`,
       );
     }
-    origins.add(url.origin);
+    IntrinsicReflectApply(SetPrototypeAdd, origins, [readNativeURLString(url, URLOriginGet)]);
   }
   return origins;
 }
 
-function isHostAllowedInternalProviderOrigin(base: URL): boolean {
-  return parseAllowedInternalProviderOrigins(
+/** Whether `base.origin` is on the host-owned internal-provider allowlist ({@link HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}). */
+export function isHostAllowedInternalProviderOrigin(base: URL): boolean {
+  const allowedOrigins = parseAllowedInternalProviderOrigins(
     getHostEnv(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
-  ).has(readUrlString(urlOriginGetter, base, "origin"));
-}
-
-function readUrlString(
-  getter: ((this: URL) => string) | undefined,
-  url: URL,
-  label: string,
-): string {
-  if (!getter) throw new TypeError(`Native URL ${label} getter is unavailable`);
-  return Reflect.apply(getter, url, []) as string;
+  );
+  return IntrinsicReflectApply(SetPrototypeHas, allowedOrigins, [
+    readNativeURLString(base, URLOriginGet),
+  ]) as boolean;
 }
 
 function snapshotOutboundFetchTransport(
@@ -270,35 +344,36 @@ function createOriginBoundFetchWithTransport(
   allowHostInternalEgress = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
-  const baseProtocol = readUrlString(urlProtocolGetter, base, "protocol");
+  const baseProtocol = readNativeURLString(base, URLProtocolGet);
   if (baseProtocol !== "http:" && baseProtocol !== "https:") {
     throw new TypeError("Provider base URL must use http: or https:");
   }
-  if (
-    readUrlString(urlUsernameGetter, base, "username") ||
-    readUrlString(urlPasswordGetter, base, "password")
-  ) {
+  if (readNativeURLString(base, URLUsernameGet) || readNativeURLString(base, URLPasswordGet)) {
     throw new TypeError("Provider base URL must not include credentials");
   }
+  const baseOrigin = readNativeURLString(base, URLOriginGet);
   const allowInternalEgress = allowHostInternalEgress || isHostAllowedInternalProviderOrigin(base);
+  // A primitive, not the URL object: passing `base` itself as the second URL()
+  // argument would coerce it through a possibly-replaced URL.prototype.toString.
+  const baseHref = readNativeURLString(base, URLHrefGet);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const raw = input instanceof Request
-      ? input.url
-      : input instanceof NativeURL
-      ? readUrlString(urlHrefGetter, input, "href")
-      : input;
-    const target = new NativeURL(raw, base);
-    const baseOrigin = readUrlString(urlOriginGetter, base, "origin");
+    const isRequestInput = isNativeInstance(input, NativeRequest);
+    const raw = isRequestInput
+      ? readNativeURLString(input as Request, RequestUrlGet)
+      : isNativeInstance(input, NativeURL)
+      ? readNativeURLString(input as URL, URLHrefGet)
+      : input as string;
+    const target = new NativeURL(raw, baseHref);
     // Keep a Request input intact so provider SDKs do not lose its method,
     // headers, body, signal, or other request-level semantics at this boundary.
-    const guardedInput: RequestInfo | URL = input instanceof Request ? input : target;
+    const guardedInput: RequestInfo | URL = isRequestInput ? (input as Request) : target;
     return await fetchWithBoundaryErrors(
       guardedInput,
       { ...init, redirect: "error" },
       {
         authorizeUrl(url) {
-          if (readUrlString(urlOriginGetter, url, "origin") !== baseOrigin) {
+          if (readNativeURLString(url, URLOriginGet) !== baseOrigin) {
             throw new OutboundRequestBlockedError(
               "Provider request blocked: destination origin is not authorized",
             );
@@ -460,13 +535,18 @@ export function createHostInternalOriginBoundOutboundFetch(baseUrl: string): typ
 }
 
 function requestUrl(input: RequestInfo | URL): URL {
-  if (input instanceof Request) return new NativeURL(input.url);
-  if (input instanceof NativeURL) return input;
-  return new NativeURL(input);
+  if (isNativeInstance(input, NativeRequest)) {
+    return new NativeURL(readNativeURLString(input as Request, RequestUrlGet));
+  }
+  if (isNativeInstance(input, NativeURL)) return input as URL;
+  return new NativeURL(input as string);
 }
 
 function requireExactHttpLoopbackUrl(url: URL): void {
-  if (url.protocol !== "http:" || !isExactLoopbackHostname(url.hostname)) {
+  if (
+    readNativeURLString(url, URLProtocolGet) !== "http:" ||
+    !isExactLoopbackHostname(readNativeURLString(url, URLHostnameGet))
+  ) {
     throw new OutboundRequestBlockedError(
       "Outbound loopback request requires an exact HTTP loopback host",
     );

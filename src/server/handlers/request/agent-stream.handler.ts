@@ -91,6 +91,7 @@ import {
   runWithProjectEnv,
   unwrapReplayedProjectEnvironmentFailure,
 } from "../../project-env/index.ts";
+import { runWithTrustedProjectEnv } from "../../project-env/storage.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -1232,15 +1233,27 @@ export class AgentStreamHandler extends BaseHandler {
                             },
                           });
                         const shouldIsolateEnv = apiAuthToken.length > 0;
+                        const agentEnv = buildAgentStreamEnv({
+                          envVars: envVarsForAgent,
+                          proxyToken: projectRuntimeToken,
+                          projectSlug: projectScopedContext.projectSlug,
+                        });
+                        const trustedIdentity = projectScopedContext.projectId ||
+                            projectScopedContext.projectSlug || projectScopedContext.environmentId
+                          ? {
+                            projectId: projectScopedContext.projectId,
+                            projectSlug: projectScopedContext.projectSlug,
+                            environmentId: projectScopedContext.environmentId,
+                          }
+                          : undefined;
                         const response = shouldIsolateEnv
-                          ? await runWithProjectEnv(
-                            buildAgentStreamEnv({
-                              envVars: envVarsForAgent,
-                              proxyToken: projectRuntimeToken,
-                              projectSlug: projectScopedContext.projectSlug,
-                            }),
-                            runAgentStream,
-                          )
+                          ? trustedIdentity
+                            ? await runWithTrustedProjectEnv(
+                              agentEnv,
+                              trustedIdentity,
+                              runAgentStream,
+                            )
+                            : await runWithProjectEnv(agentEnv, runAgentStream)
                           : await runAgentStream();
                         logger.info("Internal agent stream response created", {
                           runId: payload.runId,

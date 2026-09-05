@@ -77,6 +77,7 @@ describe("run-scoped inference credential", () => {
     restoreMockFetch();
     clearModelProviders();
     deleteEnv("VERYFRONT_API_TOKEN");
+    deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
     deleteEnv("VERYFRONT_PROJECT_SLUG");
   });
 
@@ -820,6 +821,89 @@ describe("run-scoped inference credential", () => {
     assertEquals(exposedToSharedRealmJson, false);
   });
 
+  it("routes a default-chat inference header to gateway Authorization", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    let capturedAuthorization: string | null = null;
+    let capturedUrl: string | null = null;
+    let frameworkModel: ReturnType<typeof resolveModel> | undefined;
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        capturedUrl = request.url;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const routeSet = createHostedAgentServiceRouteSet({
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      runtimeSource: { type: "release", releaseId: "release-42" },
+      authenticateRequest: async (): Promise<HostedServiceAuthenticatedRequest | Response> => ({
+        authToken: "broader-control-plane-token",
+        userId: "user-1",
+      }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunEventAppendToken: async () => ({ verified: true }),
+      prepareExecution: async (request) => {
+        frameworkModel = createHostedInferenceModelResolver(request, {
+          apiBaseUrl: "https://public-api.example.test/graphql/",
+        })?.(
+          "veryfront-cloud/openai/gpt-test",
+        );
+        return { executionId: "exec-default-chat" };
+      },
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {
+        if (!frameworkModel) throw new TypeError("Expected framework model");
+        const result = await frameworkModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+    });
+    const response = await routeSet.handleDurableChatRunExecuteRequest({
+      request: new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-token",
+          "X-Veryfront-Inference-Token": "run-scoped-inference-token",
+        },
+        body: JSON.stringify({
+          messages: [{ id: "message-1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId: "00000000-0000-4000-8000-000000000001",
+            projectId: "00000000-0000-4000-8000-000000000005",
+            branchId: null,
+          },
+          model: "openai/gpt-test",
+          durableRootRun: {
+            runId: "run-default-chat",
+            messageId: "00000000-0000-4000-8000-000000000002",
+          },
+        }),
+      }),
+    });
+
+    assertEquals(response.status, 202);
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+    assertEquals(
+      capturedUrl,
+      "https://public-api.example.test/api/ai/gateway/openai/v1/chat/completions",
+    );
+  });
+
   it("ignores an inference credential without a verified run-event token", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
@@ -1060,7 +1144,7 @@ describe("run-scoped inference credential", () => {
     );
   });
 
-  it("requires HTTPS or loopback for run-scoped inference credentials", () => {
+  it("requires HTTPS, a loopback, or a host-allowed internal provider origin for run-scoped inference credentials", () => {
     const error = assertThrows(
       () =>
         runWithVeryfrontCloudContext(
@@ -1068,7 +1152,7 @@ describe("run-scoped inference credential", () => {
           () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
         ),
       VeryfrontError,
-      "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+      "Run-scoped inference credentials require HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
     );
     if (!(error instanceof VeryfrontError)) {
       throw new Error("Expected a registered VeryfrontError");
@@ -1082,6 +1166,58 @@ describe("run-scoped inference credential", () => {
         ),
         "run-scoped-inference-token",
       );
+    }
+  });
+
+  it("routes run-scoped inference credentials through the trusted public API host env", () => {
+    setEnv(
+      "VERYFRONT_PUBLIC_API_BASE_URL",
+      "https://api.staging.veryfront.example",
+    );
+
+    assertEquals(
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "http://control-plane.internal.example" },
+        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      ),
+      "https://api.staging.veryfront.example",
+    );
+  });
+
+  it("keeps the inference destination and HTTPS guard out of mutable regex replacement hooks", () => {
+    const originalReplace = RegExp.prototype[Symbol.replace];
+    RegExp.prototype[Symbol.replace] = function (): string {
+      return "localhost";
+    };
+
+    try {
+      assertEquals(
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "http://control-plane.internal.example" },
+          () =>
+            requireVeryfrontCloudBootstrap(
+              "run-scoped-inference-token",
+              "https://public-api.example/graphql/",
+            ).apiBaseUrl,
+        ),
+        "https://public-api.example/api",
+      );
+      assertThrows(
+        () =>
+          runWithVeryfrontCloudContext(
+            { apiBaseUrl: "https://control-plane.example" },
+            () =>
+              requireVeryfrontCloudBootstrap(
+                "run-scoped-inference-token",
+                "http://plaintext-api.example",
+              ),
+          ),
+        VeryfrontError,
+        "Run-scoped inference credentials require HTTPS, a loopback, or a " +
+          "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
+      );
+    } finally {
+      RegExp.prototype[Symbol.replace] = originalReplace;
     }
   });
 

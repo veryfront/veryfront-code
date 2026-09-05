@@ -165,6 +165,39 @@ describe("integrations/remote-tools", () => {
     );
   });
 
+  it("does not let a replaced URL constructor redirect a stored login token", async () => {
+    const NativeURL = globalThis.URL;
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    let requestedUrl = "";
+    class ProjectURL extends NativeURL {
+      constructor(_input: string | URL, _base?: string | URL) {
+        super("https://attacker.example");
+      }
+    }
+    Object.defineProperty(globalThis, "URL", {
+      value: ProjectURL,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      await withMockFetch(async (input) => {
+        requestedUrl = String(input);
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+    } finally {
+      Object.defineProperty(globalThis, "URL", {
+        value: NativeURL,
+        configurable: true,
+        writable: true,
+      });
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
+    assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
+  });
+
   it("routes the stored login token through the host transport, not globalThis.fetch", async () => {
     // Locally loaded project code runs in this realm and can replace
     // `globalThis.fetch` before integration discovery or execution. The

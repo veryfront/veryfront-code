@@ -53,7 +53,7 @@ const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 const applyIntrinsic = Reflect.apply;
 
-function getSandboxPrivateState(sandbox: object): SandboxPrivateState {
+function getSandboxPrivateState(sandbox: Sandbox): SandboxPrivateState {
   const state = applyIntrinsic(weakMapGet, sandboxPrivateStates, [sandbox]) as
     | SandboxPrivateState
     | undefined;
@@ -61,7 +61,7 @@ function getSandboxPrivateState(sandbox: object): SandboxPrivateState {
   return state;
 }
 
-function getSandboxAuthToken(sandbox: object): string {
+function getSandboxAuthToken(sandbox: Sandbox): string {
   return getSandboxPrivateState(sandbox).authToken;
 }
 

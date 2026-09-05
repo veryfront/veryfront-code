@@ -16,6 +16,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
+import { saveToken } from "../../../../../../cli/auth/token-store.ts";
 
 import { preloadDevAuth } from "../../../../../../cli/commands/dev/command.ts";
 
@@ -81,6 +82,8 @@ describe("cli/commands/dev preloadDevAuth credential boundary", () => {
 
   it("uses the configured API origin for an environment token", async () => {
     const originalApiUrl = getEnv("VERYFRONT_API_URL");
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+    const originalXdgConfigHome = getEnv("XDG_CONFIG_HOME");
     const origins: string[] = [];
 
     try {
@@ -89,7 +92,8 @@ describe("cli/commands/dev preloadDevAuth credential boundary", () => {
       await withTempDir(async (dir) => {
         await Deno.writeTextFile(
           `${dir}/.env`,
-          "VERYFRONT_API_URL=https://self-hosted.example/api\n",
+          "VERYFRONT_API_URL=https://self-hosted.example/api\n" +
+            "VERYFRONT_API_TOKEN=vf_self_hosted\n",
         );
         await loadEnv({ cwd: dir, override: true });
         refreshEnvironmentConfig();
@@ -100,8 +104,18 @@ describe("cli/commands/dev preloadDevAuth credential boundary", () => {
           }) as typeof fetch,
         );
 
-        const result = await preloadDevAuth("vf_self_hosted", "environment");
-        const storedResult = await preloadDevAuth("vf_stored", "token-store");
+        const result = await preloadDevAuth(undefined, dir);
+
+        // Move to a clean host-only environment and put the second credential
+        // in the real token-store path. The current preload API accepts a
+        // project directory, not a caller-asserted provenance label.
+        deleteEnv("VERYFRONT_API_URL");
+        deleteEnv("VERYFRONT_API_TOKEN");
+        __resetEnvLoaderForTests();
+        setEnv("XDG_CONFIG_HOME", dir);
+        refreshEnvironmentConfig();
+        await saveToken("vf_stored");
+        const storedResult = await preloadDevAuth(undefined, dir);
 
         assertEquals(result.identity, { authenticated: true, type: "apiKey" });
         assertEquals(storedResult.identity, { authenticated: true, type: "apiKey" });
@@ -115,6 +129,10 @@ describe("cli/commands/dev preloadDevAuth credential boundary", () => {
       __resetEnvLoaderForTests();
       if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
       else setEnv("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+      else setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      if (originalXdgConfigHome === undefined) deleteEnv("XDG_CONFIG_HOME");
+      else setEnv("XDG_CONFIG_HOME", originalXdgConfigHome);
       refreshEnvironmentConfig();
     }
   });

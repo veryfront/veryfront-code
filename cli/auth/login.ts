@@ -13,7 +13,11 @@ import {
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
 } from "../shared/constants.ts";
-import { type ApiTokenSource, resolveApiCredentialCandidatesForAuth } from "../shared/config.ts";
+import {
+  type ApiTokenSource,
+  assertApiUrlAcceptsNewCredential,
+  resolveApiCredentialCandidatesForAuth,
+} from "../shared/config.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -753,6 +757,13 @@ export async function login(
       return null;
     }
   }
+
+  // Past this point login mints a new credential and validates it against
+  // `env`, whose apiUrl a cloned project `.env` may have chosen. A new token is
+  // always the developer's own, never something the repository supplied, so
+  // there is no candidate that could make this host acceptable: stop instead of
+  // handing the token to it.
+  await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
     cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");

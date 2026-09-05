@@ -88,11 +88,12 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
 function createVeryfrontCloudModelInternal(
   modelId: string,
   inferenceCredential?: string,
-  options: { assertInferenceCredentialActive?: () => void } = {},
+  options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
     inferenceCredential,
+    options.apiBaseUrl,
   );
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
@@ -314,7 +315,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 export function createVeryfrontCloudInferenceModel(
   modelId: string,
   inferenceCredential: string,
-  options: { assertInferenceCredentialActive?: () => void } = {},
+  options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
   return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
 }

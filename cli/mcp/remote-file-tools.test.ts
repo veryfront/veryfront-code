@@ -410,7 +410,7 @@ describe("cli/mcp/remote-file-tools", () => {
   describe("tool execute happy-path behavior", () => {
     const resetEnv = () => {
       _setEnvironmentConfigForTesting({
-        apiBaseUrl: "https://api.remote-vf.test",
+        apiBaseUrl: "https://api.remote-vf.test/api",
         apiToken: "token-123",
         nodeEnv: "test",
         veryfrontEnv: "test",
@@ -516,6 +516,49 @@ describe("cli/mcp/remote-file-tools", () => {
         requestUrl,
         "https://api.veryfront.com/api/my-project/files/pages/index.tsx",
       );
+    });
+
+    it("preserves an explicitly configured REST base path", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiBaseUrl: "https://gateway.example/v1",
+      });
+      let requestUrl = "";
+
+      try {
+        const result = await withMockFetch(async (input) => {
+          requestUrl = String(input);
+          return Response.json({ files: [] });
+        }, () => vfRemoteListFiles.execute({ project: "my-project", limit: 50 }));
+
+        assertEquals(requestUrl.startsWith("https://gateway.example/v1/my-project/files?"), true);
+        assertEquals(result.success, true);
+      } finally {
+        _resetEnvironmentConfig();
+      }
+    });
+
+    it("does not send a token to a non-loopback HTTP endpoint", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiBaseUrl: "http://remote.example/api",
+      });
+      let fetchCalls = 0;
+
+      try {
+        const result = await withMockFetch(() => {
+          fetchCalls++;
+          return Promise.resolve(Response.json({ data: [] }));
+        }, () => vfRemoteListFiles.execute({ project: "my-project", limit: 50 }));
+
+        assertEquals(fetchCalls, 0);
+        assertEquals(result.success, false);
+        assertEquals(result.error?.includes("must use HTTPS"), true);
+      } finally {
+        _resetEnvironmentConfig();
+      }
     });
 
     it("returns error response when API responds with unauthorized JSON error", async () => {
