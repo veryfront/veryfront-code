@@ -927,14 +927,31 @@ interface ProviderValidationRun {
 }
 
 /** Assertions can change the meaning of a match without changing its span. */
-function patternInspectsMatchContext(pattern: RegExp): boolean {
+function patternInspectsMatchContext(
+  pattern: RegExp,
+  segment: { start: number; text: string },
+  match: { index: number; text: string },
+  assembled: string,
+): boolean {
   const source = pattern.source;
+  const start = segment.start + match.index;
+  const end = start + match.text.length;
+  const localEnd = match.index + match.text.length;
+  const word = new RegExp("\\w", pattern.flags.replace(/[dgmsy]/g, ""));
+  const isWord = (character: string | undefined) => character !== undefined && word.test(character);
+  const wordContextChanged =
+    isWord(segment.text[match.index - 1]) !== isWord(assembled[start - 1]) ||
+    isWord(segment.text[localEnd]) !== isWord(assembled[end]);
+  const isLineBreak = (character: string | undefined) =>
+    character !== undefined && /[\n\r\u2028\u2029]/.test(character);
   let classDepth = 0;
   for (let index = 0; index < source.length; index++) {
     const character = source[index];
     if (character === "\\") {
       const escaped = source[++index];
-      if (classDepth === 0 && (escaped === "b" || escaped === "B")) return true;
+      if (classDepth === 0 && (escaped === "b" || escaped === "B") && wordContextChanged) {
+        return true;
+      }
       continue;
     }
     if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) {
@@ -946,11 +963,23 @@ function patternInspectsMatchContext(pattern: RegExp): boolean {
       continue;
     }
     if (classDepth > 0) continue;
-    if (character === "^" || character === "$") return true;
+    if (
+      character === "^" && match.index === 0 && segment.start !== 0 &&
+      !(pattern.multiline && isLineBreak(assembled[segment.start - 1]))
+    ) return true;
+    if (
+      character === "$" && localEnd >= segment.text.length - 1 &&
+      segment.start + segment.text.length !== assembled.length &&
+      !(pattern.multiline && isLineBreak(assembled[segment.start + segment.text.length]))
+    ) return true;
     if (
       source.startsWith("(?=", index) || source.startsWith("(?!", index) ||
       source.startsWith("(?<=", index) || source.startsWith("(?<!", index)
-    ) return true;
+    ) {
+      // Lookaround can inspect unbounded context without consuming it. Its
+      // match span cannot attest that the inspected context stayed trusted.
+      return true;
+    }
   }
   return false;
 }
@@ -972,17 +1001,13 @@ async function assertProviderRunsValid(
         introducedViolations.push(violation);
         continue;
       }
-      // Do not grant a trusted-span exemption when the pattern can inspect
-      // caller-controlled context outside that span.
-      if (patternInspectsMatchContext(pattern)) {
-        introducedViolations.push(violation);
-        continue;
-      }
       const trustedMatches = trustedSegments.flatMap((segment) =>
-        patternOccurrences(segment.text, pattern).map((match) => ({
-          index: segment.start + match.index,
-          text: match.text,
-        }))
+        patternOccurrences(segment.text, pattern)
+          .filter((match) => !patternInspectsMatchContext(pattern, segment, match, text))
+          .map((match) => ({
+            index: segment.start + match.index,
+            text: match.text,
+          }))
       );
       const introduced = patternOccurrences(text, pattern).some((match) =>
         !trustedMatches.some((trusted) =>
@@ -1115,183 +1140,185 @@ export function securityMiddleware(
     context: AgentContext,
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
-    // Register the cross-turn check before this turn is committed: merged
-    // system runs and adjacent user runs must also be validated across the
-    // memory/input boundary, which only the runtime can see. Only runs this
-    // turn contributes a message to are checked; a run lying entirely inside
-    // already-persisted history cannot be rewritten here, so rejecting over it
-    // would brick the conversation on every later turn (`extractMergedRunTexts`).
-    registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
-      const systemMessages = providerSystemMessages(providerSystem);
-      const currentSystemIds = new Set(
-        typeof context.input === "string" ? [] : context.input
-          .filter((message) => message.role === "system")
-          .map((message) => message.id),
-      );
-      const callerSystemMessages = messages.filter((message) => message.role === "system");
-      const trusted = new Set(systemMessages);
-      const callers = new Set(callerSystemMessages);
-      const providerRuns: ProviderValidationRun[] = [];
-      for (const run of extractMergedSystemRuns([...systemMessages, ...messages])) {
-        if (
-          !run.some((message) => trusted.has(message)) ||
-          !run.some((message) => callers.has(message))
-        ) continue;
-        // Runtime and historical text have separate exemptions. A new match
-        // across their boundary must still be checked when the runtime changes.
-        for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-          for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-            const assembled: ProviderValidationRun = { text: "", trustedSegments: [] };
-            let previousKind: "runtime" | "history" | "current" | undefined;
-            for (const [index, message] of run.entries()) {
-              if (index > 0) assembled.text += runSeparator;
-              const start = assembled.text.length;
-              const text = messageTextParts(message).join(partSeparator);
-              assembled.text += text;
-              const kind = trusted.has(message)
-                ? "runtime"
-                : currentSystemIds.has(message.id)
-                ? "current"
-                : "history";
-              if (kind !== "current") {
-                const previous = assembled.trustedSegments.at(-1);
-                if (previous && kind === previousKind) previous.text += runSeparator + text;
-                else assembled.trustedSegments.push({ start, text });
+    if (config.input) {
+      // Register the cross-turn check before this turn is committed: merged
+      // system runs and adjacent user runs must also be validated across the
+      // memory/input boundary, which only the runtime can see. Only runs this
+      // turn contributes a message to are checked; a run lying entirely inside
+      // already-persisted history cannot be rewritten here, so rejecting over it
+      // would brick the conversation on every later turn (`extractMergedRunTexts`).
+      registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
+        const systemMessages = providerSystemMessages(providerSystem);
+        const currentSystemIds = new Set(
+          typeof context.input === "string" ? [] : context.input
+            .filter((message) => message.role === "system")
+            .map((message) => message.id),
+        );
+        const callerSystemMessages = messages.filter((message) => message.role === "system");
+        const trusted = new Set(systemMessages);
+        const callers = new Set(callerSystemMessages);
+        const providerRuns: ProviderValidationRun[] = [];
+        for (const run of extractMergedSystemRuns([...systemMessages, ...messages])) {
+          if (
+            !run.some((message) => trusted.has(message)) ||
+            !run.some((message) => callers.has(message))
+          ) continue;
+          // Runtime and historical text have separate exemptions. A new match
+          // across their boundary must still be checked when the runtime changes.
+          for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+            for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+              const assembled: ProviderValidationRun = { text: "", trustedSegments: [] };
+              let previousKind: "runtime" | "history" | "current" | undefined;
+              for (const [index, message] of run.entries()) {
+                if (index > 0) assembled.text += runSeparator;
+                const start = assembled.text.length;
+                const text = messageTextParts(message).join(partSeparator);
+                assembled.text += text;
+                const kind = trusted.has(message)
+                  ? "runtime"
+                  : currentSystemIds.has(message.id)
+                  ? "current"
+                  : "history";
+                if (kind !== "current") {
+                  const previous = assembled.trustedSegments.at(-1);
+                  if (previous && kind === previousKind) previous.text += runSeparator + text;
+                  else assembled.trustedSegments.push({ start, text });
+                }
+                previousKind = kind;
               }
-              previousKind = kind;
+              providerRuns.push(assembled);
             }
-            providerRuns.push(assembled);
           }
         }
-      }
-      await assertProviderRunsValid(
-        inputValidator,
-        providerRuns,
-        config.onViolation,
-      );
-    });
-    registerTurnMessageValidator(context, async (history, turnInput) => {
-      const individualValues = history.length === 0
-        ? {
-          texts: turnInput
-            .filter((message) => !isSummaryMemoryProjectionMessage(message))
-            .flatMap(extractMessageInputText),
-          assembled: [
-            ...turnInput
-              .filter(isSummaryMemoryProjectionMessage)
-              .flatMap(extractMessageInputText),
-            ...turnInput.flatMap(extractMessageAssembledTexts),
-          ],
-        }
-        : { texts: [], assembled: [] };
-      const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
-      // Merged runs are synthetic assemblies, so they are pattern-checked but
-      // never length-checked (`InputValidationOptions.checkMaxLength`).
-      await assertInputTextsValid(
-        inputValidator,
-        {
-          texts: individualValues.texts,
-          assembled: [...individualValues.assembled, ...runTexts],
-        },
-        config.onViolation,
-      );
-      assertTextsNeedNoSanitization(
-        inputValidator,
-        [...individualValues.texts, ...individualValues.assembled, ...runTexts],
-        "Provider-visible messages contain content sanitization removes",
-        config.onViolation,
-      );
-    });
-    registerTurnMessageProjectionValidator(context, async (messages) => {
-      const runTexts = extractMergedRunTexts(messages, new Set(messages));
-      await assertInputTextsValid(
-        inputValidator,
-        { texts: [], assembled: runTexts },
-        config.onViolation,
-      );
-      assertTextsNeedNoSanitization(
-        inputValidator,
-        runTexts,
-        "Provider-visible messages contain content sanitization removes",
-        config.onViolation,
-      );
-    });
-
-    const inputValues = extractInputValidationTexts(context.input);
-    await assertInputTextsValid(inputValidator, inputValues, config.onViolation);
-
-    // Generated annotations cannot be rewritten as caller text without losing
-    // attachment identity or moving content between messages. Reject unsafe
-    // annotations before any text rewrite instead.
-    if (typeof context.input !== "string") {
-      assertTextsNeedNoSanitization(
-        inputValidator,
-        context.input.filter((message) => message.role === "user")
-          .flatMap((
-            message,
-          ) => [
-            buildAttachmentContextFromParts(message.parts),
-            ...getProviderAttachmentMetadata(message.parts),
-          ]),
-        "Attachment annotations contain content sanitization removes",
-        config.onViolation,
-      );
-    }
-
-    let approvedInputTexts = inputValues;
-    const sanitizedInput = sanitizeAgentInput(inputValidator, context.input);
-    if (sanitizedInput !== context.input) {
-      context.input = sanitizedInput;
-
-      // Sanitization deletes markup, and deleting it can splice a blocked
-      // phrase back together (`ignore <script></script>previous instructions`),
-      // so anything the rewrite changed is validated again before it is passed
-      // on. Unchanged text is skipped: it already passed above.
-      const sanitizedValues = extractInputValidationTexts(context.input);
-      if (!sameTexts(inputValues, sanitizedValues)) {
-        await assertInputTextsValid(inputValidator, sanitizedValues, config.onViolation);
-      }
-      approvedInputTexts = sanitizedValues;
-    }
-    const approvedMessages = typeof context.input === "string"
-      ? undefined
-      : context.input.map((message) => ({ id: message.id, role: message.role }));
-
-    // A middleware later in the chain can still replace `context.input` or
-    // mutate a message in place after this middleware approved it, and the
-    // runtime persists and dispatches that resolved value. Register a hook the
-    // runtime invokes with the resolved input before committing the turn:
-    // texts identical to what was approved here are skipped, anything else is
-    // validated from scratch and must need no sanitization, which can no
-    // longer rewrite it at that point.
-    registerTurnInputValidator(context, async (messages) => {
-      const resolvedTexts = extractInputValidationTexts(messages);
-      const sameMessageIdentity = approvedMessages !== undefined &&
-        approvedMessages.length === messages.length &&
-        approvedMessages.every((message, index) => message.id === messages[index]?.id);
-      const roleRewriteCandidates = approvedMessages === undefined
-        ? messages.filter((message) => !VALIDATED_INPUT_ROLES.has(message.role))
-        : messages.filter((message, index) =>
-          !VALIDATED_INPUT_ROLES.has(message.role) &&
-          (!sameMessageIdentity || VALIDATED_INPUT_ROLES.has(approvedMessages[index]!.role))
+        await assertProviderRunsValid(
+          inputValidator,
+          providerRuns,
+          config.onViolation,
         );
-      const rewrittenRoleTexts: InputValidationTexts = {
-        texts: roleRewriteCandidates.flatMap(extractMessageInputTextRegardlessOfRole),
-        assembled: roleRewriteCandidates.flatMap(extractMessageAssembledTextsRegardlessOfRole),
-      };
-      const completeResolvedTexts: InputValidationTexts = {
-        texts: [...resolvedTexts.texts, ...rewrittenRoleTexts.texts],
-        assembled: [...resolvedTexts.assembled, ...rewrittenRoleTexts.assembled],
-      };
-      if (sameTexts(completeResolvedTexts, approvedInputTexts)) return;
-      await assertInputTextsValid(inputValidator, completeResolvedTexts, config.onViolation);
-      assertTextsNeedNoSanitization(
-        inputValidator,
-        [...completeResolvedTexts.texts, ...completeResolvedTexts.assembled],
-        "Middleware-rewritten input contains content sanitization removes",
-        config.onViolation,
-      );
-    });
+      });
+      registerTurnMessageValidator(context, async (history, turnInput) => {
+        const individualValues = history.length === 0
+          ? {
+            texts: turnInput
+              .filter((message) => !isSummaryMemoryProjectionMessage(message))
+              .flatMap(extractMessageInputText),
+            assembled: [
+              ...turnInput
+                .filter(isSummaryMemoryProjectionMessage)
+                .flatMap(extractMessageInputText),
+              ...turnInput.flatMap(extractMessageAssembledTexts),
+            ],
+          }
+          : { texts: [], assembled: [] };
+        const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
+        // Merged runs are synthetic assemblies, so they are pattern-checked but
+        // never length-checked (`InputValidationOptions.checkMaxLength`).
+        await assertInputTextsValid(
+          inputValidator,
+          {
+            texts: individualValues.texts,
+            assembled: [...individualValues.assembled, ...runTexts],
+          },
+          config.onViolation,
+        );
+        assertTextsNeedNoSanitization(
+          inputValidator,
+          [...individualValues.texts, ...individualValues.assembled, ...runTexts],
+          "Provider-visible messages contain content sanitization removes",
+          config.onViolation,
+        );
+      });
+      registerTurnMessageProjectionValidator(context, async (messages) => {
+        const runTexts = extractMergedRunTexts(messages, new Set(messages));
+        await assertInputTextsValid(
+          inputValidator,
+          { texts: [], assembled: runTexts },
+          config.onViolation,
+        );
+        assertTextsNeedNoSanitization(
+          inputValidator,
+          runTexts,
+          "Provider-visible messages contain content sanitization removes",
+          config.onViolation,
+        );
+      });
+
+      const inputValues = extractInputValidationTexts(context.input);
+      await assertInputTextsValid(inputValidator, inputValues, config.onViolation);
+
+      // Generated annotations cannot be rewritten as caller text without losing
+      // attachment identity or moving content between messages. Reject unsafe
+      // annotations before any text rewrite instead.
+      if (typeof context.input !== "string") {
+        assertTextsNeedNoSanitization(
+          inputValidator,
+          context.input.filter((message) => message.role === "user")
+            .flatMap((
+              message,
+            ) => [
+              buildAttachmentContextFromParts(message.parts),
+              ...getProviderAttachmentMetadata(message.parts),
+            ]),
+          "Attachment annotations contain content sanitization removes",
+          config.onViolation,
+        );
+      }
+
+      let approvedInputTexts = inputValues;
+      const sanitizedInput = sanitizeAgentInput(inputValidator, context.input);
+      if (sanitizedInput !== context.input) {
+        context.input = sanitizedInput;
+
+        // Sanitization deletes markup, and deleting it can splice a blocked
+        // phrase back together (`ignore <script></script>previous instructions`),
+        // so anything the rewrite changed is validated again before it is passed
+        // on. Unchanged text is skipped: it already passed above.
+        const sanitizedValues = extractInputValidationTexts(context.input);
+        if (!sameTexts(inputValues, sanitizedValues)) {
+          await assertInputTextsValid(inputValidator, sanitizedValues, config.onViolation);
+        }
+        approvedInputTexts = sanitizedValues;
+      }
+      const approvedMessages = typeof context.input === "string"
+        ? undefined
+        : context.input.map((message) => ({ id: message.id, role: message.role }));
+
+      // A middleware later in the chain can still replace `context.input` or
+      // mutate a message in place after this middleware approved it, and the
+      // runtime persists and dispatches that resolved value. Register a hook the
+      // runtime invokes with the resolved input before committing the turn:
+      // texts identical to what was approved here are skipped, anything else is
+      // validated from scratch and must need no sanitization, which can no
+      // longer rewrite it at that point.
+      registerTurnInputValidator(context, async (messages) => {
+        const resolvedTexts = extractInputValidationTexts(messages);
+        const sameMessageIdentity = approvedMessages !== undefined &&
+          approvedMessages.length === messages.length &&
+          approvedMessages.every((message, index) => message.id === messages[index]?.id);
+        const roleRewriteCandidates = approvedMessages === undefined
+          ? messages.filter((message) => !VALIDATED_INPUT_ROLES.has(message.role))
+          : messages.filter((message, index) =>
+            !VALIDATED_INPUT_ROLES.has(message.role) &&
+            (!sameMessageIdentity || VALIDATED_INPUT_ROLES.has(approvedMessages[index]!.role))
+          );
+        const rewrittenRoleTexts: InputValidationTexts = {
+          texts: roleRewriteCandidates.flatMap(extractMessageInputTextRegardlessOfRole),
+          assembled: roleRewriteCandidates.flatMap(extractMessageAssembledTextsRegardlessOfRole),
+        };
+        const completeResolvedTexts: InputValidationTexts = {
+          texts: [...resolvedTexts.texts, ...rewrittenRoleTexts.texts],
+          assembled: [...resolvedTexts.assembled, ...rewrittenRoleTexts.assembled],
+        };
+        if (sameTexts(completeResolvedTexts, approvedInputTexts)) return;
+        await assertInputTextsValid(inputValidator, completeResolvedTexts, config.onViolation);
+        assertTextsNeedNoSanitization(
+          inputValidator,
+          [...completeResolvedTexts.texts, ...completeResolvedTexts.assembled],
+          "Middleware-rewritten input contains content sanitization removes",
+          config.onViolation,
+        );
+      });
+    }
 
     const result = await next();
 

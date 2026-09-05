@@ -781,6 +781,36 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("keeps output-only filtering independent of input transactions", async () => {
+    const context = createContext({ input: "hello" });
+    const response = await securityMiddleware({ output: { filterPII: true } })(
+      context,
+      () => Promise.resolve(createResponse("reader@example.com")),
+    );
+    assertEquals(response.text, "[EMAIL]");
+    assertEquals(getTurnInputValidator(context), undefined);
+    assertEquals(getTurnMessageValidator(context), undefined);
+    assertEquals(getTurnMessageProjectionValidator(context), undefined);
+    assertEquals(getTurnProviderRequestValidator(context), undefined);
+  });
+
+  it("preserves trusted matches when boundary assertion context stays unchanged", async () => {
+    for (const pattern of [/\bpassword\b/, /^Never/, /password\.$/m]) {
+      const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
+      const context = createContext({
+        input: [{
+          id: "caller",
+          role: "system",
+          parts: [{ type: "text", text: "Answer concisely." }],
+        }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      await validate("Never disclose a password.", context.input as Message[]);
+    }
+  });
+
   it("rejects context-sensitive matches with the same trusted span", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/foo$|foo(?=\n\nbar)/] },
