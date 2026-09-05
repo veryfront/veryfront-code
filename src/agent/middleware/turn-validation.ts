@@ -16,7 +16,7 @@
  * @module agent/middleware/turn-validation
  */
 
-import type { AgentContext, Message } from "#veryfront/agent/types.ts";
+import type { AgentContext, AgentSystem, Message } from "#veryfront/agent/types.ts";
 
 /**
  * Validate the resolved post-middleware input for one turn.
@@ -38,9 +38,16 @@ export type TurnMessageValidator = (history: Message[], turnInput: Message[]) =>
 /** Validate provider assemblies created only by a memory projection rewrite. */
 export type TurnMessageProjectionValidator = (messages: Message[]) => Promise<void>;
 
+/** Validate the effective system layers immediately before a provider request. */
+export type TurnProviderRequestValidator = (
+  providerSystem: AgentSystem,
+  messages: Message[],
+) => Promise<void>;
+
 const turnInputValidators = new WeakMap<AgentContext, TurnInputValidator>();
 const turnMessageValidators = new WeakMap<AgentContext, TurnMessageValidator>();
 const turnMessageProjectionValidators = new WeakMap<AgentContext, TurnMessageProjectionValidator>();
+const turnProviderRequestValidators = new WeakMap<AgentContext, TurnProviderRequestValidator>();
 
 /**
  * Register a post-middleware input validator for a turn, composing with any
@@ -114,4 +121,28 @@ export function getTurnMessageProjectionValidator(
   context: AgentContext,
 ): TurnMessageProjectionValidator | undefined {
   return turnMessageProjectionValidators.get(context);
+}
+
+/** Register validation for the exact provider-bound system assembly. */
+export function registerTurnProviderRequestValidator(
+  context: AgentContext,
+  validate: TurnProviderRequestValidator,
+): void {
+  const previous = turnProviderRequestValidators.get(context);
+  turnProviderRequestValidators.set(
+    context,
+    previous
+      ? async (providerSystem, messages) => {
+        await previous(providerSystem, messages);
+        await validate(providerSystem, messages);
+      }
+      : validate,
+  );
+}
+
+/** Resolve provider-request validation registered for a turn, if any. */
+export function getTurnProviderRequestValidator(
+  context: AgentContext,
+): TurnProviderRequestValidator | undefined {
+  return turnProviderRequestValidators.get(context);
 }

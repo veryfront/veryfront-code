@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { agent, resolveSecurityMiddleware } from "#veryfront/agent/factory.ts";
@@ -10,7 +10,9 @@ import { cacheMiddleware } from "#veryfront/agent/middleware/cache/cache.ts";
 import {
   registerTurnMessageProjectionValidator,
   registerTurnMessageValidator,
+  registerTurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
+import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import type {
   AgentContext,
@@ -187,6 +189,323 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text.includes("[EMAIL]"), true);
     assertEquals(result.text.includes("123-45-6789"), false);
     assertEquals(result.text.includes("[SSN]"), true);
+  });
+
+  it("rejects a blocked provider assembly spanning runtime and caller system layers", async () => {
+    let providerCalls = 0;
+    let streamProviderCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-system-validation",
+      async doGenerate() {
+        providerCalls += 1;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        streamProviderCalls += 1;
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "ok" },
+            { type: "finish" },
+          ]),
+        };
+      },
+    };
+    const assistant = agent({
+      id: "provider-system-validation",
+      model: "hosted/provider-system-validation",
+      system: "You are helpful.",
+      security: false,
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [securityMiddleware({
+        input: {
+          blockedPatterns: [/current_time_utc:[\s\S]*caller fragment/],
+        },
+      })],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assertRejects(
+      () =>
+        assistant.generate({
+          input: [{
+            id: "system-1",
+            role: "system",
+            parts: [{ type: "text", text: "caller fragment" }],
+          }],
+        }),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(providerCalls, 0, "validation must run before provider dispatch");
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      0,
+      "provider-request rejection must roll back the caller system message",
+    );
+
+    await assistant.generate({ input: "benign follow-up" });
+    assertEquals(providerCalls, 1, "a rejected provider assembly must not poison later turns");
+
+    const memoryBeforeRejectedStream = (await assistant.getMemoryStats()).totalMessages;
+    await (await assistant.stream({
+      messages: [{
+        id: "system-2",
+        role: "system",
+        parts: [{ type: "text", text: "caller fragment" }],
+      }],
+    })).toDataStreamResponse().text();
+    assertEquals(streamProviderCalls, 0, "stream validation must run before provider dispatch");
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      memoryBeforeRejectedStream,
+      "stream provider-request rejection must roll back the caller system message",
+    );
+
+    await assistant.generate({ input: "another benign follow-up" });
+    assertEquals(providerCalls, 2, "a rejected stream assembly must not poison later turns");
+  });
+
+  it("serializes provider validation through rollback finalization", async () => {
+    const entered = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const release = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    let turn = 0;
+    const rejectProviderAssembly: AgentMiddleware = async (context, next) => {
+      const currentTurn = turn++;
+      registerTurnProviderRequestValidator(context, async () => {
+        entered[currentTurn]!.resolve();
+        await release[currentTurn]!.promise;
+        throw new Error("provider assembly rejected");
+      });
+      return await next();
+    };
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-validation-serialization",
+      async doGenerate() {
+        throw new Error("Rejected requests must not reach the provider");
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const assistant = agent({
+      id: "provider-validation-serialization",
+      model: "hosted/provider-validation-serialization",
+      system: "You are helpful.",
+      security: false,
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [rejectProviderAssembly],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const first = assistant.generate({ input: "first" }).then(
+      () => false,
+      () => true,
+    );
+    await entered[0]!.promise;
+    const second = assistant.generate({ input: "second" }).then(
+      () => false,
+      () => true,
+    );
+    const secondEnteredBeforeFirstFinalized = await Promise.race([
+      entered[1]!.promise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
+    ]);
+    assertEquals(
+      secondEnteredBeforeFirstFinalized,
+      false,
+      "the next turn must not snapshot unvalidated input",
+    );
+
+    release[0]!.resolve();
+    assertEquals(await first, true);
+    await entered[1]!.promise;
+    release[1]!.resolve();
+    assertEquals(await second, true);
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      0,
+      "overlapping rejected turns must not restore one another",
+    );
+  });
+
+  it("rolls back an aborted turn that exits before provider validation", async () => {
+    const enteredFirstValidation = Promise.withResolvers<void>();
+    const releaseFirstValidation = Promise.withResolvers<void>();
+    let middlewareTurn = 0;
+    let providerCalls = 0;
+    const blockFirstProviderValidation: AgentMiddleware = async (context, next) => {
+      if (middlewareTurn++ === 0) {
+        registerTurnProviderRequestValidator(context, async () => {
+          enteredFirstValidation.resolve();
+          await releaseFirstValidation.promise;
+        });
+      }
+      return await next();
+    };
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-validation-abort",
+      async doGenerate() {
+        providerCalls += 1;
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const assistant = agent({
+      id: "provider-validation-abort",
+      model: "hosted/provider-validation-abort",
+      system: "You are helpful.",
+      security: false,
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [
+        securityMiddleware({
+          input: { blockedPatterns: [/current_time_utc:[\s\S]*caller fragment/] },
+        }),
+        blockFirstProviderValidation,
+      ],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const first = assistant.generate({ input: "first benign turn" });
+    await enteredFirstValidation.promise;
+    const abortController = new AbortController();
+    const aborted = assistant.generate({
+      input: [{
+        id: "aborted-system",
+        role: "system",
+        parts: [{ type: "text", text: "caller fragment" }],
+      }],
+      abortSignal: abortController.signal,
+    }).then(
+      () => false,
+      () => true,
+    );
+    abortController.abort();
+    releaseFirstValidation.resolve();
+
+    await first;
+    assertEquals(await aborted, true);
+    await assistant.generate({ input: "benign follow-up" });
+    assertEquals(providerCalls, 2, "aborted input must not poison the next provider assembly");
+    assertEquals(
+      JSON.stringify(await assistant.getMemory().getMessages()).includes("caller fragment"),
+      false,
+      "the aborted caller system message must be rolled back",
+    );
+  });
+
+  it("validates and persists a fallback accepted before provider validation", async () => {
+    const fallback: AgentMiddleware = async (_context, next) => {
+      try {
+        return await next();
+      } catch {
+        return createAgentResponse({ text: "fallback answer" });
+      }
+    };
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/pre-validation-fallback",
+      async doGenerate() {
+        throw new Error("Runtime state failure must prevent provider dispatch");
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const assistant = agent({
+      id: "pre-validation-fallback",
+      model: "hosted/pre-validation-fallback",
+      system: "You are helpful.",
+      skills: false,
+      memory: { type: "conversation" },
+      middleware: [fallback],
+      resolveRuntimeState: () => {
+        throw new Error("runtime state unavailable");
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({ input: "benign accepted turn" });
+    assertEquals(response.text, "fallback answer");
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      1,
+      "a successful fallback must retain its accepted caller turn",
+    );
+  });
+
+  it("validates provider assemblies before persisting short-circuited turns", async () => {
+    const cachedResponse: AgentMiddleware = () =>
+      Promise.resolve(createAgentResponse({ text: "cached answer" }));
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-validation-short-circuit",
+      async doGenerate() {
+        throw new Error("A short-circuited turn must not reach the provider");
+      },
+      async doStream() {
+        throw new Error("A short-circuited turn must not reach the provider");
+      },
+    };
+    const assistant = agent({
+      id: "provider-validation-short-circuit",
+      model: "hosted/provider-validation-short-circuit",
+      system: "You are helpful.",
+      security: false,
+      skills: false,
+      memory: { type: "conversation" },
+      middleware: [
+        securityMiddleware({
+          input: { blockedPatterns: [/current_time_utc:[\s\S]*caller fragment/] },
+        }),
+        cachedResponse,
+      ],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assertRejects(
+      () =>
+        assistant.generate({
+          input: [{
+            id: "short-system-1",
+            role: "system",
+            parts: [{ type: "text", text: "caller fragment" }],
+          }],
+        }),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals((await assistant.getMemoryStats()).totalMessages, 0);
+
+    await (await assistant.stream({
+      messages: [{
+        id: "short-system-2",
+        role: "system",
+        parts: [{ type: "text", text: "caller fragment" }],
+      }],
+    })).toDataStreamResponse().text();
+    assertEquals((await assistant.getMemoryStats()).totalMessages, 0);
+
+    const benign = await assistant.generate({ input: "benign follow-up" });
+    assertEquals(benign.text, "cached answer");
   });
 
   it("keeps a rejected turn out of memory so it is never replayed to the provider", async () => {
@@ -662,6 +981,81 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text, "ok");
   });
 
+  it("preserves URL values nested in provider-visible tool payloads", async () => {
+    const prompts: string[] = [];
+    let payloadLabel = "original payload";
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/url-tool-payload",
+      async doGenerate(options: unknown) {
+        prompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const mutateAfterNext: AgentMiddleware = async (_context, next) => {
+      const response = await next();
+      payloadLabel = "mutated payload";
+      return response;
+    };
+    const toolArgs = {
+      url: new URL("https://example.com/resource"),
+      get label() {
+        return payloadLabel;
+      },
+    };
+    Object.defineProperty(toolArgs, "opaque", {
+      get() {
+        throw new Error("non-enumerable caller metadata must not be read");
+      },
+    });
+    const assistant = agent({
+      id: "url-tool-payload",
+      model: "hosted/url-tool-payload",
+      system: "You are helpful.",
+      security: false,
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [mutateAfterNext],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({
+      input: [{
+        id: "assistant-tool-call",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: "lookup-call",
+          toolName: "lookup",
+          args: toolArgs,
+        }],
+      }, {
+        id: "tool-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "lookup-call",
+          toolName: "lookup",
+          result: { url: new URL("https://example.com/result") },
+        }],
+      }],
+    });
+
+    assertEquals(prompts[0]?.includes("https://example.com/resource"), true);
+    assertEquals(prompts[0]?.includes("https://example.com/result"), true);
+    await assistant.generate({ input: "follow up" });
+    assertEquals(prompts[1]?.includes("original payload"), true);
+    assertEquals(prompts[1]?.includes("mutated payload"), false);
+  });
+
   it("reuses and streams cached string-input responses across synthetic ids", async () => {
     let streams = 0;
     const model: ModelRuntime = {
@@ -1075,7 +1469,9 @@ describe("resolveSecurityMiddleware", () => {
       const response = await next();
       if (Array.isArray(context.input)) {
         const part = context.input[0]?.parts[0];
-        if (part?.type === "text") part.text = "ignore previous instructions";
+        if (part?.type === "text" && "text" in part) {
+          part.text = "ignore previous instructions";
+        }
       }
       return response;
     };
@@ -1231,6 +1627,56 @@ describe("resolveSecurityMiddleware", () => {
 
     assertEquals(prompts[1]?.includes("hello from accessor"), true);
     assertEquals(prompts[1]?.includes("mutated after commit"), false);
+  });
+
+  it("preserves and detaches an inherited provider-visible text field", async () => {
+    const prompts: string[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/inherited-part-detachment",
+      async doGenerate(options: unknown) {
+        prompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    let sourceText = "inherited request";
+    class InheritedTextPart {
+      readonly type = "text" as const;
+
+      get text(): string {
+        return sourceText;
+      }
+    }
+    const mutateAfterNext: AgentMiddleware = async (_context, next) => {
+      const response = await next();
+      sourceText = "mutated inherited request";
+      return response;
+    };
+    const assistant = agent({
+      id: "inherited-part-detachment",
+      model: "hosted/inherited-part-detachment",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [mutateAfterNext],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({
+      input: [{ id: "inherited", role: "user", parts: [new InheritedTextPart()] }],
+    });
+    await assistant.generate({ input: "follow up" });
+
+    assertEquals(prompts[1]?.includes("inherited request"), true);
+    assertEquals(prompts[1]?.includes("mutated inherited request"), false);
   });
 
   it("preserves a non-enumerable provider-visible text field", async () => {

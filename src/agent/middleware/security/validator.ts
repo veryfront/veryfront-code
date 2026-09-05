@@ -1,4 +1,4 @@
-import type { AgentContext, AgentResponse, Message } from "#veryfront/agent/types.ts";
+import type { AgentContext, AgentResponse, AgentSystem, Message } from "#veryfront/agent/types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
 import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
@@ -11,6 +11,7 @@ import {
   registerTurnInputValidator,
   registerTurnMessageProjectionValidator,
   registerTurnMessageValidator,
+  registerTurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { isSummaryMemoryProjectionMessage } from "#veryfront/agent/memory/memory.ts";
 
@@ -168,6 +169,9 @@ export interface InputValidationOptions {
    * reject every turn on an agent configured with `maxLength`.
    */
   checkMaxLength?: boolean;
+
+  /** Check the caller-defined validator. Defaults to `true`. */
+  checkCustomValidation?: boolean;
 }
 
 /**
@@ -213,7 +217,9 @@ export class InputValidator {
       });
     }
 
-    const customValidate = this.config.validate;
+    const customValidate = options?.checkCustomValidation === false
+      ? undefined
+      : this.config.validate;
     if (customValidate) {
       const customValid = await customValidate(input);
       if (!customValid) {
@@ -629,14 +635,19 @@ function extractMergedRuns(messages: Message[]): Message[][] {
  * through the `Memory` interface. Such a run is not left unchecked either, it
  * was validated on the turn that wrote its last member, unless it predates the
  * middleware or was written directly through `memory.add`.
+ * `mustAlsoInclude` applies the same requirement to a second ownership set,
+ * which lets provider-request validation select only assemblies containing
+ * both a trusted runtime layer and a caller-supplied system message.
  */
 function extractMergedRunTexts(
   messages: Message[],
   mustInclude?: ReadonlySet<Message>,
+  mustAlsoInclude?: ReadonlySet<Message>,
 ): string[] {
   const runTexts = new Set<string>();
   for (const run of extractMergedRuns(messages)) {
     if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
+    if (mustAlsoInclude && !run.some((message) => mustAlsoInclude.has(message))) continue;
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
       // The OpenAI-compatible converter and the Anthropic builder join system
       // run members with a blank line, but the Google builder sends each
@@ -654,6 +665,17 @@ function extractMergedRunTexts(
     }
   }
   return [...runTexts];
+}
+
+function providerSystemMessages(system: AgentSystem): Message[] {
+  const layers = typeof system === "string"
+    ? [{ role: "system" as const, content: system }]
+    : system;
+  return layers.map((layer, index) => ({
+    id: `provider-system-${index}`,
+    role: "system",
+    parts: [{ type: "text", text: layer.content }],
+  }));
 }
 
 function extractInputValidationTexts(input: AgentContext["input"]): InputValidationTexts {
@@ -826,10 +848,13 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
 async function validateInputTexts(
   validator: InputValidator,
   values: InputValidationTexts,
+  options?: InputValidationOptions,
 ): Promise<{ valid: boolean; violations: SecurityViolation[] }> {
   const results = await Promise.all([
-    ...values.texts.map((value) => validator.validate(value)),
-    ...values.assembled.map((value) => validator.validate(value, { checkMaxLength: false })),
+    ...values.texts.map((value) => validator.validate(value, options)),
+    ...values.assembled.map((value) =>
+      validator.validate(value, { ...options, checkMaxLength: false })
+    ),
   ]);
   return {
     valid: results.every((result) => result.valid),
@@ -855,6 +880,57 @@ async function assertInputTextsValid(
       message: `Input validation failed: ${firstViolation?.reason ?? "Unknown reason"}`,
     }),
   );
+}
+
+/** Reject only provider-assembly violations introduced by caller-owned layers. */
+async function assertProviderRunsValid(
+  validator: InputValidator,
+  providerRuns: string[],
+  trustedRuns: string[],
+  onViolation?: (violation: SecurityViolation) => void,
+): Promise<void> {
+  if (providerRuns.length === 0) return;
+  const patternOnly = { checkCustomValidation: false } as const;
+  const [providerValidation, trustedValidation] = await Promise.all([
+    validateInputTexts(validator, { texts: [], assembled: providerRuns }, patternOnly),
+    validateInputTexts(validator, { texts: [], assembled: trustedRuns }, patternOnly),
+  ]);
+  const trustedPatterns = new Set(
+    trustedValidation.violations.flatMap((violation) =>
+      violation.pattern === undefined ? [] : [violation.pattern]
+    ),
+  );
+  const trustedReasons = new Set(
+    trustedValidation.violations.flatMap((violation) =>
+      violation.pattern === undefined ? [violation.reason] : []
+    ),
+  );
+  const introducedViolations = providerValidation.violations.filter((violation) =>
+    violation.pattern === undefined
+      ? !trustedReasons.has(violation.reason)
+      : !trustedPatterns.has(violation.pattern)
+  );
+  if (introducedViolations.length > 0) {
+    reportViolations(introducedViolations, onViolation);
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Input validation failed: ${introducedViolations[0]?.reason ?? "Unknown reason"}`,
+      }),
+    );
+  }
+
+  const trustedNeedsSanitization = trustedRuns.some((value) =>
+    (validator.sanitize(value) ?? value) !== value
+  );
+  if (!trustedNeedsSanitization) {
+    assertTextsNeedNoSanitization(
+      validator,
+      providerRuns,
+      "Provider-visible system instructions contain content sanitization removes",
+      onViolation,
+    );
+  }
 }
 
 /**
@@ -937,6 +1013,26 @@ export function securityMiddleware(
     // turn contributes a message to are checked; a run lying entirely inside
     // already-persisted history cannot be rewritten here, so rejecting over it
     // would brick the conversation on every later turn (`extractMergedRunTexts`).
+    registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
+      const systemMessages = providerSystemMessages(providerSystem);
+      const callerSystemMessages = messages.filter((message) => message.role === "system");
+      const providerRuns = extractMergedRunTexts(
+        [...systemMessages, ...messages],
+        new Set(systemMessages),
+        new Set(callerSystemMessages),
+      );
+      const trustedRuns = [
+        ...systemMessages.flatMap(extractMessageInputTextRegardlessOfRole),
+        ...systemMessages.flatMap(extractMessageAssembledTextsRegardlessOfRole),
+        ...extractMergedRunTexts(systemMessages),
+      ];
+      await assertProviderRunsValid(
+        inputValidator,
+        providerRuns,
+        trustedRuns,
+        config.onViolation,
+      );
+    });
     registerTurnMessageValidator(context, async (history, turnInput) => {
       const individualValues = history.length === 0
         ? {

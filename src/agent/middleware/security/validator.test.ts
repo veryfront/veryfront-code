@@ -12,6 +12,7 @@ import {
   getTurnInputValidator,
   getTurnMessageProjectionValidator,
   getTurnMessageValidator,
+  getTurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { SummaryMemory } from "#veryfront/agent/memory/memory.ts";
 import {
@@ -642,6 +643,71 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("validates caller system text together with the runtime system prompt", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/runtime marker\s*caller fragment/] },
+    });
+    const context = createContext({
+      input: [{
+        id: "system-1",
+        role: "system",
+        parts: [{ type: "text", text: "caller fragment" }],
+      }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProviderRequest = getTurnProviderRequestValidator(context);
+    if (!validateProviderRequest) throw new Error("Expected provider-request validation");
+
+    await assertRejects(
+      () => validateProviderRequest("runtime marker", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
+  it("does not apply caller input patterns to a trusted runtime prompt alone", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/runtime marker/] },
+    });
+    const context = createContext({
+      input: [{
+        id: "system-1",
+        role: "system",
+        parts: [{ type: "text", text: "harmless caller instruction" }],
+      }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProviderRequest = getTurnProviderRequestValidator(context);
+    if (!validateProviderRequest) throw new Error("Expected provider-request validation");
+
+    await validateProviderRequest("runtime marker", context.input as Message[]);
+  });
+
+  it("does not apply a custom caller validator to a mixed provider assembly", async () => {
+    const middleware = securityMiddleware({
+      input: {
+        validate: (text) => (JSON.parse(text) as { allowed?: boolean }).allowed === true,
+      },
+    });
+    const input = JSON.stringify({ allowed: true });
+    const context = createContext({
+      input: [{
+        id: "system-1",
+        role: "system",
+        parts: [{ type: "text", text: input }],
+      }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProviderRequest = getTurnProviderRequestValidator(context);
+    if (!validateProviderRequest) throw new Error("Expected provider-request validation");
+
+    await validateProviderRequest("trusted runtime prose", [{
+      id: "system-1",
+      role: "system",
+      parts: [{ type: "text", text: input }],
+    }]);
+  });
+
   it("does not apply caller input length limits to summary-memory projections", async () => {
     const middleware = securityMiddleware({ input: { maxLength: 8 } });
     const context = createContext({ input: "next" });
@@ -649,7 +715,9 @@ describe("securityMiddleware", () => {
     const validateTurn = getTurnMessageValidator(context);
     if (!validateTurn) throw new Error("Expected turn validation");
     const memory = new SummaryMemory<Message>({ type: "summary", maxMessages: 2 });
-    for (const [id, text] of [["one", "one"], ["two", "two"], ["three", "three"]]) {
+    for (
+      const [id, text] of [["one", "one"], ["two", "two"], ["three", "three"]] as const
+    ) {
       await memory.add({ id, role: "user", parts: [{ type: "text", text }] });
     }
 

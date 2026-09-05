@@ -67,6 +67,8 @@ import {
   getTurnInputValidator,
   getTurnMessageProjectionValidator,
   getTurnMessageValidator,
+  getTurnProviderRequestValidator,
+  type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
@@ -313,6 +315,7 @@ const IntrinsicReadableStream = ReadableStream;
 const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
@@ -322,19 +325,29 @@ const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
 const WeakMapGet = IntrinsicWeakMap.prototype.get;
 const WeakMapSet = IntrinsicWeakMap.prototype.set;
+const IntrinsicURL = URL;
+const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
 function cloneStructuredValuePreservingOpaque<T>(value: T): T {
   const seen = new IntrinsicWeakMap<object, unknown>();
   const clone = (candidate: unknown): unknown => {
-    try {
-      return IntrinsicStructuredClone(candidate);
-    } catch {
-      // Functions and other opaque values are valid in public message metadata
-      // and tool payloads even though the provider ignores them.
+    if (candidate === null || typeof candidate !== "object") {
+      try {
+        return IntrinsicStructuredClone(candidate);
+      } catch {
+        return candidate;
+      }
     }
-    if (candidate === null || typeof candidate !== "object") return candidate;
+    if (URLHrefGetter) {
+      try {
+        return new IntrinsicURL(IntrinsicReflectApply(URLHrefGetter, candidate, []));
+      } catch {
+        // The native URL getter rejects every non-URL object without invoking
+        // caller hooks, so ordinary values continue through recursive clone.
+      }
+    }
     const existing = IntrinsicReflectApply(WeakMapGet, seen, [candidate]);
     if (existing !== undefined) return existing;
     if (ArrayIsArray(candidate)) {
@@ -349,7 +362,15 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
     let descriptors: PropertyDescriptorMap;
     try {
       prototype = ObjectGetPrototypeOf(candidate);
-      if (prototype !== ObjectPrototype && prototype !== null) return candidate;
+      if (prototype !== ObjectPrototype && prototype !== null) {
+        try {
+          return IntrinsicStructuredClone(candidate);
+        } catch {
+          // Functions and other opaque values are valid in public message
+          // metadata and tool payloads even though the provider ignores them.
+          return candidate;
+        }
+      }
       descriptors = ObjectGetOwnPropertyDescriptors(candidate);
     } catch {
       return candidate;
@@ -358,12 +379,22 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
     IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
     for (const key of ReflectOwnKeys(descriptors)) {
       const descriptor = descriptors[key as keyof typeof descriptors];
-      if (!descriptor) continue;
-      if ("value" in descriptor) descriptor.value = clone(descriptor.value);
+      if (!descriptor?.enumerable) continue;
+      let detachedValue: unknown;
       try {
-        ObjectDefineProperty(object, key, descriptor);
+        detachedValue = "value" in descriptor
+          ? clone(descriptor.value)
+          : descriptor.get
+          ? clone(IntrinsicReflectApply(descriptor.get, candidate, []))
+          : undefined;
+        ObjectDefineProperty(object, key, {
+          value: detachedValue,
+          enumerable: descriptor.enumerable,
+          configurable: true,
+          writable: true,
+        });
       } catch {
-        return candidate;
+        continue;
       }
     }
     return object;
@@ -443,6 +474,23 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
     ObjectDefineProperty(detached, key, {
       value: cloneStructuredValuePreservingOpaque(value),
       enumerable: descriptor.enumerable,
+      configurable: true,
+      writable: true,
+    });
+  }
+  const source = part as Record<string, unknown>;
+  for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
+    if (ObjectHasOwn(descriptors, key)) continue;
+    let value: unknown;
+    try {
+      value = source[key];
+    } catch {
+      continue;
+    }
+    if (value === undefined) continue;
+    ObjectDefineProperty(detached, key, {
+      value: cloneStructuredValuePreservingOpaque(value),
+      enumerable: true,
       configurable: true,
       writable: true,
     });
@@ -1583,7 +1631,12 @@ export class AgentRuntime {
   private prepareTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
-  ): Promise<Message[]> {
+  ): Promise<{
+    messages: Message[];
+    commit: () => void;
+    rollback: () => Promise<void>;
+    finalized: Promise<void>;
+  }> {
     // Serialize validate-then-write per runtime: two concurrent turns that
     // both read the same history before either writes could each validate an
     // individually harmless fragment whose interleaved writes become adjacent
@@ -1609,12 +1662,18 @@ export class AgentRuntime {
     // instance, so a hung memory backend delays other validated turns on the
     // same agent; that is the same backend outage those turns would hit on
     // their own write.
-    if (!context || !getTurnMessageValidator(context)) {
+    if (
+      !context ||
+      !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context)
+    ) {
       return this.#commitTurnMessages(inputMessages, context);
     }
 
     const task = this.#turnCommitQueue.then(() => this.#commitTurnMessages(inputMessages, context));
-    this.#turnCommitQueue = task.then(() => undefined, () => undefined);
+    this.#turnCommitQueue = task.then(
+      ({ finalized }) => finalized,
+      () => undefined,
+    );
     return task;
   }
 
@@ -1623,22 +1682,56 @@ export class AgentRuntime {
   private createTurnPersistence(
     inputMessages: Message[],
     context: AgentContext,
-  ): { persisted: boolean; persist: () => Promise<Message[]> } {
+  ): {
+    persisted: boolean;
+    persist: () => Promise<Message[]>;
+    commit: () => Promise<void>;
+    finalize: () => Promise<void>;
+    validationState: () => "pending" | "accepted" | "rejected";
+    validateProviderRequest: TurnProviderRequestValidator;
+  } {
     // Memoized on the first call: persistence now runs inside the middleware
     // continuation, so a middleware that invokes `next()` more than once (a
     // retry or fallback wrapper) would otherwise write this turn's input to
     // memory once per attempt. Every attempt shares the first commit, including
     // its rejection, so a turn that failed validation stays rejected.
-    let commit: Promise<Message[]> | undefined;
+    let transaction: ReturnType<AgentRuntime["prepareTurnMessages"]> | undefined;
+    let finalized = false;
+    let validationState: "pending" | "accepted" | "rejected" = "pending";
+    const commit = async (): Promise<void> => {
+      if (finalized || transaction === undefined) return;
+      finalized = true;
+      (await transaction).commit();
+    };
+    const rollback = async (): Promise<void> => {
+      if (finalized || transaction === undefined) return;
+      finalized = true;
+      const prepared = await transaction.catch(() => undefined);
+      await prepared?.rollback();
+    };
     const persistence = {
       persisted: false,
       persist: (): Promise<Message[]> => {
         persistence.persisted = true;
-        commit ??= this.prepareTurnMessages(
+        transaction ??= this.prepareTurnMessages(
           resolveValidatedTurnInput(context.input, inputMessages),
           context,
         );
-        return commit;
+        return transaction.then(({ messages }) => messages);
+      },
+      commit,
+      finalize: () => validationState === "accepted" ? commit() : rollback(),
+      validationState: () => validationState,
+      validateProviderRequest: async (providerSystem: AgentSystem, messages: Message[]) => {
+        try {
+          await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
+        } catch (error) {
+          validationState = "rejected";
+          await rollback();
+          throw error;
+        }
+        validationState = "accepted";
+        await commit();
       },
     };
     return persistence;
@@ -1647,7 +1740,12 @@ export class AgentRuntime {
   async #commitTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
-  ): Promise<Message[]> {
+  ): Promise<{
+    messages: Message[];
+    commit: () => void;
+    rollback: () => Promise<void>;
+    finalized: Promise<void>;
+  }> {
     const committedInputMessages = inputMessages.map((message) => {
       const cloned = cloneMessageForCommit(message);
       propagateSyntheticMessageMarks(message, cloned);
@@ -1666,9 +1764,10 @@ export class AgentRuntime {
 
     const validateTurnMessages = context && getTurnMessageValidator(context);
     const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
+    const validateProviderRequest = context && getTurnProviderRequestValidator(context);
     let validated = committedInputMessages;
     let history: Message[] = [];
-    if (validateTurnMessages || validateProjectedMessages) {
+    if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
       history = await this.memory.getMessages();
       if (history.length > 0) validated = [...history, ...committedInputMessages];
       // Durable provider replay metadata can keep a reasoning-only assistant
@@ -1684,7 +1783,8 @@ export class AgentRuntime {
         await validateTurnMessages(history, committedInputMessages);
       }
     }
-    const rollbackMemory = validateTurnMessages || validateProjectedMessages
+    const rollbackMemory = validateTurnMessages || validateProjectedMessages ||
+        validateProviderRequest
       ? captureMemoryRollback(this.memory, history)
       : undefined;
     let persisted: Message[];
@@ -1711,8 +1811,27 @@ export class AgentRuntime {
         throw error;
       }
     }
-    rollbackMemory?.commit();
-    return persisted.length > 0 ? persisted : committedInputMessages;
+    let isFinalized = false;
+    const finalization = Promise.withResolvers<void>();
+    return {
+      messages: persisted.length > 0 ? persisted : committedInputMessages,
+      commit: () => {
+        if (isFinalized) return;
+        isFinalized = true;
+        rollbackMemory?.commit();
+        finalization.resolve();
+      },
+      rollback: async () => {
+        if (isFinalized) return;
+        isFinalized = true;
+        try {
+          await rollbackMemory?.rollback(new Set(committedInputMessages));
+        } finally {
+          finalization.resolve();
+        }
+      },
+      finalized: finalization.promise,
+    };
   }
 
   async #resolveModelTransport(
@@ -1914,45 +2033,59 @@ export class AgentRuntime {
         const turnPersistence = this.createTurnPersistence(inputMessages, agentContext);
 
         const chain = new MiddlewareChain(this.config.middleware);
-        const response = await chain.execute(
-          agentContext,
-          async () => {
-            try {
+        let response: AgentResponse;
+        try {
+          response = await chain.execute(
+            agentContext,
+            async () => {
               const messages = await turnPersistence.persist();
-              return await runWithRemoteIntegrationToolDiscoveryScope(() =>
-                this.#executeAgentLoop(
-                  systemPrompt,
-                  messages,
-                  {
-                    agentId: this.id,
-                    projectId: tryGetCacheKeyContext()?.projectId,
-                  },
-                  context,
-                  runRuntimeContext,
-                  supportsToolCalling,
-                  providerReplayCheckpointEmission,
-                  resolvedModelString,
-                  transport.languageModel,
-                  transport.headers,
-                  transport.providerOptions,
-                  transport.reasoning,
-                  maxOutputTokensOverride,
-                  requestedModel,
-                  this.createGenerateReplacementTools(
-                    options?.toolReplacements,
-                    options?.retainSkillLoaderTools,
-                  ),
-                  abortSignal,
-                  outputSchema,
-                )
-              );
-            } finally {
-              abortGuard.revoke();
-            }
-          },
-        );
+              try {
+                return await runWithRemoteIntegrationToolDiscoveryScope(() =>
+                  this.#executeAgentLoop(
+                    systemPrompt,
+                    messages,
+                    turnPersistence.validateProviderRequest,
+                    {
+                      agentId: this.id,
+                      projectId: tryGetCacheKeyContext()?.projectId,
+                    },
+                    context,
+                    runRuntimeContext,
+                    supportsToolCalling,
+                    providerReplayCheckpointEmission,
+                    resolvedModelString,
+                    transport.languageModel,
+                    transport.headers,
+                    transport.providerOptions,
+                    transport.reasoning,
+                    maxOutputTokensOverride,
+                    requestedModel,
+                    this.createGenerateReplacementTools(
+                      options?.toolReplacements,
+                      options?.retainSkillLoaderTools,
+                    ),
+                    abortSignal,
+                    outputSchema,
+                  )
+                );
+              } finally {
+                abortGuard.revoke();
+              }
+            },
+          );
+        } catch (error) {
+          await turnPersistence.finalize();
+          throw error;
+        }
 
-        if (!turnPersistence.persisted) await turnPersistence.persist();
+        const messages = await turnPersistence.persist();
+        if (turnPersistence.validationState() === "pending") {
+          await turnPersistence.validateProviderRequest(
+            withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+            messages,
+          );
+        }
+        await turnPersistence.commit();
         return response;
       }).catch(async (error) => {
         await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
@@ -2126,6 +2259,7 @@ export class AgentRuntime {
                     this.#executeAgentLoopStreaming(
                       systemPrompt,
                       memoryMessages,
+                      turnPersistence.validateProviderRequest,
                       controller,
                       encoder,
                       streamingCallbacks,
@@ -2152,7 +2286,14 @@ export class AgentRuntime {
               },
             );
             const response = await inFlight;
-            if (!turnPersistence.persisted) await turnPersistence.persist();
+            const messages = await turnPersistence.persist();
+            if (turnPersistence.validationState() === "pending") {
+              await turnPersistence.validateProviderRequest(
+                withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+                messages,
+              );
+            }
+            await turnPersistence.commit();
             throwIfAborted(streamAbortSignal);
             if (response.text.length > 0 && streamedResponseText.length === 0) {
               sendSSE(controller, encoder, { type: "text-start", id: textPartId });
@@ -2179,6 +2320,7 @@ export class AgentRuntime {
             });
             closeSSEStream(controller);
           } catch (error) {
+            await turnPersistence.finalize();
             try {
               await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
             } catch (failureHookError) {
@@ -2231,6 +2373,7 @@ export class AgentRuntime {
   async #executeAgentLoop( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
+    validateProviderRequest: TurnProviderRequestValidator,
     toolContextBase: ToolExecutionContext | undefined,
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
@@ -2411,6 +2554,10 @@ export class AgentRuntime {
           const providerSystemPrompt = withAgentRunRuntimeContext(
             currentSystemPrompt,
             runRuntimeContext,
+          );
+          await validateProviderRequest(
+            providerSystemPrompt,
+            currentMessages,
           );
           const result = await generateText({
             model: languageModel,
@@ -2898,6 +3045,7 @@ export class AgentRuntime {
   async #executeAgentLoopStreaming( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
+    validateProviderRequest: TurnProviderRequestValidator,
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
     callbacks: {
@@ -3059,6 +3207,10 @@ export class AgentRuntime {
       const providerSystemPrompt = withAgentRunRuntimeContext(
         currentSystemPrompt,
         runRuntimeContext,
+      );
+      await validateProviderRequest(
+        providerSystemPrompt,
+        currentMessages,
       );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamText({
