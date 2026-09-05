@@ -733,6 +733,44 @@ function collectCompositeSubWorkflowOwnerPaths(
   }
 }
 
+function hasActiveCallbackSubWorkflow(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+): boolean {
+  for (const node of nodes) {
+    switch (node.config.type) {
+      case "subWorkflow":
+        if (
+          typeof node.config.workflow !== "string" &&
+          typeof node.config.workflow.steps === "function" &&
+          nodeStates[node.id]?.status === "running"
+        ) return true;
+        if (
+          typeof node.config.workflow !== "string" &&
+          Array.isArray(node.config.workflow.steps) &&
+          hasActiveCallbackSubWorkflow(node.config.workflow.steps, nodeStates)
+        ) return true;
+        break;
+      case "parallel":
+        if (hasActiveCallbackSubWorkflow(node.config.nodes, nodeStates)) return true;
+        break;
+      case "branch":
+        if (
+          hasActiveCallbackSubWorkflow(node.config.then, nodeStates) ||
+          hasActiveCallbackSubWorkflow(node.config.else ?? [], nodeStates)
+        ) return true;
+        break;
+      case "loop":
+        if (
+          Array.isArray(node.config.steps) &&
+          hasActiveCallbackSubWorkflow(node.config.steps, nodeStates)
+        ) return true;
+        break;
+    }
+  }
+  return false;
+}
+
 function createCompositeNodeStateView(
   nodes: readonly WorkflowNode[],
   nodeStates: Readonly<Record<string, NodeState>>,
@@ -768,6 +806,7 @@ function createCompositeNodeStateView(
   const activeCompositeChildIds = new Set(
     nodeStates[compositeNodeId]?._activeCompositeChildIds ?? [],
   );
+  const preserveUnknownLegacyStates = hasActiveCallbackSubWorkflow(nodes, nodeStates);
   for (const [ownerPath, ownerNodeId] of scope.subWorkflowReservationOwners) {
     if (
       ownerPath === parentPath ||
@@ -789,8 +828,9 @@ function createCompositeNodeStateView(
       continue;
     }
     if (
-      declaredIds.has(nodeId) &&
-      (activeCompositeChildIds.has(nodeId) || !claimedLegacyIds.has(nodeId))
+      !claimedLegacyIds.has(nodeId) &&
+        (declaredIds.has(nodeId) || preserveUnknownLegacyStates) ||
+      declaredIds.has(nodeId) && activeCompositeChildIds.has(nodeId)
     ) visible[nodeId] = state;
   }
   return visible;

@@ -5102,6 +5102,48 @@ describe("DAGExecutor", () => {
       assertEquals(executed, ["review"]);
     });
 
+    it("preserves legacy callback child state through an enclosing parallel", async () => {
+      const nodes: WorkflowNode[] = [{
+        id: "outer",
+        config: {
+          type: "parallel",
+          nodes: [{
+            id: "sub",
+            config: {
+              type: "subWorkflow",
+              workflow: {
+                id: "child",
+                steps: () => [{
+                  id: "review",
+                  config: { type: "wait", waitType: "approval" },
+                }],
+              },
+            },
+          }],
+        },
+      }];
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            outer: { nodeId: "outer", status: "running", attempt: 1 },
+            sub: { nodeId: "sub", status: "running", attempt: 1 },
+            review: {
+              nodeId: "review",
+              status: "completed",
+              attempt: 1,
+              output: { approved: true },
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates.review?.status, "completed");
+    });
+
     it("reconstructs sub-workflow ownership after an executor restart", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
