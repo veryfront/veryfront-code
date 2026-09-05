@@ -803,6 +803,14 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("retains object-shaped tool IDs from recovered JSON fences", () => {
+      const text = "Here is the agent's documentation.\n" + "x ".repeat(65_000) +
+        '\n```json\n{"tools":[{"id":"create_agent"},{"name":"read_file"}]}\n```';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent", "read_file"],
+      });
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

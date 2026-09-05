@@ -1239,6 +1239,11 @@ function recoverPlainProseTail(
           const facts = ["model", "tools", "tool_ids", "provider_tool_ids"]
             .flatMap((key) => {
               if (!Object.hasOwn(parsed, key)) return [];
+              if (key === "tools" && Array.isArray(parsed[key])) {
+                const ids: string[] = [];
+                addToolIdsFromParsedArray(ids, parsed[key], true);
+                return ids.length > 0 ? [`tools:${JSON.stringify(ids)}`] : [];
+              }
               const value = recoverableContractFactLine(`${key}:${JSON.stringify(parsed[key])}`);
               return value === undefined ? [] : [value];
             }).join("\n");
