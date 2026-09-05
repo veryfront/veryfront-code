@@ -17,10 +17,15 @@ import {
 import { ApiSearchCircuitBreaker } from "./api-search-circuit-breaker.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
+import type { ResolvedContentContext } from "./types.ts";
+import { toClientContext } from "./adapter-content-context.ts";
+import { scopeToRequestAuthority } from "./request-authority.ts";
+import { getRequestScopedFile, setRequestScopedFile } from "./request-context.ts";
 
 const logger = baseLogger.component("stat-operations");
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
+const ORIGINAL_API_PATH_CACHE_PREFIX = "__vf_original_api_path__:";
 
 const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
 const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
@@ -32,6 +37,13 @@ const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
  * the read path.
  */
 const INDEX_AUTHORITY_LIMIT_MS = 5 * 60 * 1000;
+
+interface StatIndexSnapshot {
+  fileIndex: Map<string, ProjectFile>;
+  directoryIndex: Set<string>;
+  pathMapping: Map<string, string>;
+  builtAt: number;
+}
 
 function isFileNotFoundError(error: unknown): boolean {
   if (error instanceof VeryfrontError && error.slug === "file-not-found") {
@@ -45,11 +57,12 @@ function isFileNotFoundError(error: unknown): boolean {
 export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
-  private buildingIndex: Promise<void> | null = null;
+  private buildingIndex: Promise<StatIndexSnapshot> | null = null;
+  private buildingIndexScopeKey: string | null = null;
+  private buildingIndexGeneration: number | null = null;
+  private indexScopeKey: string | null = null;
+  private indexGeneration = 0;
   private indexBuiltAt = 0;
-
-  private indexBuildLockResolver: (() => void) | null = null;
-  private indexBuildLockPromise: Promise<void> | null = null;
 
   private pathMapping: Map<string, string> = new Map();
 
@@ -57,6 +70,24 @@ export class StatOperations extends VeryfrontOperationsBase {
     threshold: API_SEARCH_CIRCUIT_BREAKER_THRESHOLD,
     cooldownMs: API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS,
   });
+
+  private cacheResolutionIfCurrent(
+    cacheKey: string,
+    value: string,
+    generation: number,
+    scopeKey: string,
+  ): void {
+    const currentScopeKey = scopeToRequestAuthority(
+      buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
+    );
+    const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
+      false;
+    if (
+      generation === this.indexGeneration && currentScopeKey === scopeKey && !scopeInvalidated
+    ) {
+      this.cache.set(cacheKey, value);
+    }
+  }
 
   stat(path: string): Promise<FileInfo> {
     return withSpan("fs.veryfront.stat", () => this.statWithoutSpan(path), { "fs.path": path });
@@ -69,10 +100,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     logger.debug("stat called", { path, normalizedPath, cacheKey });
 
-    await this.ensureIndexBuilt();
+    const snapshot = await this.ensureIndexBuilt(ctx);
 
-    const fileIdx = this.fileIndex;
-    const dirIdx = this.directoryIndex;
+    const fileIdx = snapshot.fileIndex;
+    const dirIdx = snapshot.directoryIndex;
 
     if (!fileIdx || !dirIdx) {
       logger.debug("stat - no index available", { normalizedPath });
@@ -124,7 +155,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
         try {
           // Search for the exact file path
-          const matches = await this.client.searchFiles(normalizedPath);
+          const matches = await this.client.searchFiles(
+            normalizedPath,
+            ctx ? toClientContext(ctx) : undefined,
+          );
           this.apiSearchCircuitBreaker.recordSuccess();
 
           const exactMatch = matches.find((m) => m.path === normalizedPath);
@@ -173,52 +207,80 @@ export class StatOperations extends VeryfrontOperationsBase {
     });
   }
 
-  private async ensureIndexBuilt(): Promise<void> {
-    if (this.fileIndex && this.directoryIndex) {
+  private async ensureIndexBuilt(
+    contentContext: ResolvedContentContext | null | undefined,
+    rebuildsLeft = 1,
+  ): Promise<StatIndexSnapshot> {
+    const scopeKey = scopeToRequestAuthority(buildStatCacheKeyPrefix(contentContext));
+    const isScopeInvalidated = () =>
+      this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
+    if (
+      this.fileIndex && this.directoryIndex && this.indexScopeKey === scopeKey &&
+      !isScopeInvalidated()
+    ) {
       logger.debug("ensureIndexBuilt - index already built");
-      return;
+      return {
+        fileIndex: this.fileIndex,
+        directoryIndex: this.directoryIndex,
+        pathMapping: this.pathMapping,
+        builtAt: this.indexBuiltAt,
+      };
     }
 
     if (this.buildingIndex) {
       logger.debug("ensureIndexBuilt - waiting for concurrent build");
       const waitStart = performance.now();
-      await this.buildingIndex;
+      const building = this.buildingIndex;
+      const buildingScopeKey = this.buildingIndexScopeKey;
+      const buildingGeneration = this.buildingIndexGeneration;
+      const snapshot = await building;
       logger.debug("ensureIndexBuilt - concurrent build done", {
         waitMs: Math.round(performance.now() - waitStart),
       });
-      return;
+      if (buildingScopeKey === scopeKey && buildingGeneration === this.indexGeneration) {
+        return snapshot;
+      }
+      return await this.ensureIndexBuilt(contentContext, rebuildsLeft);
     }
 
-    if (this.indexBuildLockPromise) {
-      logger.debug("ensureIndexBuilt - waiting for lock");
-      await this.indexBuildLockPromise;
-      if (this.buildingIndex) await this.buildingIndex;
-      return;
-    }
-
-    this.indexBuildLockPromise = new Promise((resolve) => {
-      this.indexBuildLockResolver = resolve;
-    });
-
+    const generation = this.indexGeneration;
+    const building = this.buildIndex(generation, contentContext, scopeKey);
+    this.buildingIndex = building;
+    this.buildingIndexScopeKey = scopeKey;
+    this.buildingIndexGeneration = generation;
+    let snapshot: StatIndexSnapshot;
     try {
-      if (this.fileIndex && this.directoryIndex) return;
-
-      this.buildingIndex = this.buildIndex();
-      await this.buildingIndex;
+      snapshot = await building;
     } finally {
       this.buildingIndex = null;
-      this.indexBuildLockResolver?.();
-      this.indexBuildLockResolver = null;
-      this.indexBuildLockPromise = null;
+      this.buildingIndexScopeKey = null;
+      this.buildingIndexGeneration = null;
     }
+
+    // A warmup that publishes the very listing this build asked for bumps the
+    // index generation while the fetch is open, so `buildIndex` discards its
+    // result instead of retaining it. Returning that orphan leaves
+    // `isIndexAuthoritative()` false, and every later miss then pays an API
+    // probe the listing could have answered. Rebuild once from the settled
+    // snapshot; the listing is cached by then, so the retry costs no request.
+    if (rebuildsLeft > 0 && this.indexScopeKey !== scopeKey && !isScopeInvalidated()) {
+      logger.debug("ensureIndexBuilt - build superseded, rebuilding", { scopeKey });
+      return await this.ensureIndexBuilt(contentContext, rebuildsLeft - 1);
+    }
+
+    return snapshot;
   }
 
-  private async buildIndex(): Promise<void> {
+  private async buildIndex(
+    generation: number,
+    contentContext: ResolvedContentContext | null | undefined,
+    scopeKey: string,
+  ): Promise<StatIndexSnapshot> {
     const buildStart = performance.now();
     logger.debug("buildIndex START");
 
     const fetchStart = performance.now();
-    const allFiles = await this.getAllFilesRaw();
+    const allFiles = await this.getAllFilesRaw(contentContext);
     const fetchMs = Math.round(performance.now() - fetchStart);
     logger.debug("buildIndex - getAllFilesRaw done", {
       fetchMs,
@@ -247,10 +309,21 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
-    this.fileIndex = fileIdx;
-    this.directoryIndex = dirIdx;
-    this.pathMapping = pathMap;
-    this.indexBuiltAt = Date.now();
+    const builtAt = Date.now();
+    const currentScopeKey = scopeToRequestAuthority(
+      buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
+    );
+    const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
+      false;
+    if (
+      generation === this.indexGeneration && currentScopeKey === scopeKey && !scopeInvalidated
+    ) {
+      this.fileIndex = fileIdx;
+      this.directoryIndex = dirIdx;
+      this.pathMapping = pathMap;
+      this.indexBuiltAt = builtAt;
+      this.indexScopeKey = scopeKey;
+    }
 
     const indexMs = Math.round(performance.now() - indexStart);
     const totalMs = Math.round(performance.now() - buildStart);
@@ -262,13 +335,16 @@ export class StatOperations extends VeryfrontOperationsBase {
       indexMs,
       totalMs,
     });
+    return { fileIndex: fileIdx, directoryIndex: dirIdx, pathMapping: pathMap, builtAt };
   }
 
   clearIndex(): void {
+    this.indexGeneration += 1;
     this.fileIndex = null;
     this.directoryIndex = null;
     this.pathMapping.clear();
     this.indexBuiltAt = 0;
+    this.indexScopeKey = null;
   }
 
   /**
@@ -320,16 +396,38 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   getOriginalApiPath(normalizedPath: string): string {
-    return this.pathMapping.get(normalizedPath) ?? normalizedPath;
+    const scopeKey = scopeToRequestAuthority(
+      buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
+    );
+    return getRequestScopedFile(`${ORIGINAL_API_PATH_CACHE_PREFIX}${scopeKey}:${normalizedPath}`) ??
+      this.pathMapping.get(normalizedPath) ?? normalizedPath;
   }
 
-  private async getAllFilesRaw(): Promise<ProjectFile[]> {
+  private retainOriginalApiPath(
+    normalizedPath: string,
+    pathMapping: Map<string, string>,
+    scopeKey: string,
+  ): string {
+    const originalPath = pathMapping.get(normalizedPath);
+    if (originalPath !== undefined) {
+      setRequestScopedFile(
+        `${ORIGINAL_API_PATH_CACHE_PREFIX}${scopeKey}:${normalizedPath}`,
+        originalPath,
+      );
+    }
+    return normalizedPath;
+  }
+
+  private async getAllFilesRaw(
+    contentContext: ResolvedContentContext | null | undefined,
+  ): Promise<ProjectFile[]> {
     return await loadAllProjectFiles({
       client: this.client,
       cache: this.cache,
       contextProvider: this.contextProvider,
       logger,
       operationLabel: "stat",
+      contentContext,
     });
   }
 
@@ -376,6 +474,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private async tryResolveViaApiSearch(
     normalizedPath: string,
     options?: ResolveFileOptions,
+    contentContext?: ResolvedContentContext | null,
     knownExtensionFallback: "exact" | "wildcard" = "exact",
   ): Promise<string | null | undefined> {
     if (isFrameworkSourcePath(normalizedPath)) {
@@ -397,7 +496,10 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     for (const pattern of patterns) {
       try {
-        const matches = await this.client.searchFiles(pattern);
+        const matches = await this.client.searchFiles(
+          pattern,
+          contentContext ? toClientContext(contentContext) : undefined,
+        );
         sawSuccessfulSearch = true;
         this.apiSearchCircuitBreaker.recordSuccess();
 
@@ -462,6 +564,8 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private resolveFromIndex(
     fileIdx: Map<string, ProjectFile>,
+    pathMapping: Map<string, string>,
+    scopeKey: string,
     normalizedPath: string,
     options: ResolveFileOptions | undefined,
     indexMs: number,
@@ -474,7 +578,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         indexMs,
         totalMs,
       });
-      return normalizedPath;
+      return this.retainOriginalApiPath(normalizedPath, pathMapping, scopeKey);
     }
 
     const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
@@ -487,7 +591,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         indexMs,
         totalMs,
       });
-      return resolvedDirect;
+      return this.retainOriginalApiPath(resolvedDirect, pathMapping, scopeKey);
     }
 
     if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
@@ -503,7 +607,7 @@ export class StatOperations extends VeryfrontOperationsBase {
           indexMs,
           totalMs,
         });
-        return resolvedPages;
+        return this.retainOriginalApiPath(resolvedPages, pathMapping, scopeKey);
       }
     }
 
@@ -515,7 +619,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         indexMs,
         totalMs,
       });
-      return indexPath;
+      return this.retainOriginalApiPath(indexPath, pathMapping, scopeKey);
     }
 
     return null;
@@ -543,7 +647,9 @@ export class StatOperations extends VeryfrontOperationsBase {
     const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
-    const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:resolve:${normalizedPath}`;
+    const scopeKey = scopeToRequestAuthority(buildStatCacheKeyPrefix(ctx));
+    const cacheKey = `${scopeKey}:resolve:${normalizedPath}`;
+    const generation = this.indexGeneration;
 
     logger.debug("resolveFile called", {
       basePath,
@@ -551,7 +657,12 @@ export class StatOperations extends VeryfrontOperationsBase {
       cacheKey,
     });
 
-    const cached = await this.cache.getAsync<string>(cacheKey);
+    const isScopeInvalidated = () =>
+      this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
+    const cachedCandidate = isScopeInvalidated()
+      ? undefined
+      : await this.cache.getAsync<string>(cacheKey);
+    const cached = isScopeInvalidated() ? undefined : cachedCandidate;
     if (cached === NOT_FOUND_SENTINEL) {
       logger.debug("resolveFile cached negative result", { normalizedPath });
       return null;
@@ -569,23 +680,23 @@ export class StatOperations extends VeryfrontOperationsBase {
     const attemptedApiResolve = !hasCachedFileList;
 
     if (!hasCachedFileList) {
-      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options);
+      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, ctx);
       if (typeof apiResolved === "string") {
-        this.cache.set(cacheKey, apiResolved);
+        this.cacheResolutionIfCurrent(cacheKey, apiResolved, generation, scopeKey);
         return apiResolved;
       }
 
       if (apiResolved === null) {
-        this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+        this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
         return null;
       }
     }
 
     const indexStart = performance.now();
-    await this.ensureIndexBuilt();
+    const snapshot = await this.ensureIndexBuilt(ctx);
     const indexMs = Math.round(performance.now() - indexStart);
 
-    const fileIdx = this.fileIndex;
+    const fileIdx = snapshot.fileIndex;
     if (!fileIdx) {
       logger.debug("resolveFile - no file index", { indexMs });
       return null;
@@ -593,6 +704,8 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     const indexedResolution = this.resolveFromIndex(
       fileIdx,
+      snapshot.pathMapping,
+      scopeKey,
       normalizedPath,
       options,
       indexMs,
@@ -607,7 +720,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         normalizedPath,
         indexMs,
       });
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
       return null;
     }
 
@@ -616,7 +729,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         normalizedPath,
         indexMs,
       });
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
       return null;
     }
 
@@ -628,13 +741,18 @@ export class StatOperations extends VeryfrontOperationsBase {
     // NOTE: Keep the post-index API fallback aligned with the pre-index helper for extensionless
     // paths, while preserving the older wildcard sibling-extension lookup for known-extension
     // paths. Incomplete file-list snapshots otherwise hide valid files until the cache refreshes.
-    const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, "wildcard");
+    const apiResolved = await this.tryResolveViaApiSearch(
+      normalizedPath,
+      options,
+      ctx,
+      "wildcard",
+    );
     if (typeof apiResolved === "string") {
-      this.cache.set(cacheKey, apiResolved);
+      this.cacheResolutionIfCurrent(cacheKey, apiResolved, generation, scopeKey);
       return apiResolved;
     }
     if (apiResolved === null) {
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
     }
     return null;
   }

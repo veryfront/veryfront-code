@@ -81,6 +81,25 @@ describe("read-operations helpers", () => {
       assertEquals(state.isReleaseInvalidated, true);
       assertEquals(state.skipPersistentCaches, true);
     });
+
+    it("keeps optional-read identities distinct from valid file paths", () => {
+      const context: ResolvedContentContext = {
+        sourceType: "branch",
+        projectSlug: "demo",
+        branch: "main",
+      };
+      const ordinary = buildReadFetchState({
+        normalizedPath: "optional-exact:globals.css",
+        contentContext: context,
+      });
+      const optional = buildReadFetchState({
+        normalizedPath: "globals.css",
+        contentContext: context,
+        cacheVariant: "optional-exact",
+      });
+
+      assertEquals(ordinary.cacheKey === optional.cacheKey, false);
+    });
   });
 
   describe("utility helpers", () => {

@@ -9,6 +9,7 @@ import { join, relative } from "#veryfront/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { isDynamicRoute, isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
@@ -36,10 +37,6 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   if (include?.length && !include.some((p) => path.startsWith(p))) return false;
   if (exclude?.length && exclude.some((p) => path.startsWith(p))) return false;
   return true;
-}
-
-function compareStrings(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 // Route discovery walks the project with `readDir`, which yields entries in

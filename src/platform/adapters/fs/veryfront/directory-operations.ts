@@ -1,10 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import type { DirectoryEntry } from "./types.ts";
+import type { DirectoryEntry, ResolvedContentContext } from "./types.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { buildDirCacheKeyPrefix } from "./cache-keys.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { scopeToRequestAuthority } from "./request-authority.ts";
 
 const logger = baseLogger.component("directory-operations");
 
@@ -15,7 +16,11 @@ interface DirNode {
 
 export class DirectoryOperations extends VeryfrontOperationsBase {
   private dirTree: Map<string, DirNode> | null = null;
-  private buildingTree: Promise<void> | null = null;
+  private treeScopeKey: string | null = null;
+  private buildingTree: Promise<Map<string, DirNode>> | null = null;
+  private buildingTreeScopeKey: string | null = null;
+  private buildingTreeGeneration: number | null = null;
+  private treeGeneration = 0;
 
   readdir(path: string): Promise<DirectoryEntry[]> {
     return withSpan(
@@ -23,17 +28,23 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
         const ctx = this.contextProvider?.getContentContext();
-        const cacheKey = `${buildDirCacheKeyPrefix(ctx)}:${normalizedPath}`;
+        const scopeKey = scopeToRequestAuthority(buildDirCacheKeyPrefix(ctx));
+        const cacheKey = `${scopeKey}:${normalizedPath}`;
+        const generation = this.treeGeneration;
+        const isScopeInvalidated = () =>
+          this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
 
-        const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
+        const cached = isScopeInvalidated()
+          ? undefined
+          : this.cache.get<DirectoryEntry[]>(cacheKey);
         if (cached) {
           logger.debug("Cache hit (readdir)", { path: normalizedPath });
           return cached;
         }
 
-        await this.ensureTreeBuilt();
+        const tree = await this.ensureTreeBuilt(ctx);
 
-        const node = this.dirTree?.get(normalizedPath);
+        const node = tree.get(normalizedPath);
         if (!node) return [];
 
         const entries: DirectoryEntry[] = [];
@@ -58,7 +69,15 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           });
         }
 
-        this.cache.set(cacheKey, entries);
+        const currentScopeKey = scopeToRequestAuthority(
+          buildDirCacheKeyPrefix(this.contextProvider?.getContentContext()),
+        );
+        if (
+          generation === this.treeGeneration && currentScopeKey === scopeKey &&
+          !isScopeInvalidated()
+        ) {
+          this.cache.set(cacheKey, entries);
+        }
 
         logger.debug("Listed directory", {
           path: normalizedPath,
@@ -71,24 +90,48 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     );
   }
 
-  private async ensureTreeBuilt(): Promise<void> {
-    if (this.dirTree) return;
-
-    if (this.buildingTree) {
-      await this.buildingTree;
-      return;
+  private async ensureTreeBuilt(
+    contentContext: ResolvedContentContext | null | undefined,
+  ): Promise<Map<string, DirNode>> {
+    const scopeKey = scopeToRequestAuthority(buildDirCacheKeyPrefix(contentContext));
+    const isScopeInvalidated = () =>
+      this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
+    if (this.dirTree && this.treeScopeKey === scopeKey && !isScopeInvalidated()) {
+      return this.dirTree;
     }
 
-    this.buildingTree = this.buildTree();
-    await this.buildingTree;
-    this.buildingTree = null;
+    if (this.buildingTree) {
+      const building = this.buildingTree;
+      const buildingScopeKey = this.buildingTreeScopeKey;
+      const buildingGeneration = this.buildingTreeGeneration;
+      const tree = await building;
+      if (buildingScopeKey === scopeKey && buildingGeneration === this.treeGeneration) return tree;
+      return await this.ensureTreeBuilt(contentContext);
+    }
+
+    const generation = this.treeGeneration;
+    const building = this.buildTree(generation, contentContext, scopeKey);
+    this.buildingTree = building;
+    this.buildingTreeScopeKey = scopeKey;
+    this.buildingTreeGeneration = generation;
+    try {
+      return await building;
+    } finally {
+      this.buildingTree = null;
+      this.buildingTreeScopeKey = null;
+      this.buildingTreeGeneration = null;
+    }
   }
 
-  private buildTree(): Promise<void> {
+  private buildTree(
+    generation: number,
+    contentContext: ResolvedContentContext | null | undefined,
+    scopeKey: string,
+  ): Promise<Map<string, DirNode>> {
     return withSpan(
       "fs.veryfront.buildTree",
       async () => {
-        const allFiles = await this.getAllFilesRaw();
+        const allFiles = await this.getAllFilesRaw(contentContext);
         const tree = new Map<string, DirNode>();
         tree.set("", { files: new Map(), dirs: new Set() });
 
@@ -138,18 +181,33 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           dirNode.files.set(fileName, file);
         }
 
-        this.dirTree = tree;
+        const currentScopeKey = scopeToRequestAuthority(
+          buildDirCacheKeyPrefix(this.contextProvider?.getContentContext()),
+        );
+        const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
+          false;
+        if (
+          generation === this.treeGeneration && currentScopeKey === scopeKey && !scopeInvalidated
+        ) {
+          this.dirTree = tree;
+          this.treeScopeKey = scopeKey;
+        }
         logger.debug("Tree built", { directories: tree.size });
+        return tree;
       },
       { "fs.tree.fileCount": "lazy" },
     );
   }
 
   clearTree(): void {
+    this.treeGeneration += 1;
     this.dirTree = null;
+    this.treeScopeKey = null;
   }
 
-  private getAllFilesRaw(): Promise<ProjectFile[]> {
+  private getAllFilesRaw(
+    contentContext: ResolvedContentContext | null | undefined,
+  ): Promise<ProjectFile[]> {
     return withSpan("fs.veryfront.getAllFilesRaw", () =>
       loadAllProjectFiles({
         client: this.client,
@@ -157,6 +215,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         contextProvider: this.contextProvider,
         logger,
         operationLabel: "dir",
+        contentContext,
       }));
   }
 }

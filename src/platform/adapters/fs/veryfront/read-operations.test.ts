@@ -9,6 +9,7 @@ import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
+import type { ResolvedContentContext } from "./types.ts";
 
 function createMockClient(
   overrides: Record<string, unknown> = {},
@@ -20,6 +21,10 @@ function createMockClient(
     resolveFileWithExtension: () => Promise.resolve(null),
     ...overrides,
   } as unknown as VeryfrontApiClient;
+}
+
+function notFoundError(): Error {
+  return API_CLIENT_ERROR.create({ detail: "not found", status: 404 });
 }
 
 function createBranchContext(): ContentContextProvider {
@@ -53,8 +58,12 @@ function createReadOps(
   cacheEnabled: boolean,
   contextProvider?: ContentContextProvider,
   pathResolver?: (path: string) => string,
-  getFileListCache?: () => Promise<Array<{ path: string; content?: string }>>,
+  getFileListCache?: (
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   pathNormalizer = new PathNormalizer(),
+  getFileListSnapshotVersion?: () => number,
 ): ReadOperations {
   return new ReadOperations(
     client,
@@ -63,6 +72,7 @@ function createReadOps(
     contextProvider,
     pathResolver,
     getFileListCache,
+    getFileListSnapshotVersion,
   );
 }
 
@@ -71,8 +81,12 @@ function createReadyReadOps(
   cacheEnabled: boolean,
   contextProvider?: ContentContextProvider,
   pathResolver?: (path: string) => string,
-  getFileListCache?: () => Promise<Array<{ path: string; content?: string }>>,
+  getFileListCache?: (
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ) => Promise<Array<{ path: string; content?: string }> | undefined>,
   pathNormalizer = new PathNormalizer(),
+  getFileListSnapshotVersion?: () => number,
 ): ReadOperations {
   const readOps = createReadOps(
     client,
@@ -81,6 +95,7 @@ function createReadyReadOps(
     pathResolver,
     getFileListCache,
     pathNormalizer,
+    getFileListSnapshotVersion,
   );
   readOps.setFileListReadyPromise(Promise.resolve());
   return readOps;
@@ -162,6 +177,29 @@ describe("ReadOperations", () => {
       );
       assertEquals(exactCall, ["original/styles/manifest.json", 3]);
       assertEquals(unboundedCalls, 0);
+    });
+
+    it("uses the request branch for exact bounded reads", async () => {
+      let exactContext: { type: "branch"; name: string } | undefined;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getRequestBranch: () => "feature",
+          getFileContentBytesWithinLimit: (
+            _path: string,
+            _maximumBytes: number,
+            _options?: { expectedMissing?: boolean },
+            context?: { type: "branch"; name: string },
+          ) => {
+            exactContext = context;
+            return Promise.resolve(new Uint8Array([1]));
+          },
+        }),
+        true,
+        createBranchContext(),
+      );
+
+      assertEquals([...await readOps.readFileBytesWithinLimit("manifest.json", 1)], [1]);
+      assertEquals(exactContext, { type: "branch", name: "feature" });
     });
 
     it("forwards release identity to the exact published reader", async () => {
@@ -491,6 +529,86 @@ describe("ReadOperations", () => {
       assertEquals(publishedFetchCount, 0);
       assertEquals(resolveBasePath, "pages/home");
       assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
+    });
+
+    it("does not share resolved extension content across request authorities", async () => {
+      let resolveCallCount = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          resolveFileWithExtension: () => {
+            resolveCallCount++;
+            return Promise.resolve({
+              path: "pages/home.tsx",
+              content: resolveCallCount === 1 ? "token-a content" : "token-b content",
+            });
+          },
+        }),
+        true,
+        createReleaseContext("rel-authority"),
+      );
+
+      const tokenA = await runWithRequestContext(
+        { projectSlug: "test", token: "token-a", productionMode: true },
+        () => readOps.readTextFile("pages/home"),
+      );
+      const tokenB = await runWithRequestContext(
+        { projectSlug: "test", token: "token-b", productionMode: true },
+        () => readOps.readTextFile("pages/home"),
+      );
+
+      assertEquals(tokenA, "token-a content");
+      assertEquals(tokenB, "token-b content");
+      assertEquals(resolveCallCount, 2);
+    });
+
+    it("should resolve empty extensionless files from the file list", async () => {
+      let resolveCalls = 0;
+      let apiFetchCalls = 0;
+      const readOps = createReadOps(
+        createMockClient({
+          resolveFileWithExtension: () => {
+            resolveCalls++;
+            return Promise.resolve({ path: "empty.ts", content: "fallback" });
+          },
+          getPublishedFileContent: () => {
+            apiFetchCalls++;
+            return Promise.resolve("fallback");
+          },
+        }),
+        true,
+        createReleaseContext("rel-empty-file-list"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "empty.ts", content: "" }]),
+      );
+
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(resolveCalls, 0);
+      assertEquals(apiFetchCalls, 0);
+    });
+
+    it("should preserve empty content returned by extension fallback", async () => {
+      let resolveCalls = 0;
+      let apiFetchCalls = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          resolveFileWithExtension: () => {
+            resolveCalls++;
+            return Promise.resolve({ path: "empty.ts", content: "" });
+          },
+          getPublishedFileContent: () => {
+            apiFetchCalls++;
+            return Promise.resolve("fallback");
+          },
+        }),
+        true,
+        createReleaseContext("rel-empty-fallback"),
+      );
+
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(resolveCalls, 1);
+      assertEquals(apiFetchCalls, 0);
     });
 
     it("should resolve extensionless dotted paths directly from file list cache", async () => {
@@ -954,6 +1072,412 @@ describe("ReadOperations", () => {
       ]);
 
       assertEquals(settled, { status: "resolved", value: "fast ts content" });
+    });
+  });
+
+  describe("readOptionalTextFile", () => {
+    it("does not join or cache a fetch from a superseded source snapshot", async () => {
+      const oldFetch = Promise.withResolvers<string>();
+      let fetchCount = 0;
+      let snapshotVersion = 1;
+      const client = createMockClient({
+        getPublishedFileContent: () => {
+          fetchCount++;
+          return fetchCount === 1 ? oldFetch.promise : Promise.resolve("new content");
+        },
+      });
+      const readOps = createReadyReadOps(
+        client,
+        true,
+        createReleaseContext("release-snapshot"),
+        undefined,
+        undefined,
+        new PathNormalizer(),
+        () => snapshotVersion,
+      );
+
+      const oldRead = readOps.readOptionalTextFile("globals.css");
+      for (let attempt = 0; attempt < 100 && fetchCount === 0; attempt++) await Promise.resolve();
+      assertEquals(fetchCount, 1);
+      snapshotVersion = 2;
+      const newRead = readOps.readOptionalTextFile("globals.css");
+      assertEquals(await newRead, "new content");
+      oldFetch.resolve("old content");
+      assertEquals(await oldRead, "old content");
+
+      assertEquals(await readOps.readOptionalTextFile("globals.css"), "new content");
+      assertEquals(fetchCount, 2);
+    });
+
+    it("does not deduplicate optional reads across request credentials", async () => {
+      const firstFetch = Promise.withResolvers<string>();
+      let fetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fetchCount++;
+          return fetchCount === 1 ? firstFetch.promise : Promise.resolve("token-b content");
+        },
+      });
+      const readOps = createReadyReadOps(client, false, createBranchContext());
+
+      const first = runWithRequestContext(
+        { projectSlug: "test", token: "token-a", productionMode: false },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      await Promise.resolve();
+      const second = runWithRequestContext(
+        { projectSlug: "test", token: "token-b", productionMode: false },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      await Promise.resolve();
+      firstFetch.resolve("token-a content");
+
+      assertEquals(await Promise.all([first, second]), ["token-a content", "token-b content"]);
+      assertEquals(fetchCount, 2);
+    });
+
+    it("should share request cache entries only between exact optional reads", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fetchCount++;
+          return Promise.resolve("body { color: red; }");
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [first, second, viaReadText] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const first = await readOps.readOptionalTextFile("globals.css");
+          const second = await readOps.readOptionalTextFile("globals.css");
+          const viaReadText = await readOps.readTextFile("globals.css");
+          return [first, second, viaReadText] as const;
+        },
+      );
+
+      assertEquals(first, "body { color: red; }");
+      assertEquals(second, "body { color: red; }");
+      assertEquals(viaReadText, "body { color: red; }");
+      assertEquals(
+        fetchCount,
+        2,
+        "optional reads share one fetch while a module read keeps a separate cache identity",
+      );
+    });
+
+    it("should serve optional reads from the file list cache without an API call", async () => {
+      let apiCallCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        getPublishedFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        resolveFileWithExtension: () => {
+          apiCallCount++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createReleaseContext("rel-css"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "globals.css", content: "cached stylesheet" }]),
+      );
+
+      const content = await readOps.readOptionalTextFile("globals.css");
+      assertEquals(content, "cached stylesheet");
+      assertEquals(apiCallCount, 0, "a file list hit must not reach the API");
+    });
+
+    it("should answer a fresh file-list miss without any API request", async () => {
+      let apiCallCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        getPublishedFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        resolveFileWithExtension: () => {
+          apiCallCount++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createReleaseContext("rel-no-css"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "pages/index.tsx", content: "index content" }]),
+      );
+
+      await assertRejects(
+        () => readOps.readOptionalTextFile("globals.css"),
+        Error,
+        "404 Not Found",
+      );
+      assertEquals(
+        apiCallCount,
+        0,
+        "an expected optional miss must be answered by the file list index, not the API",
+      );
+    });
+
+    it("should read the exact path instead of resolving a same-stem sibling", async () => {
+      // "globals.css" has no extension this pipeline recognises as a source
+      // extension, so the module path would treat it as extensionless and
+      // resolve "globals.css.*" -- which can rank a sourcemap ahead of the
+      // real stylesheet. An optional read names a complete file.
+      let resolveCalls = 0;
+      const client = createMockClient({
+        resolveFileWithExtension: (basePath: string) => {
+          resolveCalls++;
+          return Promise.resolve({
+            path: `${basePath}.map`,
+            content: '{"version":3,"sources":[]}',
+          });
+        },
+        getFileContent: (path: string) =>
+          path === "globals.css"
+            ? Promise.resolve("body { color: red; }")
+            : Promise.reject(notFoundError()),
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      assertEquals(await readOps.readOptionalTextFile("globals.css"), "body { color: red; }");
+      assertEquals(resolveCalls, 0, "an optional read must not run extension resolution");
+    });
+
+    it("should not reuse a module fallback as an exact optional read", async () => {
+      const requestedPaths: string[] = [];
+      const client = createMockClient({
+        resolveFileWithExtension: () =>
+          Promise.resolve({ path: "theme.tsx", content: "resolved sibling" }),
+        getPublishedFileContent: (path: string) => {
+          requestedPaths.push(path);
+          return path === "theme.tsx"
+            ? Promise.resolve("resolved sibling")
+            : Promise.reject(new Error("404 Not Found"));
+        },
+      });
+      const readOps = createReadOps(client, true, createReleaseContext("rel-semantics"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      assertEquals(await readOps.readTextFile("theme.ts"), "resolved sibling");
+      await assertRejects(
+        () => readOps.readOptionalTextFile("theme.ts"),
+        Error,
+        "404 Not Found",
+      );
+      assertEquals(
+        requestedPaths.filter((path) => path === "theme.ts").length,
+        2,
+        "the exact optional read must perform its own requested-path lookup",
+      );
+    });
+
+    it("should key optional reads and file-list indexes by the request branch", async () => {
+      let requestBranch = "main";
+      const client = createMockClient({
+        getRequestBranch: () => requestBranch,
+      });
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createBranchContext(),
+        (path: string) => path,
+        (_cacheKey, contentContext) =>
+          Promise.resolve([{
+            path: "globals.css",
+            content: `${contentContext?.branch ?? "main"} content`,
+          }]),
+      );
+
+      const mainContent = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false, branch: "main" },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      requestBranch = "feature";
+      const featureContent = await runWithRequestContext(
+        { projectSlug: "test", token: "token-2", productionMode: false, branch: "feature" },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+
+      assertEquals(mainContent, "main content");
+      assertEquals(featureContent, "feature content");
+    });
+
+    it("binds overlapping file-list misses and fallback reads to their captured branches", async () => {
+      let requestBranch = "main";
+      const pending = new Map<string, () => void>();
+      const observedListScopes: string[] = [];
+      const observedReadBranches: string[] = [];
+      const client = createMockClient({
+        getRequestBranch: () => requestBranch,
+        getFileContent: (
+          _path: string,
+          _options: unknown,
+          context: { type: string; name?: string },
+        ) => {
+          const branch = context.name ?? "main";
+          observedReadBranches.push(branch);
+          return Promise.resolve(`${branch} fallback`);
+        },
+      });
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createBranchContext(),
+        (path: string) => path,
+        (cacheKey, contentContext) =>
+          new Promise((resolve) => {
+            const branch = contentContext?.branch ?? "main";
+            observedListScopes.push(`${cacheKey}:${branch}`);
+            pending.set(branch, () => resolve(undefined));
+          }),
+      );
+
+      const mainRead = runWithRequestContext(
+        { projectSlug: "test", token: "main-token", productionMode: false, branch: "main" },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      while (!pending.has("main")) await Promise.resolve();
+      requestBranch = "feature";
+      const featureRead = runWithRequestContext(
+        {
+          projectSlug: "test",
+          token: "feature-token",
+          productionMode: false,
+          branch: "feature",
+        },
+        () => readOps.readOptionalTextFile("globals.css"),
+      );
+      while (!pending.has("feature")) await Promise.resolve();
+      pending.get("feature")?.();
+      pending.get("main")?.();
+
+      assertEquals(await Promise.all([mainRead, featureRead]), [
+        "main fallback",
+        "feature fallback",
+      ]);
+      assertEquals(observedReadBranches.sort(), ["feature", "main"]);
+      assertEquals(
+        observedListScopes.some((scope) =>
+          scope.startsWith("files:branch:test:main|authority:") && scope.endsWith(":main")
+        ),
+        true,
+      );
+      assertEquals(
+        observedListScopes.some((scope) =>
+          scope.startsWith("files:branch:test:feature|authority:") && scope.endsWith(":feature")
+        ),
+        true,
+      );
+    });
+
+    it("should cache an empty optional file as valid content", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getPublishedFileContent: () => {
+          fetchCount++;
+          return Promise.resolve("");
+        },
+      });
+      const readOps = createReadOps(client, true, createReleaseContext("rel-empty"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+      const read = () =>
+        runWithRequestContext(
+          { projectSlug: "test", token: "token-1", productionMode: true },
+          () => readOps.readOptionalTextFile("globals.css"),
+        );
+
+      assertEquals(await read(), "");
+      assertEquals(await read(), "");
+      assertEquals(fetchCount, 1, "an empty file must be a persistent cache hit");
+    });
+
+    it("should not apply the framework-module guard to configured project files", async () => {
+      // "src/lib/" is reserved for framework modules on the module-read path,
+      // but a project may legitimately configure a stylesheet there. Rejecting
+      // it reaches the caller as an optional miss and silently drops the file.
+      const client = createMockClient({
+        getFileContent: (path: string) =>
+          path === "src/lib/app.css"
+            ? Promise.resolve("body { color: blue; }")
+            : Promise.reject(notFoundError()),
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      assertEquals(
+        await readOps.readOptionalTextFile("src/lib/app.css"),
+        "body { color: blue; }",
+      );
+
+      // The guard still holds for module reads, which is what it is for.
+      await assertRejects(
+        () => readOps.readTextFile("src/lib/app.css"),
+        Error,
+        "cannot be fetched from API",
+      );
+    });
+
+    it("should declare an optional draft 404 expected so it is not logged as a fault", async () => {
+      const seen: Array<boolean | undefined> = [];
+      const client = createMockClient({
+        getFileContent: (_path: string, options?: { expectedMissing?: boolean }) => {
+          seen.push(options?.expectedMissing);
+          return Promise.reject(notFoundError());
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      await assertRejects(() => readOps.readOptionalTextFile("globals.css"), Error);
+      assertEquals(seen, [true], "an optional miss must reach the transport as an expected 404");
+    });
+
+    it("should declare an optional published 404 expected and not try other extensions", async () => {
+      const seen: Array<boolean | undefined> = [];
+      let resolveCalls = 0;
+      const client = createMockClient({
+        getPublishedFileContent: (
+          _path: string,
+          _releaseId?: string,
+          _environmentName?: string,
+          options?: { expectedMissing?: boolean },
+        ) => {
+          seen.push(options?.expectedMissing);
+          return Promise.reject(notFoundError());
+        },
+        resolveFileWithExtension: () => {
+          resolveCalls++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const readOps = createReadOps(client, false, createReleaseContext("rel-optional"));
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      await assertRejects(() => readOps.readOptionalTextFile("theme.ts"), Error, "404 Not Found");
+      assertEquals(seen, [true], "an optional miss must reach the transport as an expected 404");
+      assertEquals(resolveCalls, 0, "an optional miss must not fan out over other extensions");
     });
   });
 
@@ -1570,7 +2094,30 @@ describe("ReadOperations", () => {
   });
 
   describe("file list index caching", () => {
-    it("should reuse index when file list has not changed", async () => {
+    it("bounds extension mappings across rotating request credentials", async () => {
+      const readOps = createReadOps(
+        createMockClient({
+          resolveFileWithExtension: () =>
+            Promise.resolve({ path: "pages/example.tsx", content: "resolved content" }),
+        }),
+        false,
+        createReleaseContext(),
+      );
+      readOps.setFileListReadyPromise(Promise.resolve());
+      for (let index = 0; index < 1_025; index++) {
+        const content = await runWithRequestContext(
+          { projectSlug: "test", token: `test-token-${index}`, productionMode: true },
+          () => readOps.readTextFile("pages/example"),
+        );
+        assertEquals(content, "resolved content");
+      }
+      const mappings = (readOps as unknown as {
+        extensionResolutionCache: Map<string, string>;
+      }).extensionResolutionCache;
+      assertEquals(mappings.size, 1_024);
+    });
+
+    it("rebuilds inline content when file-list paths have not changed", async () => {
       let indexBuildCount = 0;
       const fileList = [
         { path: "pages/index.tsx", content: "index content" },
@@ -1594,14 +2141,13 @@ describe("ReadOperations", () => {
         "the first read is served from the freshly built index",
       );
 
-      // The list length and its first/last path stay the same, so the index key
-      // is unchanged and the memoized index must answer the second read.
+      // The list length and paths stay the same, but inline content changed.
       fileList[0]!.content = "mutated content";
 
       assertEquals(
         await readOps.readTextFile("pages/index.tsx"),
-        "index content",
-        "an unchanged index key must reuse the memoized index instead of rebuilding it",
+        "mutated content",
+        "a refreshed listing must replace stale inline content",
       );
       assertEquals(indexBuildCount, 2, "getFileListCache is consulted once per read");
     });

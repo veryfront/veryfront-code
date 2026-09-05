@@ -16,6 +16,7 @@ import type {
   DependencyArtifactBuildResultBody,
   DependencyArtifactContentType,
 } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
 const IntrinsicObjectDefineProperty = Object.defineProperty;
@@ -48,6 +49,7 @@ export class VeryfrontApiClient {
   private requestProjectSlug?: string;
   private requestContext?: FileContext;
   private requestBranch?: string | null;
+  private useContextualToken = false;
   private initialized = false;
   private initializingPromise?: Promise<void>;
   /** Cached project data from initialization - avoids redundant API calls */
@@ -63,6 +65,12 @@ export class VeryfrontApiClient {
     this.config = { ...config, retry: retryConfig };
 
     const tokenProvider: TokenProvider = () => {
+      const requestContext = this.useContextualToken ? currentRequestContext() : null;
+      if (requestContext) {
+        if (requestContext.token) return requestContext.token;
+        if (this.config.apiToken) return this.config.apiToken;
+        throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
+      }
       if (this.requestToken) return this.requestToken;
       if (this.config.apiToken) return this.config.apiToken;
       throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
@@ -85,6 +93,10 @@ export class VeryfrontApiClient {
 
   setRequestToken(token: string): void {
     this.requestToken = token;
+  }
+
+  enableContextualToken(): void {
+    this.useContextualToken = true;
   }
 
   clearRequestToken(): void {
@@ -274,13 +286,18 @@ export class VeryfrontApiClient {
   // File Operations (context-aware)
   // =============================================================================
 
-  listFiles(options: ListFilesOptions = {}): Promise<FileListResult> {
-    return this.listFilesByContext(this.requireProjectSlug(), this.getContext(), options);
+  listFiles(
+    options: ListFilesOptions = {},
+    context: FileContext = this.getContext(),
+  ): Promise<FileListResult> {
+    return this.listFilesByContext(this.requireProjectSlug(), context, options);
   }
 
-  listAllFiles(options: Omit<ListFilesOptions, "cursor"> = {}) {
+  listAllFiles(
+    options: Omit<ListFilesOptions, "cursor"> = {},
+    context: FileContext = this.getContext(),
+  ) {
     const projectRef = this.requireProjectSlug();
-    const context = this.getContext();
 
     switch (context.type) {
       case "branch":
@@ -292,9 +309,12 @@ export class VeryfrontApiClient {
     }
   }
 
-  getFile(pathOrId: string, options: { expectedMissing?: boolean } = {}): Promise<FileDetail> {
+  getFile(
+    pathOrId: string,
+    options: { expectedMissing?: boolean } = {},
+    context: FileContext = this.getContext(),
+  ): Promise<FileDetail> {
     const projectRef = this.requireProjectSlug();
-    const context = this.getContext();
 
     switch (context.type) {
       case "branch":
@@ -306,8 +326,12 @@ export class VeryfrontApiClient {
     }
   }
 
-  async getFileContent(pathOrId: string): Promise<string> {
-    const file = await this.getFile(pathOrId);
+  async getFileContent(
+    pathOrId: string,
+    options: GetFileOptions = {},
+    context: FileContext = this.getContext(),
+  ): Promise<string> {
+    const file = await this.getFile(pathOrId, options, context);
     return file.content;
   }
 
@@ -315,9 +339,9 @@ export class VeryfrontApiClient {
     pathOrId: string,
     maximumBytes: number,
     options: GetFileOptions = {},
+    context: FileContext = this.getContext(),
   ): Promise<Uint8Array> {
     const projectRef = this.requireProjectSlug();
-    const context = this.getContext();
     switch (context.type) {
       case "branch":
         return this.operations.getBranchFileContentBytesWithinLimit(
@@ -359,8 +383,8 @@ export class VeryfrontApiClient {
     return this.operations.listBranchFiles(this.requireProjectSlug(), branchName, options);
   }
 
-  getBranchFile(branchName: string, pathOrId: string) {
-    return this.operations.getBranchFile(this.requireProjectSlug(), branchName, pathOrId);
+  getBranchFile(branchName: string, pathOrId: string, options: GetFileOptions = {}) {
+    return this.operations.getBranchFile(this.requireProjectSlug(), branchName, pathOrId, options);
   }
 
   // =============================================================================
@@ -530,8 +554,11 @@ export class VeryfrontApiClient {
     }
   }
 
-  async searchFiles(pattern: string): Promise<{ id?: string; path: string }[]> {
-    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
+  async searchFiles(
+    pattern: string,
+    context: FileContext = this.getContext(),
+  ): Promise<{ id?: string; path: string }[]> {
+    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT }, context);
     return result.files.map((f) => ({ id: f.id, path: f.path }));
   }
 
@@ -547,8 +574,9 @@ export class VeryfrontApiClient {
    */
   async searchFilesWithContent(
     pattern: string,
+    context: FileContext = this.getContext(),
   ): Promise<Array<{ path: string; content: string }>> {
-    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
+    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT }, context);
 
     const filesWithContent: Array<{ path: string; content: string }> = [];
     const filesNeedingContent: string[] = [];
@@ -566,7 +594,7 @@ export class VeryfrontApiClient {
     const fetched = await Promise.all(
       filesNeedingContent.map(async (path) => {
         try {
-          const content = await this.getFileContent(path);
+          const content = await this.getFileContent(path, {}, context);
           return { path, content };
         } catch (error) {
           logger.debug("Failed to fetch file content during search", { path, error });
@@ -608,8 +636,9 @@ export class VeryfrontApiClient {
   async resolveFileWithExtension(
     basePath: string,
     extensionPriority = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"],
+    context: FileContext = this.getContext(),
   ): Promise<{ path: string; content: string } | null> {
-    const matches = await this.searchFilesWithContent(`${basePath}.*`);
+    const matches = await this.searchFilesWithContent(`${basePath}.*`, context);
     if (matches.length === 0) return null;
 
     matches.sort((a, b) => {
@@ -642,16 +671,22 @@ export class VeryfrontApiClient {
     path: string,
     releaseId?: string,
     environmentName?: string,
+    options: GetFileOptions = {},
   ): Promise<string> {
     const projectRef = this.requireProjectSlug();
 
     if (releaseId) {
-      const result = await this.operations.getReleaseFile(projectRef, releaseId, path);
+      const result = await this.operations.getReleaseFile(projectRef, releaseId, path, options);
       return result.content;
     }
 
     if (environmentName) {
-      const result = await this.operations.getEnvironmentFile(projectRef, environmentName, path);
+      const result = await this.operations.getEnvironmentFile(
+        projectRef,
+        environmentName,
+        path,
+        options,
+      );
       return result.content;
     }
 

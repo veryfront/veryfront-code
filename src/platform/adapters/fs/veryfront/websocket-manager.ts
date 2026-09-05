@@ -49,6 +49,16 @@ type WebSocketFactory = (
   protocols?: string | string[],
 ) => WebSocket;
 
+interface PreviewInvalidationToken {
+  entries: Array<{ prefix: string; version: number }>;
+}
+
+interface PendingSelectiveInvalidation {
+  contentContext: ResolvedContentContext | null;
+  changedPaths: Set<string>;
+  token: PreviewInvalidationToken;
+}
+
 function createIntrinsicWebSocket(
   url: string,
   protocols?: string | string[],
@@ -99,9 +109,11 @@ interface WebSocketDeps {
   defaultBranchName?: string;
 
   getContentContext: () => ResolvedContentContext | null;
+  getEffectiveContentContext?: () => ResolvedContentContext | null;
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
+  getFileListCacheKey?: () => string | undefined;
   getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot: (
     cacheKey: string,
@@ -121,13 +133,18 @@ export class WebSocketManager {
   private wsLastPong = currentTime();
   private invalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingChangedPaths = new Set<string>();
+  private pendingSelectiveInvalidations = new Map<string, PendingSelectiveInvalidation>();
+  private pendingFullInvalidations = new Map<
+    string,
+    { contentContext: ResolvedContentContext | null; token: PreviewInvalidationToken }
+  >();
 
   private wsConnectionId: string | null = null;
   private wsConsecutiveFailures = 0;
   private wsErrorLogged = false;
   private disposed = false;
-  private previewInvalidationVersion = 0;
+  private nextPreviewInvalidationVersion = 0;
+  private previewInvalidationVersions = new Map<string, number>();
   private activePreviewInvalidationPrefixes = new Set<string>();
   private pokeMetrics = {
     received: 0,
@@ -157,24 +174,58 @@ export class WebSocketManager {
     return getPreviewInvalidationPrefixesHelper(contentContext);
   }
 
-  private beginPreviewInvalidation(contentContext: ResolvedContentContext | null): void {
-    const prefixes = this.getPreviewInvalidationPrefixes(contentContext);
-    if (prefixes.length === 0) return;
+  private getActiveContentContext(): ResolvedContentContext | null {
+    return this.deps.getEffectiveContentContext?.() ?? this.deps.getContentContext();
+  }
 
-    this.previewInvalidationVersion++;
+  private clearPersistentBranchCache(branch: string): void {
+    const context: ResolvedContentContext = {
+      sourceType: "branch",
+      projectSlug: this.deps.projectSlug,
+      branch,
+    };
+    const pendingPrefixes = [
+      buildFileCacheKeyPrefix(context),
+      buildStatCacheKeyPrefix(context),
+      buildDirCacheKeyPrefix(context),
+    ];
+    const deletionPrefixes = [...pendingPrefixes, buildFileListCacheKey(context)];
+    for (const prefix of pendingPrefixes) addPendingInvalidation(prefix);
+    void Promise.all(
+      deletionPrefixes.map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix)),
+    ).then(
+      () => {
+        for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
+      },
+      (error) =>
+        logger.error("Branch poke cache invalidation failed", {
+          projectSlug: this.deps.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+    );
+  }
+
+  private beginPreviewInvalidation(
+    contentContext: ResolvedContentContext | null,
+  ): PreviewInvalidationToken {
+    const prefixes = this.getPreviewInvalidationPrefixes(contentContext);
+    const entries: PreviewInvalidationToken["entries"] = [];
 
     for (const prefix of prefixes) {
+      const version = ++this.nextPreviewInvalidationVersion;
+      this.previewInvalidationVersions.set(prefix, version);
+      entries.push({ prefix, version });
       if (this.activePreviewInvalidationPrefixes.has(prefix)) continue;
       addPendingInvalidation(prefix);
       this.activePreviewInvalidationPrefixes.add(prefix);
     }
+    return { entries };
   }
 
-  private completePreviewInvalidation(prefixes: string[], version: number): void {
-    if (prefixes.length === 0) return;
-    if (version !== this.previewInvalidationVersion) return;
-
-    for (const prefix of prefixes) {
+  private completePreviewInvalidation(token: PreviewInvalidationToken): void {
+    for (const { prefix, version } of token.entries) {
+      if (this.previewInvalidationVersions.get(prefix) !== version) continue;
+      this.previewInvalidationVersions.delete(prefix);
       if (!this.activePreviewInvalidationPrefixes.delete(prefix)) continue;
       removePendingInvalidation(prefix);
     }
@@ -357,6 +408,15 @@ export class WebSocketManager {
       this.selectiveInvalidationTimer = null;
     }
 
+    for (const pending of this.pendingSelectiveInvalidations.values()) {
+      this.completePreviewInvalidation(pending.token);
+    }
+    for (const pending of this.pendingFullInvalidations.values()) {
+      this.completePreviewInvalidation(pending.token);
+    }
+    this.pendingSelectiveInvalidations.clear();
+    this.pendingFullInvalidations.clear();
+
     if (!this.ws) return;
 
     // Detach handlers before closing to prevent onclose from scheduling a reconnect
@@ -393,7 +453,7 @@ export class WebSocketManager {
           undefined)
         : undefined;
 
-      const contentContext = this.deps.getContentContext();
+      const contentContext = this.getActiveContentContext();
 
       const rawBranchId = payload.branchId;
       const pokeBranchId: string | null | undefined = typeof rawBranchId === "string" ||
@@ -455,6 +515,7 @@ export class WebSocketManager {
 
       if (!isProductionMode) {
         if (normalizedBranchName && normalizedBranchName !== currentBranch) {
+          this.clearPersistentBranchCache(normalizedBranchName);
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
             { hasCurrentBranch: currentBranch !== null },
@@ -525,7 +586,7 @@ export class WebSocketManager {
         isPublishPoke,
       });
 
-      this.beginPreviewInvalidation(contentContext);
+      const previewInvalidationToken = this.beginPreviewInvalidation(contentContext);
       this.deps.invalidationCallbacks.clearDomainCache?.();
       this.deps.clearMemoryCaches();
       logger.debug("All in-memory caches cleared immediately on POKE");
@@ -535,12 +596,16 @@ export class WebSocketManager {
       }
 
       if (changedPaths?.length) {
-        this.scheduleSelectiveInvalidation(changedPaths);
+        this.scheduleSelectiveInvalidation(
+          changedPaths,
+          contentContext,
+          previewInvalidationToken,
+        );
         return;
       }
 
       logger.debug("No changedPaths provided - using full invalidation");
-      this.scheduleInvalidation();
+      this.scheduleInvalidation(contentContext, previewInvalidationToken);
     } catch (error) {
       logger.debug("WebSocket message parse error", { error });
     }
@@ -646,8 +711,19 @@ export class WebSocketManager {
     })();
   }
 
-  private scheduleInvalidation(): void {
+  private invalidationContextKey(contentContext: ResolvedContentContext | null): string {
+    return contentContext ? buildFileListCacheKey(contentContext) : "none";
+  }
+
+  private scheduleInvalidation(
+    contentContext: ResolvedContentContext | null,
+    token: PreviewInvalidationToken,
+  ): void {
     if (this.invalidationTimer) clearTimeout(this.invalidationTimer);
+    this.pendingFullInvalidations.set(this.invalidationContextKey(contentContext), {
+      contentContext,
+      token,
+    });
 
     logger.debug("Scheduling invalidation", {
       debounceMs: INVALIDATION_DEBOUNCE_MS,
@@ -655,24 +731,69 @@ export class WebSocketManager {
 
     this.invalidationTimer = setTimeout(() => {
       this.invalidationTimer = null;
-      this.performInvalidation();
+      const pending = [...this.pendingFullInvalidations.values()];
+      this.pendingFullInvalidations.clear();
+      void (async () => {
+        for (const invalidation of pending) {
+          try {
+            await this.performInvalidation(invalidation.contentContext, invalidation.token);
+          } catch (error) {
+            logger.error("Queued full invalidation failed", {
+              projectSlug: this.deps.projectSlug,
+              error,
+            });
+          }
+        }
+      })();
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  private scheduleSelectiveInvalidation(changedPaths: string[]): void {
-    for (const path of changedPaths) this.pendingChangedPaths.add(path);
+  private scheduleSelectiveInvalidation(
+    changedPaths: string[],
+    contentContext: ResolvedContentContext | null,
+    token: PreviewInvalidationToken,
+  ): void {
+    const contextKey = this.invalidationContextKey(contentContext);
+    const pending = this.pendingSelectiveInvalidations.get(contextKey) ?? {
+      contentContext,
+      changedPaths: new Set<string>(),
+      token,
+    };
+    for (const path of changedPaths) pending.changedPaths.add(path);
+    pending.token = token;
+    this.pendingSelectiveInvalidations.set(contextKey, pending);
 
     if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
 
     logger.debug("Scheduling selective invalidation", {
       newPaths: changedPaths.length,
-      totalPending: this.pendingChangedPaths.size,
+      totalPending: [...this.pendingSelectiveInvalidations.values()].reduce(
+        (count, invalidation) => count + invalidation.changedPaths.size,
+        0,
+      ),
       debounceMs: INVALIDATION_DEBOUNCE_MS,
     });
 
     this.selectiveInvalidationTimer = setTimeout(() => {
       this.selectiveInvalidationTimer = null;
-      this.performSelectiveInvalidation();
+      const scheduled = [...this.pendingSelectiveInvalidations.values()];
+      this.pendingSelectiveInvalidations.clear();
+      void (async () => {
+        for (const invalidation of scheduled) {
+          try {
+            await this.performSelectiveInvalidation(
+              [...invalidation.changedPaths],
+              invalidation.contentContext,
+              invalidation.token,
+            );
+          } catch (error) {
+            logger.error("Queued selective invalidation failed", {
+              projectSlug: this.deps.projectSlug,
+              error,
+            });
+          }
+        }
+      })();
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
@@ -689,15 +810,13 @@ export class WebSocketManager {
     );
   }
 
-  private async performSelectiveInvalidation(): Promise<void> {
+  private async performSelectiveInvalidation(
+    changedPaths: string[],
+    contentContext: ResolvedContentContext | null,
+    previewInvalidationToken: PreviewInvalidationToken,
+  ): Promise<void> {
     const startTime = currentTime();
-    const changedPaths = Array.from(this.pendingChangedPaths);
-    this.pendingChangedPaths.clear();
-
-    const contentContext = this.deps.getContentContext();
     const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
-    const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
-    const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
@@ -799,7 +918,10 @@ export class WebSocketManager {
       if (contentContext?.sourceType === "branch") {
         await this.deps.cache.deleteByPrefixAsync("files:branch:");
         try {
-          const files = await this.deps.client.listAllFiles();
+          const files = await this.deps.client.listAllFiles({}, {
+            type: "branch",
+            name: contentContext.branch ?? "main",
+          });
           const cacheKey = buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
@@ -879,10 +1001,7 @@ export class WebSocketManager {
       succeeded = true;
     } finally {
       if (succeeded) {
-        this.completePreviewInvalidation(
-          previewInvalidationPrefixes,
-          previewInvalidationVersion,
-        );
+        this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }
@@ -890,11 +1009,11 @@ export class WebSocketManager {
     }
   }
 
-  private async performInvalidation(): Promise<void> {
+  private async performInvalidation(
+    contentContext: ResolvedContentContext | null,
+    previewInvalidationToken: PreviewInvalidationToken,
+  ): Promise<void> {
     const startTime = currentTime();
-    const contentContext = this.deps.getContentContext();
-    const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
-    const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
@@ -1004,7 +1123,10 @@ export class WebSocketManager {
 
       if (contentContext?.sourceType === "branch") {
         try {
-          const files = await this.deps.client.listAllFiles();
+          const files = await this.deps.client.listAllFiles({}, {
+            type: "branch",
+            name: contentContext.branch ?? "main",
+          });
           const cacheKey = buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
@@ -1077,10 +1199,7 @@ export class WebSocketManager {
       succeeded = true;
     } finally {
       if (succeeded) {
-        this.completePreviewInvalidation(
-          previewInvalidationPrefixes,
-          previewInvalidationVersion,
-        );
+        this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }

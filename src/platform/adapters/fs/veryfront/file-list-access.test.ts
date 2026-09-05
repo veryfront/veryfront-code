@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { type ContentContextProvider, loadAllProjectFiles } from "./file-list-access.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 function makeFile(path: string): ProjectFile {
   return {
@@ -219,5 +220,208 @@ describe("veryfront/file-list-access", () => {
     });
 
     assertEquals(apiCalls, 1, "the written-back entry must answer the next load");
+  });
+
+  it("bypasses persistent file-list caches for contextual credentials", async () => {
+    const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+    cache.set("files:branch:test:main", [makeFile("cached.tsx")]);
+    let apiCalls = 0;
+    const client = {
+      listAllFiles: () => {
+        apiCalls += 1;
+        return Promise.resolve([makeFile("fresh.tsx")]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await runWithRequestContext(
+      { projectSlug: "test", token: "context-token", productionMode: false, branch: "main" },
+      () =>
+        loadAllProjectFiles({
+          client,
+          cache,
+          contextProvider: {
+            isProductionMode: () => false,
+            getReleaseId: () => null,
+            getContentContext: () => ({
+              sourceType: "branch",
+              projectSlug: "test",
+              branch: "main",
+            }),
+          },
+          logger: createLogger(),
+          operationLabel: "test",
+        }),
+    );
+
+    assertEquals(apiCalls, 1);
+    assertEquals(loaded.map((file) => file.path), ["fresh.tsx"]);
+    assertEquals(
+      (await cache.getAsync<ProjectFile[]>("files:branch:test:main"))?.map((file) => file.path),
+      ["cached.tsx"],
+    );
+  });
+
+  it("retries a fallback fetch that spans a source snapshot change", async () => {
+    let apiCalls = 0;
+    let snapshotVersion = 1;
+    const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => false,
+      getReleaseId: () => null,
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: "main",
+      }),
+      getSourceSnapshotVersion: () => snapshotVersion,
+      getSourceSnapshotIdentity: () => "branch:test:main",
+      isPersistentCacheInvalidated: () => false,
+    };
+    const client = {
+      listAllFiles: () => {
+        apiCalls += 1;
+        if (apiCalls === 1) {
+          snapshotVersion += 1;
+          return Promise.resolve([makeFile("stale.tsx")]);
+        }
+        return Promise.resolve([makeFile("fresh.tsx")]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await loadAllProjectFiles({
+      client,
+      cache,
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+    });
+
+    assertEquals(apiCalls, 2);
+    assertEquals(loaded.map((file) => file.path), ["fresh.tsx"]);
+    assertEquals(
+      (await cache.getAsync<ProjectFile[]>("files:branch:test:main"))?.map((file) => file.path),
+      ["fresh.tsx"],
+    );
+  });
+
+  it("keeps the caller's branch context when retrying across a snapshot change", async () => {
+    let apiCalls = 0;
+    let snapshotVersion = 1;
+    const currentBranch = "branch-a";
+    const requestedBranches: string[] = [];
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => false,
+      getReleaseId: () => null,
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: currentBranch,
+      }),
+      getSourceSnapshotVersion: () => snapshotVersion,
+      getSourceSnapshotIdentity: () => `branch:test:${currentBranch}`,
+      isPersistentCacheInvalidated: () => false,
+    };
+    const client = {
+      listAllFiles: (_options: unknown, context: { name?: string }) => {
+        apiCalls += 1;
+        requestedBranches.push(context.name ?? "");
+        if (apiCalls <= 2) {
+          snapshotVersion += 1;
+        }
+        return Promise.resolve([makeFile(`${context.name}.tsx`)]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await loadAllProjectFiles({
+      client,
+      cache: new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+      contentContext: {
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: "branch-a",
+      },
+    });
+
+    assertEquals(requestedBranches, ["branch-a", "branch-a", "branch-a"]);
+    assertEquals(loaded.map((file) => file.path), ["branch-a.tsx"]);
+  });
+
+  it("does not retry a pinned branch fetch when an unrelated branch changes", async () => {
+    let apiCalls = 0;
+    let snapshotVersion = 1;
+    let currentBranch = "branch-a";
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => false,
+      getReleaseId: () => null,
+      getContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test",
+        branch: currentBranch,
+      }),
+      getSourceSnapshotVersion: () => snapshotVersion,
+      getSourceSnapshotIdentity: () => `branch:test:${currentBranch}`,
+      isPersistentCacheInvalidated: () => false,
+    };
+    const client = {
+      listAllFiles: (_options: unknown, context: { name?: string }) => {
+        apiCalls += 1;
+        currentBranch = "branch-b";
+        snapshotVersion += 1;
+        return Promise.resolve([makeFile(`${context.name}.tsx`)]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await loadAllProjectFiles({
+      client,
+      cache: new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+      contentContext: { sourceType: "branch", projectSlug: "test", branch: "branch-a" },
+    });
+
+    assertEquals(apiCalls, 1);
+    assertEquals(loaded.map((file) => file.path), ["branch-a.tsx"]);
+  });
+
+  it("bounds retries during sustained changes and does not cache the result", async () => {
+    let apiCalls = 0;
+    let snapshotVersion = 1;
+    const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => false,
+      getReleaseId: () => null,
+      getContentContext: () => ({ sourceType: "branch", projectSlug: "test", branch: "main" }),
+      getSourceSnapshotVersion: () => snapshotVersion,
+      getSourceSnapshotIdentity: () => "branch:test:main",
+      isPersistentCacheInvalidated: () => false,
+    };
+    const client = {
+      listAllFiles: () => {
+        apiCalls += 1;
+        snapshotVersion += 1;
+        return Promise.resolve([makeFile(`result-${apiCalls}.tsx`)]);
+      },
+      listPublishedFiles: () => Promise.resolve([]),
+    } as any;
+
+    const loaded = await loadAllProjectFiles({
+      client,
+      cache,
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+    });
+
+    assertEquals(apiCalls, 4);
+    assertEquals(loaded.map((file) => file.path), ["result-4.tsx"]);
+    assertEquals(await cache.getAsync("files:branch:test:main"), undefined);
   });
 });

@@ -38,6 +38,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   applySnapshotResponseHeaders,
   readSnapshotHeader,
@@ -207,6 +208,23 @@ export class SSRHandler extends BaseHandler {
             error: e instanceof Error ? e.message : String(e),
             projectSlug: ctx.projectSlug,
           });
+        }
+
+        const requestProjectSlug = ctx.projectSlug ?? ctx.requestContext?.slug;
+        const requestToken = ctx.proxyToken ?? ctx.requestContext?.token;
+        if (requestProjectSlug && requestToken !== undefined) {
+          return runWithRequestContext(
+            {
+              projectSlug: requestProjectSlug,
+              projectId: ctx.projectId,
+              token: requestToken,
+              productionMode: isProductionMode(ctx),
+              releaseId: ctx.releaseId,
+              branch: ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+              environmentName: ctx.environmentName,
+            },
+            () => this.handleWithContext(req, ctx, slug, requestId, url),
+          );
         }
       }
 

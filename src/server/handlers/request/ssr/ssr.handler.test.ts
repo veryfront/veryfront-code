@@ -20,6 +20,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
 import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
 import { preparePreviewDocumentSourceSnapshot } from "../source-snapshot-freshness.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   __resetPerfTimerForTests,
   __trackedRequestIdsForTests,
@@ -1539,6 +1540,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       // adapter to the requested branch, the prepared snapshot describes the
       // previous branch and must not satisfy the document render.
       const refreshedIdentities: string[] = [];
+      const refreshedRequestBranches: Array<string | null | undefined> = [];
       let adapterBranch: string | null = "main"; // left over from the previous request
       const fs = {
         ...createMockAdapter().fs,
@@ -1555,6 +1557,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         getSourceSnapshotVersion: () => 1,
         refreshSourceSnapshot: () => {
           refreshedIdentities.push(`branch:preview-project:${adapterBranch ?? "main"}`);
+          refreshedRequestBranches.push(getCurrentRequestContext()?.branch);
           return Promise.resolve();
         },
       };
@@ -1582,6 +1585,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       // refreshes whatever branch the reused adapter still points at.
       await preparePreviewDocumentSourceSnapshot(ctx);
       assertEquals(refreshedIdentities, ["branch:preview-project:main"]);
+      assertEquals(refreshedRequestBranches, [undefined]);
 
       const result = await new SSRHandler(createMockSSRService()).handle(
         new Request("http://localhost/page"),
@@ -1594,6 +1598,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         ["branch:preview-project:main", "branch:preview-project:feature"],
         "the render must re-establish freshness for the branch it actually reads from",
       );
+      assertEquals(refreshedRequestBranches, [undefined, "feature"]);
     });
 
     it("silently catches errors from contextual setup", async () => {
