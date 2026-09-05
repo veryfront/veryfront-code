@@ -96,6 +96,66 @@ function prepare(memory: Memory<Message>, validate = true) {
 }
 
 describe("custom memory transactions", () => {
+  it("shares pending commits and rejects retries after a commit conflict", async () => {
+    const store = new TransactionMemory();
+    const gate = Promise.withResolvers<void>();
+    const begin = store.beginTransaction.bind(store);
+    store.beginTransaction = async () => {
+      const transaction = await begin();
+      return {
+        ...transaction,
+        commit: async () => {
+          await gate.promise;
+          await transaction.commit();
+        },
+      };
+    };
+    const runtime = new AgentRuntime("transaction-test", {
+      model: "openai/gpt-4.1",
+      system: "You are helpful.",
+    });
+    Reflect.set(runtime, "memory", store);
+    const context: AgentContext = {
+      agentId: "transaction-test",
+      input: "hello",
+      model: "openai/gpt-4.1",
+      data: {},
+      platform: {},
+    };
+    registerTurnMessageValidator(context, () => Promise.resolve());
+    const create = Reflect.get(runtime, "createTurnPersistence") as (
+      messages: Message[],
+      context: AgentContext,
+    ) => {
+      persist(): Promise<Message[]>;
+      commit(): Promise<void>;
+      finalize(): Promise<void>;
+      validateProviderRequest(system: string, messages: Message[]): Promise<void>;
+    };
+    const persistence = create.call(runtime, [message("attempted")], context);
+    await persistence.persist();
+    const first = persistence.commit();
+    let secondSettled = false;
+    const second = persistence.commit().finally(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(secondSettled, false);
+    await store.clear();
+    const firstRejected = assertRejects(() => first, Error, "transaction conflict");
+    const secondRejected = assertRejects(() => second, Error, "transaction conflict");
+    gate.resolve();
+    await Promise.all([firstRejected, secondRejected]);
+    await persistence.finalize();
+    await assertRejects(() => persistence.persist(), Error, "transaction conflict");
+    await assertRejects(
+      () => persistence.validateProviderRequest("system", []),
+      Error,
+      "transaction conflict",
+    );
+    assertEquals(store.stored, []);
+  });
   it("rejects unsupported memory before writes", async () => {
     const store = new TransactionMemory();
     const memory: Memory<Message> = {

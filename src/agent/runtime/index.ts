@@ -1732,22 +1732,38 @@ export class AgentRuntime {
     // memory once per attempt. Every attempt shares the first commit, including
     // its rejection, so a turn that failed validation stays rejected.
     let transaction: ReturnType<AgentRuntime["prepareTurnMessages"]> | undefined;
-    let finalized = false;
+    let finalization: Promise<void> | undefined;
+    let rejection: { error: unknown } | undefined;
     let validationState: "pending" | "accepted" | "rejected" = "pending";
     const commit = async (): Promise<void> => {
-      if (finalized || transaction === undefined) return;
-      finalized = true;
-      await (await transaction).commit();
+      if (rejection) throw rejection.error;
+      if (transaction === undefined) return;
+      finalization ??= transaction.then(async (prepared) => {
+        try {
+          await prepared.commit();
+        } catch (error) {
+          rejection = { error };
+          validationState = "rejected";
+          throw error;
+        }
+      });
+      await finalization;
     };
     const rollback = async (): Promise<void> => {
-      if (finalized || transaction === undefined) return;
-      finalized = true;
-      const prepared = await transaction.catch(() => undefined);
-      await prepared?.rollback();
+      if (transaction === undefined) return;
+      if (finalization !== undefined) {
+        // The original caller observes commit or rollback errors. Cleanup must
+        // still finish so streaming can report that error and close replay state.
+        await finalization.catch(() => undefined);
+        return;
+      }
+      finalization = transaction.catch(() => undefined).then((prepared) => prepared?.rollback());
+      await finalization;
     };
     const persistence = {
       persisted: false,
       persist: (): Promise<Message[]> => {
+        if (rejection) return Promise.reject(rejection.error);
         persistence.persisted = true;
         transaction ??= this.prepareTurnMessages(
           resolveValidatedTurnInput(context.input, inputMessages),
@@ -1759,15 +1775,17 @@ export class AgentRuntime {
       finalize: () => validationState === "accepted" ? commit() : rollback(),
       validationState: () => validationState,
       validateProviderRequest: async (providerSystem: AgentSystem, messages: Message[]) => {
+        if (rejection) throw rejection.error;
         try {
           await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
+          await commit();
         } catch (error) {
+          rejection = { error };
           validationState = "rejected";
           await rollback();
           throw error;
         }
         validationState = "accepted";
-        await commit();
       },
     };
     return persistence;
