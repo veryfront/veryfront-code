@@ -1,17 +1,23 @@
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 const requestAuthoritySalt = crypto.randomUUID();
+const intrinsicApply = Reflect.apply;
+const intrinsicBigInt = BigInt;
+const stringCodePointAt = String.prototype.codePointAt;
+const bigintToString = BigInt.prototype.toString;
 
 function foldAuthority(value: string): string {
   const FNV_OFFSET_BASIS = 14695981039346656037n;
   const FNV_PRIME = 1099511628211n;
   const MASK_64 = (1n << 64n) - 1n;
   let hash = FNV_OFFSET_BASIS;
-  for (const character of value) {
-    hash ^= BigInt(character.codePointAt(0)!);
+  for (let offset = 0; offset < value.length;) {
+    const codePoint = intrinsicApply(stringCodePointAt, value, [offset]) as number;
+    offset += codePoint > 0xFFFF ? 2 : 1;
+    hash ^= intrinsicBigInt(codePoint);
     hash = (hash * FNV_PRIME) & MASK_64;
   }
-  return hash.toString(36);
+  return intrinsicApply(bigintToString, hash, [36]) as string;
 }
 
 export function requestAuthorityFingerprint(token: string): string {
