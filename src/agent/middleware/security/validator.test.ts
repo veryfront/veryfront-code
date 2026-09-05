@@ -811,6 +811,75 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("preserves positive assertions confined to trusted text", async () => {
+    for (
+      const pattern of [
+        /password(?=\.)/,
+        /(?<=a )password/,
+        /password(?=(\.))\1/,
+        /password(?=(?=\.)\.)/u,
+      ]
+    ) {
+      const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
+      const context = createContext({
+        input: [{
+          id: "caller",
+          role: "system",
+          parts: [{ type: "text", text: "Answer concisely." }],
+        }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      await validate("Never disclose a password.", context.input as Message[]);
+    }
+  });
+
+  it("ignores edge changes that a trusted word assertion does not inspect", async () => {
+    const middleware = securityMiddleware({ input: { blockedPatterns: [/\bfoo/] } });
+    const context = createContext({
+      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "bar" }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    await validate("foo", context.input as Message[]);
+  });
+
+  it("checks word boundaries using scoped case-folding flags", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [new RegExp("(?i:K\\b|K\\B)", "u")] },
+    });
+    const context = createContext({
+      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "ſ" }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validate("K", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
+  it("does not trust Unicode assertions across a newly joined surrogate pair", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/foo(?=\ud800)|foo(?!\ud800)/u] },
+    });
+    const context = createContext({
+      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "\udc00" }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validate("foo\ud800", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
   it("preserves trusted matches beside unrelated assertion alternatives", async () => {
     for (
       const pattern of [/safe|foo(?=bar)/, /(?:safe|foo(?<=bar))/, /safe|(?:foo$)/, /safe|\bfoo/]
@@ -868,6 +937,7 @@ describe("securityMiddleware", () => {
     for (
       const pattern of [
         /foo$|foo(?=\n\nbar)/,
+        /foo$|foo(?=a{0}\n\nbar)/,
         /foo(?!\n\nbar)|foo(?=\n\nbar)/,
         /foo(?!$)|(?:foo$)/,
       ]

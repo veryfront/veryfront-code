@@ -967,107 +967,169 @@ function isMonotoneNegativeAssertion(pattern: RegExp, start: number): boolean {
   return false;
 }
 
-/** Prove a matching alternative cannot start succeeding because text was added. */
-function hasContextIndependentMatch(
+/** Conservative inspection bound; unbounded quantifiers and backreferences use the guarded path. */
+function assertionInspectionWidth(source: string, unicodeSets: boolean): number {
+  let width = source.length;
+  let classDepth = 0;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (character === "\\") {
+      const escaped = source[++index];
+      if (classDepth === 0 && escaped && /[1-9k]/.test(escaped)) return Infinity;
+      continue;
+    }
+    if (character === "[" && (classDepth === 0 || unicodeSets)) classDepth++;
+    else if (character === "]" && classDepth > 0) classDepth--;
+    else if (classDepth === 0) {
+      if (character === "*" || character === "+") return Infinity;
+      if (character === "{") {
+        const quantifier = /^\{(\d+)(?:,(\d*))?\}/.exec(source.slice(index));
+        if (quantifier) {
+          if (quantifier[2] === "") return Infinity;
+          width *= Math.max(1, Number(quantifier[2] ?? quantifier[1]));
+          if (!Number.isSafeInteger(width)) return Infinity;
+          index += quantifier[0].length - 1;
+        }
+      }
+    }
+  }
+  return width;
+}
+
+/** Prove an assembly match also has a path using unchanged trusted context. */
+function createTrustedMatchPredicate(
   pattern: RegExp,
   segment: { start: number; text: string },
-  match: { index: number; text: string },
   assembled: string,
-): boolean {
+): (match: { index: number; text: string }) => boolean {
+  const unicode = pattern.unicode || pattern.unicodeSets;
+  const splitsCodePoint = (offset: number) =>
+    assembled.charCodeAt(offset - 1) >= 0xd800 && assembled.charCodeAt(offset - 1) <= 0xdbff &&
+    assembled.charCodeAt(offset) >= 0xdc00 && assembled.charCodeAt(offset) <= 0xdfff;
+  // Joining lone surrogates changes Unicode matching even without assertions.
+  if (
+    unicode &&
+    (splitsCodePoint(segment.start) || splitsCodePoint(segment.start + segment.text.length))
+  ) {
+    return () => false;
+  }
+  const units = (text: string) => unicode ? [...text].length : text.length;
+  const lower = units(assembled.slice(0, segment.start));
+  const upper = lower + units(segment.text);
+  const lowerGuard = "(?<=[\\s\\S]{" + lower + "})";
+  const upperGuard = "(?<![\\s\\S]{" + (upper + 1) + "})";
+  const excludePosition = (position: number) =>
+    "(?!(?<=[\\s\\S]{" + position + "})(?<![\\s\\S]{" + (position + 1) + "}))";
+  let ignoreCase = pattern.ignoreCase;
+  const isWord = (character: string | undefined) =>
+    character !== undefined &&
+    new RegExp(
+      "\\w",
+      (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
+    )
+      .test(character);
+  const groups: Array<
+    { kind: "ahead" | "behind" | "ordinary"; ignoreCase: boolean; bodyStart?: number }
+  > = [];
+  let inspectionRadius = 0;
+  let fastPath = true;
   let source = "";
   let classDepth = 0;
   for (let index = 0; index < pattern.source.length; index++) {
     const character = pattern.source[index];
     if (character === "\\") {
       const escaped = pattern.source[++index];
-      if (classDepth === 0 && (escaped === "b" || escaped === "B")) source += "(?!)";
       source += character + escaped;
-      continue;
-    }
-    if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) classDepth++;
-    else if (character === "]" && classDepth > 0) classDepth--;
-    else if (
-      classDepth === 0 &&
-      (character === "^" || character === "$" ||
-        pattern.source.startsWith("(?=", index) || pattern.source.startsWith("(?!", index) ||
-        pattern.source.startsWith("(?<=", index) || pattern.source.startsWith("(?<!", index))
-    ) {
-      // A context-free negative assertion can only lose matches when text is
-      // added around the trusted segment. Keep those assertions executable.
-      // Disable other assertion paths without changing capture numbering.
-      if (!isMonotoneNegativeAssertion(pattern, index)) source += "(?!)";
-    }
-    source += character;
-  }
-  try {
-    const matcher = new RegExp(source, pattern.flags.replace(/[gy]/g, "") + "y");
-    matcher.lastIndex = match.index;
-    const local = matcher.exec(segment.text);
-    if (local?.[0] !== match.text) return false;
-    matcher.lastIndex = segment.start + match.index;
-    return matcher.exec(assembled)?.[0] === match.text;
-  } catch {
-    // An unsupported pattern rewrite cannot establish a trusted match.
-    return false;
-  }
-}
-
-/** Assertions can change the meaning of a match without changing its span. */
-function patternInspectsMatchContext(
-  pattern: RegExp,
-  segment: { start: number; text: string },
-  match: { index: number; text: string },
-  assembled: string,
-): boolean {
-  const source = pattern.source;
-  const start = segment.start + match.index;
-  const end = start + match.text.length;
-  const localEnd = match.index + match.text.length;
-  const word = new RegExp("\\w", pattern.flags.replace(/[dgmsy]/g, ""));
-  const isWord = (character: string | undefined) => character !== undefined && word.test(character);
-  const wordContextChanged =
-    isWord(segment.text[match.index - 1]) !== isWord(assembled[start - 1]) ||
-    isWord(segment.text[localEnd]) !== isWord(assembled[end]);
-  const isLineBreak = (character: string | undefined) =>
-    character !== undefined && /[\n\r\u2028\u2029]/.test(character);
-  let classDepth = 0;
-  for (let index = 0; index < source.length; index++) {
-    const character = source[index];
-    if (character === "\\") {
-      const escaped = source[++index];
-      if (classDepth === 0 && (escaped === "b" || escaped === "B") && wordContextChanged) {
-        return true;
+      if (classDepth === 0 && (escaped === "b" || escaped === "B")) {
+        inspectionRadius = Math.max(inspectionRadius, 1);
+        // Only assertions at a segment edge can see different word context.
+        const boundary = escaped === "b";
+        if (isWord(segment.text[0]) !== boundary) source += excludePosition(lower);
+        if (isWord(segment.text.at(-1)) !== boundary) source += excludePosition(upper);
       }
       continue;
     }
     if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) {
       classDepth++;
+      source += character;
       continue;
     }
     if (character === "]" && classDepth > 0) {
       classDepth--;
+      source += character;
       continue;
     }
-    if (classDepth > 0) continue;
-    if (
-      character === "^" && match.index === 0 && segment.start !== 0 &&
-      !(pattern.multiline && isLineBreak(assembled[segment.start - 1]))
-    ) return true;
-    if (
-      character === "$" && localEnd >= segment.text.length - 1 &&
-      segment.start + segment.text.length !== assembled.length &&
-      !(pattern.multiline && isLineBreak(assembled[end]))
-    ) return true;
-    if (
-      source.startsWith("(?=", index) || source.startsWith("(?!", index) ||
-      source.startsWith("(?<=", index) || source.startsWith("(?<!", index)
-    ) {
-      // Lookaround can inspect unbounded context without consuming it. Its
-      // match span cannot attest that the inspected context stayed trusted.
-      return true;
+    if (classDepth > 0) {
+      source += character;
+      continue;
     }
+    if (character === "(") {
+      if (pattern.source.startsWith("(?=", index)) {
+        groups.push({ kind: "ahead", ignoreCase, bodyStart: index + 3 });
+        source += "(?=(?:";
+        index += 2;
+        continue;
+      }
+      if (pattern.source.startsWith("(?<=", index)) {
+        groups.push({ kind: "behind", ignoreCase, bodyStart: index + 4 });
+        source += "(?<=" + lowerGuard + "(?:";
+        index += 3;
+        continue;
+      }
+      groups.push({ kind: "ordinary", ignoreCase });
+      const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(pattern.source.slice(index));
+      if (modifiers?.[1]?.includes("i")) ignoreCase = true;
+      if (modifiers?.[2]?.includes("i")) ignoreCase = false;
+      if (
+        (pattern.source.startsWith("(?!", index) || pattern.source.startsWith("(?<!", index)) &&
+        !isMonotoneNegativeAssertion(pattern, index)
+      ) {
+        source += "(?!)";
+        fastPath = false;
+      }
+    } else if (character === ")") {
+      const group = groups.pop();
+      if (!group) return () => false;
+      ignoreCase = group.ignoreCase;
+      if (group.bodyStart !== undefined) {
+        inspectionRadius = Math.max(
+          inspectionRadius,
+          assertionInspectionWidth(
+            pattern.source.slice(group.bodyStart, index),
+            pattern.unicodeSets,
+          ) * (unicode ? 2 : 1),
+        );
+      }
+      if (group.kind === "ahead") {
+        source += ")" + upperGuard + ")";
+        continue;
+      }
+      if (group.kind === "behind") {
+        source += "))";
+        continue;
+      }
+    }
+    source += character;
   }
-  return false;
+  try {
+    // Guard positive assertions' consumed context without adding captures or
+    // changing backreference numbers. Monotone negative assertions can only
+    // lose matches when caller text is added; other negative paths stay closed.
+    const matcher = new RegExp(source, pattern.flags.replace(/[gy]/g, "") + "y");
+    return (match) => {
+      // Interior matches cannot inspect caller text. Avoid prefix scans for
+      // each occurrence in long trusted prompts with many boundary matches.
+      if (
+        fastPath && match.index >= inspectionRadius &&
+        match.index + match.text.length + inspectionRadius <= segment.text.length
+      ) return true;
+      matcher.lastIndex = segment.start + match.index;
+      const found = matcher.exec(assembled);
+      return found?.index === segment.start + match.index && found[0] === match.text;
+    };
+  } catch {
+    return () => false;
+  }
 }
 
 /** Reject assembly matches outside unchanged runtime or historical segments. */
@@ -1089,10 +1151,7 @@ async function assertProviderRunsValid(
       }
       const trustedMatches = trustedSegments.flatMap((segment) =>
         patternOccurrences(segment.text, pattern)
-          .filter((match) =>
-            !patternInspectsMatchContext(pattern, segment, match, text) ||
-            hasContextIndependentMatch(pattern, segment, match, text)
-          )
+          .filter(createTrustedMatchPredicate(pattern, segment, text))
           .map((match) => ({
             index: segment.start + match.index,
             text: match.text,
