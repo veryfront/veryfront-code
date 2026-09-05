@@ -106,6 +106,17 @@ function throwMapChildIdCollision(mapNodeId: string, collidingChildId: string): 
   });
 }
 
+function isOwnedLoopSnapshot(
+  key: string,
+  value: unknown,
+  nodeStates: Record<string, NodeState>,
+): boolean {
+  if (typeof value !== "object" || value === null || !("_loopStateOwner" in value)) return false;
+  const owner = value._loopStateOwner;
+  return typeof owner === "string" && key === `${owner}_loop_state` &&
+    Object.hasOwn(nodeStates, owner);
+}
+
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
@@ -200,9 +211,19 @@ export async function executeMapNodeStrategy(
 
   runtime.onNodeComplete?.(node.id, state);
 
+  const contextPatch = createSetContextPatch(result.completed ? { [node.id]: outputs } : {});
+  // Keep resumable loop bookkeeping without exposing processor outputs as
+  // top-level map context. Only the child that owns a snapshot can update it.
+  for (const [key, value] of Object.entries(result.contextPatch.set)) {
+    if (isOwnedLoopSnapshot(key, value, result.nodeStates)) contextPatch.set[key] = value;
+  }
+  for (const key of result.contextPatch.delete) {
+    if (isOwnedLoopSnapshot(key, context[key], result.nodeStates)) contextPatch.delete.push(key);
+  }
+
   return {
     state,
-    contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
+    contextPatch,
     waiting,
     errorCause: waiting ? undefined : result.errorCause,
     waitingNode: result.waitingNode ?? waitingNodes?.[0]?.nodeId,

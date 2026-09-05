@@ -3438,6 +3438,46 @@ describe("DAGExecutor", () => {
   });
 
   describe("loop resume (H9)", () => {
+    it("resumes callback-loop map processors inside enclosing composites", async () => {
+      for (const composite of ["parallel", "branch"]) {
+        for (const dynamicItems of [false, true]) {
+          const mapped = map("orders", {
+            items: dynamicItems ? () => [1] : [1],
+            processor: loop("processor", {
+              maxIterations: 1,
+              while: () => true,
+              steps: () => [waitForApproval("review", { message: "Approve" })],
+            }),
+          });
+          const nodes: WorkflowNode[] = [{
+            id: "group",
+            config: composite === "parallel"
+              ? { type: "parallel", nodes: [mapped] }
+              : { type: "branch", condition: () => true, then: [mapped], else: [] },
+          }];
+          const first = await executor.execute(nodes, createTestRun());
+          assertEquals(first.waiting, true);
+          assertExists(first.waitingNode);
+          const second = await executor.execute(
+            nodes,
+            createTestRun({
+              status: "waiting",
+              context: first.context,
+              nodeStates: {
+                ...first.nodeStates,
+                [first.waitingNode]: {
+                  ...first.nodeStates[first.waitingNode]!,
+                  status: "completed",
+                },
+              },
+            }),
+          );
+          assertEquals(second.completed, true, `${composite}, dynamic items: ${dynamicItems}`);
+          assertEquals(second.context.orders_0_loop_state, undefined);
+        }
+      }
+    });
+
     it("removes an explicitly owned callback-loop snapshot after resume", async () => {
       const nodes = [loop("repeat", {
         maxIterations: 1,
