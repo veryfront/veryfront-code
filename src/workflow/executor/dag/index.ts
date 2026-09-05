@@ -177,10 +177,10 @@ function narrowReservationsToSelectedBranches(
           (branchOwnerPaths.get(node.id)?.size ?? 0) > 1;
         if (ambiguousOwnerlessState) {
           for (
-            const childId of collectWorkflowNodeIds([
+            const childId of collectSubWorkflowNodeIds([
               ...node.config.then,
               ...(node.config.else ?? []),
-            ])
+            ], nodeStates)
           ) {
             reservations.delete(childId);
           }
@@ -212,8 +212,8 @@ function narrowReservationsToSelectedBranches(
         }
         const selectedNodes = selected === "then" ? node.config.then : (node.config.else ?? []);
         const unselectedNodes = selected === "then" ? (node.config.else ?? []) : node.config.then;
-        const selectedIds = collectWorkflowNodeIds(selectedNodes);
-        for (const childId of collectWorkflowNodeIds(unselectedNodes)) {
+        const selectedIds = collectSubWorkflowNodeIds(selectedNodes, nodeStates);
+        for (const childId of collectSubWorkflowNodeIds(unselectedNodes, nodeStates)) {
           if (!selectedIds.has(childId)) reservations.delete(childId);
         }
         narrowReservationsToSelectedBranches(
@@ -247,7 +247,9 @@ function narrowReservationsToSelectedBranches(
           const nestedStateBelongsToOwner = nestedStateOwner === undefined ||
             isSubWorkflowDescendant(nestedStateOwner, nestedOwnerPath);
           if (nestedStateBelongsToOwner && nestedState?.status === "skipped") {
-            for (const childId of collectWorkflowNodeIds(node.config.workflow.steps)) {
+            for (
+              const childId of collectSubWorkflowNodeIds(node.config.workflow.steps, nodeStates)
+            ) {
               reservations.delete(childId);
             }
             break;
@@ -343,7 +345,7 @@ function collectStaticSubWorkflowReservation(
         typeof node.config.workflow === "string" ||
         !Array.isArray(node.config.workflow.steps)
       ) return;
-      const childIds = collectWorkflowNodeIds(node.config.workflow.steps);
+      const childIds = collectSubWorkflowNodeIds(node.config.workflow.steps, nodeStates);
       const recordedState = nodeStates[node.id];
       const recordedOwner = recordedState?._subWorkflowOwnerPath;
       const recordedSkipped = recordedState?.status === "skipped" &&
@@ -738,6 +740,7 @@ function createCompositeNodeStateView(
   compositeNodeId: string,
   context: WorkflowContext,
   scope: ExecutionScope,
+  mapNode?: WorkflowNode,
 ): Record<string, NodeState> {
   const declaredIds = collectWorkflowNodeIds([...nodes]);
   collectCompositeLoopStateEvidence(nodes, context, declaredIds);
@@ -750,6 +753,16 @@ function createCompositeNodeStateView(
     declaredIds,
     allowedOwnerPaths,
   );
+  if (mapNode) {
+    collectCompositeMapStateEvidence(
+      [mapNode],
+      nodeStates,
+      parentPath,
+      declaredIds,
+      allowedOwnerPaths,
+      true,
+    );
+  }
   const allowedOwnerPathList = [...allowedOwnerPaths];
   const claimedLegacyIds = new Set<string>(scope.completedCompositeChildIds);
   const activeCompositeChildIds = new Set(
@@ -880,15 +893,35 @@ function collectCompositeMapStateEvidence(
   parentPath: string,
   declaredIds: Set<string>,
   allowedOwnerPaths: Set<string>,
+  includePending = false,
 ): void {
   for (const node of nodes) {
     if (node.config.type === "map") {
       const output = nodeStates[node.id]?.output;
-      if (!Array.isArray(output)) continue;
+      const wrapperIds = new Set<string>();
+      if (includePending) {
+        for (const wrapper of collectStaticMapWrapperNodes(node) ?? []) {
+          wrapperIds.add(wrapper.id);
+        }
+        if (nodeStates[node.id]?.status === "running") {
+          const prefix = `${node.id}_`;
+          for (const stateId of Object.keys(nodeStates)) {
+            if (
+              stateId.startsWith(prefix) && /^(?:0|[1-9][0-9]*)$/.test(stateId.slice(prefix.length))
+            ) {
+              wrapperIds.add(stateId);
+            }
+          }
+        }
+      }
+      if (Array.isArray(output)) {
+        for (let index = 0; index < output.length; index++) {
+          const wrapperId = `${node.id}_${index}`;
+          if (nodeStates[wrapperId] !== undefined) wrapperIds.add(wrapperId);
+        }
+      }
       const processor = node.config.processor;
-      for (let index = 0; index < output.length; index++) {
-        const wrapperId = `${node.id}_${index}`;
-        if (nodeStates[wrapperId] === undefined) continue;
+      for (const wrapperId of wrapperIds) {
         declaredIds.add(wrapperId);
         allowedOwnerPaths.add(subWorkflowOwnerPath(parentPath, wrapperId));
         // A map processor executes under ids rebased onto the generated
@@ -913,6 +946,7 @@ function collectCompositeMapStateEvidence(
           parentPath,
           declaredIds,
           allowedOwnerPaths,
+          includePending,
         );
       }
       continue;
@@ -924,6 +958,7 @@ function collectCompositeMapStateEvidence(
         parentPath,
         declaredIds,
         allowedOwnerPaths,
+        includePending,
       );
     } else if (node.config.type === "branch") {
       collectCompositeMapStateEvidence(
@@ -932,6 +967,7 @@ function collectCompositeMapStateEvidence(
         parentPath,
         declaredIds,
         allowedOwnerPaths,
+        includePending,
       );
     } else if (node.config.type === "loop" && Array.isArray(node.config.steps)) {
       collectCompositeMapStateEvidence(
@@ -940,6 +976,7 @@ function collectCompositeMapStateEvidence(
         parentPath,
         declaredIds,
         allowedOwnerPaths,
+        includePending,
       );
     } else if (
       node.config.type === "subWorkflow" && typeof node.config.workflow !== "string" &&
@@ -952,9 +989,19 @@ function collectCompositeMapStateEvidence(
         ownerPath,
         declaredIds,
         allowedOwnerPaths,
+        includePending,
       );
     }
   }
+}
+
+function collectSubWorkflowNodeIds(
+  nodes: WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+): Set<string> {
+  const ids = collectWorkflowNodeIds(nodes);
+  collectCompositeMapStateEvidence(nodes, nodeStates, "", ids, new Set(), true);
+  return ids;
 }
 
 function collectPreviouslyProducedSubWorkflowNodeIds(
@@ -1881,6 +1928,7 @@ export class DAGExecutor {
                     node.id,
                     context,
                     scope,
+                    node,
                   ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
@@ -2271,7 +2319,7 @@ export class DAGExecutor {
     // done and let its dependents publish without ever raising the approval.
     // Refuse the run instead, matching how map and loop reject generated child
     // ids that collide with the parent graph.
-    const childNodeIds = collectWorkflowNodeIds(steps);
+    const childNodeIds = collectSubWorkflowNodeIds(steps, nodeStates);
     const collidingChildId = [...childNodeIds].find((childId) =>
       scope.declaredNodeIds.has(childId)
     );
