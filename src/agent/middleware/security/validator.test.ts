@@ -812,7 +812,9 @@ describe("securityMiddleware", () => {
   });
 
   it("preserves trusted matches beside unrelated assertion alternatives", async () => {
-    for (const pattern of [/safe|foo(?=bar)/, /(?:safe|foo(?<=bar))/, /safe|foo$/, /safe|\\bfoo/]) {
+    for (
+      const pattern of [/safe|foo(?=bar)/, /(?:safe|foo(?<=bar))/, /safe|(?:foo$)/, /safe|\bfoo/]
+    ) {
       const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
       const context = createContext({
         input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "hello" }] }],
@@ -849,21 +851,42 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("preserves trusted matches with stable negative assertions", async () => {
+    for (const pattern of [/safe(?!evil)/, /(?<!evil)safe/, /safe(?!(?:evil|bad))/]) {
+      const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
+      const context = createContext({
+        input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "hello" }] }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      await validate("safe", context.input as Message[]);
+    }
+  });
+
   it("rejects context-sensitive matches with the same trusted span", async () => {
-    const middleware = securityMiddleware({
-      input: { blockedPatterns: [/foo$|foo(?=\n\nbar)/] },
-    });
-    const context = createContext({
-      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "bar" }] }],
-    });
-    await middleware(context, () => Promise.resolve(createResponse("ok")));
-    const validate = getTurnProviderRequestValidator(context);
-    if (!validate) throw new Error("Expected provider-request validation");
-    await assertRejects(
-      () => validate("foo", context.input as Message[]),
-      Error,
-      "Input validation failed",
-    );
+    for (
+      const pattern of [
+        /foo$|foo(?=\n\nbar)/,
+        /foo(?!\n\nbar)|foo(?=\n\nbar)/,
+        /foo(?!$)|(?:foo$)/,
+      ]
+    ) {
+      const middleware = securityMiddleware({
+        input: { blockedPatterns: [pattern] },
+      });
+      const context = createContext({
+        input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "bar" }] }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      await assertRejects(
+        () => validate("foo", context.input as Message[]),
+        Error,
+        "Input validation failed",
+      );
+    }
   });
 
   it("rejects new sanitization matches beside a trusted sanitization example", async () => {

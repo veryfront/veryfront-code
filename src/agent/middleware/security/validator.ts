@@ -926,7 +926,48 @@ interface ProviderValidationRun {
   trustedSegments: Array<{ start: number; text: string }>;
 }
 
-/** Prove an alternative matches without executing any context assertions. */
+/** Adding surrounding text cannot make these negative assertions start succeeding. */
+function isMonotoneNegativeAssertion(pattern: RegExp, start: number): boolean {
+  const source = pattern.source;
+  const prefixLength = source.startsWith("(?!", start)
+    ? 3
+    : source.startsWith("(?<!", start)
+    ? 4
+    : 0;
+  if (prefixLength === 0) return false;
+  let groupDepth = 1;
+  let classDepth = 0;
+  for (let index = start + prefixLength; index < source.length; index++) {
+    const character = source[index];
+    if (character === "\\") {
+      const escaped = source[++index];
+      if (classDepth === 0 && (escaped === "b" || escaped === "B")) return false;
+      continue;
+    }
+    if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) {
+      classDepth++;
+      continue;
+    }
+    if (character === "]" && classDepth > 0) {
+      classDepth--;
+      continue;
+    }
+    if (classDepth > 0) continue;
+    if (character === "^" || character === "$") return false;
+    if (character === "(") {
+      if (
+        source.startsWith("(?=", index) || source.startsWith("(?!", index) ||
+        source.startsWith("(?<=", index) || source.startsWith("(?<!", index)
+      ) return false;
+      groupDepth++;
+    } else if (character === ")" && --groupDepth === 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Prove a matching alternative cannot start succeeding because text was added. */
 function hasContextIndependentMatch(
   pattern: RegExp,
   segment: { start: number; text: string },
@@ -951,9 +992,10 @@ function hasContextIndependentMatch(
         pattern.source.startsWith("(?=", index) || pattern.source.startsWith("(?!", index) ||
         pattern.source.startsWith("(?<=", index) || pattern.source.startsWith("(?<!", index))
     ) {
-      // Keep the original assertion and its captures intact, but make that
-      // execution path fail. Other alternatives retain their capture numbers.
-      source += "(?!)";
+      // A context-free negative assertion can only lose matches when text is
+      // added around the trusted segment. Keep those assertions executable.
+      // Disable other assertion paths without changing capture numbering.
+      if (!isMonotoneNegativeAssertion(pattern, index)) source += "(?!)";
     }
     source += character;
   }
