@@ -147,8 +147,9 @@ path.
 `veryfront up` makes the current directory live rather than promoting a reviewed
 Push, so it refreshes a stale receipt with a quiet Push instead of refusing. That
 refresh is an ordinary push: it keeps the remote-conflict checks that `--force`
-would waive. In a Git checkout, it prunes only files the checkout deleted from
-Git, so remote-only files stay in place. In a non-Git directory whose source
+would waive. In a Git checkout, it prunes files deleted from Git and receipt-owned
+paths missing from the current source, including previously uploaded untracked
+files. Other remote-only files stay in place. In a non-Git directory whose source
 digest changed, the refresh performs a full prune and removes remote-only files
 because the local directory is authoritative. The first refresh of a legacy
 receipt without a local source digest preserves remote-only files because the

@@ -1046,73 +1046,81 @@ describe("push receipt source snapshot", () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
     try {
-      await withGitProject(async ({ projectDir, runGit }) => {
-        await Deno.remove(`${projectDir}/.git`, { recursive: true });
-        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
-        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
-        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
-        _resetEnvironmentConfig();
-        await writeSyncTarget(projectDir, {
-          controlPlane: "https://control.example.test",
-          projectId: "project-123",
-          projectSlug: "my-project",
-          branch: "main",
-          files: {
-            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
-            "remote-only.ts": {
-              digest: await computeContentDigest("export const remote = true;\n"),
+      for (const initializeDuringUpload of [false, true]) {
+        await withGitProject(async ({ projectDir, runGit }) => {
+          await Deno.remove(`${projectDir}/.git`, { recursive: true });
+          if (initializeDuringUpload) {
+            await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+          }
+          Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+          Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+          Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+          _resetEnvironmentConfig();
+          await writeSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+              "remote-only.ts": {
+                digest: await computeContentDigest("export const remote = true;\n"),
+              },
             },
-          },
-        });
-        let fileListCalls = 0;
-        const mutations: string[] = [];
-        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
-          const request = input instanceof Request ? input : new Request(input, init);
-          const url = new URL(request.url);
-          if (request.method === "GET" && url.pathname === "/projects/my-project") {
-            return Response.json({ id: "project-123", slug: "my-project" });
-          }
-          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            fileListCalls += 1;
-            if (fileListCalls === 2) await runGit("init", "--quiet");
-            return Response.json({
-              data: [
-                {
-                  path: "app.ts",
-                  content: "export const value = 1;\n",
-                  version_id: "00000000-0000-4000-8000-000000000001",
-                },
-                {
-                  path: "remote-only.ts",
-                  content: "export const remote = true;\n",
-                  version_id: "00000000-0000-4000-8000-000000000002",
-                },
-              ],
-              page_info: {},
-            });
-          }
-          if (request.method === "PUT" || request.method === "DELETE") {
-            mutations.push(request.method);
-            return Response.json({});
-          }
-          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        };
+          });
+          let fileListCalls = 0;
+          const mutations: string[] = [];
+          const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (request.method === "GET" && url.pathname === "/projects/my-project") {
+              return Response.json({ id: "project-123", slug: "my-project" });
+            }
+            if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+              fileListCalls += 1;
+              if (fileListCalls === 2 && !initializeDuringUpload) await runGit("init", "--quiet");
+              return Response.json({
+                data: [
+                  {
+                    path: "app.ts",
+                    content: "export const value = 1;\n",
+                    version_id: "00000000-0000-4000-8000-000000000001",
+                  },
+                  {
+                    path: "remote-only.ts",
+                    content: "export const remote = true;\n",
+                    version_id: "00000000-0000-4000-8000-000000000002",
+                  },
+                ],
+                page_info: {},
+              });
+            }
+            if (request.method === "PUT" || request.method === "DELETE") {
+              mutations.push(request.method);
+              if (request.method === "PUT" && initializeDuringUpload) {
+                await runGit("init", "--quiet");
+              }
+              return Response.json({});
+            }
+            throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+          };
 
-        await withMockFetch(fetchHandler, () =>
-          assertRejects(
-            () =>
-              pushCommand({
-                projectDir,
-                branch: "main",
-                prune: true,
-                quiet: true,
-                expectedRepositoryAvailable: false,
-              }),
-            Error,
-            "Local source changed during push",
-          ));
-        assertEquals(mutations, []);
-      });
+          await withMockFetch(fetchHandler, () =>
+            assertRejects(
+              () =>
+                pushCommand({
+                  projectDir,
+                  branch: "main",
+                  prune: true,
+                  quiet: true,
+                  expectedRepositoryAvailable: false,
+                }),
+              Error,
+              "Local source changed during push",
+            ));
+          assertEquals(mutations, initializeDuringUpload ? ["PUT"] : []);
+        });
+      }
     } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();

@@ -151,7 +151,7 @@ export interface PushOptions {
   expectedCommitSha?: string | null;
   /** Reject when Git repository availability changed after push selection. */
   expectedRepositoryAvailable?: boolean;
-  /** Discover tracked deletions inside the same snapshot used for this push. */
+  /** Discover Git deletions and missing receipt-owned paths for this push. */
   discoverDeletedGitPaths?: boolean;
 }
 
@@ -1896,6 +1896,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
 
       if (deleteOps.length > 0) {
+        try {
+          await verifyExpectedRepositoryAvailability();
+        } catch (error) {
+          await writeConfirmedAppliedSyncTarget();
+          throw error;
+        }
         spinner.update("Deleting removed files...");
         deleteResult = await deleteFiles(
           client,
