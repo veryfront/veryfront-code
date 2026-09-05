@@ -77,10 +77,11 @@ export function resolveCacheRequestAuthority(
     ? "request"
     : hasRequestSelectedTenant
     ? "none"
-    : hostPrivateToken !== undefined
-    ? "host-private"
-    : hostToken && hasEnvFileValueSource("VERYFRONT_API_TOKEN")
+    : hostToken && hostToken !== hostPrivateToken &&
+        hasEnvFileValueSource("VERYFRONT_API_TOKEN")
     ? "env-file"
+    : hostPrivateToken !== undefined && hostToken === hostPrivateToken
+    ? "host-private"
     : hostToken
     ? "host-env"
     : envToken

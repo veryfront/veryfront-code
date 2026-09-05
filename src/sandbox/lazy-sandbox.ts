@@ -54,7 +54,7 @@ interface PendingOperation {
 
 interface DataPlaneRoute {
   baseUrl: string;
-  kind: "internal" | "proxy";
+  kind: "internal" | "runtime" | "proxy";
 }
 
 interface TrackedBackgroundCommand {
@@ -675,12 +675,13 @@ export class LazySandbox {
     }
 
     const runtimeEndpoint = this.#resolveRuntimeEndpointFor(session.endpoint, session.id);
+    const routeKind = this.#runtimeRouteKind(session.endpoint, runtimeEndpoint);
     const start = Date.now();
     let lastFailure = `sandbox status is ${session.status}`;
 
     while (Date.now() - start < this.startupTimeoutMs) {
       try {
-        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, {}, "internal");
+        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, {}, routeKind);
 
         if (res.ok) {
           return;
@@ -808,7 +809,7 @@ export class LazySandbox {
   ): void {
     if (backgroundCommand.status === "running") {
       this.activeBackgroundCommands.set(backgroundCommand.id, command);
-      if (command.routeKind === "internal") {
+      if (command.routeKind !== "proxy") {
         this.stopHeartbeatLoop();
       }
       return;
@@ -825,7 +826,7 @@ export class LazySandbox {
 
   private hasActiveInternalBackgroundCommand(): boolean {
     for (const command of this.activeBackgroundCommands.values()) {
-      if (command.routeKind === "internal") {
+      if (command.routeKind !== "proxy") {
         return true;
       }
     }
@@ -924,6 +925,17 @@ export class LazySandbox {
     return normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint);
   }
 
+  #runtimeRouteKind(
+    endpoint: string,
+    runtimeEndpoint: string,
+  ): "internal" | "runtime" {
+    const defaultEndpoint = resolveDefaultSandboxRuntimeEndpoint({ endpoint });
+    return normalizeDataPlaneBaseUrl(defaultEndpoint) !== normalizeDataPlaneBaseUrl(endpoint) &&
+        normalizeDataPlaneBaseUrl(runtimeEndpoint) === normalizeDataPlaneBaseUrl(defaultEndpoint)
+      ? "internal"
+      : "runtime";
+  }
+
   #resolveDataPlaneRoute(): DataPlaneRoute {
     const endpoint = this.#requireEndpoint();
     const sessionId = this.#requireSessionId();
@@ -938,7 +950,7 @@ export class LazySandbox {
     if (normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint)) {
       return {
         baseUrl: normalizeDataPlaneBaseUrl(runtimeEndpoint),
-        kind: "internal",
+        kind: this.#runtimeRouteKind(endpoint, runtimeEndpoint),
       };
     }
 
@@ -973,11 +985,11 @@ function isRetryableExecStartStatus(status: number): boolean {
 }
 
 function commandStreamUrl(route: DataPlaneRoute): string {
-  return `${route.baseUrl}${route.kind === "internal" ? "/exec" : "/commands/stream"}`;
+  return `${route.baseUrl}${route.kind === "proxy" ? "/commands/stream" : "/exec"}`;
 }
 
 function backgroundCommandsUrl(route: DataPlaneRoute): string {
-  return `${route.baseUrl}${route.kind === "internal" ? "/exec/commands" : "/commands"}`;
+  return `${route.baseUrl}${route.kind === "proxy" ? "/commands" : "/exec/commands"}`;
 }
 
 /**

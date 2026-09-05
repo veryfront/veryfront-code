@@ -187,7 +187,8 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
 
   const usesHostCredential = requestContext?.token === undefined &&
     scopedContext?.apiToken === undefined &&
-    getHostSecret("VERYFRONT_API_TOKEN") !== undefined;
+    resolvedContext.apiToken !== undefined &&
+    resolvedContext.apiToken === getHostSecret("VERYFRONT_API_TOKEN");
   return {
     apiBaseUrl: usesHostCredential
       ? resolveHostCredentialApiBaseUrl()

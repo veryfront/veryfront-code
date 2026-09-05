@@ -32,6 +32,8 @@ import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 // Mock fetch for testing
 let fetchCalls: FetchCall[] = [];
@@ -188,6 +190,72 @@ describe("Sandbox", () => {
 
       assertStringIncludes(fetchCalls[0]!.url, "https://api.test.com/sandbox-sessions");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
+    });
+
+    it("prefers a scoped cloud credential over ambient host auth", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "ambient-host-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-scoped-token",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await runWithVeryfrontCloudContext(
+        {
+          apiBaseUrl: "https://api.test.com",
+          apiToken: "scoped-cloud-token",
+        },
+        () => Sandbox.create(),
+      );
+
+      assertEquals(sandbox.id, "session-scoped-token");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer scoped-cloud-token");
+    });
+
+    it("rejects a scoped cloud credential on a different explicit origin", async () => {
+      await assertRejects(
+        () =>
+          runWithVeryfrontCloudContext(
+            {
+              apiBaseUrl: "https://scoped-api.example",
+              apiToken: "scoped-cloud-token",
+            },
+            () => Sandbox.create({ apiUrl: "https://other-api.example" }),
+          ),
+        Error,
+        "Sandbox auth must match the scoped Veryfront API URL",
+      );
+    });
+
+    it("rejects unrelated ambient credentials for a scoped API URL", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "ambient-host-token");
+      setEnv("VERYFRONT_API_URL", "https://host-api.example");
+      const createWithScopedUrl = () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "https://scoped-api.example" },
+          () => Sandbox.create(),
+        );
+
+      await assertRejects(
+        createWithScopedUrl,
+        Error,
+        "Sandbox auth must be supplied with the scoped Veryfront API URL",
+      );
+      await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "sandbox-test",
+              token: "request-token",
+            },
+            createWithScopedUrl,
+          ),
+        Error,
+        "Sandbox auth must be supplied with the scoped Veryfront API URL",
+      );
     });
 
     it("pairs project env-file sandbox credentials with their API URL", async () => {
@@ -1322,6 +1390,53 @@ describe("Sandbox", () => {
         false,
       );
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+    });
+
+    it("keeps an explicitly authenticated caller runtime endpoint behind egress policy", async () => {
+      const publicAddress = "192.0.2.1";
+      const transportFetch: typeof fetch = (input) => {
+        const url = String(input);
+        if (url === "https://api.test.com/sandbox-sessions") {
+          return Promise.resolve(jsonResponse({
+            id: "session-1",
+            endpoint: "https://session-1.sandbox.veryfront.com",
+            status: "running",
+          }));
+        }
+        if (url.startsWith("https://api.test.com/sandbox-sessions/session-1")) {
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.resolve(ndjsonResponse([{ type: "exit", exitCode: 0 }]));
+      };
+
+      await __runWithOutboundFetchTransportForTests(
+        {
+          fetch: transportFetch,
+          pinnedFetch: (url, _addresses, init) => transportFetch(url, init),
+          resolveHost: (hostname) =>
+            Promise.resolve(
+              hostname === "metadata.internal" ? ["169.254.169.254"] : [publicAddress],
+            ),
+        },
+        async () => {
+          const sandbox = Sandbox.createLazy({
+            authToken: "test-token",
+            apiUrl: "https://api.test.com",
+            execStartMaxAttempts: 1,
+            resolveRuntimeEndpoint: () => "http://metadata.internal",
+          });
+          try {
+            await assertRejects(
+              () => sandbox.executeCommand("true"),
+              Error,
+              "egress blocked",
+            );
+          } finally {
+            await sandbox.close();
+          }
+        },
+        { allowedResolvedAddresses: [publicAddress] },
+      );
     });
 
     it("waits long enough for pending sandbox sessions to survive operator reconcile lag", async () => {

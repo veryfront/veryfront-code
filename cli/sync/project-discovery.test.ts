@@ -15,7 +15,7 @@ import {
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { deleteToken } from "../auth/token-store.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchRemoteProjects,
   getCurrentUser,
@@ -85,7 +85,9 @@ describe("project-discovery", () => {
         (input, init) => {
           const url = new URL(String(input));
           assertEquals(url.pathname, "/projects");
-          authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+          authorizations.push(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization") ?? "",
+          );
           return Promise.resolve(
             new Response(
               JSON.stringify({

@@ -2041,8 +2041,10 @@ Deno.test({
   fn: async () => {
     const { ApiCacheBackend } = await importBackend();
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const capturedUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.35");
+    Deno.env.set("VERYFRONT_API_URL", "https://93.184.216.36/graphql");
     markEnvFileValue("VERYFRONT_API_BASE_URL");
     installMockFetch(
       ((input: RequestInfo | URL) => {
@@ -2062,7 +2064,7 @@ Deno.test({
       });
       assertEquals(await cache.delByPattern("agent:*"), 1);
       assertEquals(capturedUrls, [
-        "https://api.veryfront.com/projects/project-123/cache/del-pattern",
+        "https://93.184.216.35/projects/project-123/cache/del-pattern",
       ]);
 
       cache.cacheAuthority = () => ({
@@ -2072,10 +2074,72 @@ Deno.test({
       });
       assertEquals(await cache.delByPattern("agent:*"), 1);
       assertEquals(capturedUrls[1], "https://93.184.216.35/projects/project-123/cache/del-pattern");
+
+      cache.cacheAuthority = () => ({
+        token: "request-token",
+        projectRef: "project-123",
+        tokenSource: "request",
+      });
+      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(capturedUrls[2], "https://93.184.216.35/projects/project-123/cache/del-pattern");
+
+      cache.cacheAuthority = () => ({
+        token: "verified-control-plane-token",
+        projectRef: "project-123",
+        tokenSource: "verified-control-plane",
+      });
+      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(
+        capturedUrls[3],
+        "https://93.184.216.36/api/projects/project-123/cache/del-pattern",
+      );
     } finally {
       restoreMockFetch();
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
       else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      __resetEnvLoaderForTests();
+    }
+  },
+});
+
+Deno.test({
+  name: "ApiCacheBackend honors API_URL for ambient credentials",
+  fn: async () => {
+    const { ApiCacheBackend } = await importBackend();
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const capturedUrls: string[] = [];
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_URL", "https://93.184.216.36/graphql");
+    installMockFetch(
+      ((input: RequestInfo | URL) => {
+        capturedUrls.push(String(input));
+        return Promise.resolve(Response.json({ deleted: 1 }));
+      }) as typeof fetch,
+    );
+
+    try {
+      const cache = new ApiCacheBackend({
+        circuitBreakerName: "api-cache-ambient-url-test",
+      });
+      cache.cacheAuthority = () => ({
+        token: "request-token",
+        projectRef: "project-123",
+        tokenSource: "request",
+      });
+
+      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(capturedUrls, [
+        "https://93.184.216.36/api/projects/project-123/cache/del-pattern",
+      ]);
+    } finally {
+      restoreMockFetch();
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       __resetEnvLoaderForTests();
     }
   },
@@ -2092,6 +2156,26 @@ Deno.test({
       const authority = resolveCacheRequestAuthority();
       assertEquals(authority.token, "stored-login-token");
       assertEquals(authority.tokenSource, "host-private");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      __resetEnvLoaderForTests();
+    }
+  },
+});
+
+Deno.test({
+  name: "cache authority keeps env-file provenance when a stored host token also exists",
+  fn: () => {
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    Deno.env.set("VERYFRONT_API_TOKEN", "project-env-token");
+    markEnvFileValue("VERYFRONT_API_TOKEN");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    try {
+      const authority = resolveCacheRequestAuthority();
+      assertEquals(authority.token, "project-env-token");
+      assertEquals(authority.tokenSource, "env-file");
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
       if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");

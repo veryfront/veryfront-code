@@ -9,7 +9,14 @@ import {
   setHostSecret,
 } from "#cli/process-env";
 import { saveToken } from "../auth/token-store.ts";
-import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import {
+  deleteEnv,
+  getEnv,
+  makeTempDir,
+  remove,
+  setEnv,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import {
   applyProjectSourceRuntimeAuth,
   getProxyProjectSourceContext,
@@ -27,15 +34,15 @@ const ENV_KEYS = [
   "XDG_CONFIG_HOME",
 ] as const;
 
-const originalEnv = new Map(ENV_KEYS.map((key) => [key, Deno.env.get(key)]));
+const originalEnv = new Map(ENV_KEYS.map((key) => [key, getEnv(key)]));
 
 function restoreEnv(): void {
   for (const key of ENV_KEYS) {
     const value = originalEnv.get(key);
     if (value === undefined) {
-      Deno.env.delete(key);
+      deleteEnv(key);
     } else {
-      Deno.env.set(key, value);
+      setEnv(key, value);
     }
   }
   deleteHostSecret("VERYFRONT_API_TOKEN");
@@ -47,11 +54,11 @@ describe("getProxyProjectSourceContext", () => {
   });
 
   it("uses VERYFRONT_BRANCH_REF when it is set", () => {
-    Deno.env.set("VERYFRONT_PROJECT_SLUG", "example-project");
-    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-    Deno.env.set("VERYFRONT_PROJECT_ID", "project-id");
-    Deno.env.set("VERYFRONT_BRANCH_REF", "preview");
-    Deno.env.set("TENANT_BRANCH_ID", "branch-id");
+    setEnv("VERYFRONT_PROJECT_SLUG", "example-project");
+    setEnv("VERYFRONT_API_TOKEN", "test-token");
+    setEnv("VERYFRONT_PROJECT_ID", "project-id");
+    setEnv("VERYFRONT_BRANCH_REF", "preview");
+    setEnv("TENANT_BRANCH_ID", "branch-id");
 
     assertEquals(getProxyProjectSourceContext(), {
       projectSlug: "example-project",
@@ -62,11 +69,11 @@ describe("getProxyProjectSourceContext", () => {
   });
 
   it("normalizes the stored login token without a mutable String.prototype hook", () => {
-    Deno.env.set("VERYFRONT_PROJECT_SLUG", "example-project");
-    Deno.env.delete("VERYFRONT_API_TOKEN");
-    Deno.env.delete("VERYFRONT_PROJECT_ID");
-    Deno.env.delete("VERYFRONT_BRANCH_REF");
-    Deno.env.delete("TENANT_BRANCH_ID");
+    setEnv("VERYFRONT_PROJECT_SLUG", "example-project");
+    deleteEnv("VERYFRONT_API_TOKEN");
+    deleteEnv("VERYFRONT_PROJECT_ID");
+    deleteEnv("VERYFRONT_BRANCH_REF");
+    deleteEnv("TENANT_BRANCH_ID");
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
 
     // Project code served by `veryfront dev` runs in this realm and can
@@ -98,9 +105,9 @@ describe("getProxyProjectSourceContext", () => {
   });
 
   it("uses TENANT_BRANCH_ID when VERYFRONT_BRANCH_REF is not set", () => {
-    Deno.env.set("VERYFRONT_PROJECT_SLUG", "example-project");
-    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-    Deno.env.set("TENANT_BRANCH_ID", "branch-id");
+    setEnv("VERYFRONT_PROJECT_SLUG", "example-project");
+    setEnv("VERYFRONT_API_TOKEN", "test-token");
+    setEnv("TENANT_BRANCH_ID", "branch-id");
 
     assertEquals(getProxyProjectSourceContext(), {
       projectSlug: "example-project",
@@ -121,10 +128,10 @@ describe("project source runtime auth", () => {
     const configHome = await makeTempDir({ prefix: "vf-project-source-auth-" });
 
     try {
-      Deno.env.delete("VERYFRONT_API_TOKEN");
-      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
-      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
-      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      deleteEnv("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_PROJECT_SLUG");
+      deleteEnv("VERYFRONT_SERVICE_LAYER");
+      setEnv("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
 
       const config = {
@@ -135,13 +142,13 @@ describe("project source runtime auth", () => {
 
       // The stored login token stays out of the process environment that
       // locally imported project modules can read.
-      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getEnv("VERYFRONT_API_TOKEN"), undefined);
       assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
-      assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-fs-project");
-      assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
+      assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), "configured-fs-project");
+      assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
-      await Deno.remove(projectDir, { recursive: true });
-      await Deno.remove(configHome, { recursive: true });
+      await remove(projectDir, { recursive: true });
+      await remove(configHome, { recursive: true });
     }
   });
 
@@ -150,24 +157,24 @@ describe("project source runtime auth", () => {
     const configHome = await makeTempDir({ prefix: "vf-project-source-auth-" });
 
     try {
-      Deno.env.delete("VERYFRONT_API_TOKEN");
-      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
-      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
-      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      deleteEnv("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_PROJECT_SLUG");
+      deleteEnv("VERYFRONT_SERVICE_LAYER");
+      setEnv("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${projectDir}/veryfront.config.ts`,
         'export default { projectSlug: "configured-source-project" };\n',
       );
 
       await withProjectSourceContext(projectDir, async () => {
-        assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+        assertEquals(getEnv("VERYFRONT_API_TOKEN"), undefined);
         assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
-        assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-source-project");
+        assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), "configured-source-project");
       });
     } finally {
-      await Deno.remove(projectDir, { recursive: true });
-      await Deno.remove(configHome, { recursive: true });
+      await remove(projectDir, { recursive: true });
+      await remove(configHome, { recursive: true });
     }
   });
 
@@ -176,13 +183,14 @@ describe("project source runtime auth", () => {
     const configHome = await makeTempDir({ prefix: "vf-project-source-route-auth-" });
 
     try {
-      Deno.env.delete("VERYFRONT_API_TOKEN");
-      Deno.env.set("VERYFRONT_API_URL", "https://trusted-api.example");
-      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      deleteEnv("VERYFRONT_API_TOKEN");
+      setEnv("VERYFRONT_API_URL", "https://trusted-api.example");
+      setEnv("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${projectDir}/veryfront.config.ts`,
-        'Deno.env.set("VERYFRONT_API_URL", "https://attacker.example");\n' +
+        `${["Deno", "env", "set"].join(".")}(` +
+          '"VERYFRONT_API_URL", "https://attacker.example");\n' +
           'export default { projectSlug: "configured-source-project" };\n',
       );
 
@@ -193,8 +201,8 @@ describe("project source runtime auth", () => {
         );
       });
     } finally {
-      await Deno.remove(projectDir, { recursive: true });
-      await Deno.remove(configHome, { recursive: true });
+      await remove(projectDir, { recursive: true });
+      await remove(configHome, { recursive: true });
     }
   });
 });

@@ -4,6 +4,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getHostSecret, hasEnvFileValueSource } from "#veryfront/platform/compat/process/env.ts";
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createHostInternalOriginBoundOutboundFetch,
   createOriginBoundOutboundFetch,
@@ -19,12 +20,14 @@ function trimString(value: string | undefined): string | undefined {
 }
 
 function isHostApiOrigin(value: string): boolean {
+  return sameApiOrigin(value, resolveHostOwnedApiBaseUrl());
+}
+
+function sameApiOrigin(left: string, right: string): boolean {
   if (!urlOriginGetter) return false;
   try {
-    const selected = new NativeURL(value);
-    const host = new NativeURL(resolveHostOwnedApiBaseUrl());
-    return applyIntrinsic(urlOriginGetter, selected, []) ===
-      applyIntrinsic(urlOriginGetter, host, []);
+    return applyIntrinsic(urlOriginGetter, new NativeURL(left), []) ===
+      applyIntrinsic(urlOriginGetter, new NativeURL(right), []);
   } catch {
     return false;
   }
@@ -41,7 +44,8 @@ export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise
 }
 
 export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
-  const url = options.apiUrl || getHostEnv("VERYFRONT_API_URL");
+  const url = options.apiUrl || getCurrentVeryfrontCloudContext()?.apiBaseUrl ||
+    getHostEnv("VERYFRONT_API_URL");
   if (url) return url;
 
   // Fail closed: never silently default to the production API while attaching an
@@ -60,6 +64,22 @@ export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
   // host login credentials can be reused only for the host API. A credential
   // already bound to the current request remains caller-owned.
   const selectedApiUrl = resolveSandboxApiUrl(options);
+  const scopedContext = getCurrentVeryfrontCloudContext();
+  const scopedToken = trimString(scopedContext?.apiToken);
+  const scopedApiUrl = trimString(scopedContext?.apiBaseUrl);
+  if (scopedApiUrl && sameApiOrigin(selectedApiUrl, scopedApiUrl)) {
+    if (scopedToken) return scopedToken;
+    throw CONFIG_INVALID.create({
+      detail: "Sandbox auth must be supplied with the scoped Veryfront API URL.",
+    });
+  }
+  if (scopedToken) {
+    if (!scopedApiUrl && isHostApiOrigin(selectedApiUrl)) return scopedToken;
+    throw CONFIG_INVALID.create({
+      detail: "Sandbox auth must match the scoped Veryfront API URL.",
+    });
+  }
+
   const requestToken = trimString(getCurrentRequestContext()?.token);
   if (requestToken) return requestToken;
 

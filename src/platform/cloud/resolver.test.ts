@@ -218,6 +218,17 @@ describe("platform/cloud/resolver", () => {
     assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://project-api.example/api");
   });
 
+  it("keeps an env-file token paired with its API URL when a stored token also exists", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_project_token");
+    setEnv("VERYFRONT_API_URL", "https://project-api.example/graphql");
+    markEnvFileValue("VERYFRONT_API_TOKEN");
+    markEnvFileValue("VERYFRONT_API_URL");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    assertEquals(getVeryfrontCloudBootstrap().apiToken, "vf_project_token");
+    assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://project-api.example/api");
+  });
+
   it("keeps the host bootstrap's env-file token paired with its API URL", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_project_token");
     setEnv("VERYFRONT_API_URL", "https://project-api.example/graphql");

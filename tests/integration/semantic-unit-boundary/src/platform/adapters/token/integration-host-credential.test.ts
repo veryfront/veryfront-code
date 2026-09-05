@@ -39,6 +39,7 @@ describe("platform/adapters/token/integration host credential boundary", () => {
     setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
     const requests: Array<{ origin: string; authorization: string }> = [];
     let ambientFetchCalled = false;
+    let privateTokenReachedMutableTrim = false;
 
     await withTempDir(async (dir) => {
       await Deno.writeTextFile(
@@ -71,12 +72,24 @@ describe("platform/adapters/token/integration host credential boundary", () => {
             configurable: true,
             writable: true,
           });
-          await getTokenStorageAdapter();
+          const originalTrim = String.prototype.trim;
+          String.prototype.trim = function (): string {
+            if (String(this) === "host-private-token") {
+              privateTokenReachedMutableTrim = true;
+            }
+            return Reflect.apply(originalTrim, this, []);
+          };
+          try {
+            await getTokenStorageAdapter();
+          } finally {
+            String.prototype.trim = originalTrim;
+          }
         },
       );
     });
 
     assertEquals(ambientFetchCalled, false);
+    assertEquals(privateTokenReachedMutableTrim, false);
     assertEquals(requests, [{
       origin: "https://api.veryfront.com",
       authorization: "Bearer host-private-token",

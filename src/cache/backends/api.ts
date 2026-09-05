@@ -35,12 +35,36 @@ const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
 const ERROR_BODY_MAX_LENGTH = 500;
+const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIGURED_RESPONSE_BYTES = 128 * 1024 * 1024;
 const NativeURL = URL;
 const applyIntrinsic = Reflect.apply;
 const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 const urlHostGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "host")?.get;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringEndsWith = String.prototype.endsWith;
+const stringSlice = String.prototype.slice;
+const stringTrim = String.prototype.trim;
+
+function normalizeConfiguredApiBaseUrl(value: string, graphqlUrl = false): string {
+  const trimmed = applyIntrinsic(stringTrim, value, []) as string;
+  let end = trimmed.length;
+  while (end > 0 && applyIntrinsic(stringCharCodeAt, trimmed, [end - 1]) === 47) end--;
+  const normalized = applyIntrinsic(stringSlice, trimmed, [0, end]) as string;
+  return graphqlUrl && applyIntrinsic(stringEndsWith, normalized, ["/graphql"])
+    ? `${applyIntrinsic(stringSlice, normalized, [0, -"/graphql".length]) as string}/api`
+    : normalized;
+}
+
+function resolveConfiguredApiBaseUrl(): string {
+  const apiBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+  const normalizedApiBaseUrl = apiBaseUrl && normalizeConfiguredApiBaseUrl(apiBaseUrl);
+  if (normalizedApiBaseUrl) return normalizedApiBaseUrl;
+  const apiUrl = getHostEnv("VERYFRONT_API_URL");
+  const normalizedApiUrl = apiUrl && normalizeConfiguredApiBaseUrl(apiUrl, true);
+  return normalizedApiUrl || DEFAULT_API_BASE_URL;
+}
 
 function readUrlProperty(
   url: URL,
@@ -85,9 +109,7 @@ export class ApiCacheBackend implements CacheBackend {
     } = {},
   ) {
     this.hasExplicitApiBaseUrl = options.apiBaseUrl !== undefined;
-    this.apiBaseUrl = options.apiBaseUrl ??
-      getHostEnv("VERYFRONT_API_BASE_URL") ??
-      "https://api.veryfront.com";
+    this.apiBaseUrl = options.apiBaseUrl ?? resolveConfiguredApiBaseUrl();
     this.hostApiBaseUrl = resolveHostOwnedApiBaseUrl();
     this.apiOrigin = readUrlProperty(new NativeURL(this.apiBaseUrl), urlOriginGetter);
     this.explicitApiToken = options.apiToken;
@@ -190,9 +212,10 @@ export class ApiCacheBackend implements CacheBackend {
     try {
       return await this.circuitBreaker.execute(async () => {
         const encodedProjectRef = encodeURIComponent(projectRef);
-        const apiBaseUrl = this.hasExplicitApiBaseUrl || tokenSource === "env-file"
-          ? this.apiBaseUrl
-          : this.hostApiBaseUrl;
+        const apiBaseUrl = tokenSource === "verified-control-plane" ||
+            !this.hasExplicitApiBaseUrl && tokenSource === "host-private"
+          ? this.hostApiBaseUrl
+          : this.apiBaseUrl;
         const parsedApiBaseUrl = new NativeURL(apiBaseUrl);
         const apiOrigin = readUrlProperty(parsedApiBaseUrl, urlOriginGetter);
         const url = `${apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;

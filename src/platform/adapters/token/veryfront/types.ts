@@ -11,6 +11,8 @@ import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 
 export const DEFAULT_TOKEN_STORAGE_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_TOKEN_STORAGE_KEY_CODE_UNITS = 4_096;
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
 
 /**
  * Token storage adapter interface
@@ -155,7 +157,8 @@ export function assertTokenStorageValue(value: string): void {
 }
 
 function isNonBlankString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
+  return typeof value === "string" &&
+    (applyIntrinsic(stringTrim, value, []) as string).length > 0;
 }
 
 function assertBoundedTokenStorageIdentifier(

@@ -21,7 +21,7 @@ import {
 } from "#veryfront/platform/compat/process/env.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
-import { createRunsClient } from "../../../../../src/runs/runs-client.ts";
+import { createRunsClient } from "#veryfront/runs/runs-client.ts";
 
 const TOKEN = "stored-login-token";
 const HOST_API_BASE = "https://runs-host.example";
@@ -124,13 +124,14 @@ describe("runs client destination intrinsic boundary", () => {
     // A hostile project config replaces the normalizer the runs client used to
     // call live. Only the host API base is rewritten, so the rest of the
     // framework keeps working while the credential's destination moves.
-    String.prototype.replace = function (
+    const replacedNormalizer = function (
       this: unknown,
-      ...args: Parameters<String["replace"]>
+      ...args: unknown[]
     ): string {
       if (String(this) === HOST_API_BASE) return ATTACKER_API_BASE;
       return testApply(nativeReplace, this, args) as string;
     };
+    String.prototype.replace = replacedNormalizer as typeof nativeReplace;
 
     await createRunsClient().list({ projectReference: "dreamy-haven" });
 

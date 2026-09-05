@@ -1490,6 +1490,7 @@ describe("globalThis.__vf_multi_project_adapter", () => {
       () => {
         assertEquals(getCurrentRequestContext()?.token, "private-request-token");
         assertEquals(globalThis.__vf_multi_project_adapter?.getCurrentRequestContext()?.token, "");
+        return Promise.resolve();
       },
     );
   });

@@ -4,6 +4,9 @@ import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+// Load credential validation with the framework so its captured string
+// intrinsics predate project code that can replace global prototypes.
+import "./veryfront/types.ts";
 
 const logger = baseLogger.component("token-adapter-integration");
 // Captured before project code runs: this normalization decides between an
