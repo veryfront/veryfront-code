@@ -876,6 +876,30 @@ describe("child-run-result-summary", () => {
       );
     });
 
+    it("retains case-insensitive fields in inline configuration", () => {
+      for (
+        const field of [
+          "tools",
+          '"TOOLS"',
+          "'ToOl_IdS'",
+          "PrOvIdEr_ToOl_IdS",
+        ]
+      ) {
+        const text = "Use ` " + field + ' : ["create_agent"]`.';
+        assertEquals(
+          buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+          field.toLowerCase().includes("provider_tool_ids")
+            ? { providerToolIds: ["create_agent"] }
+            : { toolIds: ["create_agent"] },
+        );
+      }
+      assertEquals(
+        buildChildRunResultSummary("Use `TOOLS are listed in the docs`.", { mode: "structured" })
+          .contractFacts,
+        undefined,
+      );
+    });
+
     it("retains assignment syntax in inline configuration declarations", () => {
       for (const field of ["tools", '"tools"', "'tool_ids'", "provider_tool_ids"]) {
         const text = "Use ` " + field + ' = ["create_agent"]`.';

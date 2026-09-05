@@ -1115,7 +1115,7 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
           inlineCodeEnd = cursor + inlineCode[0].length;
           const code = inlineCode[0].slice(1, -1).trimStart();
           const configuration = code.includes("{") || code.includes("=") || code.startsWith("[") ||
-            /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/.test(code);
+            /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/i.test(code);
           if (!configuration) {
             cursor = inlineCodeEnd;
             continue;
