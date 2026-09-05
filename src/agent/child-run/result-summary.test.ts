@@ -830,6 +830,24 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("extracts declarations from inline configuration objects but not their string values", () => {
+      assertEquals(
+        buildChildRunResultSummary('Use `{tool_ids: ["create_agent"]}` when delegating.', {
+          mode: "structured",
+        }).contractFacts,
+        {
+          toolIds: ["create_agent"],
+        },
+      );
+      assertEquals(
+        buildChildRunResultSummary(
+          'Use `{"description":" example tools: [\\"bogus_tool\\"]"}` when delegating.',
+          { mode: "structured" },
+        ).contractFacts,
+        undefined,
+      );
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

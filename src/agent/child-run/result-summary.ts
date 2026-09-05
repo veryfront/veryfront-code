@@ -982,6 +982,7 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
   let cursor = 0;
   let lineStart = 0;
   let apostropheLineStart = -1;
+  let inlineCodeEnd = -1;
   let proseApostrophes: ReadonlySet<number> = new Set();
   for (const match of text.matchAll(pattern)) {
     while (cursor < match.index!) {
@@ -997,11 +998,20 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
           continue;
         }
       }
-      if (character === "`" && text[cursor - 1] !== "`" && text[cursor + 1] !== "`") {
+      if (
+        character === "`" && cursor !== inlineCodeEnd - 1 && text[cursor - 1] !== "`" &&
+        text[cursor + 1] !== "`"
+      ) {
         const inlineCode = /^`[^`\r\n]+`/.exec(text.slice(cursor));
         if (inlineCode && text[cursor + inlineCode[0].length] !== "`") {
-          cursor += inlineCode[0].length;
-          continue;
+          inlineCodeEnd = cursor + inlineCode[0].length;
+          const code = inlineCode[0].slice(1, -1).trimStart();
+          const configuration = code.startsWith("{") || code.startsWith("[") ||
+            /^(?:tools|tool_ids|provider_tool_ids)\s*:/.test(code);
+          if (!configuration) {
+            cursor = inlineCodeEnd;
+            continue;
+          }
         }
       }
       if (character === '"' || character === "'") {
