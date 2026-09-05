@@ -987,17 +987,27 @@ interface QueuedJsxCachePrune {
 /** At most one pending follow-up prune per cache directory. */
 const scheduledJsxCachePrunes = new Map<string, ScheduledJsxCachePrune>();
 const queuedJsxCachePrunes = new Map<string, QueuedJsxCachePrune>();
+const pendingJsxCachePersistence = new Map<
+  string,
+  { fireAtMs: number; requestDirectory: string }
+>();
+let jsxCachePersistencePump: Promise<void> | undefined;
+let jsxCachePersistenceRetry: ReturnType<typeof setTimeout> | undefined;
 const inFlightJsxCachePrunes = new Set<string>();
 let persistedJsxCachePrunePromotion: Promise<void> | undefined;
 let persistedJsxCachePrunePromotionRequested = false;
+let persistedJsxCachePrunePromotionRetry: ReturnType<typeof setTimeout> | undefined;
 
 function getPersistedJsxCachePruneRequestDirectory(): string {
   return join(getMdxEsmCacheDir(), JSX_CACHE_PRUNE_REQUEST_DIRECTORY);
 }
 
-async function getPersistedJsxCachePruneRequestPath(esmCacheDir: string): Promise<string> {
+async function getPersistedJsxCachePruneRequestPath(
+  esmCacheDir: string,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+): Promise<string> {
   return join(
-    getPersistedJsxCachePruneRequestDirectory(),
+    requestDirectory,
     `${JSX_CACHE_PRUNE_REQUEST_PREFIX}${await computeHash(esmCacheDir)}.json`,
   );
 }
@@ -1005,12 +1015,12 @@ async function getPersistedJsxCachePruneRequestPath(esmCacheDir: string): Promis
 async function persistJsxCachePruneRequest(
   esmCacheDir: string,
   fireAtMs: number,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<string | undefined> {
   const localFs = getLocalFs();
-  const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   try {
     await localFs.mkdir(requestDirectory, { recursive: true });
-    const requestPath = await getPersistedJsxCachePruneRequestPath(esmCacheDir);
+    const requestPath = await getPersistedJsxCachePruneRequestPath(esmCacheDir, requestDirectory);
     return await withJsxArtifactLock(requestPath, async (assertLeaseOwned) => {
       let effectiveFireAtMs = fireAtMs;
       try {
@@ -1024,10 +1034,6 @@ async function persistJsxCachePruneRequest(
             (existing as { fireAtMs: number }).fireAtMs,
             fireAtMs,
           );
-          if (
-            (existing as { fireAtMs: number }).fireAtMs <= fireAtMs &&
-            typeof (existing as { generation?: unknown }).generation === "string"
-          ) return (existing as { generation: string }).generation;
         }
       } catch { /* a missing or malformed request is replaced below */ }
       const request = IntrinsicObjectCreate(null) as PersistedJsxCachePruneRequest;
@@ -1282,12 +1288,21 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
 }
 
 function requestPersistedJsxCachePrunePromotion(): void {
+  if (persistedJsxCachePrunePromotionRetry !== undefined) return;
   if (persistedJsxCachePrunePromotion !== undefined) {
     persistedJsxCachePrunePromotionRequested = true;
     return;
   }
   persistedJsxCachePrunePromotionRequested = false;
-  const promotion = promotePersistedJsxCachePruneRequest();
+  const promotion = promotePersistedJsxCachePruneRequest().catch(() => {
+    // A full persistence tier must defer background promotion, not reject an
+    // unobserved promise. Admission keeps the old timer until queueing succeeds.
+    persistedJsxCachePrunePromotionRetry = setTimeout(() => {
+      persistedJsxCachePrunePromotionRetry = undefined;
+      requestPersistedJsxCachePrunePromotion();
+    }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+    unrefTimer(persistedJsxCachePrunePromotionRetry);
+  });
   persistedJsxCachePrunePromotion = promotion;
   void promotion.finally(() => {
     if (persistedJsxCachePrunePromotion === promotion) {
@@ -1296,6 +1311,33 @@ function requestPersistedJsxCachePrunePromotion(): void {
         requestPersistedJsxCachePrunePromotion();
       }
     }
+  });
+}
+
+function pumpJsxCachePersistence(): void {
+  if (jsxCachePersistencePump !== undefined || jsxCachePersistenceRetry !== undefined) return;
+  const pump = (async () => {
+    for (const [directory, request] of [...pendingJsxCachePersistence]) {
+      if (pendingJsxCachePersistence.get(directory) !== request) continue;
+      const generation = await persistJsxCachePruneRequest(
+        directory,
+        request.fireAtMs,
+        request.requestDirectory,
+      );
+      if (generation !== undefined && pendingJsxCachePersistence.get(directory) === request) {
+        pendingJsxCachePersistence.delete(directory);
+      }
+    }
+  })();
+  jsxCachePersistencePump = pump;
+  void pump.finally(() => {
+    jsxCachePersistencePump = undefined;
+    if (pendingJsxCachePersistence.size === 0) return;
+    jsxCachePersistenceRetry = setTimeout(() => {
+      jsxCachePersistenceRetry = undefined;
+      pumpJsxCachePersistence();
+    }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+    unrefTimer(jsxCachePersistenceRetry);
   });
 }
 
@@ -1315,7 +1357,18 @@ function queueJsxCachePrune(
     return;
   }
   if (queuedJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
-    void persistJsxCachePruneRequest(esmCacheDir, fireAtMs);
+    const pending = pendingJsxCachePersistence.get(esmCacheDir);
+    if (
+      pending === undefined &&
+      pendingJsxCachePersistence.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES
+    ) {
+      throw new JsxCacheCapacityError("JSX cache maintenance backlog is exhausted");
+    }
+    pendingJsxCachePersistence.set(esmCacheDir, {
+      fireAtMs: Math.min(fireAtMs, pending?.fireAtMs ?? fireAtMs),
+      requestDirectory: pending?.requestDirectory ?? getPersistedJsxCachePruneRequestDirectory(),
+    });
+    pumpJsxCachePersistence();
     return;
   }
   queuedJsxCachePrunes.set(esmCacheDir, { fireAtMs, persistedGeneration });
@@ -1371,13 +1424,13 @@ function scheduleJsxCachePruneRetry(
       queueJsxCachePrune(esmCacheDir, fireAtMs, persistedGeneration);
       return;
     }
-    clearTimeout(latest[1].timer!);
-    scheduledJsxCachePrunes.delete(latest[0]);
     queueJsxCachePrune(
       latest[0],
       latest[1].fireAtMs,
       latest[1].persistedGeneration,
     );
+    clearTimeout(latest[1].timer!);
+    scheduledJsxCachePrunes.delete(latest[0]);
   }
   const timer = setTimeout(() => {
     const fired = scheduledJsxCachePrunes.get(esmCacheDir);
@@ -1446,6 +1499,15 @@ function cancelScheduledJsxCachePrunes(): void {
   }
   scheduledJsxCachePrunes.clear();
   queuedJsxCachePrunes.clear();
+  pendingJsxCachePersistence.clear();
+  if (persistedJsxCachePrunePromotionRetry !== undefined) {
+    clearTimeout(persistedJsxCachePrunePromotionRetry);
+    persistedJsxCachePrunePromotionRetry = undefined;
+  }
+  if (jsxCachePersistenceRetry !== undefined) {
+    clearTimeout(jsxCachePersistenceRetry);
+    jsxCachePersistenceRetry = undefined;
+  }
   if (lazyJsxArtifactHeartbeat !== undefined) {
     clearInterval(lazyJsxArtifactHeartbeat);
     lazyJsxArtifactHeartbeat = undefined;
