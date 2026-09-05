@@ -781,6 +781,23 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("rejects context-sensitive matches with the same trusted span", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/foo$|foo(?=\n\nbar)/] },
+    });
+    const context = createContext({
+      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "bar" }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validate("foo", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
   it("rejects new sanitization matches beside a trusted sanitization example", async () => {
     const middleware = securityMiddleware({ input: { sanitize: true } });
     const context = createContext({
@@ -1539,6 +1556,27 @@ describe("securityMiddleware", () => {
     assertEquals(message?.role, "system");
     assertEquals(message?.id, "system-1");
     assertEquals(textPartValue(message?.parts[0]), "stay terse");
+  });
+
+  it("sanitizes text without evaluating unrelated extension accessors", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    for (const fragments of [["<script>x</script>hello"], ["<scr", "ipt>x</script>hello"]]) {
+      const context = createContext({
+        input: [{
+          id: "caller",
+          role: "system",
+          parts: fragments.map((text) => ({
+            type: "text" as const,
+            text,
+            get extension() {
+              throw new Error("Unrelated extension accessor");
+            },
+          })),
+        }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      assertEquals(textPartValue((context.input as Message[])[0]?.parts[0]), "hello");
+    }
   });
 
   it("sanitizes a harmful sequence split across sibling text parts", async () => {

@@ -1,4 +1,10 @@
-import type { AgentContext, AgentResponse, AgentSystem, Message } from "#veryfront/agent/types.ts";
+import type {
+  AgentContext,
+  AgentResponse,
+  AgentSystem,
+  Message,
+  MessagePart,
+} from "#veryfront/agent/types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
 import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
@@ -746,18 +752,26 @@ function collapseTextParts(parts: Message["parts"], text: string | undefined): M
       collapsed.push(part);
     } else if (!replaced && text !== undefined) {
       replaced = true;
-      collapsed.push({ ...part, text });
+      collapsed.push(copySanitizedTextPart(part, text));
     }
   }
   return collapsed;
 }
 
+function copySanitizedTextPart(part: MessagePart, text: string): MessagePart {
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(part);
+    descriptors.text = { value: text, enumerable: true, configurable: true, writable: true };
+    return Object.create(Object.prototype, descriptors);
+  } catch {
+    // Text conversion requires only type and text. A Proxy can deny descriptor
+    // enumeration while still exposing those structural fields.
+    return { type: "text", text };
+  }
+}
+
 /**
- * Sanitize the text parts of caller-authored messages in place.
- *
- * Structured input must stay structured: replacing a `Message[]` with the
- * sanitized scalar would drop the role, message id, and every other field, so
- * downstream middleware would no longer see the system/user split.
+ * Sanitize caller text while preserving structured roles and message ids.
  */
 function sanitizeStructuredInput(validator: InputValidator, messages: Message[]): Message[] {
   let changed = false;
@@ -771,7 +785,7 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
       const sanitized = sanitizeTextToFixpoint(validator, part.text);
       if (sanitized === part.text) return part;
       messageChanged = true;
-      return { ...part, text: sanitized };
+      return copySanitizedTextPart(part, sanitized);
     });
 
     // A harmful sequence can also span sibling text parts ("<scr" + "ipt>…"):
@@ -912,6 +926,35 @@ interface ProviderValidationRun {
   trustedSegments: Array<{ start: number; text: string }>;
 }
 
+/** Assertions can change the meaning of a match without changing its span. */
+function patternInspectsMatchContext(pattern: RegExp): boolean {
+  const source = pattern.source;
+  let classDepth = 0;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (character === "\\") {
+      const escaped = source[++index];
+      if (classDepth === 0 && (escaped === "b" || escaped === "B")) return true;
+      continue;
+    }
+    if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) {
+      classDepth++;
+      continue;
+    }
+    if (character === "]" && classDepth > 0) {
+      classDepth--;
+      continue;
+    }
+    if (classDepth > 0) continue;
+    if (character === "^" || character === "$") return true;
+    if (
+      source.startsWith("(?=", index) || source.startsWith("(?!", index) ||
+      source.startsWith("(?<=", index) || source.startsWith("(?<!", index)
+    ) return true;
+  }
+  return false;
+}
+
 /** Reject assembly matches outside unchanged runtime or historical segments. */
 async function assertProviderRunsValid(
   validator: InputValidator,
@@ -926,6 +969,12 @@ async function assertProviderRunsValid(
     for (const violation of validation.violations) {
       const pattern = violation.pattern;
       if (pattern === undefined) {
+        introducedViolations.push(violation);
+        continue;
+      }
+      // Do not grant a trusted-span exemption when the pattern can inspect
+      // caller-controlled context outside that span.
+      if (patternInspectsMatchContext(pattern)) {
         introducedViolations.push(violation);
         continue;
       }
