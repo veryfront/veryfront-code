@@ -65,8 +65,12 @@ export class VeryfrontApiClient {
     this.config = { ...config, retry: retryConfig };
 
     const tokenProvider: TokenProvider = () => {
-      const contextualToken = this.useContextualToken ? currentRequestContext()?.token : undefined;
-      if (contextualToken) return contextualToken;
+      const requestContext = this.useContextualToken ? currentRequestContext() : null;
+      if (requestContext) {
+        if (requestContext.token) return requestContext.token;
+        if (this.config.apiToken) return this.config.apiToken;
+        throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
+      }
       if (this.requestToken) return this.requestToken;
       if (this.config.apiToken) return this.config.apiToken;
       throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });

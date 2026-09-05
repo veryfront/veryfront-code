@@ -70,6 +70,20 @@ describe("VeryfrontApiClient", () => {
       );
     });
 
+    it("uses the config token for an empty async-local token", async () => {
+      const client = createClient();
+      client.setRequestToken("another-request-token");
+      client.enableContextualToken();
+
+      await runWithRequestContext(
+        { projectSlug: "request-project", token: "" },
+        () => {
+          assertEquals(client.getToken(), "config-token");
+          return Promise.resolve();
+        },
+      );
+    });
+
     it("preserves an explicit client token unless contextual auth is enabled", async () => {
       const client = createClient();
       client.setRequestToken("explicit-token");
