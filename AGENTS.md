@@ -289,7 +289,10 @@ Match errors with `error instanceof VeryfrontError && error.slug === "my-error-s
 
 - Use `describe()` and `it()` from `#veryfront/testing/bdd.ts`.
 - Use assertions from `#veryfront/testing/assert.ts`.
-- Keep test files colocated as `*.test.ts` next to source.
+- Keep unit tests colocated as `*.test.ts` next to source.
+- Keep integration tests under `tests/integration/` and E2E tests under `tests/e2e/`, not next to source.
+- Follow `scripts/test/suites.ts` and the semantic test audit when classifying filesystem and
+  native-library integration coverage.
 - Do not delete tests to force a green run.
 
 ### Argument parsing
