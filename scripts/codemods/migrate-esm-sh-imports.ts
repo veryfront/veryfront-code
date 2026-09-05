@@ -3,15 +3,11 @@
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
-import {
-  lstat as lstatNativeFile,
-  open as openNativeFile,
-  stat as statNativeFile,
-} from "node:fs/promises";
+import { lstat as lstatNativeFile, open as openNativeFile } from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
 import {
-  createPinnedWindowsFile,
   openPinnedPosixFile,
+  openPinnedWindowsFile,
   readPinnedDirectory,
 } from "./pinned-directory.ts";
 
@@ -600,23 +596,24 @@ function failedCreation(error: unknown, path: string): SafeFileGuardError {
 
 async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r+" | "wx+") {
   if (Deno.build.os === "windows") {
-    if (mode !== "wx+") return await openNativeFile(path, mode);
     // Resolve short-name aliases before comparing the parent to the canonical
     // project root. The native walk still rejects subsequent reparse swaps.
     const parent = await Deno.realPath(nativeDirname(path));
-    const created = createPinnedWindowsFile(`${parent}/${parsePath(path).base}`, projectRoot);
+    const pinned = openPinnedWindowsFile(`${parent}/${parsePath(path).base}`, projectRoot, mode);
     try {
-      // Reopening never creates a file. Keep the native creation handle alive
+      // Reopening never creates a file. Keep the native no-follow handle alive
       // until the Node handle proves it owns the same file, preventing ID reuse.
-      const file = await openNativeFile(path, "r+");
+      const file = await openNativeFile(path, mode === "wx+" ? "r+" : mode);
       try {
         if (
           !sameFileIdentity(
-            stableFileIdentity(created),
+            stableFileIdentity(pinned),
             stableFileIdentity(await file.stat({ bigint: true })),
           )
         ) {
-          throw new SafeFileGuardError("Refusing to write a file that changed after creation.");
+          throw new SafeFileGuardError(
+            "Refusing to access a file that changed after the native open.",
+          );
         }
         return file;
       } catch (error) {
@@ -624,9 +621,9 @@ async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r
         throw error;
       }
     } catch (error) {
-      throw failedCreation(error, path);
+      throw mode === "wx+" ? failedCreation(error, path) : error;
     } finally {
-      created.close();
+      pinned.close();
     }
   }
   const parent = await Deno.realPath(nativeDirname(path));
@@ -634,9 +631,6 @@ async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r
 }
 
 async function pathFileIdentity(path: string, projectRoot: string): Promise<StableFileIdentity> {
-  if (Deno.build.os === "windows") {
-    return stableFileIdentity(await statNativeFile(path, { bigint: true }));
-  }
   const file = await openProjectFile(path, projectRoot, "r");
   try {
     return stableFileIdentity(await file.stat({ bigint: true }));

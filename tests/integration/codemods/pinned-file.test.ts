@@ -1,13 +1,71 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { writeTextFileInsideProject } from "../../../scripts/codemods/migrate-esm-sh-imports.ts";
+import {
+  readProjectPackageJson,
+  writeTextFileInsideProject,
+} from "../../../scripts/codemods/migrate-esm-sh-imports.ts";
 import {
   openPinnedPosixFile,
   readPinnedDirectory,
 } from "../../../scripts/codemods/pinned-directory.ts";
 
 describe("pinned file operations", () => {
+  for (const operation of ["read", "write"] as const) {
+    it(`pins existing Windows files before ${operation} validation`, async () => {
+      if (Deno.build.os !== "windows") return;
+      const base = await Deno.realPath(await makeTempDir());
+      const root = `${base}/project`;
+      const moved = `${base}/original`;
+      const outside = `${base}/outside`;
+      await Deno.mkdir(root);
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(`${root}/package.json`, '{"name":"inside"}');
+      await Deno.writeTextFile(`${outside}/package.json`, '{"name":"outside"}');
+      const originalDlopen = Deno.dlopen;
+      let swapped = false;
+      try {
+        Deno.dlopen = ((...args: Parameters<typeof Deno.dlopen>) => {
+          const library = Reflect.apply(originalDlopen, Deno, args);
+          return new Proxy(library, {
+            get(nativeLibrary, key) {
+              if (key === "symbols") {
+                return new Proxy(nativeLibrary.symbols, {
+                  get(symbols, symbol) {
+                    const fn = Reflect.get(symbols, symbol);
+                    if (symbol !== "NtCreateFile") return fn;
+                    return (...values: unknown[]) => {
+                      if (!swapped && values[7] === 1 && (Number(values[8]) & 0x40) !== 0) {
+                        Deno.renameSync(root, moved);
+                        swapped = true;
+                        Deno.symlinkSync(outside, root, { type: "junction" });
+                      }
+                      return Reflect.apply(fn, undefined, values);
+                    };
+                  },
+                });
+              }
+              const value = Reflect.get(nativeLibrary, key, nativeLibrary);
+              return typeof value === "function" ? value.bind(nativeLibrary) : value;
+            },
+          });
+        }) as typeof Deno.dlopen;
+        if (operation === "read") {
+          const result = await readProjectPackageJson(`${root}/package.json`, root);
+          assertEquals(typeof result.parseError, "string");
+          assertEquals(result.data, {});
+        } else {
+          await assertRejects(() => writeTextFileInsideProject(`${root}/package.json`, root, "{}"));
+        }
+        assertEquals(swapped, true);
+        assertEquals(await Deno.readTextFile(`${outside}/package.json`), '{"name":"outside"}');
+      } finally {
+        Deno.dlopen = originalDlopen;
+        if (swapped) await Deno.remove(root);
+        await Deno.remove(base, { recursive: true });
+      }
+    });
+  }
   it("uses legacy stat bindings when modern glibc symbols are unavailable", async () => {
     if (Deno.build.os !== "linux") return;
     const root = await Deno.realPath(await makeTempDir());

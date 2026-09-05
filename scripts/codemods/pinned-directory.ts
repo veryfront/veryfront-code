@@ -364,7 +364,11 @@ function openWindowsLibrary() {
     GetLastError: { parameters: [], result: "u32" },
     GetFileInformationByHandle: { parameters: ["pointer", "buffer"], result: "i32" },
   });
-  const open = (name: string, parent: Deno.PointerValue, createFile = false): Deno.PointerValue => {
+  const open = (
+    name: string,
+    parent: Deno.PointerValue,
+    fileMode?: "r" | "r+" | "wx+",
+  ): Deno.PointerValue => {
     const encoded = new Uint16Array(name.length + 1);
     for (let index = 0; index < name.length; index++) {
       encoded[index] = name.charCodeAt(index);
@@ -405,11 +409,14 @@ function openWindowsLibrary() {
       null,
       0,
       7,
-      createFile ? 2 : 1,
-      createFile ? 0x200060 : 0x200021,
+      fileMode === "wx+" ? 2 : 1,
+      fileMode === undefined ? 0x200021 : 0x200060,
       null,
       0,
     );
+    if ((error >>> 0) === 0xc0000034 || (error >>> 0) === 0xc000003a) {
+      throw new Deno.errors.NotFound("File not found");
+    }
     // Keep the backing buffers reachable throughout the synchronous native call.
     if (
       error !== 0 || encoded.length === 0 || unicode.length === 0 ||
@@ -441,8 +448,8 @@ function nativeWindowsRoot(root: string): string {
     : "\\??\\" + normalized;
 }
 
-/** Create exclusively relative to a pinned parent, and retain its identity until handoff. */
-export function createPinnedWindowsFile(path: string, root: string) {
+/** Open relative to a pinned parent, and retain its identity until handoff. */
+export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r+" | "wx+") {
   const parts = components(path, root);
   const name = parts.pop();
   if (!name || Deno.build.os !== "windows") throw failure();
@@ -468,7 +475,7 @@ export function createPinnedWindowsFile(path: string, root: string) {
       nt.symbols.NtClose(parent);
       parent = child;
     }
-    file = open(name, parent, true);
+    file = open(name, parent, mode);
     const info = new Uint8Array(52);
     if (!kernel.symbols.GetFileInformationByHandle(file, info)) throw failure();
     const view = new DataView(info.buffer);
