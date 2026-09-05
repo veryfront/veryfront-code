@@ -639,6 +639,13 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
     });
 
+    it("retains tail facts after multiple prose contractions", () => {
+      const text = "I don't think it's ready, but we're close. " + "p".repeat(140_000) +
+        '\ntools: ["create_agent"]';
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+      assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

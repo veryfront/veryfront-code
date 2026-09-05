@@ -839,17 +839,21 @@ function isPlainProseApostrophe(text: string, index: number): boolean {
     line.trim().length === 0 || startsWithProseWord(line)
   ) && startsWithProseWord(text.slice(lineStart)) &&
     gapProseApostrophes(text, lineStart).has(index) &&
-    isPlainProseText(text.slice(0, index) + text.slice(index + 1));
+    isPlainProseText(normalizeProseApostrophes(text));
+}
+
+function normalizeProseApostrophes(text: string): string {
+  return text
+    .replace(/([\p{L}\p{N}_])'(?=(?:s|t|re|ve|ll|d|m)\b)/giu, "$1")
+    .replace(/(\b[\p{L}\p{N}_]+s)'(?=\W|$)/giu, "$1")
+    .replace(/\b([OD])'(?=\p{Lu})/gu, "$1");
 }
 
 function gapProseApostrophes(text: string, lineStart: number): ReadonlySet<number> {
   const lineEnd = text.indexOf("\n", lineStart);
   const end = lineEnd === -1 ? text.length : lineEnd;
   const line = text.slice(lineStart, end);
-  const normalizedLine = line
-    .replace(/([\p{L}\p{N}_])'(?=(?:s|t|re|ve|ll|d|m)\b)/giu, "$1")
-    .replace(/(\b[\p{L}\p{N}_]+s)'(?=\W|$)/giu, "$1")
-    .replace(/\b([OD])'(?=\p{Lu})/gu, "$1");
+  const normalizedLine = normalizeProseApostrophes(line);
   if (normalizedLine === line) return new Set();
 
   const indices = new Set<number>();
