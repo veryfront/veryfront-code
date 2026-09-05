@@ -926,6 +926,26 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("normalizes contractions in the omitted recovery gap", () => {
+      const text = "I don't expect a problem. " + "p".repeat(40_000) +
+        "\nWe're ready.\n" + "p".repeat(80_000) + '\nmodel: "sonnet"\n' + "p".repeat(60_000);
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        modelIds: ["sonnet"],
+      });
+    });
+
+    it("recovers mixed-case JSON fences and field names", () => {
+      for (const language of ["JSON", "Json", "json"]) {
+        const text = "I don't expect a problem. " + "p".repeat(70_000) +
+          "\n```" + language + '\n{"Model":"sonnet","TOOLS":[{"id":"create_agent"}]}\n```\n' +
+          "p".repeat(60_000);
+        assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+          modelIds: ["sonnet"],
+          toolIds: ["create_agent"],
+        });
+      }
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

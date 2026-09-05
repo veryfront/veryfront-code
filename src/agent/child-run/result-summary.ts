@@ -1424,7 +1424,7 @@ function recoverPlainProseTail(
     if (newline === -1) return undefined;
     lineStart = newline + 1;
   }
-  if (!isPlainProseText(text.slice(headLength, lineStart))) {
+  if (!isPlainProseText(normalizeProseApostrophes(text.slice(headLength, lineStart)))) {
     return undefined;
   }
 
@@ -1434,7 +1434,7 @@ function recoverPlainProseTail(
     const lineEnd = text.indexOf("\n", lineStart);
     const end = lineEnd === -1 ? text.length : lineEnd;
     const line = text.slice(lineStart, end);
-    if (/^ {0,3}```json[ \t]*\r?$/.test(line) && lineEnd !== -1) {
+    if (/^ {0,3}```json[ \t]*\r?$/i.test(line) && lineEnd !== -1) {
       const closing = /^ {0,3}```[ \t]*\r?$/gm;
       closing.lastIndex = lineEnd + 1;
       const match = closing.exec(text);
@@ -1444,15 +1444,16 @@ function recoverPlainProseTail(
           parsed = JSON.parse(text.slice(lineEnd + 1, match.index));
         } catch { /* malformed fences do not contribute facts */ }
         if (isPlainRecord(parsed)) {
-          const facts = ["model", "tools", "tool_ids", "provider_tool_ids"]
-            .flatMap((key) => {
-              if (!Object.hasOwn(parsed, key)) return [];
-              if (key === "tools" && Array.isArray(parsed[key])) {
+          const facts = Object.entries(parsed)
+            .flatMap(([sourceKey, fieldValue]) => {
+              const key = sourceKey.toLowerCase();
+              if (!["model", "tools", "tool_ids", "provider_tool_ids"].includes(key)) return [];
+              if (key === "tools" && Array.isArray(fieldValue)) {
                 const ids: string[] = [];
-                addToolIdsFromParsedArray(ids, parsed[key], true);
+                addToolIdsFromParsedArray(ids, fieldValue, true);
                 return ids.length > 0 ? [`tools:${JSON.stringify(ids)}`] : [];
               }
-              const value = recoverableContractFactLine(`${key}:${JSON.stringify(parsed[key])}`);
+              const value = recoverableContractFactLine(`${key}:${JSON.stringify(fieldValue)}`);
               return value === undefined ? [] : [value];
             }).join("\n");
           const blockEnd = match.index + match[0].length;
