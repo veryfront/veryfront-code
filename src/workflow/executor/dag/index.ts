@@ -781,7 +781,8 @@ function createCompositeNodeStateView(
   mapNode?: WorkflowNode,
 ): Record<string, NodeState> {
   const declaredIds = collectWorkflowNodeIds([...nodes]);
-  collectCompositeLoopStateEvidence(nodes, context, declaredIds);
+  const loopOwnedStatePaths = new Map<string, string>();
+  collectCompositeLoopStateEvidence(nodes, context, declaredIds, loopOwnedStatePaths);
   const allowedOwnerPaths = new Set<string>();
   collectCompositeSubWorkflowOwnerPaths(nodes, parentPath, allowedOwnerPaths);
   collectCompositeMapStateEvidence(
@@ -792,6 +793,7 @@ function createCompositeNodeStateView(
     allowedOwnerPaths,
     false,
     context,
+    loopOwnedStatePaths,
   );
   if (mapNode) {
     collectCompositeMapStateEvidence(
@@ -802,6 +804,7 @@ function createCompositeNodeStateView(
       allowedOwnerPaths,
       true,
       context,
+      loopOwnedStatePaths,
     );
   }
   const allowedOwnerPathList = [...allowedOwnerPaths];
@@ -826,6 +829,7 @@ function createCompositeNodeStateView(
     const ownerPath = state._subWorkflowOwnerPath;
     if (ownerPath !== undefined) {
       const allowed = ownerPath === parentPath && declaredIds.has(nodeId) ||
+        loopOwnedStatePaths.get(nodeId) === ownerPath ||
         allowedOwnerPathList.some((candidate) => isSubWorkflowDescendant(ownerPath, candidate));
       if (allowed) visible[nodeId] = state;
       continue;
@@ -855,6 +859,7 @@ function collectCompositeLoopStateEvidence(
   nodes: readonly WorkflowNode[],
   context: WorkflowContext,
   declaredIds: Set<string>,
+  ownedStatePaths?: Map<string, string>,
 ): void {
   for (const node of nodes) {
     if (node.config.type === "loop") {
@@ -866,7 +871,13 @@ function collectCompositeLoopStateEvidence(
         const iterationNodeStates = (loopState as { iterationNodeStates?: unknown })
           .iterationNodeStates;
         if (typeof iterationNodeStates === "object" && iterationNodeStates !== null) {
-          for (const nodeId of Object.keys(iterationNodeStates)) declaredIds.add(nodeId);
+          for (const [nodeId, state] of Object.entries(iterationNodeStates)) {
+            declaredIds.add(nodeId);
+            if (
+              typeof state === "object" && state !== null && "_subWorkflowOwnerPath" in state &&
+              typeof state._subWorkflowOwnerPath === "string"
+            ) ownedStatePaths?.set(nodeId, state._subWorkflowOwnerPath);
+          }
         }
       }
       if (
@@ -878,21 +889,27 @@ function collectCompositeLoopStateEvidence(
         }
       }
       if (Array.isArray(node.config.steps)) {
-        collectCompositeLoopStateEvidence(node.config.steps, context, declaredIds);
+        collectCompositeLoopStateEvidence(node.config.steps, context, declaredIds, ownedStatePaths);
       }
     } else if (node.config.type === "parallel") {
-      collectCompositeLoopStateEvidence(node.config.nodes, context, declaredIds);
+      collectCompositeLoopStateEvidence(node.config.nodes, context, declaredIds, ownedStatePaths);
     } else if (node.config.type === "branch") {
       collectCompositeLoopStateEvidence(
         [...node.config.then, ...(node.config.else ?? [])],
         context,
         declaredIds,
+        ownedStatePaths,
       );
     } else if (
       node.config.type === "subWorkflow" && typeof node.config.workflow !== "string" &&
       Array.isArray(node.config.workflow.steps)
     ) {
-      collectCompositeLoopStateEvidence(node.config.workflow.steps, context, declaredIds);
+      collectCompositeLoopStateEvidence(
+        node.config.workflow.steps,
+        context,
+        declaredIds,
+        ownedStatePaths,
+      );
     }
   }
 }
@@ -943,6 +960,7 @@ function collectCompositeMapStateEvidence(
   allowedOwnerPaths: Set<string>,
   includePending = false,
   context?: WorkflowContext,
+  ownedStatePaths?: Map<string, string>,
 ): void {
   for (const node of nodes) {
     if (node.config.type === "map") {
@@ -979,7 +997,9 @@ function collectCompositeMapStateEvidence(
         // approved wait state and the map raises that approval again.
         const wrapper = rebaseMapProcessorNode(wrapperId, processor);
         if (wrapper === undefined) continue;
-        if (context) collectCompositeLoopStateEvidence([wrapper], context, declaredIds);
+        if (context) {
+          collectCompositeLoopStateEvidence([wrapper], context, declaredIds, ownedStatePaths);
+        }
         for (const descendantId of collectWorkflowNodeIds([wrapper])) {
           declaredIds.add(descendantId);
         }
@@ -998,6 +1018,7 @@ function collectCompositeMapStateEvidence(
           allowedOwnerPaths,
           includePending,
           context,
+          ownedStatePaths,
         );
       }
       continue;
@@ -1011,6 +1032,7 @@ function collectCompositeMapStateEvidence(
         allowedOwnerPaths,
         includePending,
         context,
+        ownedStatePaths,
       );
     } else if (node.config.type === "branch") {
       collectCompositeMapStateEvidence(
@@ -1021,6 +1043,7 @@ function collectCompositeMapStateEvidence(
         allowedOwnerPaths,
         includePending,
         context,
+        ownedStatePaths,
       );
     } else if (node.config.type === "loop" && Array.isArray(node.config.steps)) {
       collectCompositeMapStateEvidence(
@@ -1031,6 +1054,7 @@ function collectCompositeMapStateEvidence(
         allowedOwnerPaths,
         includePending,
         context,
+        ownedStatePaths,
       );
     } else if (
       node.config.type === "subWorkflow" && typeof node.config.workflow !== "string" &&
@@ -1045,6 +1069,7 @@ function collectCompositeMapStateEvidence(
         allowedOwnerPaths,
         includePending,
         context,
+        ownedStatePaths,
       );
     }
   }
