@@ -2887,8 +2887,8 @@ describe("scheduled prune bound", () => {
 
   it("retires only the persisted generation that completed", async () => {
     const directory = `${persistedTestPrefix}generation`;
-    const firstGeneration = await persistJsxCachePruneRequest(directory, Date.now());
-    const replacementGeneration = await persistJsxCachePruneRequest(directory, Date.now() + 20_000);
+    const firstGeneration = await persistJsxCachePruneRequest(directory, Date.now() + 20_000);
+    const replacementGeneration = await persistJsxCachePruneRequest(directory, Date.now());
     if (firstGeneration === undefined || replacementGeneration === undefined) {
       throw new Error("failed to persist the test prune generations");
     }
@@ -2954,6 +2954,19 @@ describe("scheduled prune bound", () => {
       cancelScheduledJsxCachePrunes();
       localFs.writeTextFile = originalWrite;
     }
+  });
+
+  it("renews a persisted generation even when new work has a later deadline", async () => {
+    const directory = `${persistedTestPrefix}later-generation`;
+    const firstGeneration = await persistJsxCachePruneRequest(directory, Date.now());
+    const replacementGeneration = await persistJsxCachePruneRequest(directory, Date.now() + 20_000);
+    assertExists(firstGeneration);
+    assertExists(replacementGeneration);
+    assertNotEquals(firstGeneration, replacementGeneration);
+    await retirePersistedJsxCachePruneRequest(directory, firstGeneration);
+    assertEquals(await hasPersistedJsxCachePrune(directory), true);
+    await retirePersistedJsxCachePruneRequest(directory, replacementGeneration);
+    assertEquals(await hasPersistedJsxCachePrune(directory), false);
   });
 });
 
