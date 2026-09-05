@@ -1137,6 +1137,12 @@ describe("resolveSecurityMiddleware", () => {
     const selfSerialized = new SelfSerialized();
     const nestedTarget = { value: "original nested proxy" };
     const nestedProxy = new Proxy(nestedTarget, { getPrototypeOf: () => Date.prototype });
+    const prototypeFailureTarget = { value: "original prototype failure" };
+    const prototypeFailureProxy = new Proxy(prototypeFailureTarget, {
+      getPrototypeOf() {
+        throw new Error("opaque prototype");
+      },
+    });
     const arrayTarget = ["original array value"];
     let arrayLengthReads = 0;
     const arrayProxy = new Proxy(arrayTarget, {
@@ -1169,6 +1175,7 @@ describe("resolveSecurityMiddleware", () => {
       payloadLabel = "mutated payload";
       selfSerialized.value = "mutated self value";
       nestedTarget.value = "mutated nested proxy";
+      prototypeFailureTarget.value = "mutated prototype failure";
       arrayTarget[0] = "mutated array value";
       return response;
     };
@@ -1178,6 +1185,7 @@ describe("resolveSecurityMiddleware", () => {
       first: selfSerialized,
       second: selfSerialized,
       nestedProxy,
+      prototypeFailureProxy,
       arrayProxy,
       get label() {
         return payloadLabel;
@@ -1236,6 +1244,8 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(prompts[1]?.includes("mutated payload"), false);
     assertEquals(prompts[1]?.includes("mutated self value"), false);
     assertEquals(prompts[1]?.includes("mutated nested proxy"), false);
+    assertEquals(prompts[1]?.includes("original prototype failure"), true);
+    assertEquals(prompts[1]?.includes("mutated prototype failure"), false);
     assertEquals(prompts[1]?.includes("original array value"), true);
     assertEquals(prompts[1]?.includes("mutated array value"), false);
   });
