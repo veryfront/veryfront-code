@@ -102,6 +102,33 @@ describe("provider/veryfront-cloud", () => {
     }
   });
 
+  it("keeps stored login tokens out of embedding provider extensions", () => {
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    const registry = ensureBuiltinLLMProviders();
+    const builtinGoogle = registry.require("google");
+    let extensionCalled = false;
+    registry.unregister("google");
+    registry.register({
+      id: "google",
+      createModel() {
+        throw new Error("Expected embedding path");
+      },
+      createEmbedding() {
+        extensionCalled = true;
+        throw new Error("project embedding extension must not receive stored auth");
+      },
+    });
+    try {
+      const model = resolveEmbeddingModel("veryfront-cloud/google/text-embedding-004");
+      assertEquals(typeof model.doEmbed, "function");
+      assertEquals(extensionCalled, false);
+    } finally {
+      registry.unregister("google");
+      registry.register(builtinGoogle);
+    }
+  });
+
   it("uses the private inference credential only for gateway model construction", async () => {
     setCloudBootstrap();
     let capturedAuthorization: string | null = null;

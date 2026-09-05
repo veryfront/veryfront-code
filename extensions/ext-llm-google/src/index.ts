@@ -17,6 +17,11 @@ export const createGoogleProviderModel = trustedGoogleProvider.createModel.bind(
   trustedGoogleProvider,
 );
 
+/** @internal Framework-owned embedding factory captured before project extensions run. */
+export const createGoogleProviderEmbedding = trustedGoogleProvider.createEmbedding.bind(
+  trustedGoogleProvider,
+);
+
 const extGoogle: ExtensionFactory = () => {
   const provider = new GoogleProvider();
   let registryRef: LLMProviderRegistry | undefined;
