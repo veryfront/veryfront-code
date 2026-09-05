@@ -43,12 +43,38 @@ export async function* readPinnedDirectory(
   }
 }
 
+/** Load the host POSIX C library without requiring glibc on Linux. */
+export function loadPosixLibrary<T>(
+  os: string,
+  arch: string,
+  load: (path: string) => T,
+): T {
+  if (os === "darwin") return load("/usr/lib/libSystem.B.dylib");
+  if (os !== "linux" || !["x86_64", "aarch64"].includes(arch)) throw failure();
+  // musl installs its shared C library as the dynamic loader as well. Keep
+  // glibc first, then try musl sonames and its standard loader location.
+  for (
+    const path of [
+      "libc.so.6",
+      `libc.musl-${arch}.so.1`,
+      `/lib/ld-musl-${arch}.so.1`,
+      "libc.so",
+    ]
+  ) {
+    try {
+      return load(path);
+    } catch {
+      // Missing libraries and incompatible symbol tables both fail closed.
+    }
+  }
+  throw failure();
+}
+
 function openPosixLibrary() {
   const darwin = Deno.build.os === "darwin";
   const inode64Suffix = darwin && Deno.build.arch === "x86_64" ? "$INODE64" : "";
-  const library = Deno.dlopen(
-    darwin ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
-    {
+  const library = loadPosixLibrary(Deno.build.os, Deno.build.arch, (path) =>
+    Deno.dlopen(path, {
       open: { parameters: ["buffer", "i32"], result: "i32" },
       openat: { parameters: ["i32", "buffer", "i32"], result: "i32" },
       close: { parameters: ["i32"], result: "i32" },
@@ -91,8 +117,7 @@ function openPosixLibrary() {
         result: "i32",
         optional: !darwin,
       },
-    },
-  );
+    }));
   // Older glibc exports the versioned entrypoints rather than fstat/fstatat.
   // The x86-64 stat ABI is version 1; the generic AArch64 ABI is version 0.
   const version = Deno.build.arch === "x86_64" ? 1 : 0;
@@ -285,15 +310,17 @@ export function openPinnedPosixFile(
     // openat is variadic when creating a file; use a separate fixed binding
     // below so the permission mode is passed with the correct native ABI.
     if (mode === "wx+") {
-      const creation = Deno.dlopen(
-        Deno.build.os === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
-        {
-          openat: {
-            name: Deno.build.os === "darwin" ? "__openat" : "openat",
-            parameters: ["i32", "buffer", "i32", "u32"],
-            result: "i32",
-          },
-        },
+      const creation = loadPosixLibrary(
+        Deno.build.os,
+        Deno.build.arch,
+        (path) =>
+          Deno.dlopen(path, {
+            openat: {
+              name: Deno.build.os === "darwin" ? "__openat" : "openat",
+              parameters: ["i32", "buffer", "i32", "u32"],
+              result: "i32",
+            },
+          }),
       );
       try {
         fd = creation.symbols.openat(
