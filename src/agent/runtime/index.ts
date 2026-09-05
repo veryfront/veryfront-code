@@ -35,7 +35,7 @@ import {
   canIdentifyProxyWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
-import { createAgentMemory, type Memory, NoMemory } from "../memory/index.ts";
+import { createAgentMemory, type Memory, NoMemory } from "#veryfront/agent/memory/index.ts";
 import { captureMemoryRollback } from "#veryfront/agent/memory/memory.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
