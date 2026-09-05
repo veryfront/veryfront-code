@@ -98,6 +98,19 @@ type into `agent()` memory construction, so it is rejected at validation. The
 conversation on one runtime instance, construct a Redis-backed memory manually,
 or persist and restore the conversation outside the agent.
 
+## Use custom memory with input validation
+
+Implement `beginInputTransaction()` on your custom `Memory` adapter before using
+it with transactional input validation. Return backend-owned `commit()` and
+`rollback(rejectedMessages)` operations, and make both operations idempotent.
+
+Use a backend transaction or an atomic version check to remove rejected writes
+without undoing concurrent additions or restoring a conversation cleared after
+the transaction began. Do not implement rollback with separate `clear()` and
+`add()` calls. Adapters without this capability are rejected before validated
+input is written; the built-in conversation, buffer, and summary stores provide
+their own rollback support.
+
 ## Memory operations
 
 Access memory programmatically in API routes:

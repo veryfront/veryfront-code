@@ -43,6 +43,22 @@ export interface Memory<M extends MinimalMessage = MinimalMessage> {
   getMessages(): Promise<M[]>;
   clear(): Promise<void>;
   getStats(): Promise<MemoryStats>;
+  /**
+   * Capture a backend-owned rollback boundary before validated input writes.
+   * Required for custom stores used with transactional input validation.
+   */
+  beginInputTransaction?(): MemoryInputTransaction<M> | Promise<MemoryInputTransaction<M>>;
+}
+
+/**
+ * Backend-owned transaction for writes made through the memory instance.
+ * Rollback must atomically remove rejected writes and restore any displaced
+ * history without undoing concurrent additions or resurrecting cleared data.
+ * Both operations must be idempotent. Commit releases rollback resources.
+ */
+export interface MemoryInputTransaction<M extends MinimalMessage = MinimalMessage> {
+  commit(): void | Promise<void>;
+  rollback(rejectedMessages?: ReadonlySet<M>): Promise<void>;
 }
 
 /** Public API contract for memory persistence. */

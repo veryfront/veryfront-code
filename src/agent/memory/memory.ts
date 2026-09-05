@@ -3,16 +3,14 @@ import {
   getTextFromMemoryParts,
   type Memory,
   type MemoryConfigBase,
+  type MemoryInputTransaction,
   type MemoryStats,
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 type BasicMemoryType = "conversation" | "buffer";
-interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
-  commit(): void;
-  rollback(rejectedMessages?: ReadonlySet<M>): Promise<void>;
-}
+type MemoryRollback<M extends MinimalMessage = MinimalMessage> = MemoryInputTransaction<M>;
 interface RollbackObserver<M> {
   add(message: M): void;
   clear(): void;
@@ -20,86 +18,6 @@ interface RollbackObserver<M> {
 // Each factory retains its message type; the heterogeneous registry erases
 // that type until captureMemoryRollback retrieves it with the same memory.
 const memoryRollbackFactories = new WeakMap<object, () => unknown>();
-const stringifyRollbackValue = JSON.stringify;
-const parseRollbackValue = JSON.parse;
-
-function rollbackValuesEqual(
-  left: unknown,
-  right: unknown,
-  seen: WeakMap<object, object>,
-): boolean {
-  if (Object.is(left, right)) return true;
-  if (
-    left === null || right === null ||
-    typeof left !== "object" || typeof right !== "object"
-  ) return false;
-
-  const knownRight = seen.get(left);
-  if (knownRight !== undefined) return knownRight === right;
-  seen.set(left, right);
-
-  try {
-    const leftIsArray = Array.isArray(left);
-    if (leftIsArray !== Array.isArray(right)) return false;
-    if (leftIsArray) {
-      const leftArray = left as unknown[];
-      const rightArray = right as unknown[];
-      if (leftArray.length !== rightArray.length) return false;
-      for (let index = 0; index < leftArray.length; index++) {
-        if (!rollbackValuesEqual(leftArray[index], rightArray[index], seen)) return false;
-      }
-      return true;
-    }
-
-    const leftPrototype = Object.getPrototypeOf(left);
-    const rightPrototype = Object.getPrototypeOf(right);
-    if (
-      leftPrototype !== Object.prototype && leftPrototype !== null ||
-      rightPrototype !== Object.prototype && rightPrototype !== null
-    ) return false;
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord);
-    const rightKeys = Object.keys(rightRecord);
-    if (leftKeys.length !== rightKeys.length) return false;
-    for (const key of leftKeys) {
-      if (
-        !Object.hasOwn(rightRecord, key) ||
-        !rollbackValuesEqual(leftRecord[key], rightRecord[key], seen)
-      ) return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function rollbackMessagesEqual<M extends MinimalMessage>(left: M, right: M): boolean {
-  if (left.id !== right.id || left.role !== right.role) return false;
-  if (rollbackValuesEqual(left, right, new WeakMap())) return true;
-  try {
-    return rollbackValuesEqual(
-      parseRollbackValue(stringifyRollbackValue(left)),
-      parseRollbackValue(stringifyRollbackValue(right)),
-      new WeakMap(),
-    );
-  } catch {
-    return false;
-  }
-}
-
-function subtractRollbackMessages<M extends MinimalMessage>(
-  messages: readonly M[],
-  excluded: readonly M[],
-): M[] {
-  const unmatched = [...excluded];
-  return messages.filter((message) => {
-    const index = unmatched.findIndex((candidate) => rollbackMessagesEqual(message, candidate));
-    if (index < 0) return true;
-    unmatched.splice(index, 1);
-    return false;
-  });
-}
 
 function registerMemoryRollbackFactory<M extends MinimalMessage>(
   memory: Memory<M>,
@@ -109,31 +27,31 @@ function registerMemoryRollbackFactory<M extends MinimalMessage>(
 }
 
 /** @internal Capture an exact built-in memory state before a transactional write. */
-export function captureMemoryRollback<M extends MinimalMessage>(
+export async function captureMemoryRollback<M extends MinimalMessage>(
   memory: Memory<M>,
-  fallbackMessages: readonly M[],
-): MemoryRollback<M> {
+  _fallbackMessages: readonly M[],
+): Promise<MemoryRollback<M>> {
   const factory = memoryRollbackFactories.get(memory) as
     | (() => MemoryRollback<M>)
     | undefined;
   if (factory) return factory();
 
-  // Preserve compatibility with custom Memory implementations. Built-in
-  // stores use exact private-state snapshots registered in their constructors.
-  const snapshot = [...fallbackMessages];
-  return {
-    commit() {},
-    async rollback(rejectedMessages) {
-      const current = await memory.getMessages();
-      const laterMessages = rejectedMessages === undefined ? [] : subtractRollbackMessages(
-        subtractRollbackMessages(current, snapshot),
-        [...rejectedMessages],
-      );
-      await memory.clear();
-      for (const message of snapshot) await memory.add(message);
-      for (const message of laterMessages) await memory.add(message);
-    },
-  };
+  if (memory instanceof NoMemory) return { commit() {}, rollback: () => Promise.resolve() };
+  if (typeof memory.beginInputTransaction !== "function") {
+    throw new TypeError(
+      "Custom memory must implement beginInputTransaction for transactional input validation",
+    );
+  }
+  const transaction = await memory.beginInputTransaction();
+  if (
+    !transaction || typeof transaction.commit !== "function" ||
+    typeof transaction.rollback !== "function"
+  ) {
+    throw new TypeError(
+      "Custom memory beginInputTransaction must return commit and rollback operations",
+    );
+  }
+  return transaction;
 }
 
 function getMessagesWithTrace<M extends MinimalMessage>(

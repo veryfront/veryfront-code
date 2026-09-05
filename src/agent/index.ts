@@ -313,6 +313,7 @@ export {
   createMemory,
   createRedisMemory,
   type Memory,
+  type MemoryInputTransaction,
   type MemoryPersistence,
   type MemoryStats,
   type RedisClient,

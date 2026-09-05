@@ -1,4 +1,4 @@
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BufferMemory,
@@ -41,30 +41,43 @@ describe("NoMemory", () => {
 });
 
 describe("custom memory rollback", () => {
-  it("matches deserialized snapshot and rejected messages by stable content", async () => {
-    let stored = [userMessage("history", "accepted history")];
-    const cloneStored = () => JSON.parse(JSON.stringify(stored)) as MinimalMessage[];
+  it("rejects custom memory without an atomic rollback capability before writes", async () => {
+    const store = new ConversationMemory({ type: "conversation" });
+    const custom = {
+      add: store.add.bind(store),
+      getMessages: store.getMessages.bind(store),
+      clear: store.clear.bind(store),
+      getStats: store.getStats.bind(store),
+    };
+    await assertRejects(
+      async () => {
+        await captureMemoryRollback(custom, []);
+      },
+      Error,
+      "beginInputTransaction",
+    );
+    assertEquals((await store.getStats()).totalMessages, 0);
+  });
+
+  it("delegates rollback to the backend even when reads deserialize messages", async () => {
+    const stored = new ConversationMemory<MinimalMessage>({ type: "conversation" });
+    await stored.add(userMessage("history", "accepted history"));
     const memory = {
       add(message: MinimalMessage) {
-        stored.push(JSON.parse(JSON.stringify(message)) as MinimalMessage);
-        return Promise.resolve();
+        return stored.add(message);
       },
-      getMessages() {
-        return Promise.resolve(cloneStored());
+      async getMessages() {
+        return JSON.parse(JSON.stringify(await stored.getMessages())) as MinimalMessage[];
       },
       clear() {
-        stored = [];
-        return Promise.resolve();
+        return stored.clear();
       },
       getStats() {
-        return Promise.resolve({
-          totalMessages: stored.length,
-          estimatedTokens: 0,
-          type: "custom",
-        });
+        return stored.getStats();
       },
+      beginInputTransaction: () => captureMemoryRollback(stored, []),
     };
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rollback = await captureMemoryRollback(memory, await memory.getMessages());
     const rejected = {
       ...userMessage("turn", "rejected input"),
       metadata: { optional: undefined },
@@ -82,6 +95,13 @@ describe("custom memory rollback", () => {
       userMessage("history", "accepted history"),
       later,
     ]);
+
+    const concurrentClear = await captureMemoryRollback(memory, await memory.getMessages());
+    await memory.add(rejected);
+    await memory.clear();
+    await memory.add(later);
+    await concurrentClear.rollback(new Set([rejected]));
+    assertEquals(await memory.getMessages(), [later]);
   });
 });
 
@@ -153,7 +173,7 @@ describe("ConversationMemory", () => {
   it("does not resurrect a snapshot after a concurrent clear", async () => {
     const memory = new ConversationMemory({ type: "conversation" });
     await memory.add(userMessage("history", "accepted history"));
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rollback = await captureMemoryRollback(memory, await memory.getMessages());
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);
     await memory.clear();
@@ -166,7 +186,7 @@ describe("ConversationMemory", () => {
   it("removes a rejected write added after a concurrent clear", async () => {
     const memory = new ConversationMemory({ type: "conversation" });
     await memory.add(userMessage("history", "accepted history"));
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rollback = await captureMemoryRollback(memory, await memory.getMessages());
     await memory.clear();
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);
@@ -178,7 +198,7 @@ describe("ConversationMemory", () => {
 
   it("stops replay when another clear occurs between post-clear additions", async () => {
     const memory = new ConversationMemory({ type: "conversation" });
-    const rollback = captureMemoryRollback(memory, []);
+    const rollback = await captureMemoryRollback(memory, []);
     await memory.clear();
     await memory.add(userMessage("assistant-1", "first concurrent output"));
     await memory.add(userMessage("assistant-2", "second concurrent output"));
@@ -198,7 +218,7 @@ describe("ConversationMemory", () => {
     const memory = new ConversationMemory({ type: "conversation", maxTokens: 100 });
     const concurrent = userMessage("assistant", "concurrent output");
     const addition = memory.add(concurrent);
-    const rollback = captureMemoryRollback(memory, []);
+    const rollback = await captureMemoryRollback(memory, []);
     await addition;
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);
@@ -211,7 +231,7 @@ describe("ConversationMemory", () => {
   it("starts retained replay additions in their original order before yielding", async () => {
     const memory = new ConversationMemory({ type: "conversation" });
     await memory.add(userMessage("history", "accepted history"));
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rollback = await captureMemoryRollback(memory, await memory.getMessages());
     const rejected = userMessage("rejected", "rejected input");
     const first = userMessage("assistant-1", "first concurrent output");
     const second = userMessage("assistant-2", "second concurrent output");
@@ -359,7 +379,7 @@ describe("SummaryMemory", () => {
     await memory.add(userMessage("2", "second topic"));
     await memory.add(userMessage("3", "third topic"));
     const before = await memory.getMessages();
-    const rollback = captureMemoryRollback(memory, before);
+    const rollback = await captureMemoryRollback(memory, before);
 
     await memory.add(userMessage("4", "fourth topic"));
     await memory.add(userMessage("5", "fifth topic"));
@@ -382,7 +402,7 @@ describe("SummaryMemory", () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
     await memory.add(userMessage("history", "accepted history"));
     const before = await memory.getMessages();
-    const transaction = captureMemoryRollback(memory, before);
+    const transaction = await captureMemoryRollback(memory, before);
     const rejected = userMessage("rejected", "rejected input");
     const concurrent = {
       ...userMessage("assistant", "concurrent model output"),
@@ -404,7 +424,7 @@ describe("SummaryMemory", () => {
     for (let index = 1; index <= 3; index++) {
       await memory.add(userMessage(String(index), `topic ${index}`));
     }
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rollback = await captureMemoryRollback(memory, await memory.getMessages());
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);
     await memory.clear();
@@ -417,7 +437,7 @@ describe("SummaryMemory", () => {
   it("removes a rejected summary-memory write added after a concurrent clear", async () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
     await memory.add(userMessage("history", "accepted history"));
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rollback = await captureMemoryRollback(memory, await memory.getMessages());
     await memory.clear();
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);
@@ -429,7 +449,7 @@ describe("SummaryMemory", () => {
 
   it("stops summary replay when another clear occurs between post-clear additions", async () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
-    const rollback = captureMemoryRollback(memory, []);
+    const rollback = await captureMemoryRollback(memory, []);
     await memory.clear();
     await memory.add(userMessage("assistant-1", "first concurrent output"));
     await memory.add(userMessage("assistant-2", "second concurrent output"));
@@ -447,7 +467,7 @@ describe("SummaryMemory", () => {
 
   it("removes rejected post-clear writes after they enter the rolling summary", async () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
-    const rollback = captureMemoryRollback(memory, []);
+    const rollback = await captureMemoryRollback(memory, []);
     await memory.clear();
     const rejected = [
       userMessage("rejected-1", "first rejected topic"),
@@ -467,7 +487,7 @@ describe("SummaryMemory", () => {
     await memory.add(userMessage("history-2", "second"));
     const concurrent = userMessage("assistant", "concurrent output");
     const addition = memory.add(concurrent);
-    const rollback = captureMemoryRollback(memory, []);
+    const rollback = await captureMemoryRollback(memory, []);
     await addition;
     const rejected = userMessage("rejected", "rejected input");
     await memory.add(rejected);

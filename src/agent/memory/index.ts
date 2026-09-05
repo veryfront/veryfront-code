@@ -8,6 +8,7 @@ export {
   estimateTokens,
   type Memory,
   type MemoryConfigBase,
+  type MemoryInputTransaction,
   type MemoryPersistence,
   type MemoryStats,
   type MinimalMessage,

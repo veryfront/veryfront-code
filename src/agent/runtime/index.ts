@@ -1706,7 +1706,7 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<{
     messages: Message[];
-    commit: () => void;
+    commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
   }> {
@@ -1770,8 +1770,14 @@ export class AgentRuntime {
     let validationState: "pending" | "accepted" | "rejected" = "pending";
     const commit = async (): Promise<void> => {
       if (finalized || transaction === undefined) return;
-      finalized = true;
-      (await transaction).commit();
+      const prepared = await transaction;
+      try {
+        await prepared.commit();
+        finalized = true;
+      } catch (error) {
+        await rollback();
+        throw error;
+      }
     };
     const rollback = async (): Promise<void> => {
       if (finalized || transaction === undefined) return;
@@ -1813,7 +1819,7 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<{
     messages: Message[];
-    commit: () => void;
+    commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
   }> {
@@ -1857,7 +1863,7 @@ export class AgentRuntime {
     }
     const rollbackMemory = validateTurnMessages || validateProjectedMessages ||
         validateProviderRequest
-      ? captureMemoryRollback(this.memory, history)
+      ? await captureMemoryRollback(this.memory, history)
       : undefined;
     let persisted: Message[];
     try {
@@ -1887,10 +1893,10 @@ export class AgentRuntime {
     const finalization = Promise.withResolvers<void>();
     return {
       messages: persisted.length > 0 ? persisted : committedInputMessages,
-      commit: () => {
+      commit: async () => {
         if (isFinalized) return;
+        await rollbackMemory?.commit();
         isFinalized = true;
-        rollbackMemory?.commit();
         finalization.resolve();
       },
       rollback: async () => {
