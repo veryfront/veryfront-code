@@ -141,7 +141,7 @@ function removeToolTranscriptFences(text: string): string {
     while (text[index] === " " || text[index] === "\t") index += 1;
     const shellStart = index;
     while (/[A-Za-z]/.test(text[index] ?? "")) index += 1;
-    if (!TOOL_TRANSCRIPT_SHELL_FENCE_NAMES.has(text.slice(shellStart, index))) {
+    if (!TOOL_TRANSCRIPT_SHELL_FENCE_NAMES.has(text.slice(shellStart, index).toLowerCase())) {
       cursor = start + 3;
       continue;
     }
