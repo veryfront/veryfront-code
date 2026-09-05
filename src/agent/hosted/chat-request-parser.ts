@@ -31,6 +31,7 @@ import {
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 import { registerHostedInferenceCredential } from "./inference-credential.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import {
   MAX_GRANTED_INTEGRATION_TOOL_NAMES,
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
@@ -43,9 +44,55 @@ import {
 
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
+const HeadersGet = Headers.prototype.get;
+const StringTrim = String.prototype.trim;
+
+function readRequestHeaderRaw(request: Request, name: string): string | undefined {
+  if (!RequestHeadersGetter) return undefined;
+  const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
+  const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
+  return value === null ? undefined : value;
+}
+
+function readRequestHeader(request: Request, name: string): string | undefined {
+  const value = readRequestHeaderRaw(request, name);
+  if (value === undefined) return undefined;
+  return IntrinsicReflectApply(StringTrim, value, []) as string;
+}
+
+/**
+ * Reads and validates the inference token header with the same visible-ASCII
+ * and byte-size checks `credentials.inferenceAuthToken` gets from its Zod
+ * schema on the runtime-invocation path (`inferenceCredential()` in
+ * `agent-invocation-contract.ts`). Without this, a malformed or oversized
+ * header value is accepted and bound here, then only fails later inside
+ * `requireInferenceProviderCredential` at the point the credential is
+ * actually used -- potentially after the run has already been durably
+ * accepted.
+ *
+ * Reads the raw, untrimmed value: trimming first would let edge whitespace
+ * (including non-ASCII whitespace such as U+00A0) silently disappear before
+ * the visible-ASCII check runs, turning a malformed header into a validated
+ * one instead of a 400.
+ */
+function readInferenceTokenHeader(request: Request): string | undefined | Response {
+  const value = readRequestHeaderRaw(request, INFERENCE_TOKEN_HEADER);
+  if (value === undefined) return undefined;
+  try {
+    return requireInferenceProviderCredential(value, "Inference token header");
+  } catch (error) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid request",
+      validationMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /** Internal control-plane credential for exact-run durable event appends. */
 export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
+/** Internal control-plane credential for managed inference on legacy chat dispatches. */
+export const INFERENCE_TOKEN_HEADER = "X-Veryfront-Inference-Token";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -188,8 +235,9 @@ async function withVerifiedRunEventAppendToken(
     ChatRequestContext,
     "runtimeTargetKind" | "runtimeTargetEnvironmentId"
   >,
+  bindInferenceTokenHeader = false,
 ): Promise<ParsedHostedChatRequest | Response> {
-  const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
+  const token = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
   if (!token) {
     const hasLegacyReplayState = isRecord(parsedRequest.forwardedProps) &&
       Object.hasOwn(
@@ -228,6 +276,13 @@ async function withVerifiedRunEventAppendToken(
     );
   }
 
+  const inferenceAuthToken = bindInferenceTokenHeader
+    ? readInferenceTokenHeader(request)
+    : undefined;
+  if (inferenceAuthToken !== undefined && typeof inferenceAuthToken !== "string") {
+    return inferenceAuthToken;
+  }
+
   // The grant rides on the verified token, so it is trusted on every path that
   // presents one — including the durable-chat path, whose body stays untrusted.
   const grantedIntegrationToolNames = sanitizeGrantedIntegrationToolNames(
@@ -257,6 +312,7 @@ async function withVerifiedRunEventAppendToken(
       runId,
     },
   );
+  registerHostedInferenceCredential(verifiedRequest, inferenceAuthToken);
   return verifiedRequest;
 }
 
@@ -629,6 +685,8 @@ export async function parseHostedChatRequestFromRequest(
     parsedRequest,
     options.verifyRunEventAppendToken,
     false,
+    undefined,
+    true,
   );
 }
 

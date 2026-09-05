@@ -199,6 +199,7 @@ const report = await runEval(definition, {
 | `EvalTrace`                           | Trace metadata captured for one eval record.                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts)     |
 | `EvalUsage`                           | Token and cost usage captured for one eval record.                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts)     |
 | `EvalUsageSummary`                    | Usage totals for an eval report.                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts)     |
+| `LocalEvalReport`                     | Eval report returned by local execution, with its dataset hash intact.                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts)     |
 | `RunEvalOptions`                      | Options for running an eval locally.                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts)     |
 
 ### Constants

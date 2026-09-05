@@ -8,7 +8,9 @@ import {
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
+  isSameApiEndpoint,
   MAX_PORT_ATTEMPTS,
+  resolveCliApiUrlWithOrigin,
   TOKEN_FILE_NAME,
   TOKEN_FILE_PERMISSIONS,
 } from "./constants.ts";
@@ -103,6 +105,63 @@ describe("cli/shared/constants", () => {
         apiBaseUrl: "https://api.veryfront.org",
       } as EnvironmentConfig;
       assertEquals(getApiUrl(env), "https://custom.api.com");
+    });
+  });
+
+  describe("resolveCliApiUrlWithOrigin", () => {
+    it("reports VERYFRONT_API_URL as the operator override that supplied the host", () => {
+      const env = { apiUrl: "https://custom.api.com" } as EnvironmentConfig;
+
+      assertEquals(resolveCliApiUrlWithOrigin(env, "https://from-file.test"), {
+        apiUrl: "https://custom.api.com",
+        origin: { source: "env", key: "VERYFRONT_API_URL" },
+      });
+    });
+
+    it("reports a non-default VERYFRONT_API_BASE_URL as the source", () => {
+      const env = { apiBaseUrl: "https://api.veryfront.org" } as EnvironmentConfig;
+
+      assertEquals(resolveCliApiUrlWithOrigin(env, "https://from-file.test"), {
+        apiUrl: "https://api.veryfront.org",
+        origin: { source: "env", key: "VERYFRONT_API_BASE_URL" },
+      });
+    });
+
+    it("reports the config file when it supplies the host below the default base URL", () => {
+      const env = { apiBaseUrl: DEFAULT_API_URL } as EnvironmentConfig;
+
+      assertEquals(resolveCliApiUrlWithOrigin(env, "https://from-file.test"), {
+        apiUrl: "https://from-file.test",
+        origin: { source: "config-file" },
+      });
+    });
+
+    it("reports the default when nothing overrides it", () => {
+      assertEquals(resolveCliApiUrlWithOrigin({} as EnvironmentConfig), {
+        apiUrl: DEFAULT_API_URL,
+        origin: { source: "default" },
+      });
+    });
+  });
+
+  describe("isSameApiEndpoint", () => {
+    it("treats case, default port, and trailing slash differences as the same endpoint", () => {
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://API.VERYFRONT.COM"), true);
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://api.veryfront.com:443"), true);
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://api.veryfront.com/"), true);
+    });
+
+    it("keeps a different host, scheme, port, path, or userinfo distinct", () => {
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://attacker.example"), false);
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "http://api.veryfront.com"), false);
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://api.veryfront.com:8443"), false);
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://api.veryfront.com/v2"), false);
+      assertEquals(isSameApiEndpoint(DEFAULT_API_URL, "https://user:pw@api.veryfront.com"), false);
+    });
+
+    it("treats an unparseable URL as equal only to its exact self", () => {
+      assertEquals(isSameApiEndpoint("not a url", "not a url"), true);
+      assertEquals(isSameApiEndpoint("not a url", DEFAULT_API_URL), false);
     });
   });
 });

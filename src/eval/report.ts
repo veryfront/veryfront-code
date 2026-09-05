@@ -14,6 +14,7 @@ import type {
   EvalReportMetadata,
   EvalReportSummary,
   EvalUsageSummary,
+  LocalEvalReport,
 } from "./types.ts";
 import { computeHash } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
@@ -71,11 +72,17 @@ function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
   };
 }
 
-/** Create stable dataset metadata for report consumers and CI artifacts. */
+/**
+ * Create stable dataset metadata for report consumers and CI artifacts.
+ *
+ * The return type restates `hash` as required: locally created metadata always carries the
+ * content hash. Only {@link EvalReportDatasetMetadata} itself leaves it optional, because export
+ * redaction strips the hash from the copies exporters receive.
+ */
 export async function createEvalDatasetMetadata(
   dataset: EvalDataset,
   examples: EvalExample[],
-): Promise<EvalReportDatasetMetadata> {
+): Promise<EvalReportDatasetMetadata & { hash: string }> {
   const hashInput = createDatasetHashInput(dataset, examples);
   return {
     kind: dataset.kind,
@@ -333,8 +340,8 @@ export function summarizeEvalRecords(records: EvalRecord[]): EvalReportSummary {
   };
 }
 
-/** Create a JSON-serializable eval report from executed records. */
-export function createEvalReport(input: {
+/** Input accepted by {@link createEvalReport}. */
+export interface CreateEvalReportInput {
   definition: EvalDefinition;
   records: EvalRecord[];
   runId: string;
@@ -342,7 +349,21 @@ export function createEvalReport(input: {
   endedAt: Date;
   dataset?: EvalReportDatasetMetadata;
   metadata?: EvalReportMetadata;
-}): EvalReport {
+}
+
+/**
+ * Create a JSON-serializable eval report from executed records.
+ *
+ * Dataset metadata from {@link createEvalDatasetMetadata} always carries a content hash, so
+ * passing it returns a {@link LocalEvalReport} whose `dataset.hash` stays required. Callers
+ * holding the wider {@link EvalReportDatasetMetadata}, whose hash a sanitized export can omit,
+ * still get an {@link EvalReport}.
+ */
+export function createEvalReport(
+  input: CreateEvalReportInput & { dataset?: EvalReportDatasetMetadata & { hash: string } },
+): LocalEvalReport;
+export function createEvalReport(input: CreateEvalReportInput): EvalReport;
+export function createEvalReport(input: CreateEvalReportInput): EvalReport {
   return {
     kind: "eval-report",
     schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
