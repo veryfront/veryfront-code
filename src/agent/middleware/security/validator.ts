@@ -926,22 +926,29 @@ interface ProviderValidationRun {
   trustedSegments: Array<{ start: number; text: string }>;
 }
 
-/** Adding surrounding text cannot make these negative assertions start succeeding. */
-function isMonotoneNegativeAssertion(pattern: RegExp, start: number): boolean {
+/** Classify a negative body without changing its capture numbering. */
+function negativeAssertionBody(
+  pattern: RegExp,
+  start: number,
+): { body: string; end: number; context: boolean; backrefs: boolean; nested: boolean } | undefined {
   const source = pattern.source;
   const prefixLength = source.startsWith("(?!", start)
     ? 3
     : source.startsWith("(?<!", start)
     ? 4
     : 0;
-  if (prefixLength === 0) return false;
+  if (prefixLength === 0) return undefined;
+  let context = false;
+  let backrefs = false;
+  let nested = false;
   let groupDepth = 1;
   let classDepth = 0;
   for (let index = start + prefixLength; index < source.length; index++) {
     const character = source[index];
     if (character === "\\") {
       const escaped = source[++index];
-      if (classDepth === 0 && (escaped === "b" || escaped === "B")) return false;
+      if (classDepth === 0 && (escaped === "b" || escaped === "B")) context = true;
+      if (classDepth === 0 && escaped && /[1-9k]/.test(escaped)) backrefs = true;
       continue;
     }
     if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) {
@@ -953,18 +960,24 @@ function isMonotoneNegativeAssertion(pattern: RegExp, start: number): boolean {
       continue;
     }
     if (classDepth > 0) continue;
-    if (character === "^" || character === "$") return false;
+    if (character === "^" || character === "$") context = true;
     if (character === "(") {
       if (
         source.startsWith("(?=", index) || source.startsWith("(?!", index) ||
         source.startsWith("(?<=", index) || source.startsWith("(?<!", index)
-      ) return false;
+      ) nested = true;
       groupDepth++;
     } else if (character === ")" && --groupDepth === 0) {
-      return true;
+      return {
+        body: source.slice(start + prefixLength, index),
+        end: index,
+        context,
+        backrefs,
+        nested,
+      };
     }
   }
-  return false;
+  return undefined;
 }
 
 /** Conservative inspection bound; unbounded quantifiers and backreferences use the guarded path. */
@@ -1018,6 +1031,8 @@ function createTrustedMatchPredicate(
   const upper = lower + units(segment.text);
   const lowerGuard = "(?<=[\\s\\S]{" + lower + "})";
   const upperGuard = "(?<![\\s\\S]{" + (upper + 1) + "})";
+  const atPosition = (position: number) =>
+    "(?<=[\\s\\S]{" + position + "})(?<![\\s\\S]{" + (position + 1) + "})";
   const excludePosition = (position: number) =>
     "(?!(?<=[\\s\\S]{" + position + "})(?<![\\s\\S]{" + (position + 1) + "}))";
   let ignoreCase = pattern.ignoreCase;
@@ -1028,6 +1043,53 @@ function createTrustedMatchPredicate(
       (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
     )
       .test(character);
+  const localNegativeBody = (body: string): string => {
+    let result = "";
+    let depth = 0;
+    let localIgnoreCase = ignoreCase;
+    const cases: boolean[] = [];
+    const word = (character: string | undefined) =>
+      character !== undefined &&
+      new RegExp(
+        "\\w",
+        (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (localIgnoreCase ? "i" : ""),
+      ).test(character);
+    for (let index = 0; index < body.length; index++) {
+      const character = body[index];
+      if (character === "\\") {
+        const escaped = body[++index];
+        if (depth === 0 && (escaped === "b" || escaped === "B")) {
+          const choices = [character + escaped + excludePosition(lower) + excludePosition(upper)];
+          if (word(segment.text[0]) === (escaped === "b")) choices.push(atPosition(lower));
+          if (word(segment.text.at(-1)) === (escaped === "b")) choices.push(atPosition(upper));
+          result += "(?:" + choices.join("|") + ")";
+        } else result += character + escaped;
+        continue;
+      }
+      if (character === "[" && (depth === 0 || pattern.unicodeSets)) depth++;
+      else if (character === "]" && depth > 0) depth--;
+      else if (depth === 0) {
+        if (character === "^" || character === "$") {
+          result += "(?:" + character + "|" + atPosition(character === "^" ? lower : upper) + ")";
+          continue;
+        }
+        if (character === "(") {
+          cases.push(localIgnoreCase);
+          const named = /^\(\?<[^>]+>/.exec(body.slice(index));
+          if (body[index + 1] !== "?" || named) {
+            result += "(?:";
+            if (named) index += named[0].length - 1;
+            continue;
+          }
+          const flags = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(body.slice(index));
+          if (flags?.[1]?.includes("i")) localIgnoreCase = true;
+          if (flags?.[2]?.includes("i")) localIgnoreCase = false;
+        } else if (character === ")") localIgnoreCase = cases.pop() ?? ignoreCase;
+      }
+      result += character;
+    }
+    return result;
+  };
   const groups: Array<
     { kind: "ahead" | "behind" | "ordinary"; ignoreCase: boolean; bodyStart?: number }
   > = [];
@@ -1064,6 +1126,28 @@ function createTrustedMatchPredicate(
       continue;
     }
     if (character === "(") {
+      const negative = negativeAssertionBody(pattern, index);
+      if (negative) {
+        const original = pattern.source.slice(index, negative.end + 1);
+        if (negative.nested || (negative.context && negative.backrefs)) {
+          source += "(?:(?!)" + original + ")";
+          fastPath = false;
+        } else if (!negative.context) {
+          source += original;
+        } else {
+          const body = localNegativeBody(negative.body);
+          const local = original.startsWith("(?!")
+            ? "(?!(?:" + body + ")" + upperGuard + ")"
+            : "(?<!" + lowerGuard + "(?:" + body + "))";
+          source += "(?:" + original + local + ")";
+          inspectionRadius = Math.max(
+            inspectionRadius,
+            assertionInspectionWidth(negative.body, pattern.unicodeSets) * (unicode ? 2 : 1),
+          );
+        }
+        index = negative.end;
+        continue;
+      }
       if (pattern.source.startsWith("(?=", index)) {
         groups.push({ kind: "ahead", ignoreCase, bodyStart: index + 3 });
         source += "(?=(?:";
@@ -1080,13 +1164,6 @@ function createTrustedMatchPredicate(
       const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(pattern.source.slice(index));
       if (modifiers?.[1]?.includes("i")) ignoreCase = true;
       if (modifiers?.[2]?.includes("i")) ignoreCase = false;
-      if (
-        (pattern.source.startsWith("(?!", index) || pattern.source.startsWith("(?<!", index)) &&
-        !isMonotoneNegativeAssertion(pattern, index)
-      ) {
-        source += "(?!)";
-        fastPath = false;
-      }
     } else if (character === ")") {
       const group = groups.pop();
       if (!group) return () => false;
@@ -1113,8 +1190,8 @@ function createTrustedMatchPredicate(
   }
   try {
     // Guard positive assertions' consumed context without adding captures or
-    // changing backreference numbers. Monotone negative assertions can only
-    // lose matches when caller text is added; other negative paths stay closed.
+    // changing backreference numbers. Contextual negative assertions also
+    // check a capture-free body against the trusted segment's own boundaries.
     const matcher = new RegExp(source, pattern.flags.replace(/[gy]/g, "") + "y");
     return (match) => {
       // Interior matches cannot inspect caller text. Avoid prefix scans for

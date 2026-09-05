@@ -921,7 +921,20 @@ describe("securityMiddleware", () => {
   });
 
   it("preserves trusted matches with stable negative assertions", async () => {
-    for (const pattern of [/safe(?!evil)/, /(?<!evil)safe/, /safe(?!(?:evil|bad))/]) {
+    for (
+      const pattern of [
+        /safe(?!evil)/,
+        /(?<!evil)safe/,
+        /safe(?!(?:evil|bad))/,
+        /safe(?!evil$)/,
+        /safe(?!(evil)$)/,
+        /safe(?!(?:evil|bad)$)/,
+        /(?<!^evil)safe/,
+        /safe(?!$hello$)/,
+        /(?!(^safehello$))safe/,
+        /safe(?!(?<bad>evil)$)\k<bad>/,
+      ]
+    ) {
       const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
       const context = createContext({
         input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "hello" }] }],
@@ -940,6 +953,7 @@ describe("securityMiddleware", () => {
         /foo$|foo(?=a{0}\n\nbar)/,
         /foo(?!\n\nbar)|foo(?=\n\nbar)/,
         /foo(?!$)|(?:foo$)/,
+        /foo(?!\b)|foo\b/,
       ]
     ) {
       const middleware = securityMiddleware({
