@@ -1305,6 +1305,25 @@ async function main(args: string[]): Promise<void> {
           { cause: error },
         );
       }
+    } else if (fileResults.length > 0 && pkgJsonFileIdentity && pkgJsonSource !== undefined) {
+      // Matching pins still authorize the source rewrite. Revalidate their
+      // analyzed snapshot even when the manifest itself needs no update.
+      let current: Awaited<ReturnType<typeof readTextFileInsideProject>>;
+      try {
+        current = await readTextFileInsideProject(pkgJsonPath, projectRoot);
+      } catch (error) {
+        throw new SafeFileGuardError(
+          "Refusing to rewrite source files because package.json could not be revalidated safely.",
+          { cause: error },
+        );
+      }
+      if (
+        !sameFileIdentity(pkgJsonFileIdentity, current.identity) || current.text !== pkgJsonSource
+      ) {
+        throw new SafeFileGuardError(
+          "Refusing to rewrite source files because package.json changed after analysis.",
+        );
+      }
     }
 
     for (const { file, source, code, identity } of fileResults) {
