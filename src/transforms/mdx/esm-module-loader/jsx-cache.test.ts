@@ -846,6 +846,14 @@ describe("pruneSupersededJsxArtifacts", () => {
     return found;
   }
 
+  async function countJsxArtifacts(dir: string): Promise<number> {
+    let count = 0;
+    for await (const entry of readDir(dir)) {
+      if (entry.isFile && entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) count++;
+    }
+    return count;
+  }
+
   it("treats an artifact that vanished before its stat as the oldest variant", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-vanished-test-" });
 
@@ -1159,6 +1167,41 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("evicts one eligible artifact to reserve write headroom at capacity", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-directory-headroom-test-" });
+    const nextPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/next.tsx", "export const next = true;"),
+    );
+    const localFs = getLocalFs();
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+    const eligibleAt = new Date(Date.now() - JSX_CACHE_VARIANT_MIN_AGE_MS - 1_000);
+
+    try {
+      for (let index = 0; index < MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY; index++) {
+        const path = join(
+          tempDir,
+          buildMdxJsxCacheFileName(
+            `/tmp/source/eligible-${index}.tsx`,
+            `export const value = ${index};`,
+          ),
+        );
+        await writeTextFile(path, `export const value = ${index};`);
+        await utime(path, eligibleAt, eligibleAt);
+      }
+
+      await withJsxArtifactWriteCapacity(tempDir, nextPath, async () => {
+        await writeTextFile(nextPath, "export const next = true;");
+      });
+
+      assertEquals(await localFs.exists(nextPath), true);
+      assertEquals(await countJsxArtifacts(tempDir), MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reserves the full current-namespace capacity after a namespace upgrade", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-namespace-headroom-test-" });
     const nextPath = join(
@@ -1193,6 +1236,80 @@ describe("pruneSupersededJsxArtifacts", () => {
       });
 
       assertEquals(await getLocalFs().exists(nextPath), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("recounts the shared namespace before each artifact write", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-directory-count-test-" });
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    let directoryScans = 0;
+    localFs.readDir = (path) => {
+      if (path === tempDir) directoryScans++;
+      return originalReadDir(path);
+    };
+
+    try {
+      const firstPath = join(
+        tempDir,
+        buildMdxJsxCacheFileName("/tmp/source/first.tsx", "export const first = true;"),
+      );
+      const secondPath = join(
+        tempDir,
+        buildMdxJsxCacheFileName("/tmp/source/second.tsx", "export const second = true;"),
+      );
+      await withJsxArtifactWriteCapacity(
+        tempDir,
+        firstPath,
+        () => writeTextFile(firstPath, "export const first = true;"),
+      );
+      const scansAfterFirstWrite = directoryScans;
+
+      await withJsxArtifactWriteCapacity(
+        tempDir,
+        secondPath,
+        () => writeTextFile(secondPath, "export const second = true;"),
+      );
+
+      assertEquals(
+        directoryScans,
+        scansAfterFirstWrite + 1,
+        "the next write needs one authoritative quota scan and no lock-transition scan",
+      );
+    } finally {
+      localFs.readDir = originalReadDir;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps waiting for directory capacity beyond the artifact lease retry window", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-directory-wait-test-" });
+    const artifactPath = join(
+      tempDir,
+      buildMdxJsxCacheFileName("/tmp/source/wait.tsx", "export const waited = true;"),
+    );
+    const quotaLockPath = join(tempDir, ".jsx-directory-quota.lock");
+    const localFs = getLocalFs();
+    const createExclusive = localFs.createFileBytesExclusive;
+    if (!createExclusive) {
+      throw new Error("the test runtime must support exclusive file creation");
+    }
+
+    try {
+      await createExclusive(quotaLockPath, new TextEncoder().encode("live-owner"));
+      const release = setTimeout(() => {
+        void localFs.remove(quotaLockPath).catch(() => undefined);
+      }, 5_200);
+      await withJsxArtifactWriteCapacity(
+        tempDir,
+        artifactPath,
+        () => writeTextFile(artifactPath, "export const waited = true;"),
+      );
+      clearTimeout(release);
+
+      assertEquals(await localFs.exists(artifactPath), true);
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -1453,8 +1570,8 @@ describe("pruneSupersededJsxArtifacts", () => {
         Date.now(),
       );
 
-      await assertRejects(() => Deno.lstat(join(tempDir, `${staleArtifact}.lock`)));
-      assertEquals((await Deno.lstat(join(tempDir, `${freshArtifact}.lock`))).isFile, true);
+      assertEquals(await localFs.exists(join(tempDir, `${staleArtifact}.lock`)), false);
+      assertEquals((await localFs.stat(join(tempDir, `${freshArtifact}.lock`))).isFile, true);
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -1556,26 +1673,109 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("does not scan the cache directory for an uncontended artifact lease", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-uncontended-lease-test-" });
+    const artifactPath = join(tempDir, "jsx-uncontended.mjs");
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    let scans = 0;
+    localFs.readDir = (path) => {
+      if (path === tempDir) scans++;
+      return originalReadDir(path);
+    };
+
+    try {
+      await withJsxArtifactLock(artifactPath, async () => undefined);
+      assertEquals(scans, 0);
+    } finally {
+      localFs.readDir = originalReadDir;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reclaims a stale transition only while owning the canonical lease", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-transition-owner-test-" });
+    const artifactPath = join(tempDir, "jsx-transition-owner.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    const transitionPath = `${leasePath}.transition`;
+    const localFs = getLocalFs();
+    const originalRemove = localFs.remove.bind(localFs);
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support atomic cache leases");
+    let removedUnderCanonicalLease = false;
+    try {
+      await writeTextFile(transitionPath, "stale-transition-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(transitionPath, staleAt, staleAt);
+      localFs.remove = async (path, options) => {
+        if (path === transitionPath && !removedUnderCanonicalLease) {
+          removedUnderCanonicalLease = await localFs.exists(leasePath);
+        }
+        await originalRemove(path, options);
+      };
+
+      await withJsxArtifactLock(artifactPath, async () => undefined);
+      assertEquals(removedUnderCanonicalLease, true);
+    } finally {
+      localFs.remove = originalRemove;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("removes a provisional lease when transition inspection fails", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-transition-read-failure-" });
     const artifactPath = join(tempDir, "jsx-transition-failure.mjs");
     const leasePath = `${artifactPath}.lock`;
     const localFs = getLocalFs();
-    const originalReadDir = localFs.readDir;
+    const originalStat = localFs.stat.bind(localFs);
     try {
       await writeTextFile(artifactPath, "export const v = 0;");
-      localFs.readDir = () => {
-        throw new Error("directory unavailable");
+      localFs.stat = (path) => {
+        if (path === `${leasePath}.transition`) {
+          return Promise.reject(new Error("transition unavailable"));
+        }
+        return originalStat(path);
       };
 
       await assertRejects(
         () => withJsxArtifactLock(artifactPath, async () => {}),
         Error,
-        "directory unavailable",
+        "transition unavailable",
       );
       assertEquals(await localFs.exists(leasePath), false);
     } finally {
-      localFs.readDir = originalReadDir;
+      localFs.stat = originalStat;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps successful work when transition cleanup fails", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-transition-cleanup-test-" });
+    const artifactPath = join(tempDir, "jsx-transition-cleanup.mjs");
+    const transitionPath = `${artifactPath}.lock.transition`;
+    const localFs = getLocalFs();
+    const originalRemove = localFs.remove.bind(localFs);
+    try {
+      localFs.remove = (path, options) => {
+        if (path === transitionPath) {
+          return Promise.reject(Object.assign(new Error("transition busy"), { code: "EBUSY" }));
+        }
+        return originalRemove(path, options);
+      };
+
+      assertEquals(
+        await withJsxArtifactLock(artifactPath, async () => "completed"),
+        "completed",
+      );
+      assertEquals(
+        __jsxCacheInternals.hasScheduledJsxCachePrune(tempDir),
+        true,
+        "failed fence cleanup must preserve a maintenance obligation",
+      );
+    } finally {
+      localFs.remove = originalRemove;
       await remove(tempDir, { recursive: true });
     }
   });
@@ -1654,6 +1854,35 @@ describe("pruneSupersededJsxArtifacts", () => {
 
       assertEquals(entered, true);
       assertEquals(await getLocalFs().exists(leasePath), false);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("recovers a stale lease behind an abandoned transition fence", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-stale-transition-test-" });
+    const artifactPath = join(tempDir, "jsx-stale-transition.mjs");
+    const leasePath = `${artifactPath}.lock`;
+    const transitionPath = `${leasePath}.transition`;
+    const localFs = getLocalFs();
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+    try {
+      await writeTextFile(leasePath, "abandoned-lease-owner");
+      await writeTextFile(transitionPath, "abandoned-transition-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(leasePath, staleAt, staleAt);
+      await utime(transitionPath, staleAt, staleAt);
+
+      let entered = false;
+      await withJsxArtifactLock(artifactPath, async () => {
+        entered = true;
+      });
+
+      assertEquals(entered, true);
+      assertEquals(await localFs.exists(transitionPath), false);
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -2382,6 +2611,7 @@ describe("scheduled prune bound", () => {
     cancelScheduledJsxCachePrunes,
     clearPersistedJsxCachePruneRequestsForTests,
     getPersistedJsxCachePruneRequestPath,
+    hasActiveScheduledJsxCachePrune,
     hasScheduledJsxCachePrune,
     hasPersistedJsxCachePrune,
     MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
@@ -2414,6 +2644,22 @@ describe("scheduled prune bound", () => {
       true,
       "render admission must not fail because other directories hold cleanup timers",
     );
+    assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
+    assertEquals(queuedJsxCachePruneCount(), 1);
+  });
+
+  it("replaces a later timer so an urgent overflow deadline can run", () => {
+    for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES; entry++) {
+      scheduleJsxCachePruneRetry(
+        `/tmp/vf-jsx-sweep-deadline/${entry}`,
+        JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
+      );
+    }
+
+    const urgent = "/tmp/vf-jsx-sweep-deadline/urgent";
+    scheduleJsxCachePruneRetry(urgent, JSX_CACHE_VARIANT_MIN_AGE_MS);
+
+    assertEquals(hasActiveScheduledJsxCachePrune(urgent), true);
     assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
     assertEquals(queuedJsxCachePruneCount(), 1);
   });
@@ -2522,6 +2768,62 @@ describe("scheduled prune bound", () => {
       );
     } finally {
       await localFs.remove(tombstonePath).catch(() => undefined);
+    }
+  });
+
+  it("sweeps stale persisted-request lease transitions", async () => {
+    const directory = `${persistedTestPrefix}request-transition`;
+    const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
+    const transitionPath = `${requestPath}.lock.transition`;
+    const localFs = getLocalFs();
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+
+    try {
+      await mkdir(dirname(requestPath), { recursive: true });
+      await writeTextFile(transitionPath, "abandoned-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(transitionPath, staleAt, staleAt);
+
+      await promotePersistedJsxCachePruneRequest();
+
+      assertEquals(
+        await localFs.exists(transitionPath),
+        false,
+        "central request transition fences must not accumulate",
+      );
+    } finally {
+      await localFs.remove(transitionPath).catch(() => undefined);
+    }
+  });
+
+  it("sweeps a stale persisted-request lock whose request was never written", async () => {
+    const directory = `${persistedTestPrefix}orphan-request-lock`;
+    const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
+    const lockPath = `${requestPath}.lock`;
+    const localFs = getLocalFs();
+    const utime = localFs.utime;
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+
+    try {
+      await mkdir(dirname(requestPath), { recursive: true });
+      await writeTextFile(lockPath, "abandoned-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(lockPath, staleAt, staleAt);
+
+      await promotePersistedJsxCachePruneRequest();
+
+      assertEquals(
+        await localFs.exists(lockPath),
+        false,
+        "a request writer that exits before creating JSON must not leak its lease",
+      );
+    } finally {
+      await localFs.remove(lockPath).catch(() => undefined);
     }
   });
 

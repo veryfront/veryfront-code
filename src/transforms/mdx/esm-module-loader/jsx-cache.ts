@@ -510,6 +510,7 @@ const JSX_ARTIFACT_LEASE_RETRY_MS = 10;
 const JSX_ARTIFACT_LEASE_ATTEMPTS = 500;
 const JSX_ARTIFACT_LEASE_STALE_MS = 60_000;
 const JSX_ARTIFACT_LEASE_HEARTBEAT_MS = JSX_ARTIFACT_LEASE_STALE_MS / 3;
+const JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX = ".transition";
 const leaseEncoder = new TextEncoder();
 
 /** Base name of the directory-wide lock the artifact quota serializes on. */
@@ -517,7 +518,7 @@ const JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME = ".jsx-directory-quota";
 
 /** Tail a stale-lease recovery gives the lock file it renames aside. */
 const JSX_LEASE_TOMBSTONE_PATTERN =
-  /\.lock\.(?:stale|release)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  /\.lock(?:\.transition)?\.(?:stale|release)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Recognize a `.stale-<uuid>` tombstone this loader's lease recovery left.
@@ -539,6 +540,17 @@ function isJsxLeaseTombstoneName(name: string): boolean {
     return false;
   }
   return JSX_LEASE_TOMBSTONE_PATTERN.test(name);
+}
+
+function isJsxLeaseTransitionName(name: string): boolean {
+  if (
+    !name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
+    !name.startsWith(JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME) &&
+    !name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)
+  ) {
+    return false;
+  }
+  return name.endsWith(`.lock${JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX}`);
 }
 
 async function sweepJsxLeaseTombstones(
@@ -576,6 +588,91 @@ async function sweepJsxLeaseTombstones(
   return retryAtMs;
 }
 
+function leaseTransitionPath(lockPath: string): string {
+  return `${lockPath}${JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX}`;
+}
+
+async function hasLiveFilesystemLeaseTransition(
+  lockPath: string,
+  nowMs = Date.now(),
+): Promise<boolean> {
+  const path = leaseTransitionPath(lockPath);
+  let observedOwner: string;
+  let modifiedAtMs: number;
+  try {
+    modifiedAtMs = (await getLocalFs().stat(path)).mtime?.getTime() ?? nowMs;
+    observedOwner = await getLocalFs().readTextFile(path);
+    const confirmedModifiedAtMs = (await getLocalFs().stat(path)).mtime?.getTime() ?? nowMs;
+    if (confirmedModifiedAtMs !== modifiedAtMs) return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+  if (nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return true;
+
+  // Callers reach this only while they exclusively own `lockPath`. No other
+  // process can create a replacement transition until that canonical lease is
+  // released, so token-checked removal cannot unlink a successor.
+  await removeFilesystemLeaseIfOwned(path, observedOwner);
+  return false;
+}
+
+async function sweepJsxLeaseTransitions(
+  directory: string,
+  names: readonly string[],
+  nowMs: number,
+): Promise<number | undefined> {
+  const localFs = getLocalFs();
+  if (!localFs.createFileBytesExclusive || !localFs.rename) {
+    return names.length === 0 ? undefined : nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS;
+  }
+
+  let retryAtMs: number | undefined;
+  const noteRetry = (readyAtMs: number) => {
+    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
+  };
+  for (const name of names) {
+    const transitionPath = join(directory, name);
+    const lockPath = transitionPath.slice(0, -JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX.length);
+    try {
+      const modifiedAtMs = await readArtifactModifiedAtMs(transitionPath);
+      if (modifiedAtMs > 0 && nowMs - modifiedAtMs >= JSX_ARTIFACT_LEASE_STALE_MS) {
+        await withJsxArtifactLock(lockPath.slice(0, -".lock".length), async () => undefined);
+        continue;
+      }
+      noteRetry(
+        modifiedAtMs === 0 ? nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS : Math.max(
+          nowMs + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+          modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS,
+        ),
+      );
+    } catch {
+      noteRetry(nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
+    }
+  }
+  return retryAtMs;
+}
+
+async function acquireFilesystemLeaseTransition(
+  lockPath: string,
+  createExclusive: (path: string, data: Uint8Array) => Promise<void>,
+): Promise<string> {
+  const path = leaseTransitionPath(lockPath);
+  const owner = cryptoRandomUUID();
+  const bytes = leaseEncoder.encode(owner);
+  for (let attempt = 0; attempt < JSX_ARTIFACT_LEASE_ATTEMPTS; attempt++) {
+    try {
+      await createExclusive(path, bytes);
+      return owner;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+      if (!(await hasLiveFilesystemLeaseTransition(lockPath))) continue;
+      await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+    }
+  }
+  throw new Error(`Timed out waiting for JSX cache lease transition ${basename(lockPath)}`);
+}
+
 async function recoverStaleFilesystemLease(
   lockPath: string,
   nowMs: number,
@@ -595,61 +692,65 @@ async function recoverStaleFilesystemLease(
   }
   if (nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return false;
 
+  let transitionOwner: string | undefined;
+  const transitionPath = leaseTransitionPath(lockPath);
+  try {
+    transitionOwner = cryptoRandomUUID();
+    await createExclusive(transitionPath, leaseEncoder.encode(transitionOwner));
+  } catch (error) {
+    if (!isAlreadyExistsError(error)) throw error;
+    transitionOwner = undefined;
+    const transitionModifiedAtMs = await readArtifactModifiedAtMs(transitionPath);
+    if (
+      transitionModifiedAtMs === 0 ||
+      nowMs - transitionModifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS
+    ) return false;
+  }
   const stalePath = `${lockPath}.stale-${cryptoRandomUUID()}`;
   try {
-    await localFs.rename(lockPath, stalePath);
-  } catch (error) {
-    if (isNotFoundError(error)) return true;
-    return false;
-  }
-  let renamedOwner: string;
-  try {
-    renamedOwner = await localFs.readTextFile(stalePath);
-  } catch {
-    return false;
-  }
-  if (renamedOwner !== observedOwner) {
-    // A fresh owner replaced the stale file between validation and rename.
-    // Restore that unique owner token with an exclusive create when the path
-    // is still empty. The fresh operation's ownership fence then either keeps
-    // working or observes the newer waiter that won this restoration race.
-    await restoreDisplacedFilesystemLease(lockPath, stalePath, renamedOwner, createExclusive);
+    try {
+      modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+      observedOwner = await localFs.readTextFile(lockPath);
+      if (nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return false;
+      await localFs.rename(lockPath, stalePath);
+    } catch (error) {
+      if (isNotFoundError(error)) return true;
+      return false;
+    }
+    let renamedOwner: string;
+    try {
+      renamedOwner = await localFs.readTextFile(stalePath);
+    } catch {
+      return false;
+    }
+    if (renamedOwner !== observedOwner) {
+      // A fresh owner replaced the stale file between validation and rename.
+      // Restore that unique owner token with an exclusive create when the path
+      // is still empty. The fresh operation's ownership fence then either keeps
+      // working or observes the newer waiter that won this restoration race.
+      await restoreDisplacedFilesystemLease(lockPath, stalePath, renamedOwner, createExclusive);
+      try {
+        await localFs.remove(stalePath);
+      } catch (_) {
+        // Same stranding risk as the removal below, so arm the same sweep.
+        scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      }
+      return false;
+    }
     try {
       await localFs.remove(stalePath);
     } catch (_) {
-      // Same stranding risk as the removal below, so arm the same sweep.
+      // The uniquely renamed lease no longer blocks this lock. Schedule the
+      // normal directory sweep so a transient EBUSY/permission race cannot
+      // strand one tombstone per recovery forever.
       scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
     }
-    return false;
-  }
-  try {
-    await localFs.remove(stalePath);
-  } catch (_) {
-    // The uniquely renamed lease no longer blocks this lock. Schedule the
-    // normal directory sweep so a transient EBUSY/permission race cannot
-    // strand one tombstone per recovery forever.
-    scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
-  }
-  return true;
-}
-
-async function hasLiveFilesystemLeaseTransition(lockPath: string): Promise<boolean> {
-  const lockName = basename(lockPath);
-  const nowMs = Date.now();
-  try {
-    for await (const entry of getLocalFs().readDir(dirname(lockPath))) {
-      if (
-        !entry.isFile ||
-        !entry.name.startsWith(`${lockName}.release-`) &&
-          !entry.name.startsWith(`${lockName}.stale-`)
-      ) continue;
-      const modifiedAtMs = await readArtifactModifiedAtMs(join(dirname(lockPath), entry.name));
-      if (modifiedAtMs > 0 && nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return true;
+    return true;
+  } finally {
+    if (transitionOwner !== undefined) {
+      await removeFilesystemLeaseTransitionIfOwned(lockPath, transitionOwner);
     }
-  } catch (error) {
-    if (!isNotFoundError(error)) throw error;
   }
-  return false;
 }
 
 async function removeFilesystemLeaseIfOwned(lockPath: string, owner: string): Promise<void> {
@@ -658,6 +759,20 @@ async function removeFilesystemLeaseIfOwned(lockPath: string, owner: string): Pr
     await getLocalFs().remove(lockPath);
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
+  }
+}
+
+async function removeFilesystemLeaseTransitionIfOwned(
+  lockPath: string,
+  owner: string,
+): Promise<void> {
+  try {
+    await removeFilesystemLeaseIfOwned(leaseTransitionPath(lockPath), owner);
+  } catch (error) {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease transition`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
   }
 }
 
@@ -684,6 +799,7 @@ async function restoreDisplacedFilesystemLease(
 async function withFilesystemLease<T>(
   lockPath: string,
   operation: (assertLeaseOwned: () => Promise<void>) => Promise<T>,
+  waitForLiveLease = false,
 ): Promise<T> {
   const localFs = getLocalFs();
   const createExclusive = localFs.createFileBytesExclusive;
@@ -693,7 +809,11 @@ async function withFilesystemLease<T>(
   const leaseOwner = cryptoRandomUUID();
   const leaseBytes = leaseEncoder.encode(leaseOwner);
   let acquired = false;
-  for (let attempt = 0; attempt < JSX_ARTIFACT_LEASE_ATTEMPTS; attempt++) {
+  for (
+    let attempt = 0;
+    waitForLiveLease || attempt < JSX_ARTIFACT_LEASE_ATTEMPTS;
+    attempt++
+  ) {
     try {
       await createExclusive(lockPath, leaseBytes);
       try {
@@ -738,8 +858,12 @@ async function withFilesystemLease<T>(
     return await operation(assertLeaseOwned);
   } finally {
     if (heartbeat !== undefined) clearInterval(heartbeat);
+    let transitionOwner: string | undefined;
     const releasePath = `${lockPath}.release-${cryptoRandomUUID()}`;
     try {
+      await assertLeaseOwned();
+      transitionOwner = await acquireFilesystemLeaseTransition(lockPath, createExclusive);
+      await assertLeaseOwned();
       await localFs.rename!(lockPath, releasePath);
       const releasedOwner = await localFs.readTextFile(releasePath);
       if (releasedOwner !== leaseOwner) {
@@ -758,6 +882,10 @@ async function withFilesystemLease<T>(
         });
         scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
       }
+    } finally {
+      if (transitionOwner !== undefined) {
+        await removeFilesystemLeaseTransitionIfOwned(lockPath, transitionOwner);
+      }
     }
   }
 }
@@ -772,9 +900,16 @@ async function withFilesystemLease<T>(
 export async function withJsxArtifactLock<T>(
   artifactPath: string,
   operation: (assertLeaseOwned: () => Promise<void>) => Promise<T>,
+  options: { waitForLiveLease?: boolean } = {},
 ): Promise<T> {
   const previous = jsxArtifactLocks.get(artifactPath) ?? Promise.resolve();
-  const run = previous.then(() => withFilesystemLease(`${artifactPath}.lock`, operation));
+  const run = previous.then(() =>
+    withFilesystemLease(
+      `${artifactPath}.lock`,
+      operation,
+      options.waitForLiveLease ?? false,
+    )
+  );
   const settled = run.then(
     () => undefined,
     () => undefined,
@@ -821,16 +956,20 @@ interface PersistedJsxCachePruneRequest {
   generation: string;
 }
 
+interface ScheduledJsxCachePrune {
+  timer: ReturnType<typeof setTimeout> | undefined;
+  fireAtMs: number;
+  persistedGeneration?: string;
+}
+
+interface QueuedJsxCachePrune {
+  fireAtMs: number;
+  persistedGeneration?: string;
+}
+
 /** At most one pending follow-up prune per cache directory. */
-const scheduledJsxCachePrunes = new Map<
-  string,
-  {
-    timer: ReturnType<typeof setTimeout> | undefined;
-    fireAtMs: number;
-    persistedGeneration?: string;
-  }
->();
-const queuedJsxCachePrunes = new Map<string, number>();
+const scheduledJsxCachePrunes = new Map<string, ScheduledJsxCachePrune>();
+const queuedJsxCachePrunes = new Map<string, QueuedJsxCachePrune>();
 const inFlightJsxCachePrunes = new Set<string>();
 let persistedJsxCachePrunePromotion: Promise<void> | undefined;
 let persistedJsxCachePrunePromotionRequested = false;
@@ -978,25 +1117,43 @@ async function retirePersistedJsxCachePruneRequest(
 }
 
 async function promotePersistedJsxCachePruneRequest(): Promise<void> {
-  if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) return;
-
   const queuedCandidates = [...queuedJsxCachePrunes].sort(
-    (left, right) => left[1] - right[1],
+    (left, right) => left[1].fireAtMs - right[1].fireAtMs,
   );
   const persistedCandidates: PersistedJsxCachePruneRequest[] = [];
   const requestLeaseTombstones: string[] = [];
+  const requestLeaseTransitions: string[] = [];
+  const requestFileNames = new Set<string>();
+  const possibleOrphanRequestLocks: string[] = [];
   const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   let requestTombstoneRetryAtMs: number | undefined;
+  const noteRequestMaintenanceRetry = (readyAtMs: number) => {
+    requestTombstoneRetryAtMs = requestTombstoneRetryAtMs === undefined
+      ? readyAtMs
+      : Math.min(requestTombstoneRetryAtMs, readyAtMs);
+  };
   try {
     for await (const entry of getLocalFs().readDir(requestDirectory)) {
       if (entry.isFile && isJsxLeaseTombstoneName(entry.name)) {
         requestLeaseTombstones.push(entry.name);
         continue;
       }
+      if (entry.isFile && isJsxLeaseTransitionName(entry.name)) {
+        requestLeaseTransitions.push(entry.name);
+        continue;
+      }
+      if (
+        entry.isFile && entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX) &&
+        entry.name.endsWith(".json.lock")
+      ) {
+        possibleOrphanRequestLocks.push(entry.name);
+        continue;
+      }
       if (
         !entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX) ||
         !entry.name.endsWith(".json")
       ) continue;
+      requestFileNames.add(entry.name);
       const requestPath = join(requestDirectory, entry.name);
       const request = await readPersistedJsxCachePruneRequest(requestPath);
       if (request === undefined) continue;
@@ -1010,11 +1167,33 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
       persistedCandidates.push({ esmCacheDir, fireAtMs, generation });
     }
 
-    requestTombstoneRetryAtMs = await sweepJsxLeaseTombstones(
+    const nowMs = Date.now();
+    for (const lockName of possibleOrphanRequestLocks) {
+      const requestName = lockName.slice(0, -".lock".length);
+      if (requestFileNames.has(requestName)) continue;
+      const lockPath = join(requestDirectory, lockName);
+      const modifiedAtMs = await readArtifactModifiedAtMs(lockPath);
+      if (modifiedAtMs === 0) continue;
+      const recoverAtMs = modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS;
+      if (recoverAtMs > nowMs) {
+        noteRequestMaintenanceRetry(recoverAtMs);
+        continue;
+      }
+      await withJsxArtifactLock(join(requestDirectory, requestName), async () => undefined);
+    }
+
+    const tombstoneRetryAtMs = await sweepJsxLeaseTombstones(
       requestDirectory,
       requestLeaseTombstones,
-      Date.now(),
+      nowMs,
     );
+    if (tombstoneRetryAtMs !== undefined) noteRequestMaintenanceRetry(tombstoneRetryAtMs);
+    const transitionRetryAtMs = await sweepJsxLeaseTransitions(
+      requestDirectory,
+      requestLeaseTransitions,
+      nowMs,
+    );
+    if (transitionRetryAtMs !== undefined) noteRequestMaintenanceRetry(transitionRetryAtMs);
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read persisted JSX prune requests`, {
@@ -1027,11 +1206,36 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
   persistedCandidates.sort((left, right) => left.fireAtMs - right.fireAtMs);
   let queuedIndex = 0;
   let persistedIndex = 0;
+  if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+    const queued = queuedCandidates[queuedIndex];
+    const persisted = persistedCandidates[persistedIndex];
+    if (
+      persisted !== undefined && (queued === undefined || persisted.fireAtMs <= queued[1].fireAtMs)
+    ) {
+      persistedIndex++;
+      scheduleJsxCachePruneRetry(
+        persisted.esmCacheDir,
+        Math.max(persisted.fireAtMs - Date.now(), 0),
+        persisted.generation,
+      );
+    } else if (queued !== undefined) {
+      queuedIndex++;
+      queuedJsxCachePrunes.delete(queued[0]);
+      scheduleJsxCachePruneRetry(
+        queued[0],
+        Math.max(queued[1].fireAtMs - Date.now(), 0),
+        queued[1].persistedGeneration,
+      );
+    }
+  }
   while (scheduledJsxCachePrunes.size < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
     const queued = queuedCandidates[queuedIndex];
     const persisted = persistedCandidates[persistedIndex];
     if (queued === undefined && persisted === undefined) break;
-    if (persisted !== undefined && (queued === undefined || persisted.fireAtMs <= queued[1])) {
+    if (
+      persisted !== undefined &&
+      (queued === undefined || persisted.fireAtMs <= queued[1].fireAtMs)
+    ) {
       persistedIndex++;
       scheduleJsxCachePruneRetry(
         persisted.esmCacheDir,
@@ -1045,7 +1249,8 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
       queuedJsxCachePrunes.delete(queued[0]);
       scheduleJsxCachePruneRetry(
         queued[0],
-        Math.max(queued[1] - Date.now(), 0),
+        Math.max(queued[1].fireAtMs - Date.now(), 0),
+        queued[1].persistedGeneration,
       );
     }
   }
@@ -1077,17 +1282,26 @@ function requestPersistedJsxCachePrunePromotion(): void {
   });
 }
 
-function queueJsxCachePrune(esmCacheDir: string, fireAtMs: number): void {
-  const queuedAtMs = queuedJsxCachePrunes.get(esmCacheDir);
-  if (queuedAtMs !== undefined) {
-    if (fireAtMs < queuedAtMs) queuedJsxCachePrunes.set(esmCacheDir, fireAtMs);
+function queueJsxCachePrune(
+  esmCacheDir: string,
+  fireAtMs: number,
+  persistedGeneration?: string,
+): void {
+  const queued = queuedJsxCachePrunes.get(esmCacheDir);
+  if (queued !== undefined) {
+    if (fireAtMs < queued.fireAtMs || queued.persistedGeneration === undefined) {
+      queuedJsxCachePrunes.set(esmCacheDir, {
+        fireAtMs: Math.min(fireAtMs, queued.fireAtMs),
+        persistedGeneration: queued.persistedGeneration ?? persistedGeneration,
+      });
+    }
     return;
   }
   if (queuedJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
     void persistJsxCachePruneRequest(esmCacheDir, fireAtMs);
     return;
   }
-  queuedJsxCachePrunes.set(esmCacheDir, fireAtMs);
+  queuedJsxCachePrunes.set(esmCacheDir, { fireAtMs, persistedGeneration });
 }
 
 async function revisitJsxCacheDirectory(esmCacheDir: string): Promise<void> {
@@ -1129,8 +1343,24 @@ function scheduleJsxCachePruneRetry(
     if (pending.timer !== undefined && pending.fireAtMs <= fireAtMs) return;
     if (pending.timer !== undefined) clearTimeout(pending.timer);
   } else if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
-    queueJsxCachePrune(esmCacheDir, fireAtMs);
-    return;
+    let latest: [string, ScheduledJsxCachePrune] | undefined;
+    for (const candidate of scheduledJsxCachePrunes) {
+      if (
+        candidate[1].timer !== undefined && candidate[1].fireAtMs > fireAtMs &&
+        (latest === undefined || candidate[1].fireAtMs > latest[1].fireAtMs)
+      ) latest = candidate;
+    }
+    if (latest === undefined) {
+      queueJsxCachePrune(esmCacheDir, fireAtMs, persistedGeneration);
+      return;
+    }
+    clearTimeout(latest[1].timer!);
+    scheduledJsxCachePrunes.delete(latest[0]);
+    queueJsxCachePrune(
+      latest[0],
+      latest[1].fireAtMs,
+      latest[1].persistedGeneration,
+    );
   }
   const timer = setTimeout(() => {
     const fired = scheduledJsxCachePrunes.get(esmCacheDir);
@@ -1283,20 +1513,23 @@ export function withJsxArtifactWriteCapacity<T>(
         await assertLeaseOwned();
         return await operation(assertLeaseOwned);
       }
-      if (
-        await countCurrentNamespaceJsxArtifacts(esmCacheDir) >=
-          MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY
-      ) {
+      let remainingArtifacts = await countCurrentNamespaceJsxArtifacts(esmCacheDir);
+      if (remainingArtifacts >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
         await assertLeaseOwned();
-        await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
+        remainingArtifacts = await collectExcessJsxArtifacts(
+          esmCacheDir,
+          new Map(),
+          Date.now(),
+          1,
+        ) ?? await countCurrentNamespaceJsxArtifacts(esmCacheDir);
       }
-      const remainingArtifacts = await countCurrentNamespaceJsxArtifacts(esmCacheDir);
       if (remainingArtifacts >= MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY) {
         throw new JsxCacheCapacityError("JSX cache artifact quota is exhausted");
       }
       await assertLeaseOwned();
       return await operation(assertLeaseOwned);
     },
+    { waitForLiveLease: true },
   );
 }
 
@@ -1404,19 +1637,21 @@ export async function pruneSupersededJsxArtifacts(
  * one artifact each) and reclaims artifacts stranded under a superseded
  * cache namespace: recognisably this loader's files, but unreachable since the
  * roll, so no variant window can ever cover them again. It also sweeps the
- * `.stale-<uuid>` lease tombstones a recovery could not remove itself, which
- * nothing else in the directory accounts for.
+ * lease tombstones and transition fences a recovery could not remove itself,
+ * which nothing else in the directory accounts for.
  */
 async function collectExcessJsxArtifacts(
   esmCacheDir: string,
   currentByPrefix: ReadonlyMap<string, string>,
   nowMs: number,
-): Promise<void> {
+  reservedSlots = 0,
+): Promise<number | undefined> {
   const localFs = getLocalFs();
 
   const variantsByPrefix = new Map<string, string[]>();
   const strandedNamespaceArtifacts: string[] = [];
   const leaseTombstones: string[] = [];
+  const leaseTransitions: string[] = [];
   const possibleOrphanLeaseArtifacts: Array<{ artifactName: string; lockName: string }> = [];
   const allArtifactNames: string[] = [];
   try {
@@ -1424,6 +1659,10 @@ async function collectExcessJsxArtifacts(
       if (!entry.isFile) continue;
       if (isJsxLeaseTombstoneName(entry.name)) {
         leaseTombstones.push(entry.name);
+        continue;
+      }
+      if (isJsxLeaseTransitionName(entry.name)) {
+        leaseTransitions.push(entry.name);
         continue;
       }
       if (entry.name.endsWith(".mjs.lock")) {
@@ -1463,8 +1702,16 @@ async function collectExcessJsxArtifacts(
         JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
       );
     }
-    return;
+    return undefined;
   }
+
+  let remainingCurrentNamespaceArtifacts =
+    allArtifactNames.filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)).length;
+  const noteArtifactRemoval = (name: string, removal: JsxArtifactRemoval): void => {
+    if (removal.removed && name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
+      remainingCurrentNamespaceArtifacts--;
+    }
+  };
 
   /** Earliest moment a variant this pass left behind becomes collectable. */
   let retryAtMs: number | undefined;
@@ -1478,6 +1725,12 @@ async function collectExcessJsxArtifacts(
     nowMs,
   );
   if (tombstoneRetryAtMs !== undefined) noteRetry(tombstoneRetryAtMs);
+  const transitionRetryAtMs = await sweepJsxLeaseTransitions(
+    esmCacheDir,
+    leaseTransitions,
+    nowMs,
+  );
+  if (transitionRetryAtMs !== undefined) noteRetry(transitionRetryAtMs);
 
   const artifactNames = new Set(allArtifactNames);
   for (const { artifactName, lockName } of possibleOrphanLeaseArtifacts) {
@@ -1497,7 +1750,8 @@ async function collectExcessJsxArtifacts(
   const strandedNamespaceNames = new Set(strandedNamespaceArtifacts);
   let directoryExcess = Math.max(
     0,
-    allArtifactNames.filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)).length -
+    allArtifactNames.filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)).length +
+      reservedSlots -
       MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
   );
   if (directoryExcess > 0) {
@@ -1524,8 +1778,10 @@ async function collectExcessJsxArtifacts(
       }
       const removal = await removeJsxArtifactUnlessServed(join(esmCacheDir, name), nowMs);
       quotaHandled.add(name);
-      if (removal.removed) directoryExcess--;
-      else noteRetry(removal.retryAtMs);
+      if (removal.removed) {
+        directoryExcess--;
+        noteArtifactRemoval(name, removal);
+      } else noteRetry(removal.retryAtMs);
     }
   }
 
@@ -1574,7 +1830,8 @@ async function collectExcessJsxArtifacts(
         continue;
       }
       const removal = await removeJsxArtifactUnlessServed(artifactPath, nowMs);
-      if (!removal.removed) noteRetry(removal.retryAtMs);
+      if (removal.removed) noteArtifactRemoval(name, removal);
+      else noteRetry(removal.retryAtMs);
     }
   }
 
@@ -1584,6 +1841,7 @@ async function collectExcessJsxArtifacts(
       Math.max(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
     );
   }
+  return remainingCurrentNamespaceArtifacts;
 }
 
 /**
@@ -1626,6 +1884,8 @@ export const __jsxCacheInternals = {
   retainJsxArtifact,
   scheduleJsxCachePruneRetry,
   scheduledJsxCachePruneCount: (): number => scheduledJsxCachePrunes.size,
+  hasActiveScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
+    scheduledJsxCachePrunes.get(esmCacheDir)?.timer !== undefined,
   runLazyJsxArtifactHeartbeat,
   servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
   wasJsxArtifactRecentlyServed,
