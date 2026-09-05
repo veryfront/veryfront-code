@@ -6,7 +6,9 @@ import {
   writeTextFileInsideProject,
 } from "../../../scripts/codemods/migrate-esm-sh-imports.ts";
 import {
+  capturePinnedDirectoryIdentity,
   openPinnedPosixFile,
+  openPinnedWindowsFile,
   readPinnedDirectory,
 } from "../../../scripts/codemods/pinned-directory.ts";
 
@@ -161,6 +163,33 @@ describe("pinned file operations", () => {
         Array.from(Deno.readDirSync(`${base}/outside/project`)).map((entry) => entry.name),
         ["app.ts"],
       );
+    } finally {
+      await Deno.remove(base, { recursive: true });
+    }
+  });
+  it("rejects an ordinary directory substituted for the captured project root", async () => {
+    const base = await Deno.realPath(await makeTempDir());
+    const root = `${base}/project`;
+    const original = `${base}/original`;
+    const substitute = `${base}/substitute`;
+    await Deno.mkdir(root);
+    await Deno.mkdir(substitute);
+    const rootIdentity = capturePinnedDirectoryIdentity(root);
+    await Deno.rename(root, original);
+    await Deno.rename(substitute, root);
+    try {
+      await assertRejects(async () => {
+        for await (const _entry of readPinnedDirectory(root, root, rootIdentity)) {
+          throw new Error("Unexpected entry");
+        }
+      });
+      await assertRejects(async () => {
+        const file = Deno.build.os === "windows"
+          ? openPinnedWindowsFile(`${root}/package.json`, root, "wx+", rootIdentity)
+          : openPinnedPosixFile(`${root}/package.json`, root, "wx+", rootIdentity);
+        await file.close();
+      });
+      assertEquals(Array.from(Deno.readDirSync(root)), []);
     } finally {
       await Deno.remove(base, { recursive: true });
     }

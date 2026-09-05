@@ -1333,6 +1333,39 @@ for (const mutation of ["edit", "replace"] as const) {
   });
 }
 
+it("a manifest deleted after analysis is not recreated", async () => {
+  const project = await makeTempDir();
+  const path = `${project}/package.json`;
+  const source = 'import "https://esm.sh/lodash@4.17.21";\n';
+  const stringify = JSON.stringify;
+  let deleted = false;
+  try {
+    await Deno.writeTextFile(`${project}/app.ts`, source);
+    await Deno.writeTextFile(path, '{"dependencies":{}}\n');
+    JSON.stringify = new Proxy(stringify, {
+      apply(target, receiver, args) {
+        const value = args[0];
+        if (
+          !deleted && value && typeof value === "object" &&
+          Object.keys(value).length === 1 && value.lodash === "4.17.21"
+        ) {
+          deleted = true;
+          Deno.removeSync(path);
+        }
+        return Reflect.apply(target, receiver, args);
+      },
+    });
+
+    await assertRejects(() => main([project]), Error);
+    assertEquals(deleted, true);
+    await assertRejects(() => Deno.lstat(path), Deno.errors.NotFound);
+    assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+  } finally {
+    JSON.stringify = stringify;
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 it("a manifest that appears after analysis is not overwritten", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;

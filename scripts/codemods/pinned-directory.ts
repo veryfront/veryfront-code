@@ -1,6 +1,11 @@
 import { constants } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 
+export interface PinnedDirectoryIdentity {
+  device: string;
+  inode: string;
+}
+
 function failure(): Error {
   return new Error(
     "Refusing directory traversal without a stable no-follow handle.",
@@ -24,13 +29,15 @@ function components(path: string, root: string): string[] {
 export async function* readPinnedDirectory(
   path: string,
   root: string,
+  rootIdentity?: PinnedDirectoryIdentity,
 ): AsyncGenerator<Deno.DirEntry> {
   const parts = components(path, root);
+  const expectedRoot = rootIdentity ?? capturePinnedDirectoryIdentity(root);
   if (root.includes("\0")) throw failure();
   if (Deno.build.os === "windows") {
-    yield* readWindowsDirectory(root, parts);
+    yield* readWindowsDirectory(root, parts, expectedRoot);
   } else if (Deno.build.os === "darwin" || Deno.build.os === "linux") {
-    yield* readPosixDirectory(root, parts);
+    yield* readPosixDirectory(root, parts, expectedRoot);
   } else {
     throw failure();
   }
@@ -124,7 +131,55 @@ function posixSearchFlags(): number {
     constants.O_DIRECTORY | constants.O_NOFOLLOW;
 }
 
-function* readPosixDirectory(root: string, parts: string[]): Generator<Deno.DirEntry> {
+function posixIdentity(
+  library: ReturnType<typeof openPosixLibrary>,
+  fd: number,
+): PinnedDirectoryIdentity {
+  const bytes = new Uint8Array(256);
+  if (library.symbols.fstat(fd, bytes) !== 0) throw failure();
+  const view = new DataView(bytes.buffer);
+  const darwin = Deno.build.os === "darwin";
+  return {
+    device: String(darwin ? BigInt(view.getUint32(0, true)) : view.getBigUint64(0, true)),
+    inode: String(view.getBigUint64(8, true)),
+  };
+}
+
+function sameIdentity(
+  left: PinnedDirectoryIdentity,
+  right: PinnedDirectoryIdentity,
+): boolean {
+  return left.device === right.device && left.inode === right.inode;
+}
+
+function openVerifiedPosixRoot(
+  library: ReturnType<typeof openPosixLibrary>,
+  root: string,
+  expected?: PinnedDirectoryIdentity,
+): number {
+  const cstring = (value: string) => new TextEncoder().encode(value + "\0");
+  let fd = library.symbols.open(cstring("/"), posixSearchFlags());
+  if (fd < 0) throw posixError(library);
+  try {
+    for (const part of root.split("/").filter(Boolean)) {
+      const child = library.symbols.openat(fd, cstring(part), posixSearchFlags());
+      if (child < 0) throw posixError(library);
+      library.symbols.close(fd);
+      fd = child;
+    }
+    if (expected && !sameIdentity(posixIdentity(library, fd), expected)) throw failure();
+    return fd;
+  } catch (error) {
+    library.symbols.close(fd);
+    throw error;
+  }
+}
+
+function* readPosixDirectory(
+  root: string,
+  parts: string[],
+  rootIdentity: PinnedDirectoryIdentity,
+): Generator<Deno.DirEntry> {
   const darwin = Deno.build.os === "darwin";
   const library = openPosixLibrary();
   const cstring = (value: string) => new TextEncoder().encode(value + "\0");
@@ -133,11 +188,10 @@ function* readPosixDirectory(root: string, parts: string[]): Generator<Deno.DirE
   let fd = -1;
   let directory: Deno.PointerValue = null;
   try {
-    // O_NOFOLLOW only protects the final component. Pin every ancestor of
-    // the project root as well as the paths below it.
-    fd = library.symbols.open(cstring("/"), posixSearchFlags());
-    if (fd < 0) throw failure();
-    for (const part of [...root.split("/").filter(Boolean), ...parts]) {
+    // O_NOFOLLOW only protects the final component. Pin every ancestor of the
+    // project root, verify the root captured by main(), then descend below it.
+    fd = openVerifiedPosixRoot(library, root, rootIdentity);
+    for (const part of parts) {
       const child = library.symbols.openat(fd, cstring(part), posixSearchFlags());
       if (child < 0) throw failure();
       library.symbols.close(fd);
@@ -203,19 +257,24 @@ function* readPosixDirectory(root: string, parts: string[]): Generator<Deno.DirE
 }
 
 /** Open a POSIX file beneath the root without following any path-component symlink. */
-export function openPinnedPosixFile(path: string, root: string, mode: "r" | "r+" | "wx+") {
+export function openPinnedPosixFile(
+  path: string,
+  root: string,
+  mode: "r" | "r+" | "wx+",
+  rootIdentity?: PinnedDirectoryIdentity,
+) {
   const parts = components(path, root);
   const name = parts.pop();
   if (!name || Deno.build.os === "windows") throw failure();
+  const expectedRoot = rootIdentity ?? capturePinnedDirectoryIdentity(root);
   const library = openPosixLibrary();
   const cstring = (value: string) => new TextEncoder().encode(value + "\0");
   const directoryFlags = posixSearchFlags();
   let directory = -1;
   let fd = -1;
   try {
-    directory = library.symbols.open(cstring("/"), directoryFlags);
-    if (directory < 0) throw posixError(library);
-    for (const part of [...root.split("/").filter(Boolean), ...parts]) {
+    directory = openVerifiedPosixRoot(library, root, expectedRoot);
+    for (const part of parts) {
       const child = library.symbols.openat(directory, cstring(part), directoryFlags);
       if (child < 0) throw posixError(library);
       library.symbols.close(directory);
@@ -262,13 +321,14 @@ export function openPinnedPosixFile(path: string, root: string, mode: "r" | "r+"
   let closed = false;
   const stat = () => {
     if (closed) throw failure();
+    const identity = posixIdentity(library, fd);
     const bytes = new Uint8Array(256);
     if (library.symbols.fstat(fd, bytes) !== 0) throw failure();
     const view = new DataView(bytes.buffer);
     const darwin = Deno.build.os === "darwin";
     return {
-      dev: darwin ? BigInt(view.getUint32(0, true)) : view.getBigUint64(0, true),
-      ino: view.getBigUint64(8, true),
+      dev: BigInt(identity.device),
+      ino: BigInt(identity.inode),
       size: view.getBigInt64(darwin ? 96 : 48, true),
     };
   };
@@ -452,12 +512,80 @@ function nativeWindowsRoot(root: string): string {
     : "\\??\\" + normalized;
 }
 
+function windowsIdentity(
+  kernel: ReturnType<typeof openWindowsLibrary>["kernel"],
+  handle: Deno.PointerValue,
+): PinnedDirectoryIdentity {
+  const info = new Uint8Array(52);
+  if (!kernel.symbols.GetFileInformationByHandle(handle, info)) throw failure();
+  const view = new DataView(info.buffer);
+  return {
+    device: String(view.getUint32(28, true)),
+    inode: String(
+      (BigInt(view.getUint32(44, true)) << 32n) | BigInt(view.getUint32(48, true)),
+    ),
+  };
+}
+
+function openVerifiedWindowsRoot(
+  library: ReturnType<typeof openWindowsLibrary>,
+  root: string,
+  expected?: PinnedDirectoryIdentity,
+): Deno.PointerValue {
+  const handle = library.open(nativeWindowsRoot(root), null);
+  try {
+    if (expected && !sameIdentity(windowsIdentity(library.kernel, handle), expected)) {
+      throw failure();
+    }
+    return handle;
+  } catch (error) {
+    library.nt.symbols.NtClose(handle);
+    throw error;
+  }
+}
+
+/** Capture the native identity every later traversal must reopen. */
+export function capturePinnedDirectoryIdentity(root: string): PinnedDirectoryIdentity {
+  if (!isAbsolute(root) || root.includes("\0")) throw failure();
+  if (Deno.build.os === "windows") {
+    const library = openWindowsLibrary();
+    let handle: Deno.PointerValue = null;
+    try {
+      handle = openVerifiedWindowsRoot(library, root);
+      return windowsIdentity(library.kernel, handle);
+    } finally {
+      if (handle) library.nt.symbols.NtClose(handle);
+      library.kernel.close();
+      library.nt.close();
+    }
+  }
+  if (Deno.build.os === "darwin" || Deno.build.os === "linux") {
+    const library = openPosixLibrary();
+    let fd = -1;
+    try {
+      fd = openVerifiedPosixRoot(library, root);
+      return posixIdentity(library, fd);
+    } finally {
+      if (fd >= 0) library.symbols.close(fd);
+      library.close();
+    }
+  }
+  throw failure();
+}
+
 /** Read and write through a native file handle opened beneath the pinned root. */
-export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r+" | "wx+") {
+export function openPinnedWindowsFile(
+  path: string,
+  root: string,
+  mode: "r" | "r+" | "wx+",
+  rootIdentity?: PinnedDirectoryIdentity,
+) {
   const parts = components(path, root);
   const name = parts.pop();
   if (!name || Deno.build.os !== "windows") throw failure();
-  const { nt, kernel, open } = openWindowsLibrary();
+  const expectedRoot = rootIdentity ?? capturePinnedDirectoryIdentity(root);
+  const library = openWindowsLibrary();
+  const { nt, kernel, open } = library;
   let parent: Deno.PointerValue = null;
   let file: Deno.PointerValue = null;
   let closed = false;
@@ -476,7 +604,7 @@ export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r
     nt.close();
   };
   try {
-    parent = open(nativeWindowsRoot(root), null);
+    parent = openVerifiedWindowsRoot(library, root, expectedRoot);
     for (const part of parts) {
       const child = open(part, parent);
       nt.symbols.NtClose(parent);
@@ -485,12 +613,13 @@ export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r
     file = open(name, parent, mode);
     const stat = () => {
       if (closed) throw failure();
+      const identity = windowsIdentity(kernel, file);
       const info = new Uint8Array(52);
       if (!kernel.symbols.GetFileInformationByHandle(file, info)) throw failure();
       const view = new DataView(info.buffer);
       return {
-        dev: BigInt(view.getUint32(28, true)),
-        ino: (BigInt(view.getUint32(44, true)) << 32n) | BigInt(view.getUint32(48, true)),
+        dev: BigInt(identity.device),
+        ino: BigInt(identity.inode),
         size: (BigInt(view.getUint32(32, true)) << 32n) | BigInt(view.getUint32(36, true)),
       };
     };
@@ -559,11 +688,16 @@ export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r
   }
 }
 
-function* readWindowsDirectory(root: string, parts: string[]): Generator<Deno.DirEntry> {
-  const { nt, kernel, open } = openWindowsLibrary();
+function* readWindowsDirectory(
+  root: string,
+  parts: string[],
+  rootIdentity: PinnedDirectoryIdentity,
+): Generator<Deno.DirEntry> {
+  const library = openWindowsLibrary();
+  const { nt, kernel, open } = library;
   let handle: Deno.PointerValue = null;
   try {
-    handle = open(nativeWindowsRoot(root), null);
+    handle = openVerifiedWindowsRoot(library, root, rootIdentity);
     for (const part of parts) {
       const child = open(part, handle);
       nt.symbols.NtClose(handle);

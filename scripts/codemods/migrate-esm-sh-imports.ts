@@ -6,8 +6,10 @@ import * as t from "npm:@babel/types@7.29.0";
 import { lstat as lstatNativeFile } from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
 import {
+  capturePinnedDirectoryIdentity,
   openPinnedPosixFile,
   openPinnedWindowsFile,
+  type PinnedDirectoryIdentity,
   readPinnedDirectory,
 } from "./pinned-directory.ts";
 
@@ -594,16 +596,25 @@ function failedCreation(error: unknown, path: string): SafeFileGuardError {
   );
 }
 
-async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r+" | "wx+") {
+async function openProjectFile(
+  path: string,
+  projectRoot: string,
+  mode: "r" | "r+" | "wx+",
+  rootIdentity?: PinnedDirectoryIdentity,
+) {
   const parent = await Deno.realPath(nativeDirname(path));
   const canonicalPath = parent + "/" + parsePath(path).base;
   return Deno.build.os === "windows"
-    ? openPinnedWindowsFile(canonicalPath, projectRoot, mode)
-    : openPinnedPosixFile(canonicalPath, projectRoot, mode);
+    ? openPinnedWindowsFile(canonicalPath, projectRoot, mode, rootIdentity)
+    : openPinnedPosixFile(canonicalPath, projectRoot, mode, rootIdentity);
 }
 
-async function pathFileIdentity(path: string, projectRoot: string): Promise<StableFileIdentity> {
-  const file = await openProjectFile(path, projectRoot, "r");
+async function pathFileIdentity(
+  path: string,
+  projectRoot: string,
+  rootIdentity?: PinnedDirectoryIdentity,
+): Promise<StableFileIdentity> {
+  const file = await openProjectFile(path, projectRoot, "r", rootIdentity);
   try {
     return stableFileIdentity(await file.stat({ bigint: true }));
   } finally {
@@ -625,6 +636,7 @@ async function writeTextFileInsideProjectWithNativeHandle(
   expectedContent?: string,
   allowMissing = false,
   requireMissing = false,
+  rootIdentity?: PinnedDirectoryIdentity,
 ): Promise<void> {
   // Open the destination before trusting its path, but do not mutate it until
   // the opened identity and current in-project path agree. A parent swapped to
@@ -632,7 +644,12 @@ async function writeTextFileInsideProjectWithNativeHandle(
   let file: Awaited<ReturnType<typeof openProjectFile>>;
   let created = false;
   try {
-    file = await openProjectFile(path, projectRoot, requireMissing ? "wx+" : "r+");
+    file = await openProjectFile(
+      path,
+      projectRoot,
+      requireMissing ? "wx+" : "r+",
+      rootIdentity,
+    );
     created = requireMissing;
   } catch (error) {
     if (
@@ -640,13 +657,13 @@ async function writeTextFileInsideProjectWithNativeHandle(
     ) throw error;
     // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
     // planted at the path, so creating an absent manifest stays contained.
-    file = await openProjectFile(path, projectRoot, "wx+");
+    file = await openProjectFile(path, projectRoot, "wx+", rootIdentity);
     created = true;
   }
   try {
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(opened, await pathFileIdentity(path, projectRoot))) {
+    if (!sameFileIdentity(opened, await pathFileIdentity(path, projectRoot, rootIdentity))) {
       throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
     }
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
@@ -682,7 +699,10 @@ async function writeTextFileInsideProjectWithNativeHandle(
     }
     let unchanged = false;
     try {
-      unchanged = sameFileIdentity(opened, await pathFileIdentity(path, projectRoot));
+      unchanged = sameFileIdentity(
+        opened,
+        await pathFileIdentity(path, projectRoot, rootIdentity),
+      );
     } catch { /* A missing or linked destination is no longer the opened file. */ }
     if (!unchanged) {
       throw new SafeFileGuardError(
@@ -711,12 +731,14 @@ export async function writeTextFileInsideProject(
   path: string,
   projectRoot: string,
   content: string,
-  { allowMissing = false, expectedIdentity, expectedContent, requireMissing = false }: {
-    allowMissing?: boolean;
-    expectedIdentity?: StableFileIdentity;
-    expectedContent?: string;
-    requireMissing?: boolean;
-  } = {},
+  { allowMissing = false, expectedIdentity, expectedContent, requireMissing = false, rootIdentity }:
+    {
+      allowMissing?: boolean;
+      expectedIdentity?: StableFileIdentity;
+      expectedContent?: string;
+      requireMissing?: boolean;
+      rootIdentity?: PinnedDirectoryIdentity;
+    } = {},
 ): Promise<void> {
   await assertPathInsideProject(path, projectRoot, { allowMissing });
   await writeTextFileInsideProjectWithNativeHandle(
@@ -727,23 +749,25 @@ export async function writeTextFileInsideProject(
     expectedContent,
     allowMissing,
     requireMissing,
+    rootIdentity,
   );
 }
 
 async function readTextFileInsideProject(
   path: string,
   projectRoot: string,
+  rootIdentity?: PinnedDirectoryIdentity,
 ): Promise<{ text: string; identity: StableFileIdentity }> {
-  const file = await openProjectFile(path, projectRoot, "r");
+  const file = await openProjectFile(path, projectRoot, "r", rootIdentity);
   try {
     const identity = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot))) {
+    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot, rootIdentity))) {
       throw new SafeFileGuardError("A file changed while it was being opened.");
     }
     const text = await file.readFile({ encoding: "utf8" });
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot))) {
+    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot, rootIdentity))) {
       throw new SafeFileGuardError("A file changed while it was being read.");
     }
     return { text, identity };
@@ -780,6 +804,7 @@ function describeFileError(error: unknown): string {
 export async function readProjectPackageJson(
   path: string,
   projectRoot?: string,
+  rootIdentity?: PinnedDirectoryIdentity,
 ): Promise<PackageJsonReadResult> {
   if (projectRoot !== undefined) {
     try {
@@ -800,7 +825,7 @@ export async function readProjectPackageJson(
     if (projectRoot === undefined) {
       text = await Deno.readTextFile(path);
     } else {
-      const opened = await readTextFileInsideProject(path, projectRoot);
+      const opened = await readTextFileInsideProject(path, projectRoot, rootIdentity);
       text = opened.text;
       fileIdentity = opened.identity;
     }
@@ -1001,12 +1026,16 @@ export async function collectSourceFiles(
   files: string[],
   readDir?: (path: string) => AsyncIterable<Deno.DirEntry>,
   projectRoot?: string,
+  rootIdentity?: PinnedDirectoryIdentity,
 ): Promise<void> {
   const root = projectRoot ?? await Deno.realPath(dir);
+  const pinnedRoot = rootIdentity ?? capturePinnedDirectoryIdentity(root);
   const directoryIdentity = await assertDirectoryInsideProject(dir, root);
   const entries: Deno.DirEntry[] = [];
   const directory = await Deno.realPath(dir);
-  const entriesForDirectory = readDir ? readDir(dir) : readPinnedDirectory(directory, root);
+  const entriesForDirectory = readDir
+    ? readDir(dir)
+    : readPinnedDirectory(directory, root, pinnedRoot);
   for await (const entry of entriesForDirectory) entries.push(entry);
   await assertDirectoryInsideProject(dir, root, directoryIdentity);
 
@@ -1017,7 +1046,7 @@ export async function collectSourceFiles(
     if (entry.isSymlink) continue;
     const path = `${dir}/${entry.name}`;
     if (entry.isDirectory) {
-      await collectSourceFiles(path, files, readDir, root);
+      await collectSourceFiles(path, files, readDir, root, pinnedRoot);
     } else if (entry.isFile && SOURCE_FILE_RE.test(entry.name)) {
       files.push(path);
     }
@@ -1071,6 +1100,7 @@ async function main(args: string[]): Promise<void> {
   // Resolve the project root once so every subsequent containment check
   // compares against a symlink-free absolute path.
   const projectRoot = await Deno.realPath(projectDir);
+  const projectRootIdentity = capturePinnedDirectoryIdentity(projectRoot);
   // Traversal and writes use the resolved root, but the report keeps the
   // spelling the caller passed: a relative project directory stays relative,
   // and no machine-specific filesystem layout leaks into the JSON output.
@@ -1094,7 +1124,13 @@ async function main(args: string[]): Promise<void> {
 
   const sourceFiles: string[] = [];
   try {
-    await collectSourceFiles(projectRoot, sourceFiles);
+    await collectSourceFiles(
+      projectRoot,
+      sourceFiles,
+      undefined,
+      projectRoot,
+      projectRootIdentity,
+    );
   } catch (error) {
     throw new Error(`Failed to scan ${displayRoot} safely: ${describeFileError(error)}`, {
       cause: error,
@@ -1126,7 +1162,7 @@ async function main(args: string[]): Promise<void> {
     let source: string;
     let identity: StableFileIdentity;
     try {
-      const opened = await readTextFileInsideProject(file, projectRoot);
+      const opened = await readTextFileInsideProject(file, projectRoot, projectRootIdentity);
       source = opened.text;
       identity = opened.identity;
     } catch (error) {
@@ -1184,7 +1220,7 @@ async function main(args: string[]): Promise<void> {
     fileIdentity: pkgJsonFileIdentity,
     sourceText: pkgJsonSource,
     missingAtRead: pkgJsonMissingAtRead,
-  } = await readProjectPackageJson(pkgJsonPath, projectRoot);
+  } = await readProjectPackageJson(pkgJsonPath, projectRoot, projectRootIdentity);
 
   const candidatePins = Object.fromEntries(
     [...allPins.entries()].map(([pkg, { version }]) => [pkg, version]),
@@ -1293,10 +1329,11 @@ async function main(args: string[]): Promise<void> {
           projectRoot,
           JSON.stringify(pkgJson, null, 2) + "\n",
           {
-            allowMissing: true,
+            allowMissing: pkgJsonMissingAtRead === true,
             expectedIdentity: pkgJsonFileIdentity,
             expectedContent: pkgJsonSource,
             requireMissing: pkgJsonMissingAtRead,
+            rootIdentity: projectRootIdentity,
           },
         );
       } catch (error) {
@@ -1310,7 +1347,11 @@ async function main(args: string[]): Promise<void> {
       // analyzed snapshot even when the manifest itself needs no update.
       let current: Awaited<ReturnType<typeof readTextFileInsideProject>>;
       try {
-        current = await readTextFileInsideProject(pkgJsonPath, projectRoot);
+        current = await readTextFileInsideProject(
+          pkgJsonPath,
+          projectRoot,
+          projectRootIdentity,
+        );
       } catch (error) {
         throw new SafeFileGuardError(
           "Refusing to rewrite source files because package.json could not be revalidated safely.",
@@ -1331,6 +1372,7 @@ async function main(args: string[]): Promise<void> {
         await writeTextFileInsideProject(file, projectRoot, code, {
           expectedIdentity: identity,
           expectedContent: source,
+          rootIdentity: projectRootIdentity,
         });
       } catch (error) {
         throw new Error(
