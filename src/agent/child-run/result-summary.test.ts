@@ -166,6 +166,13 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
     });
 
+    it("retains tool IDs in pseudo-JSON objects with trailing commas", () => {
+      const result = buildChildRunResultSummary("tools: [{'id':'critical_tool',}]", {
+        mode: "structured",
+      });
+      assertEquals(result.contractFacts, { toolIds: ["critical_tool"] });
+    });
+
     it("extracts structured facts from hostile unclosed tool array text without quadratic scans", () => {
       const hostileText = " tools:[".repeat(64_000);
       const start = performance.now();

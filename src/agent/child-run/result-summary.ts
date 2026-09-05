@@ -379,6 +379,18 @@ function normalizeSingleQuotedJson(text: string): string {
       continue;
     }
     if (character !== "'") {
+      if (character === ",") {
+        const next = skipWhitespace(text, index + 1);
+        let previous = index - 1;
+        while (previous >= 0 && /\s/.test(text[previous]!)) previous--;
+        if (
+          (text[next] === "}" || text[next] === "]") &&
+          previous >= 0 && !"{[,:".includes(text[previous]!)
+        ) {
+          index++;
+          continue;
+        }
+      }
       normalized += character;
       index += 1;
       continue;
