@@ -245,10 +245,10 @@ function isHexPrefix(value: string): boolean {
 }
 
 function hasValidBoundaryEscape(trailingSource: string | undefined, quote: string): boolean {
-  if (!trailingSource) return true;
+  if (!trailingSource) return false;
   const boundaryEscape = trailingSource[0]!;
   return boundaryEscape === "u"
-    ? isHexPrefix(trailingSource.slice(1, 5))
+    ? trailingSource.length >= 5 && isHexPrefix(trailingSource.slice(1, 5))
     : isSimpleQuotedEscape(boundaryEscape, quote);
 }
 
@@ -257,7 +257,8 @@ function isValidUnicodeEscapePrefix(
   trailingSource: string | undefined,
 ): boolean {
   if (!isHexPrefix(availableHex)) return false;
-  if (availableHex.length === 4 || trailingSource === undefined) return true;
+  if (availableHex.length === 4) return true;
+  if (trailingSource === undefined || trailingSource.length < 4 - availableHex.length) return false;
   return isHexPrefix(availableHex + trailingSource.slice(0, 4 - availableHex.length));
 }
 

@@ -414,6 +414,16 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("withholds IDs when quoted validation ends at a pending escape", () => {
+      const prefix = 'tools: [{"id":"bogus_tool","description":"';
+      const text = prefix + "x".repeat(32_000 - prefix.length) + "aaaa\\q" +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("rejects an invalid Unicode escape continuing past the head cutoff", () => {
       const prefix = 'tools: [{"id":"bogus_tool","description":"';
       const text = prefix + "x".repeat(32_000 - prefix.length - 2) + "\\u0q" +
