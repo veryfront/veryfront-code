@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   estimateTokens,
   getTextFromMemoryParts,
@@ -16,15 +17,26 @@ interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
   rollback(rejectedMessages?: ReadonlySet<M>): Promise<void>;
 }
 interface RollbackObserver<M> {
-  add(message: M): void;
+  add(message: M, owner?: object): void;
   clear(): void;
 }
 // Each factory retains its message type; the heterogeneous registry erases
 // that type until captureMemoryRollback retrieves it with the same memory.
-const memoryRollbackFactories = new WeakMap<object, () => unknown>();
+const memoryWriteOwner = new AsyncLocalStorage<
+  { owner: object; memory: object; message: unknown; claimed: boolean }
+>();
+function claimMemoryWrite(memory: object, message: unknown): object | undefined {
+  const write = memoryWriteOwner.getStore();
+  if (!write || write.claimed || write.memory !== memory || write.message !== message) {
+    return undefined;
+  }
+  write.claimed = true;
+  return write.owner;
+}
+const memoryRollbackFactories = new WeakMap<object, (owner?: object) => unknown>();
 function registerMemoryRollbackFactory<M extends MinimalMessage>(
   memory: Memory<M>,
-  factory: () => MemoryRollback<M>,
+  factory: (owner?: object) => MemoryRollback<M>,
 ): void {
   memoryRollbackFactories.set(memory, factory);
 }
@@ -35,7 +47,7 @@ export function captureMemoryRollback<M extends MinimalMessage>(
   _fallbackMessages: readonly M[],
 ): MemoryRollback<M> {
   const factory = memoryRollbackFactories.get(memory) as
-    | (() => MemoryRollback<M>)
+    | ((owner?: object) => MemoryRollback<M>)
     | undefined;
   if (factory) return factory();
 
@@ -67,12 +79,17 @@ export async function beginMemoryTransaction<M extends MinimalMessage>(
     }
     return transaction;
   }
-  const rollback = captureMemoryRollback(memory, []);
+  const owner = {};
+  const factory = memoryRollbackFactories.get(memory) as (owner: object) => MemoryRollback<M>;
+  const rollback = factory(owner);
   const attempted = new Set<M>();
   return {
     add(message) {
       attempted.add(message);
-      return memory.add(message);
+      return memoryWriteOwner.run(
+        { owner, memory, message, claimed: false },
+        () => memory.add(message),
+      );
     },
     getMessages: () => memory.getMessages(),
     commit: () => {
@@ -137,12 +154,12 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   protected abstract readonly spanPrefix: string;
 
   constructor() {
-    registerMemoryRollbackFactory(this, () => {
+    registerMemoryRollbackFactory(this, (owner) => {
       const messages = [...this.messages];
       const clearVersion = this.clearVersion;
-      const additions: M[] = [];
+      const additions: Array<{ message: M; owner?: object }> = [];
       const observe: RollbackObserver<M> = {
-        add: (message) => additions.push(message),
+        add: (message, owner) => additions.push({ message, owner }),
         clear: () => {
           additions.length = 0;
         },
@@ -155,28 +172,40 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
         this.rollbackObservers.delete(observe);
       };
       return {
-        commit: close,
+        commit: () => {
+          if (
+            owner &&
+            (this.clearVersion !== clearVersion || additions.some((entry) => entry.owner !== owner))
+          ) {
+            throw new Error("Memory changed concurrently during the transaction. Retry the turn.");
+          }
+          close();
+        },
         rollback: async (rejectedMessages) => {
           close();
           if (this.clearVersion !== clearVersion) {
             const replayVersion = this.clearVersion;
-            const retained = rejectedMessages === undefined
-              ? additions
-              : additions.filter((message) => !rejectedMessages.has(message));
+            const retained = additions.filter((entry) =>
+              owner
+                ? entry.owner !== owner
+                : rejectedMessages === undefined || !rejectedMessages.has(entry.message)
+            );
             this.messages = [];
             if (this.clearVersion !== replayVersion) return;
-            await Promise.all(retained.map((message) => this.add(message)));
+            await Promise.all(retained.map(({ message }) => this.add(message)));
             if (this.clearVersion !== replayVersion) return;
             return;
           }
-          const laterAdditions = rejectedMessages === undefined
-            ? []
-            : additions.filter((message) => !rejectedMessages.has(message));
+          const laterAdditions = additions.filter((entry) =>
+            owner
+              ? entry.owner !== owner
+              : rejectedMessages !== undefined && !rejectedMessages.has(entry.message)
+          );
           this.messages = [...messages];
           if (this.clearVersion !== clearVersion) return;
           // Start every built-in add synchronously before yielding, preserving
           // the original addition order against concurrent model/tool writes.
-          await Promise.all(laterAdditions.map((message) => this.add(message)));
+          await Promise.all(laterAdditions.map(({ message }) => this.add(message)));
           if (this.clearVersion !== clearVersion) return;
         },
       };
@@ -186,7 +215,8 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   abstract add(message: M): Promise<void>;
 
   protected recordAddition(message: M): void {
-    for (const observe of this.rollbackObservers) observe.add(message);
+    const owner = claimMemoryWrite(this, message);
+    for (const observe of this.rollbackObservers) observe.add(message, owner);
   }
 
   getMessages(): Promise<M[]> {
@@ -317,13 +347,13 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       1,
       Math.min(DEFAULT_SUMMARY_MAX_CHARS, Math.floor((config.maxTokens ?? 1_000) * 4)),
     );
-    registerMemoryRollbackFactory(this, () => {
+    registerMemoryRollbackFactory(this, (owner) => {
       const messages = [...this.messages];
       const summary = this.summary;
       const clearVersion = this.clearVersion;
-      const additions: M[] = [];
+      const additions: Array<{ message: M; owner?: object }> = [];
       const observe: RollbackObserver<M> = {
-        add: (message) => additions.push(message),
+        add: (message, owner) => additions.push({ message, owner }),
         clear: () => {
           additions.length = 0;
         },
@@ -336,28 +366,40 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         this.rollbackObservers.delete(observe);
       };
       return {
-        commit: close,
+        commit: () => {
+          if (
+            owner &&
+            (this.clearVersion !== clearVersion || additions.some((entry) => entry.owner !== owner))
+          ) {
+            throw new Error("Memory changed concurrently during the transaction. Retry the turn.");
+          }
+          close();
+        },
         rollback: async (rejectedMessages) => {
           close();
           if (this.clearVersion !== clearVersion) {
             const replayVersion = this.clearVersion;
-            const retained = rejectedMessages === undefined
-              ? additions
-              : additions.filter((message) => !rejectedMessages.has(message));
+            const retained = additions.filter((entry) =>
+              owner
+                ? entry.owner !== owner
+                : rejectedMessages === undefined || !rejectedMessages.has(entry.message)
+            );
             this.messages = [];
             this.summary = "";
             if (this.clearVersion !== replayVersion) return;
-            await Promise.all(retained.map((message) => this.add(message)));
+            await Promise.all(retained.map(({ message }) => this.add(message)));
             if (this.clearVersion !== replayVersion) return;
             return;
           }
-          const laterAdditions = rejectedMessages === undefined
-            ? []
-            : additions.filter((message) => !rejectedMessages.has(message));
+          const laterAdditions = additions.filter((entry) =>
+            owner
+              ? entry.owner !== owner
+              : rejectedMessages !== undefined && !rejectedMessages.has(entry.message)
+          );
           this.messages = [...messages];
           this.summary = summary;
           if (this.clearVersion !== clearVersion) return;
-          await Promise.all(laterAdditions.map((message) => this.add(message)));
+          await Promise.all(laterAdditions.map(({ message }) => this.add(message)));
           if (this.clearVersion !== clearVersion) return;
         },
       };
@@ -375,7 +417,10 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         }
 
         this.enforceTokenLimit();
-        for (const observe of this.rollbackObservers) observe.add(message);
+        const owner = claimMemoryWrite(this, message);
+        for (const observe of this.rollbackObservers) {
+          observe.add(message, owner);
+        }
       },
       { "memory.type": "summary", "memory.threshold": this.summaryThreshold },
     );

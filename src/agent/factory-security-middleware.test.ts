@@ -65,6 +65,170 @@ function createTextStream(parts: Array<{ type: "text-delta"; text: string } | { 
 }
 
 describe("resolveSecurityMiddleware", () => {
+  it("rejects cycles between concurrently active stateful roots", async () => {
+    const ready = Promise.withResolvers<void>();
+    let entered = 0;
+    let cycle = true;
+    const result = {
+      content: [{ type: "text" as const, text: "answer" }],
+      finishReason: "stop" as const,
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    };
+    const firstModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/concurrent-cycle-first",
+      async doGenerate() {
+        if (cycle) {
+          if (++entered === 2) ready.resolve();
+          await ready.promise;
+          await second.generate({ input: "nested" });
+        }
+        return result;
+      },
+      async doStream() {
+        throw new Error("Expected generate");
+      },
+    };
+    const secondModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/concurrent-cycle-second",
+      async doGenerate() {
+        if (cycle) {
+          if (++entered === 2) ready.resolve();
+          await ready.promise;
+          await first.generate({ input: "nested" });
+        }
+        return result;
+      },
+      async doStream() {
+        throw new Error("Expected generate");
+      },
+    };
+    const first = agent({
+      id: "concurrent-cycle-first",
+      system: "Helpful",
+      model: firstModel.modelId,
+      skills: false,
+      memory: { type: "conversation" },
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model: firstModel }),
+    });
+    const second = agent({
+      id: "concurrent-cycle-second",
+      system: "Helpful",
+      model: secondModel.modelId,
+      skills: false,
+      memory: { type: "conversation" },
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model: secondModel }),
+    });
+    const deadline = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () => deadline.reject(new Error("Concurrent stateful turns did not settle")),
+      1000,
+    );
+    try {
+      const results = await Promise.race([
+        Promise.allSettled([
+          first.generate({ input: "start" }),
+          second.generate({ input: "start" }),
+        ]),
+        deadline.promise,
+      ]);
+      assertEquals(results.map((result) => result.status), ["rejected", "rejected"]);
+      cycle = false;
+      const recovered = await Promise.race([
+        Promise.all([first.generate({ input: "retry" }), second.generate({ input: "retry" })]),
+        deadline.promise,
+      ]);
+      assertEquals(recovered.map((response) => response.text), ["answer", "answer"]);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  for (const streamDelegate of [false, true]) {
+    it(`rejects cyclic stateful ${streamDelegate ? "streamed" : "generated"} calls before waiting on an ancestor turn`, async () => {
+      let cycle = true;
+      let cycleFailure: unknown;
+      const result = {
+        content: [{ type: "text" as const, text: "answer" }],
+        finishReason: "stop" as const,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+      const firstModel: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/stateful-cycle-first",
+        async doGenerate() {
+          if (cycle) {
+            if (streamDelegate) {
+              await agentAsTool(second, "nested").execute({ input: "nested" });
+              if (cycleFailure) throw cycleFailure;
+            } else await second.generate({ input: "nested" });
+          }
+          return result;
+        },
+        async doStream() {
+          throw new Error("Expected generate");
+        },
+      };
+      const secondModel: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/stateful-cycle-second",
+        async doGenerate() {
+          await first.generate({ input: "cycle" });
+          return result;
+        },
+        async doStream() {
+          try {
+            await first.generate({ input: "cycle" });
+          } catch (error) {
+            cycleFailure = error;
+            throw error;
+          }
+          return { stream: createTextStream([{ type: "finish" }]) };
+        },
+      };
+      const first = agent({
+        id: "stateful-cycle-first",
+        system: "Helpful",
+        model: firstModel.modelId,
+        skills: false,
+        memory: { type: "conversation" },
+        maxSteps: 1,
+        resolveModelTransport: async () => ({ model: firstModel }),
+      });
+      const second = agent({
+        id: "stateful-cycle-second",
+        system: "Helpful",
+        model: secondModel.modelId,
+        skills: false,
+        memory: { type: "conversation" },
+        maxSteps: 1,
+        resolveModelTransport: async () => ({ model: secondModel }),
+      });
+      const deadline = Promise.withResolvers<never>();
+      const timer = setTimeout(
+        () => deadline.reject(new Error("Stateful turn did not settle")),
+        1000,
+      );
+      try {
+        await assertRejects(
+          () => Promise.race([first.generate({ input: "start" }), deadline.promise]),
+          Error,
+          "active ancestor",
+        );
+        cycle = false;
+        assertEquals(
+          (await Promise.race([first.generate({ input: "retry" }), deadline.promise])).text,
+          "answer",
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  }
+
   it("prepends security middleware by default", () => {
     const middleware = resolveSecurityMiddleware({});
     assertEquals(middleware.length, 1);

@@ -11,6 +11,7 @@
  * @module ai/agent/runtime
  */
 
+import { enterSerializedTurn, withRuntimeTurnLineage } from "./stateful-turn-lineage.ts";
 import {
   type AgentConfig,
   type AgentContext,
@@ -1749,7 +1750,32 @@ export class AgentRuntime {
       return this.#commitTurnMessages(inputMessages, context);
     }
 
-    const task = this.#turnCommitQueue.then(() => this.#commitTurnMessages(inputMessages, context));
+    const leaveLineage = enterSerializedTurn(this);
+    const task = this.#turnCommitQueue.then(async () => {
+      try {
+        const prepared = await this.#commitTurnMessages(inputMessages, context);
+        return {
+          ...prepared,
+          commit: async () => {
+            try {
+              await prepared.commit();
+            } finally {
+              leaveLineage();
+            }
+          },
+          rollback: async () => {
+            try {
+              await prepared.rollback();
+            } finally {
+              leaveLineage();
+            }
+          },
+        };
+      } catch (error) {
+        leaveLineage();
+        throw error;
+      }
+    });
     this.#turnCommitQueue = task.then(
       ({ finalized }) => finalized,
       () => undefined,
@@ -2087,7 +2113,11 @@ export class AgentRuntime {
     );
   }
 
-  async #generate(
+  #generate(...args: AgentRuntimeGenerateArgs): Promise<AgentResponse> {
+    return withRuntimeTurnLineage(this, () => this.#generateWithinTurn(...args));
+  }
+
+  async #generateWithinTurn(
     input: string | Message[],
     context?: Record<string, unknown>,
     modelOverride?: string,
@@ -2236,7 +2266,11 @@ export class AgentRuntime {
     );
   }
 
-  async #stream(
+  #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
+    return withRuntimeTurnLineage(this, () => this.#streamWithinTurn(...args));
+  }
+
+  async #streamWithinTurn(
     messages: Message[],
     context?: Record<string, unknown>,
     callbacks?: AgentRuntimeStreamCallbacks,

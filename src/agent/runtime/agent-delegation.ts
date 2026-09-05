@@ -150,10 +150,9 @@ function createLazyDelegateTool(
  * Returns an empty map when `delegates` is empty — i.e. an agent with no
  * `delegates` runs with no orchestration.
  *
- * Delegation chains are intentionally not cycle-detected here. Each delegated
- * call is a separate agent run with its own maxSteps budget; hosted nested
- * invocation metadata enforces a runtime depth cap, but authors should still
- * keep delegate graphs acyclic so cycles do not burn the available depth.
+ * Each delegated call has its own maxSteps budget. Validated stateful turns
+ * reject cyclic queue dependencies before waiting; hosted invocation metadata
+ * also enforces a depth cap. Keep delegate graphs acyclic.
  */
 export function buildAgentDelegateTools(
   input: BuildAgentDelegateToolsInput,

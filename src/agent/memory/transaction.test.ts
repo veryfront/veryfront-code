@@ -13,7 +13,12 @@ import {
   registerTurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import type { Memory, MemoryTransaction } from "./memory-interface.ts";
-import { ConversationMemory } from "./memory.ts";
+import {
+  beginMemoryTransaction,
+  BufferMemory,
+  ConversationMemory,
+  SummaryMemory,
+} from "./memory.ts";
 
 const message = (id: string): Message => ({
   id,
@@ -105,6 +110,34 @@ function prepare(memory: Memory<Message>, validate = true) {
 }
 
 describe("custom memory transactions", () => {
+  for (const Store of [ConversationMemory, BufferMemory, SummaryMemory]) {
+    for (const operation of ["clear", "add", "duplicate"] as const) {
+      it(`rejects ${Store.name} commit after concurrent ${operation}`, async () => {
+        const store = new Store<Message>({ type: "conversation", maxMessages: 100 });
+        const history = message("history");
+        const input = message("input");
+        const external = operation === "duplicate" ? input : message("external");
+        await store.add(history);
+        const transaction = await beginMemoryTransaction(store);
+        await transaction.add(input);
+        if (operation === "clear") await store.clear();
+        await store.add(external);
+        await transaction.add({ ...message("output"), role: "assistant" });
+        await assertRejects(
+          async () => {
+            await transaction.commit();
+          },
+          Error,
+          "concurrent",
+        );
+        await transaction.rollback();
+        assertEquals(
+          await store.getMessages(),
+          operation === "clear" ? [external] : [history, external],
+        );
+      });
+    }
+  }
   it("serializes built-in turns until rollback can no longer restore rejected input", async () => {
     const store = new ConversationMemory<Message>({ type: "conversation" });
     const runtime = new AgentRuntime("transaction-concurrency", {
