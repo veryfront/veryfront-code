@@ -286,6 +286,9 @@ function projectNodeStatesInPlace(
     Reflect.deleteProperty(state, INTERNAL_MAP_CHILD_NODE_IDS_FIELD);
     Reflect.deleteProperty(state, INTERNAL_SUBWORKFLOW_STATE_FIELD);
     Reflect.deleteProperty(state, INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD);
+    Reflect.deleteProperty(state, "_subWorkflowOwnerPath");
+    Reflect.deleteProperty(state, "_activeCompositeChildIds");
+    Reflect.deleteProperty(state, "_completedCompositeChildIds");
     Reflect.deleteProperty(state, INTERNAL_WORKFLOW_INPUT_KIND_FIELD);
     Reflect.deleteProperty(state, INTERNAL_WORKFLOW_OUTPUT_KIND_FIELD);
     Reflect.deleteProperty(state, INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD);
