@@ -140,7 +140,7 @@ Uncommitted edits are the one change no commit check can see, because they leave
 directory and refuses the promotion when it no longer matches the receipt, so an
 accidentally dirty checkout fails instead of promoting bytes no Push reviewed.
 
-The digest covers exactly the files Push uploads, so an edit `.gitignore` hides
+The digest covers exactly the files Push uploads, so an edit that `.gitignore` hides
 is still caught and an edit to a file Push never sends is not a mismatch. Run
 Push again to deploy the current source. Deploying a project named with
 `--project` promotes what that project already has and never uploads the working
@@ -175,7 +175,7 @@ commands across CI jobs or clean the checkout between them.
 A receipt written by a CLI older than the source digest carries no digest to
 recompute, so Deploy falls back to the recorded Git cleanliness for it.
 
-That fallback cannot see an edit `.gitignore` hides while `.vfignore` does not.
+That fallback cannot see an edit that `.gitignore` hides while `.vfignore` does not.
 Run Push once after upgrading: the receipt it writes carries the digest, and the
 full check applies from then on.
 
