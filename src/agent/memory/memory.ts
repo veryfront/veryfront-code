@@ -4,9 +4,11 @@ import {
   type Memory,
   type MemoryConfigBase,
   type MemoryStats,
+  type MemoryTransaction,
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 type BasicMemoryType = "conversation" | "buffer";
 interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
@@ -111,28 +113,54 @@ function registerMemoryRollbackFactory<M extends MinimalMessage>(
 /** @internal Capture an exact built-in memory state before a transactional write. */
 export function captureMemoryRollback<M extends MinimalMessage>(
   memory: Memory<M>,
-  fallbackMessages: readonly M[],
+  _fallbackMessages: readonly M[],
 ): MemoryRollback<M> {
   const factory = memoryRollbackFactories.get(memory) as
     | (() => MemoryRollback<M>)
     | undefined;
   if (factory) return factory();
 
-  // Preserve compatibility with custom Memory implementations. Built-in
-  // stores use exact private-state snapshots registered in their constructors.
-  const snapshot = [...fallbackMessages];
+  throw CONFIG_INVALID.create({
+    detail:
+      "Your custom memory backend must implement beginTransaction() for transactional input validation. Use conversation, buffer, or summary memory, or provide an atomic transaction adapter.",
+  });
+}
+
+/** @internal Open the memory view used for transactional input validation. */
+export async function beginMemoryTransaction<M extends MinimalMessage>(
+  memory: Memory<M>,
+): Promise<MemoryTransaction<M>> {
+  if (!memoryRollbackFactories.has(memory)) {
+    if (typeof memory.beginTransaction !== "function") {
+      captureMemoryRollback(memory, []); // Fail before any backend writes.
+    }
+    const transaction = await memory.beginTransaction!();
+    if (
+      !transaction || typeof transaction !== "object" ||
+      ["add", "getMessages", "commit", "rollback"].some(
+        (key) => typeof Reflect.get(transaction, key) !== "function",
+      )
+    ) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "Your memory beginTransaction() must return add(), getMessages(), commit(), and rollback() methods.",
+      });
+    }
+    return transaction;
+  }
+  const rollback = captureMemoryRollback(memory, []);
+  const attempted = new Set<M>();
   return {
-    commit() {},
-    async rollback(rejectedMessages) {
-      const current = await memory.getMessages();
-      const laterMessages = rejectedMessages === undefined ? [] : subtractRollbackMessages(
-        subtractRollbackMessages(current, snapshot),
-        [...rejectedMessages],
-      );
-      await memory.clear();
-      for (const message of snapshot) await memory.add(message);
-      for (const message of laterMessages) await memory.add(message);
+    add(message) {
+      attempted.add(message);
+      return memory.add(message);
     },
+    getMessages: () => memory.getMessages(),
+    commit: () => {
+      rollback.commit();
+      return Promise.resolve();
+    },
+    rollback: () => rollback.rollback(attempted),
   };
 }
 
@@ -588,6 +616,13 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
  * not by this store.
  */
 export class NoMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
+  constructor() {
+    registerMemoryRollbackFactory(this, () => ({
+      commit() {},
+      rollback: () => Promise.resolve(),
+    }));
+  }
+
   add(_message: M): Promise<void> {
     return Promise.resolve();
   }

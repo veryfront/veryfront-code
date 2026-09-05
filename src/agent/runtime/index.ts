@@ -36,7 +36,7 @@ import {
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { createAgentMemory, type Memory, NoMemory } from "#veryfront/agent/memory/index.ts";
-import { captureMemoryRollback } from "#veryfront/agent/memory/memory.ts";
+import { beginMemoryTransaction } from "#veryfront/agent/memory/memory.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
@@ -1668,7 +1668,7 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<{
     messages: Message[];
-    commit: () => void;
+    commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
   }> {
@@ -1737,7 +1737,7 @@ export class AgentRuntime {
     const commit = async (): Promise<void> => {
       if (finalized || transaction === undefined) return;
       finalized = true;
-      (await transaction).commit();
+      await (await transaction).commit();
     };
     const rollback = async (): Promise<void> => {
       if (finalized || transaction === undefined) return;
@@ -1778,7 +1778,7 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<{
     messages: Message[];
-    commit: () => void;
+    commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
   }> {
@@ -1802,67 +1802,65 @@ export class AgentRuntime {
     const validateTurnMessages = context && getTurnMessageValidator(context);
     const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
     const validateProviderRequest = context && getTurnProviderRequestValidator(context);
+    const memoryTransaction =
+      validateTurnMessages || validateProjectedMessages || validateProviderRequest
+        ? await beginMemoryTransaction(this.memory)
+        : undefined;
+    const turnMemory = memoryTransaction ?? this.memory;
     let validated = committedInputMessages;
     let history: Message[] = [];
-    if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
-      history = await this.memory.getMessages();
-      if (history.length > 0) validated = [...history, ...committedInputMessages];
-      // Durable provider replay metadata can keep a reasoning-only assistant
-      // turn in the actual provider request. Attach it before validation so
-      // the validator does not incorrectly merge the user turns around it.
-      applyProviderReplayCheckpointsToMessages(
-        validated,
-        getRuntimeProviderReplayCheckpoints(this.config),
-      );
-      // With no history the assembled conversation is exactly this turn's
-      // input, which the middleware already validated.
-      if (validateTurnMessages && history.length > 0) {
-        await validateTurnMessages(history, committedInputMessages);
-      }
-    }
-    const rollbackMemory = validateTurnMessages || validateProjectedMessages ||
-        validateProviderRequest
-      ? captureMemoryRollback(this.memory, history)
-      : undefined;
     let persisted: Message[];
     try {
-      for (const msg of committedInputMessages) await this.memory.add(msg);
-      persisted = await this.memory.getMessages();
-    } catch (error) {
-      await rollbackMemory?.rollback(new Set(committedInputMessages));
-      throw error;
-    }
-    if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
-      try {
+      if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
+        history = await turnMemory.getMessages();
+        if (history.length > 0) validated = [...history, ...committedInputMessages];
+        // Durable provider replay metadata can keep a reasoning-only assistant
+        // turn in the actual provider request. Attach it before validation so
+        // the validator does not incorrectly merge the user turns around it.
+        applyProviderReplayCheckpointsToMessages(
+          validated,
+          getRuntimeProviderReplayCheckpoints(this.config),
+        );
+        // With no history the assembled conversation is exactly this turn's
+        // input, which the middleware already validated.
+        if (validateTurnMessages && history.length > 0) {
+          await validateTurnMessages(history, committedInputMessages);
+        }
+      }
+      for (const msg of committedInputMessages) await turnMemory.add(msg);
+      persisted = await turnMemory.getMessages();
+      if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
         if (providerTranscriptIsOrderedSubset(persisted, validated)) {
           await validateProjectedMessages?.(persisted);
         } else {
           await validateTurnMessages?.([], persisted);
         }
-      } catch (error) {
-        // A memory policy can rewrite the transcript while adding this turn,
-        // notably when summary memory compacts old messages. If validation of
-        // that provider-visible form fails, restore the pre-turn transcript so
-        // neither the rejected input nor the failed compaction is retained.
-        await rollbackMemory?.rollback(new Set(committedInputMessages));
-        throw error;
       }
+    } catch (error) {
+      await memoryTransaction?.rollback();
+      throw error;
     }
     let isFinalized = false;
     const finalization = Promise.withResolvers<void>();
     return {
       messages: persisted.length > 0 ? persisted : committedInputMessages,
-      commit: () => {
+      commit: async () => {
         if (isFinalized) return;
         isFinalized = true;
-        rollbackMemory?.commit();
-        finalization.resolve();
+        try {
+          await memoryTransaction?.commit();
+        } catch (error) {
+          await memoryTransaction?.rollback();
+          throw error;
+        } finally {
+          finalization.resolve();
+        }
       },
       rollback: async () => {
         if (isFinalized) return;
         isFinalized = true;
         try {
-          await rollbackMemory?.rollback(new Set(committedInputMessages));
+          await memoryTransaction?.rollback();
         } finally {
           finalization.resolve();
         }

@@ -1,4 +1,4 @@
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BufferMemory,
@@ -41,7 +41,7 @@ describe("NoMemory", () => {
 });
 
 describe("custom memory rollback", () => {
-  it("matches deserialized snapshot and rejected messages by stable content", async () => {
+  it("rejects snapshot replay for custom memory without changing stored history", async () => {
     let stored = [userMessage("history", "accepted history")];
     const cloneStored = () => JSON.parse(JSON.stringify(stored)) as MinimalMessage[];
     const memory = {
@@ -64,24 +64,8 @@ describe("custom memory rollback", () => {
         });
       },
     };
-    const rollback = captureMemoryRollback(memory, await memory.getMessages());
-    const rejected = {
-      ...userMessage("turn", "rejected input"),
-      metadata: { optional: undefined },
-    };
-    const later = {
-      ...userMessage("turn", "accepted concurrent output"),
-      role: "assistant" as const,
-    };
-    await memory.add(rejected);
-    await memory.add(later);
-
-    await rollback.rollback(new Set([rejected]));
-
-    assertEquals(await memory.getMessages(), [
-      userMessage("history", "accepted history"),
-      later,
-    ]);
+    assertThrows(() => captureMemoryRollback(memory, []), Error, "beginTransaction()");
+    assertEquals(await memory.getMessages(), [userMessage("history", "accepted history")]);
   });
 });
 
