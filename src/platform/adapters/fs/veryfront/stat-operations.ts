@@ -19,6 +19,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { toClientContext } from "./adapter-content-context.ts";
+import { scopeToRequestAuthority } from "./request-authority.ts";
 
 const logger = baseLogger.component("stat-operations");
 
@@ -74,8 +75,8 @@ export class StatOperations extends VeryfrontOperationsBase {
     generation: number,
     scopeKey: string,
   ): void {
-    const currentScopeKey = buildStatCacheKeyPrefix(
-      this.contextProvider?.getContentContext(),
+    const currentScopeKey = scopeToRequestAuthority(
+      buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
     );
     const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
       false;
@@ -208,7 +209,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     contentContext: ResolvedContentContext | null | undefined,
     rebuildsLeft = 1,
   ): Promise<StatIndexSnapshot> {
-    const scopeKey = buildStatCacheKeyPrefix(contentContext);
+    const scopeKey = scopeToRequestAuthority(buildStatCacheKeyPrefix(contentContext));
     const isScopeInvalidated = () =>
       this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
     if (
@@ -307,7 +308,9 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     const builtAt = Date.now();
-    const currentScopeKey = buildStatCacheKeyPrefix(this.contextProvider?.getContentContext());
+    const currentScopeKey = scopeToRequestAuthority(
+      buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
+    );
     const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
       false;
     if (
@@ -621,7 +624,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
-    const scopeKey = buildStatCacheKeyPrefix(ctx);
+    const scopeKey = scopeToRequestAuthority(buildStatCacheKeyPrefix(ctx));
     const cacheKey = `${scopeKey}:resolve:${normalizedPath}`;
     const generation = this.indexGeneration;
 

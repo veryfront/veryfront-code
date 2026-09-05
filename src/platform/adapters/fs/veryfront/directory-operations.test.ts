@@ -5,6 +5,7 @@ import { FileCache } from "../cache/file-cache.ts";
 import { buildDirCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
 
 describe("DirectoryOperations", () => {
   it("should export DirectoryOperations class", () => {
@@ -206,6 +207,46 @@ describe("DirectoryOperations", () => {
         ["stale.ts"],
         "a read during invalidation must not repopulate the persistent directory cache",
       );
+    });
+
+    it("scopes directory trees to the request authority", async () => {
+      let listCalls = 0;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => {
+            listCalls++;
+            return Promise.resolve([{ path: `${getCurrentRequestContext()?.token}.ts` }]);
+          },
+          listPublishedFiles: () => Promise.resolve([]),
+        } as any,
+        new FileCache({ enabled: false, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      const tokenA = await runWithRequestContext(
+        { projectSlug: "test-project", token: "token-a", branch: "main" },
+        () => dirOps.readdir(""),
+      );
+      const tokenB = await runWithRequestContext(
+        { projectSlug: "test-project", token: "token-b", branch: "main" },
+        () => dirOps.readdir(""),
+      );
+
+      assertEquals(tokenA.map((entry) => entry.name), ["token-a.ts"]);
+      assertEquals(tokenB.map((entry) => entry.name), ["token-b.ts"]);
+      assertEquals(listCalls, 2);
     });
 
     it("does not publish a directory cache entry after its generation is cleared", async () => {

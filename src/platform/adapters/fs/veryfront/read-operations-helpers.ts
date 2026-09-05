@@ -17,6 +17,7 @@ interface ReadContextProviderLike {
 interface ReadFetchState {
   apiPath: string;
   cacheKeyPrefix: string;
+  scopedCacheKeyPrefix: string;
   cacheKey: string;
   isProduction: boolean;
   hasKnownExtension: boolean;
@@ -62,9 +63,10 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
     ? { ...contentContext, branch: requestBranch }
     : contentContext;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(effectiveContentContext);
-  const cacheKey = cacheVariant
-    ? `${cacheKeyPrefix}|${cacheVariant.length}:${cacheVariant}:${normalizedPath}`
-    : `${cacheKeyPrefix}:${normalizedPath}`;
+  const scopedCacheKeyPrefix = cacheVariant
+    ? `${cacheKeyPrefix}|${cacheVariant.length}:${cacheVariant}`
+    : cacheKeyPrefix;
+  const cacheKey = `${scopedCacheKeyPrefix}:${normalizedPath}`;
   const isProduction = contextProvider?.isProductionMode() ?? false;
   const releaseId = effectiveContentContext?.releaseId;
   const isPrefixInvalidated = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ??
@@ -76,6 +78,7 @@ export function buildReadFetchState(options: BuildReadFetchStateOptions): ReadFe
   return {
     apiPath,
     cacheKeyPrefix,
+    scopedCacheKeyPrefix,
     cacheKey,
     isProduction,
     hasKnownExtension: READ_OPERATION_EXTENSION_PRIORITY.some((ext) => apiPath.endsWith(ext)),

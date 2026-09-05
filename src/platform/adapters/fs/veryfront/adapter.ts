@@ -49,6 +49,7 @@ import { isNotFoundLikeError } from "./read-operations-helpers.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import { getCurrentRequestContext } from "./request-context.ts";
+import { scopeToRequestAuthority } from "./request-authority.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -430,8 +431,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | null = null;
   private readonly fileListRetentionMs: number;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
-  private branchMissRecoveryPromise: Promise<void> | null = null;
-  private branchMissRecoveryGeneration = 0;
+  private readonly branchMissRecoveryPromises = new Map<string, Promise<void>>();
   private readonly branchMissRecoveryFailures = new Map<string, number>();
   /** Last successful source check and generation of the materialized snapshot. */
   private sourceSnapshotCheckedAt = 0;
@@ -986,10 +986,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return shouldBackgroundPregenerateStyles(this.contentContext);
   }
 
+  #getBranchMissRecoveryScope(): string {
+    const snapshotIdentity = this.#getCurrentSourceSnapshotIdentity() ??
+      `branch:${this.projectSlug}:${this.contentContext?.branch ?? "main"}`;
+    return scopeToRequestAuthority(snapshotIdentity);
+  }
+
+  #getBranchMissRecoveryKeyPrefix(scope = this.#getBranchMissRecoveryScope()): string {
+    return `${scope.length}:${scope}:`;
+  }
+
   #getBranchMissRecoveryKey(path: string): string {
     const normalizedPath = this.normalizer.normalize(path);
-    const branch = this.requestBranch ?? this.contentContext?.branch ?? "main";
-    return `${this.projectSlug}:${branch}:${normalizedPath}`;
+    return `${this.#getBranchMissRecoveryKeyPrefix()}${normalizedPath}`;
   }
 
   #hasRecentBranchMissRecoveryFailure(key: string): boolean {
@@ -1030,7 +1039,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!options?.isRecoverableMissResult?.(result)) return false;
     if (
       options.requirePendingSourceInvalidation &&
-      !this.#isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
+      !this.#isPersistentCacheInvalidated(
+        buildFileCacheKeyPrefix(this.getEffectiveContentContext()),
+      )
     ) {
       return false;
     }
@@ -1040,23 +1051,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async #refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
-    let recoveryPromise = this.branchMissRecoveryPromise;
-    let ownsRecovery = false;
-    let recoveryGeneration = this.branchMissRecoveryGeneration;
+    const recoveryScope = this.#getBranchMissRecoveryScope();
+    let recoveryPromise = this.branchMissRecoveryPromises.get(recoveryScope);
 
     if (!recoveryPromise) {
       const normalizedPath = this.normalizer.normalize(path);
       recoveryPromise = this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
-      this.branchMissRecoveryPromise = recoveryPromise;
-      recoveryGeneration = ++this.branchMissRecoveryGeneration;
-      ownsRecovery = true;
+      this.branchMissRecoveryPromises.set(recoveryScope, recoveryPromise);
     }
 
     try {
       await recoveryPromise;
     } finally {
-      if (ownsRecovery && this.branchMissRecoveryGeneration === recoveryGeneration) {
-        this.branchMissRecoveryPromise = null;
+      if (this.branchMissRecoveryPromises.get(recoveryScope) === recoveryPromise) {
+        this.branchMissRecoveryPromises.delete(recoveryScope);
       }
     }
   }
@@ -1474,7 +1482,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.statOps.renewIndexAuthority();
       }
 
-      this.branchMissRecoveryFailures.clear();
+      const recoveryKeyPrefix = this.#getBranchMissRecoveryKeyPrefix();
+      for (const key of this.branchMissRecoveryFailures.keys()) {
+        if (key.startsWith(recoveryKeyPrefix)) this.branchMissRecoveryFailures.delete(key);
+      }
       this.retainFileList(cacheKey, files);
 
       return { applied: true, sourceChanged };
@@ -1720,8 +1731,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.clearRetainedFileList();
-    this.branchMissRecoveryPromise = null;
-    this.branchMissRecoveryGeneration++;
+    this.branchMissRecoveryPromises.clear();
     this.branchMissRecoveryFailures.clear();
 
     logger.debug("Disposed");
@@ -1858,8 +1868,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.dirOps.clearTree();
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
-    this.branchMissRecoveryPromise = null;
-    this.branchMissRecoveryGeneration++;
+    this.branchMissRecoveryPromises.clear();
     this.branchMissRecoveryFailures.clear();
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
@@ -1944,8 +1953,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
       this.clearRetainedFileList();
-      this.branchMissRecoveryPromise = null;
-      this.branchMissRecoveryGeneration++;
+      this.branchMissRecoveryPromises.clear();
       this.branchMissRecoveryFailures.clear();
       this.sourceSnapshotCheckedAt = 0;
       this.sourceSnapshotVersion = nextSourceSnapshotGeneration();

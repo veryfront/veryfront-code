@@ -24,6 +24,10 @@ import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { toClientContext } from "./adapter-content-context.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import {
+  getRequestAuthorityCacheVariant,
+  requestAuthorityFingerprint,
+} from "./request-authority.ts";
 
 export {
   endRequestMetrics,
@@ -37,26 +41,6 @@ const logger = baseLogger.component("read-operations");
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 const IN_FLIGHT_CLEANUP_INTERVAL_MS = 1_000;
-const inFlightAuthoritySalt = crypto.randomUUID();
-
-function foldAuthority(value: string): string {
-  const FNV_OFFSET_BASIS = 14695981039346656037n;
-  const FNV_PRIME = 1099511628211n;
-  const MASK_64 = (1n << 64n) - 1n;
-  let hash = FNV_OFFSET_BASIS;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= BigInt(value.charCodeAt(index));
-    hash = (hash * FNV_PRIME) & MASK_64;
-  }
-  return hash.toString(36);
-}
-
-function requestAuthorityFingerprint(token: string): string {
-  return `${foldAuthority(`read-authority:a:${inFlightAuthoritySalt}:${token}`)}${
-    foldAuthority(`read-authority:b:${inFlightAuthoritySalt}:${token}`)
-  }`;
-}
-
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
     timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
@@ -682,14 +666,15 @@ export class ReadOperations {
 
     const ctx = this.contextProvider?.getContentContext() ?? null;
     const requestBranch = this.syncRequestBranchScope();
-    const contextualToken = currentRequestContext()?.token;
+    const authorityCacheVariant = getRequestAuthorityCacheVariant();
     const cacheVariant = [
       optional ? "optional-exact" : undefined,
-      contextualToken ? `authority:${requestAuthorityFingerprint(contextualToken)}` : undefined,
+      authorityCacheVariant,
     ].filter((part): part is string => part !== undefined).join(":") || undefined;
     const {
       apiPath,
       cacheKeyPrefix,
+      scopedCacheKeyPrefix,
       cacheKey,
       isProduction,
       hasKnownExtension: hasKnownExt,
@@ -710,8 +695,8 @@ export class ReadOperations {
     const baseFileListCacheKey = effectiveContentContext
       ? buildFileListCacheKey(effectiveContentContext)
       : undefined;
-    const fileListCacheKey = baseFileListCacheKey && contextualToken
-      ? `${baseFileListCacheKey}|authority:${requestAuthorityFingerprint(contextualToken)}`
+    const fileListCacheKey = baseFileListCacheKey && authorityCacheVariant
+      ? `${baseFileListCacheKey}|${authorityCacheVariant}`
       : baseFileListCacheKey;
 
     logger.debug("fetchContent context", {
@@ -780,7 +765,7 @@ export class ReadOperations {
       if (!skipPersistentCaches) {
         const resolvedFromFileList = await this.tryResolveExtensionlessPathFromFileList(
           normalizedPath,
-          cacheKeyPrefix,
+          scopedCacheKeyPrefix,
           cacheKey,
           isProduction,
           effectiveContentContext,
@@ -798,7 +783,10 @@ export class ReadOperations {
           resolvedFromFileList.status === "present_without_content" &&
           resolvedFromFileList.path
         ) {
-          const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedFromFileList.path);
+          const resolvedCacheKey = getResolvedCacheKey(
+            scopedCacheKeyPrefix,
+            resolvedFromFileList.path,
+          );
           const resolvedApiPath = this.getOriginalApiPath?.(resolvedFromFileList.path) ??
             resolvedFromFileList.path;
           const fetchedResolved = await this.setupInFlightFetch(
@@ -834,7 +822,7 @@ export class ReadOperations {
 
       const resolved = await this.tryResolveExtensionlessPath(
         apiPath,
-        cacheKeyPrefix,
+        scopedCacheKeyPrefix,
         cacheKey,
         isProduction,
         skipPersistentCaches,

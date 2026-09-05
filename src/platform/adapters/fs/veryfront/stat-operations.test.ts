@@ -8,6 +8,7 @@ import type { ContentContextProvider } from "./file-list-access.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { StatOperations } from "./stat-operations.ts";
 import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
+import { getCurrentRequestContext, runWithRequestContext } from "./request-context.ts";
 
 function createMockClient(overrides: Record<string, unknown> = {}): VeryfrontApiClient {
   return {
@@ -670,6 +671,44 @@ describe("StatOperations", () => {
       invalidated = true;
       assertEquals((await statOps.stat("fresh.ts")).isFile, true);
       await assertRejects(() => statOps.stat("stale.ts"));
+    });
+
+    it("scopes stat indexes to the request authority", async () => {
+      let listCalls = 0;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test",
+        branch: "main",
+      };
+      const statOps = new StatOperations(
+        createMockClient({
+          listAllFiles: () => {
+            listCalls++;
+            return Promise.resolve([makeFile(`${getCurrentRequestContext()?.token}.ts`)]);
+          },
+        }),
+        new FileCache({ enabled: false, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+
+      const tokenA = await runWithRequestContext(
+        { projectSlug: "test", token: "token-a", branch: "main" },
+        () => statOps.stat("token-a.ts"),
+      );
+      const tokenB = await runWithRequestContext(
+        { projectSlug: "test", token: "token-b", branch: "main" },
+        () => statOps.stat("token-b.ts"),
+      );
+
+      assertEquals(tokenA.isFile, true);
+      assertEquals(tokenB.isFile, true);
+      assertEquals(listCalls, 2);
     });
 
     it("should retry pages-prefixed API patterns after an incomplete index miss", async () => {

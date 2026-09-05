@@ -531,6 +531,36 @@ describe("ReadOperations", () => {
       assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
     });
 
+    it("does not share resolved extension content across request authorities", async () => {
+      let resolveCallCount = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          resolveFileWithExtension: () => {
+            resolveCallCount++;
+            return Promise.resolve({
+              path: "pages/home.tsx",
+              content: resolveCallCount === 1 ? "token-a content" : "token-b content",
+            });
+          },
+        }),
+        true,
+        createReleaseContext("rel-authority"),
+      );
+
+      const tokenA = await runWithRequestContext(
+        { projectSlug: "test", token: "token-a", productionMode: true },
+        () => readOps.readTextFile("pages/home"),
+      );
+      const tokenB = await runWithRequestContext(
+        { projectSlug: "test", token: "token-b", productionMode: true },
+        () => readOps.readTextFile("pages/home"),
+      );
+
+      assertEquals(tokenA, "token-a content");
+      assertEquals(tokenB, "token-b content");
+      assertEquals(resolveCallCount, 2);
+    });
+
     it("should resolve empty extensionless files from the file list", async () => {
       let resolveCalls = 0;
       let apiFetchCalls = 0;

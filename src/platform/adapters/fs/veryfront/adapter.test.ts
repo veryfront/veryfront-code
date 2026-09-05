@@ -2264,6 +2264,78 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(listAllFilesCalls, 3);
     });
 
+    it("isolates concurrent branch-miss recoveries by request snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const branchARefresh = Promise.withResolvers<Array<{ path: string; content?: string }>>();
+      let branchAListCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: (
+            options?: Record<string, unknown>,
+            context?: { type: "branch"; name: string },
+          ) => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = (_options, context) => {
+        if (context?.name !== "branch-a") return Promise.resolve([]);
+        branchAListCalls++;
+        return branchAListCalls === 2 ? branchARefresh.promise : Promise.resolve([]);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const branchAContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "branch-a",
+      };
+      const branchBContext = { ...branchAContext, branch: "branch-b" };
+      addPendingInvalidation(buildFileCacheKeyPrefix(branchAContext));
+      addPendingInvalidation(buildFileCacheKeyPrefix(branchBContext));
+
+      try {
+        const branchA = runWithRequestContext(
+          { projectSlug: "test-project", token: "token-a", branch: "branch-a" },
+          () => adapter.readdir("new-directory"),
+        );
+        await waitFor(async () => branchAListCalls === 2);
+        const branchB = runWithRequestContext(
+          { projectSlug: "test-project", token: "token-b", branch: "branch-b" },
+          () => adapter.readdir("new-directory"),
+        );
+        const recoveries = (adapter as unknown as {
+          branchMissRecoveryPromises: Map<string, Promise<void>>;
+        }).branchMissRecoveryPromises;
+        await waitFor(async () => recoveries.size === 2);
+
+        assertEquals(recoveries.size, 2);
+        branchARefresh.resolve([]);
+        assertEquals(await Promise.all([branchA, branchB]), [[], []]);
+      } finally {
+        branchARefresh.resolve([]);
+        removePendingInvalidation(buildFileCacheKeyPrefix(branchAContext));
+        removePendingInvalidation(buildFileCacheKeyPrefix(branchBContext));
+        adapter.dispose();
+      }
+    });
+
     it("leases an unchanged branch snapshot without relying on the file-list cache", async () => {
       let routerInvalidations = 0;
       let ssrInvalidations = 0;
