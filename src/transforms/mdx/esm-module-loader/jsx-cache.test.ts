@@ -1174,7 +1174,7 @@ describe("pruneSupersededJsxArtifacts", () => {
       buildMdxJsxCacheFileName("/tmp/source/next.tsx", "export const next = true;"),
     );
     const localFs = getLocalFs();
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
     const eligibleAt = new Date(Date.now() - JSX_CACHE_VARIANT_MIN_AGE_MS - 1_000);
 
@@ -1427,7 +1427,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     const strandedName = "jsx-superseded-namespace-aborted.mjs";
     const localFs = getLocalFs();
     const originalReadTextFile = localFs.readTextFile.bind(localFs);
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
 
     try {
@@ -1553,7 +1553,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     const staleArtifact = "jsx-orphaned.mjs";
     const freshArtifact = "jsx-active-create.mjs";
     const localFs = getLocalFs();
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
 
     try {
@@ -1700,7 +1700,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     const transitionPath = `${leasePath}.transition`;
     const localFs = getLocalFs();
     const originalRemove = localFs.remove.bind(localFs);
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support atomic cache leases");
     let removedUnderCanonicalLease = false;
     try {
@@ -1785,9 +1785,9 @@ describe("pruneSupersededJsxArtifacts", () => {
     const artifactPath = join(tempDir, "jsx-release-owner.mjs");
     const leasePath = `${artifactPath}.lock`;
     const localFs = getLocalFs();
-    const originalReadTextFile = localFs.readTextFile;
-    const originalWriteTextFile = localFs.writeTextFile;
-    const originalRename = localFs.rename;
+    const originalReadTextFile = localFs.readTextFile.bind(localFs);
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    const originalRename = localFs.rename?.bind(localFs);
     const createExclusive = localFs.createFileBytesExclusive;
     if (!originalRename) throw new Error("the test runtime must support atomic rename");
     if (!createExclusive) throw new Error("the test runtime must support exclusive create");
@@ -1836,7 +1836,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     const leasePath = `${artifactPath}.lock`;
     const localFs = getLocalFs();
     const createExclusive = localFs.createFileBytesExclusive;
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     const staleMs = __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS;
     if (!createExclusive || !utime) {
       throw new Error("the test runtime must support exclusive creation and file timestamps");
@@ -1865,7 +1865,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     const leasePath = `${artifactPath}.lock`;
     const transitionPath = `${leasePath}.transition`;
     const localFs = getLocalFs();
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
     try {
       await writeTextFile(leasePath, "abandoned-lease-owner");
@@ -2194,7 +2194,7 @@ describe("jsx artifact references", () => {
       buildMdxJsxCacheFileName("/tmp/source/NoUtime.tsx", "export const v = 1;"),
     );
     const localFs = getLocalFs();
-    const originalUtime = localFs.utime;
+    const originalUtime = localFs.utime?.bind(localFs);
     try {
       await writeTextFile(artifactPath, "export const v = 1;");
       localFs.utime = undefined;
@@ -2251,7 +2251,7 @@ describe("jsx artifact references", () => {
       buildMdxJsxCacheFileName("/tmp/source/Heartbeat.tsx", "export const value = 1;"),
     );
     const localFs = getLocalFs();
-    const originalUtime = localFs.utime;
+    const originalUtime = localFs.utime?.bind(localFs);
     if (!originalUtime) throw new Error("the test runtime must support file timestamps");
     let releaseUtime: (() => void) | undefined;
     const utimeBlocked = new Promise<void>((resolve) => {
@@ -2287,7 +2287,7 @@ describe("jsx artifact references", () => {
   it("bounds filesystem refreshes for actively retained artifacts", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-active-heartbeat-test-" });
     const localFs = getLocalFs();
-    const originalUtime = localFs.utime;
+    const originalUtime = localFs.utime?.bind(localFs);
     if (!originalUtime) throw new Error("the test runtime must support file timestamps");
     const releaseUtime = Promise.withResolvers<void>();
     const artifactPaths: string[] = [];
@@ -2748,7 +2748,7 @@ describe("scheduled prune bound", () => {
     const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
     const tombstonePath = `${requestPath}.lock.stale-11111111-1111-4111-8111-111111111111`;
     const localFs = getLocalFs();
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
 
     try {
@@ -2776,7 +2776,7 @@ describe("scheduled prune bound", () => {
     const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
     const transitionPath = `${requestPath}.lock.transition`;
     const localFs = getLocalFs();
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
 
     try {
@@ -2804,7 +2804,7 @@ describe("scheduled prune bound", () => {
     const requestPath = await getPersistedJsxCachePruneRequestPath(directory);
     const lockPath = `${requestPath}.lock`;
     const localFs = getLocalFs();
-    const utime = localFs.utime;
+    const utime = localFs.utime?.bind(localFs);
     if (!utime) throw new Error("the test runtime must support file timestamps");
 
     try {
