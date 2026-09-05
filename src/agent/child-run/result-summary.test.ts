@@ -973,6 +973,41 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("skips commented quotes before tool and provider-tool declarations", () => {
+      for (const field of ["tools", "provider_tool_ids"]) {
+        for (const comment of ['/* Use " for strings */\n', '// Use " for strings\n']) {
+          const text = comment + `${field}: ["read_file"]`;
+          assertEquals(
+            buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+            field === "tools" ? { toolIds: ["read_file"] } : { providerToolIds: ["read_file"] },
+          );
+        }
+      }
+    });
+
+    it("retains complete nested source objects before a truncated array element", () => {
+      const text = 'tools: [{"id":"create_agent", /* " */ "description":"first"},{"description":"' +
+        "p".repeat(200_000) + '"}]';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent"],
+      });
+    });
+
+    it("preserves declarations after prose URLs rather than treating URLs as comments", () => {
+      for (
+        const url of ["https://example.com", "https://example.com/a//b", "ftp://example.com/path"]
+      ) {
+        for (const field of ["tools", "provider_tool_ids"]) {
+          assertEquals(
+            buildChildRunResultSummary(`See ${url} for ${field}: ["read_file"]`, {
+              mode: "structured",
+            }).contractFacts,
+            field === "tools" ? { toolIds: ["read_file"] } : { providerToolIds: ["read_file"] },
+          );
+        }
+      }
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

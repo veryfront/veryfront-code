@@ -467,6 +467,16 @@ function isValidUnicodeEscapePrefix(
   return isHexPrefix(availableHex + trailingSource.slice(0, 4 - availableHex.length));
 }
 
+function proseUrlEnd(text: string, index: number): number | undefined {
+  if (!/[A-Za-z]/.test(text[index] ?? "") || /[A-Za-z0-9+.-]/.test(text[index - 1] ?? "")) {
+    return undefined;
+  }
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(text.slice(index))) return undefined;
+  let end = index;
+  while (end < text.length && !/\s/.test(text[end]!)) end++;
+  return end;
+}
+
 function sourceCommentEnd(text: string, index: number): number | null | undefined {
   if (text[index] !== "/") return undefined;
   if (text[index + 1] === "/") {
@@ -755,6 +765,12 @@ function scanNestedArrayOrObjectEnd(
 
   while (index < fieldBody.length && closings.length > 0) {
     const character = fieldBody[index];
+    const commentEnd = sourceCommentEnd(fieldBody, index);
+    if (commentEnd === null) return undefined;
+    if (commentEnd !== undefined) {
+      index = commentEnd;
+      continue;
+    }
     if (character === '"' || character === "'") {
       const end = scanQuotedValueEnd(fieldBody, index, character);
       if (end === undefined) return undefined;
@@ -1030,6 +1046,19 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
     while (cursor < match.index!) {
       const character = text[cursor];
       if (character === "\n") lineStart = cursor + 1;
+      const urlEnd = proseUrlEnd(text, cursor);
+      if (urlEnd !== undefined) {
+        cursor = urlEnd;
+        continue;
+      }
+      const commentEnd = sourceCommentEnd(text, cursor);
+      if (commentEnd !== undefined) {
+        const end = commentEnd ?? text.length;
+        const newline = text.slice(cursor, end).lastIndexOf("\n");
+        if (newline !== -1) lineStart = cursor + newline + 1;
+        cursor = end;
+        continue;
+      }
       if (character === "'") {
         if (apostropheLineStart !== lineStart) {
           apostropheLineStart = lineStart;
@@ -1289,16 +1318,22 @@ function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
 
 function quoteAtEnd(
   text: string,
-  nextCharacter?: string,
+  limit: number,
 ): { value: string; index: number } | undefined {
-  const proseApostrophes = structuredHeadProseApostrophes(text);
+  const proseApostrophes = structuredHeadProseApostrophes(text.slice(0, limit));
   let quote: { value: string; index: number } | undefined;
-  for (let index = 0; index < text.length; index++) {
+  for (let index = 0; index < limit; index++) {
     const character = text[index]!;
     if (quote === undefined) {
-      if (character === "/" && ["/", "*"].includes(text[index + 1] ?? nextCharacter ?? "")) {
+      const urlEnd = proseUrlEnd(text, index);
+      if (urlEnd !== undefined) {
+        if (urlEnd > limit) return { value: "url", index };
+        index = urlEnd - 1;
+        continue;
+      }
+      if (character === "/" && ["/", "*"].includes(text[index + 1] ?? "")) {
         const end = sourceCommentEnd(text, index);
-        if (end === undefined || end === null || end === text.length && text[index + 1] === "/") {
+        if (typeof end !== "number" || end > limit) {
           return { value: "comment", index };
         }
         index = end - 1;
@@ -1338,6 +1373,14 @@ function quoteStateAtTail(
     if (index > start && text[index - 1] === "\n") lineStart = index;
     const character = text[index]!;
     if (quote === undefined) {
+      const urlEnd = proseUrlEnd(text, index);
+      if (urlEnd !== undefined) {
+        if (urlEnd > end) {
+          return { value: "url", inherited: false, escaped: false, commentEnd: urlEnd };
+        }
+        index = urlEnd - 1;
+        continue;
+      }
       const commentEnd = sourceCommentEnd(text, index);
       if (commentEnd !== undefined) {
         if (commentEnd === null || commentEnd > end) {
@@ -1523,14 +1566,16 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
 
   let tailStart = text.length - (CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT - headLength);
   const head = text.slice(0, headLength);
-  const openQuote = quoteAtEnd(head, text[headLength]);
   const omittedLength = tailStart - headLength;
   // A quote can open or close anywhere in an unscanned gap. Do not interpret
   // its tail as declarations when the bounded scan cannot establish its state.
   if (omittedLength > CHILD_RUN_QUOTE_STATE_GAP_LIMIT) return [head, ""];
+  const openQuote = quoteAtEnd(text, headLength);
   let gapStart = headLength;
-  if (openQuote?.value === "comment") {
-    const commentEnd = sourceCommentEnd(text, openQuote.index);
+  if (openQuote?.value === "comment" || openQuote?.value === "url") {
+    const commentEnd = openQuote.value === "url"
+      ? proseUrlEnd(text, openQuote.index)
+      : sourceCommentEnd(text, openQuote.index);
     if (typeof commentEnd !== "number") return [head, ""];
     gapStart = commentEnd;
     tailStart = Math.max(tailStart, commentEnd);
@@ -1541,9 +1586,11 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
     text,
     gapStart,
     tailStart,
-    proseApostrophe || openQuote?.value === "comment" ? undefined : openQuote?.value,
+    proseApostrophe || openQuote?.value === "comment" || openQuote?.value === "url"
+      ? undefined
+      : openQuote?.value,
   );
-  if (tailQuote?.value === "comment") {
+  if (tailQuote?.value === "comment" || tailQuote?.value === "url") {
     tailStart = tailQuote.commentEnd ?? text.length;
   } else if (tailQuote !== undefined) {
     const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value, tailQuote.escaped);
