@@ -1225,6 +1225,21 @@ describe("child-run-result-summary", () => {
         omittedChars: 0,
       });
     });
+
+    it("scales linearly across many unclosed transcript tags", () => {
+      const measure = (count: number): number => {
+        const text = "<tool_response>".repeat(count) + "<tool_call>".repeat(count);
+        const start = performance.now();
+        assertEquals(buildChildRunResultSummary(text).text, "");
+        return performance.now() - start;
+      };
+
+      const shorterDuration = measure(8_000);
+      const longerDuration = measure(16_000);
+
+      assertEquals(longerDuration < 750, true);
+      assertEquals(longerDuration < shorterDuration * 3 + 100, true);
+    });
   });
 
   describe("buildRootOwnedChildRunResultText", () => {

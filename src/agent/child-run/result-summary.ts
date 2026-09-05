@@ -7,10 +7,18 @@ const CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT = 128_000;
 const CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT = 256;
 const CHILD_RUN_PROSE_RECOVERY_GAP_LIMIT = 128_000;
 const CHILD_RUN_QUOTE_STATE_GAP_LIMIT = 128_000;
-const TOOL_TAG_START_PATTERN =
-  /<(\/?)(tool_call|tool_response|function_calls|invoke|parameter|function_result)(?=[\s>])/gi;
-const MALFORMED_TOOL_TRANSCRIPT_FENCE_PATTERN =
-  /```[ \t]*(?:\r?\n[ \t]*)?(?:bash|sh|shell|zsh)[ \t]*(?:\r?\n)?```(?=\s*<(?:tool_call|tool_response|function_calls|invoke|function_result)\b)/gi;
+const TOOL_TRANSCRIPT_TAG_NAMES = new Set([
+  "tool_call",
+  "tool_response",
+  "function_calls",
+  "invoke",
+  "parameter",
+  "function_result",
+]);
+const TOOL_TRANSCRIPT_COMMAND_TAG_NAMES = new Set(["tool_call", "function_calls", "invoke"]);
+const TOOL_TRANSCRIPT_RESPONSE_TAG_NAMES = new Set(["tool_response", "function_result"]);
+const TOOL_RESPONSE_TAG_NAMES = new Set(["tool_response"]);
+const TOOL_TRANSCRIPT_SHELL_FENCE_NAMES = new Set(["bash", "sh", "shell", "zsh"]);
 const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^let me [^.?!]+[.?!]\s*/i,
   /^i(?:'|’)ll [^.?!]+[.?!]\s*/i,
@@ -88,69 +96,188 @@ function removeHorizontalWhitespaceBeforeNewlines(text: string): string {
   return chunks.join("");
 }
 
-function rewriteToolTranscriptTags(
-  text: string,
-  mode: "responses" | "prefixes" | "calls" | "tags",
-): string {
-  const tags: { start: number; end: number; name: string; closing: boolean; exact: boolean }[] = [];
-  let coveredUntil = 0;
-  for (const match of text.matchAll(TOOL_TAG_START_PATTERN)) {
-    if (match.index < coveredUntil) continue;
-    const end = text.indexOf(">", match.index + match[0].length);
-    if (end === -1) break;
-    tags.push({
-      start: match.index,
-      end: end + 1,
-      name: match[2]!.toLowerCase(),
-      closing: match[1] === "/",
-      exact: end === match.index + match[0].length,
-    });
-    coveredUntil = end + 1;
-  }
+type ToolTranscriptTag = {
+  start: number;
+  end: number;
+  name: string;
+  closing: boolean;
+};
 
-  // Precompute the next terminator once. A missing closing tag must not make
-  // every earlier opener rescan the same remaining suffix.
-  const nextTargets = new Array<number | undefined>(tags.length);
-  const closingTags = new Map<string, number>();
-  let nextResponse: number | undefined;
-  for (let index = tags.length - 1; index >= 0; index--) {
-    const tag = tags[index]!;
-    nextTargets[index] = mode === "prefixes" ? nextResponse : closingTags.get(tag.name);
-    if (tag.closing && tag.exact) closingTags.set(tag.name, index);
-    if (!tag.closing && (tag.name === "tool_response" || tag.name === "function_result")) {
-      nextResponse = index;
+function findToolTranscriptTag(text: string, from: number): ToolTranscriptTag | undefined {
+  let cursor = from;
+  while (cursor < text.length) {
+    const start = text.indexOf("<", cursor);
+    if (start === -1) return undefined;
+    let index = start + 1;
+    const closing = text[index] === "/";
+    if (closing) index += 1;
+    const nameStart = index;
+    while (/[A-Za-z_]/.test(text[index] ?? "")) index += 1;
+    const name = text.slice(nameStart, index).toLowerCase();
+    if (
+      TOOL_TRANSCRIPT_TAG_NAMES.has(name) &&
+      (text[index] === ">" || /\s/.test(text[index] ?? ""))
+    ) {
+      const tagEnd = text.indexOf(">", index);
+      if (tagEnd === -1) return undefined;
+      return { start, end: tagEnd + 1, name, closing };
     }
+    cursor = start + 1;
   }
+  return undefined;
+}
 
-  const chunks: string[] = [];
+function removeToolTranscriptFences(text: string): string {
+  let output = "";
+  let segmentStart = 0;
   let cursor = 0;
-  for (let index = 0; index < tags.length; index++) {
-    const tag = tags[index]!;
-    if (tag.start < cursor) continue;
-    const command = tag.name === "tool_call" || tag.name === "function_calls" ||
-      tag.name === "invoke";
-    if (mode === "tags") {
-      chunks.push(text.slice(cursor, tag.start));
-      cursor = tag.end;
+  while (cursor < text.length) {
+    const start = text.indexOf("```", cursor);
+    if (start === -1) break;
+    let index = start + 3;
+    while (text[index] === " " || text[index] === "\t") index += 1;
+    if (text[index] === "\r" && text[index + 1] === "\n") index += 2;
+    else if (text[index] === "\n") index += 1;
+    while (text[index] === " " || text[index] === "\t") index += 1;
+    const shellStart = index;
+    while (/[A-Za-z]/.test(text[index] ?? "")) index += 1;
+    if (!TOOL_TRANSCRIPT_SHELL_FENCE_NAMES.has(text.slice(shellStart, index))) {
+      cursor = start + 3;
       continue;
     }
-    if (tag.closing || (mode === "responses" ? tag.name !== "tool_response" : !command)) continue;
-    const targetIndex = nextTargets[index];
-    if (targetIndex === undefined) continue;
-    const target = tags[targetIndex]!;
-    chunks.push(text.slice(cursor, tag.start), "\n");
-    if (mode === "responses") chunks.push(text.slice(tag.end, target.start), "\n");
-    cursor = mode === "prefixes" ? target.start : target.end;
+    while (text[index] === " " || text[index] === "\t") index += 1;
+    if (text[index] === "\r" && text[index + 1] === "\n") index += 2;
+    else if (text[index] === "\n") index += 1;
+    while (text[index] === " " || text[index] === "\t") index += 1;
+    if (text.slice(index, index + 3) !== "```") {
+      cursor = start + 3;
+      continue;
+    }
+    const end = index + 3;
+    let tagStart = end;
+    while (/\s/.test(text[tagStart] ?? "")) tagStart += 1;
+    const tag = findToolTranscriptTag(text, tagStart);
+    if (tag?.start !== tagStart || tag.closing) {
+      cursor = Math.max(start + 3, tagStart);
+      continue;
+    }
+    output += text.slice(segmentStart, start);
+    segmentStart = end;
+    cursor = end;
   }
-  chunks.push(text.slice(cursor));
-  return chunks.join("");
+  return segmentStart === 0 ? text : output + text.slice(segmentStart);
+}
+
+function lastClosingTagStarts(text: string): Map<string, number> {
+  const starts = new Map<string, number>();
+  let cursor = 0;
+  for (let tag = findToolTranscriptTag(text, cursor); tag !== undefined;) {
+    if (tag.closing) starts.set(tag.name, tag.start);
+    cursor = tag.end;
+    tag = findToolTranscriptTag(text, cursor);
+  }
+  return starts;
+}
+
+function replaceCompleteToolTranscriptSections(
+  text: string,
+  names: ReadonlySet<string>,
+  preserveBody: boolean,
+): string {
+  const lastClosing = lastClosingTagStarts(text);
+  let output = "";
+  let segmentStart = 0;
+  let cursor = 0;
+  for (let opener = findToolTranscriptTag(text, cursor); opener !== undefined;) {
+    if (opener.closing || !names.has(opener.name)) {
+      cursor = opener.end;
+      opener = findToolTranscriptTag(text, cursor);
+      continue;
+    }
+    if ((lastClosing.get(opener.name) ?? -1) < opener.end) {
+      cursor = opener.end;
+      opener = findToolTranscriptTag(text, cursor);
+      continue;
+    }
+    let closing = findToolTranscriptTag(text, opener.end);
+    while (closing !== undefined && (!closing.closing || closing.name !== opener.name)) {
+      closing = findToolTranscriptTag(text, closing.end);
+    }
+    if (closing === undefined) break;
+    output += text.slice(segmentStart, opener.start) + "\n";
+    if (preserveBody) output += text.slice(opener.end, closing.start) + "\n";
+    segmentStart = closing.end;
+    cursor = closing.end;
+    opener = findToolTranscriptTag(text, cursor);
+  }
+  return segmentStart === 0 ? text : output + text.slice(segmentStart);
+}
+
+function removeToolCommandPrefixes(text: string): string {
+  let lastResponseStart = -1;
+  let cursor = 0;
+  for (let tag = findToolTranscriptTag(text, cursor); tag !== undefined;) {
+    if (!tag.closing && TOOL_TRANSCRIPT_RESPONSE_TAG_NAMES.has(tag.name)) {
+      lastResponseStart = tag.start;
+    }
+    cursor = tag.end;
+    tag = findToolTranscriptTag(text, cursor);
+  }
+  if (lastResponseStart === -1) return text;
+
+  let output = "";
+  let segmentStart = 0;
+  cursor = 0;
+  for (let command = findToolTranscriptTag(text, cursor); command !== undefined;) {
+    if (
+      command.closing || !TOOL_TRANSCRIPT_COMMAND_TAG_NAMES.has(command.name) ||
+      command.start > lastResponseStart
+    ) {
+      cursor = command.end;
+      command = findToolTranscriptTag(text, cursor);
+      continue;
+    }
+    let response = findToolTranscriptTag(text, command.end);
+    while (
+      response !== undefined &&
+      (response.closing || !TOOL_TRANSCRIPT_RESPONSE_TAG_NAMES.has(response.name))
+    ) response = findToolTranscriptTag(text, response.end);
+    if (response === undefined) break;
+    output += text.slice(segmentStart, command.start) + "\n";
+    segmentStart = response.start;
+    cursor = response.end;
+    command = findToolTranscriptTag(text, cursor);
+  }
+  return segmentStart === 0 ? text : output + text.slice(segmentStart);
+}
+
+function removeToolTranscriptTags(text: string): string {
+  let output = "";
+  let segmentStart = 0;
+  let cursor = 0;
+  for (let tag = findToolTranscriptTag(text, cursor); tag !== undefined;) {
+    output += text.slice(segmentStart, tag.start);
+    segmentStart = tag.end;
+    cursor = tag.end;
+    tag = findToolTranscriptTag(text, cursor);
+  }
+  return segmentStart === 0 ? text : output + text.slice(segmentStart);
 }
 
 function sanitizeMalformedToolTranscriptText(text: string): string {
-  let sanitized = text.replace(MALFORMED_TOOL_TRANSCRIPT_FENCE_PATTERN, "");
-  for (const mode of ["responses", "prefixes", "calls", "tags"] as const) {
-    sanitized = rewriteToolTranscriptTags(sanitized, mode);
-  }
+  let sanitized = removeToolTranscriptFences(text);
+  sanitized = replaceCompleteToolTranscriptSections(
+    sanitized,
+    TOOL_RESPONSE_TAG_NAMES,
+    true,
+  );
+  sanitized = removeToolCommandPrefixes(sanitized);
+  sanitized = replaceCompleteToolTranscriptSections(
+    sanitized,
+    TOOL_TRANSCRIPT_COMMAND_TAG_NAMES,
+    false,
+  );
+  sanitized = removeToolTranscriptTags(sanitized);
   return removeHorizontalWhitespaceBeforeNewlines(sanitized)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
