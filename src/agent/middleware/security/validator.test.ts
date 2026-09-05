@@ -665,6 +665,42 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("rejects new blocked occurrences even when the trusted prompt matches the same pattern", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/safe marker$|marker\n\ncaller fragment/] },
+    });
+    const context = createContext({
+      input: [{
+        id: "system-1",
+        role: "system",
+        parts: [{ type: "text", text: "caller fragment" }],
+      }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProviderRequest = getTurnProviderRequestValidator(context);
+    if (!validateProviderRequest) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validateProviderRequest("safe marker", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
+  it("rejects new sanitization matches beside a trusted sanitization example", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [{ id: "system-1", role: "system", parts: [{ type: "text", text: '="evil"' }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProviderRequest = getTurnProviderRequestValidator(context);
+    if (!validateProviderRequest) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validateProviderRequest("<script>example</script> onclick", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
   it("does not apply caller input patterns to a trusted runtime prompt alone", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/runtime marker/] },

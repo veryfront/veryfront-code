@@ -17,7 +17,9 @@ interface RollbackObserver<M> {
   add(message: M): void;
   clear(): void;
 }
-const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
+// Each factory retains its message type; the heterogeneous registry erases
+// that type until captureMemoryRollback retrieves it with the same memory.
+const memoryRollbackFactories = new WeakMap<object, () => unknown>();
 
 function rollbackValuesEqual(
   left: unknown,
