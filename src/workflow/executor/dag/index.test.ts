@@ -1379,36 +1379,38 @@ describe("DAGExecutor", () => {
     });
 
     it("does not delete a pre-existing user value when no loop state was written", async () => {
-      let observed: unknown;
-      const exec = new DAGExecutor({
-        stepExecutor: new MockStepExecutor(new Map(), (_node, context) => {
-          observed = context.repeat_loop_state;
-          return { success: true, output: "done", executionTime: 1 };
-        }),
-      });
-      const nodes: WorkflowNode[] = [
-        loop("producer", {
-          maxIterations: 1,
-          while: () => false,
-          steps: [],
-          onComplete: () => ({ repeat_loop_state: null }),
-        }),
-        {
-          ...loop("repeat", {
+      for (const userValue of [null, { iteration: 0, previousResults: [] }]) {
+        let observed: unknown;
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), (_node, context) => {
+            observed = context.repeat_loop_state;
+            return { success: true, output: "done", executionTime: 1 };
+          }),
+        });
+        const nodes: WorkflowNode[] = [
+          loop("producer", {
             maxIterations: 1,
             while: () => false,
-            steps: () => [],
+            steps: [],
+            onComplete: () => ({ repeat_loop_state: userValue }),
           }),
-          dependsOn: ["producer"],
-        },
-        { id: "after", dependsOn: ["repeat"], config: { type: "step" } as any },
-      ];
+          {
+            ...loop("repeat", {
+              maxIterations: 1,
+              while: () => false,
+              steps: () => [],
+            }),
+            dependsOn: ["producer"],
+          },
+          { id: "after", dependsOn: ["repeat"], config: { type: "step" } as any },
+        ];
 
-      const result = await exec.execute(nodes, createTestRun());
+        const result = await exec.execute(nodes, createTestRun());
 
-      assertEquals(result.completed, true);
-      assertEquals(observed, null);
-      assertEquals(result.context.repeat_loop_state, null);
+        assertEquals(result.completed, true);
+        assertEquals(observed, userValue);
+        assertEquals(result.context.repeat_loop_state, userValue);
+      }
     });
 
     it("does not re-execute a step declared before the loop", async () => {
@@ -3436,6 +3438,34 @@ describe("DAGExecutor", () => {
   });
 
   describe("loop resume (H9)", () => {
+    it("removes an explicitly owned callback-loop snapshot after resume", async () => {
+      const nodes = [loop("repeat", {
+        maxIterations: 1,
+        while: () => true,
+        steps: () => [waitForApproval("review", { message: "Approve" })],
+      })];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(
+        (first.context.repeat_loop_state as { _loopStateOwner: string })._loopStateOwner,
+        "repeat",
+      );
+      assertEquals(first.waitingNode, "repeat/review");
+      const second = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "repeat/review": { ...first.nodeStates["repeat/review"]!, status: "completed" },
+          },
+        }),
+      );
+      assertEquals(second.completed, true);
+      assertEquals(second.context.repeat_loop_state, undefined);
+    });
+
     it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
       let incrRuns = 0;
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {

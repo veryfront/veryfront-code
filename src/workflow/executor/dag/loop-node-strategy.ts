@@ -60,6 +60,7 @@ type PersistedNodeState =
   };
 
 interface PersistedLoopState {
+  _loopStateOwner?: string;
   iteration: number;
   previousResults: unknown[];
   iterationNodeStates?: Record<string, PersistedNodeState>;
@@ -304,6 +305,7 @@ export async function executeLoopNodeStrategy(
           result.contextPatch,
           createSetContextPatch({
             [loopStateKey]: {
+              _loopStateOwner: node.id,
               iteration,
               previousResults,
               // Persist the in-flight iteration's child states so completed
@@ -387,7 +389,7 @@ export async function executeLoopNodeStrategy(
     ...completionUpdates,
   });
   if (
-    typeof config.steps === "function" && existingLoopState !== undefined &&
+    typeof config.steps === "function" && existingLoopState?._loopStateOwner === node.id &&
     !ObjectHasOwn(completionUpdates, loopStateKey)
   ) {
     contextPatch.delete.push(loopStateKey);
