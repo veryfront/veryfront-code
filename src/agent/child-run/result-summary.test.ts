@@ -1346,6 +1346,14 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("removes mixed-case malformed transcript fences", () => {
+      const result = buildChildRunResultSummary(
+        "```BASH```<tool_call>curl</tool_call><tool_response>ok</tool_response>",
+      );
+
+      assertEquals(result.text, "ok");
+    });
+
     it("scales linearly across many unclosed transcript tags", () => {
       const measure = (count: number): number => {
         const text = "<tool_response>".repeat(count) + "<tool_call>".repeat(count);
