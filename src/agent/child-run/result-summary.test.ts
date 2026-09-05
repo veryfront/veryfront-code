@@ -788,6 +788,24 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("retains facts after a prose contraction in the recovered tail", () => {
+      const text = "I don't expect a problem. " + "p".repeat(70_000) +
+        '\nWe\'re ready.\nmodel: "sonnet"\n' + "p".repeat(60_000);
+
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        modelIds: ["sonnet"],
+      });
+    });
+
+    it("retains facts from CRLF JSON fences in the recovered tail", () => {
+      const text = "I don't expect a problem. " + "p".repeat(70_000) +
+        '\r\n```json\r\n{"model":"sonnet"}\r\n```\r\n' + "p".repeat(60_000);
+
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        modelIds: ["sonnet"],
+      });
+    });
+
     it("scans blank-line-heavy heads without repeatedly reading the whitespace run", () => {
       const text = "\n".repeat(16_000) + "plain text\n" + "p".repeat(130_000);
       const started = performance.now();
