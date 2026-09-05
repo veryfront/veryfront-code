@@ -5,6 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteHostSecret, setHostSecret } from "#cli/process-env";
 import { triggerDeploy, vfTriggerDeploy } from "./deploy-tool.ts";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import {
@@ -169,6 +170,49 @@ describe("mcp/tools/deploy-tool", () => {
         result.error,
         "Not authenticated. Run 'veryfront login' first.",
       );
+    });
+
+    it("passes the auth gate with a host-private stored login token", async () => {
+      // A stored `veryfront login` token is registered host-privately instead
+      // of being exported, so the environment snapshot never carries it. The
+      // gate must still open and hand off to Deploy Execution.
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      try {
+        const result = await withDeployEnv(
+          () =>
+            triggerDeploy(
+              { projectSlug: "my-app", environment: "production", branch: "main" },
+              { deployProject: throwingDeployProject(new Error("deploy execution reached")) },
+            ),
+          { VERYFRONT_API_TOKEN: null },
+        );
+
+        assertEquals(result.success, false);
+        if (result.success) throw new Error("unreachable");
+        assertEquals(result.error, "deploy execution reached");
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+    });
+
+    it("does not let a blank exported token shadow the stored login token", async () => {
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      try {
+        const result = await withDeployEnv(
+          () =>
+            triggerDeploy(
+              { projectSlug: "my-app", environment: "production", branch: "main" },
+              { deployProject: throwingDeployProject(new Error("deploy execution reached")) },
+            ),
+          { VERYFRONT_API_TOKEN: "   " },
+        );
+
+        assertEquals(result.success, false);
+        if (result.success) throw new Error("unreachable");
+        assertEquals(result.error, "deploy execution reached");
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
     });
   });
 

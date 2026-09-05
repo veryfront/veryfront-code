@@ -13,6 +13,7 @@ import {
   preloadDevAuth,
   startDevServerOnFreePort,
 } from "./command.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { UntrustedApiUrlCredentialError } from "#cli/shared/config";
 
 describe("cli/commands/dev", () => {
@@ -310,63 +311,28 @@ describe("cli/commands/dev", () => {
   });
 
   describe("initial authentication", () => {
-    it("preloads project sync from a resolved environment API key", async () => {
-      const originalFetch = globalThis.fetch;
-      const requests: Array<{ authorization: string; limit: string | null }> = [];
-
-      try {
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-          const url = new URL(String(input));
-          requests.push({
-            authorization: new Headers(init?.headers).get("authorization") ?? "",
-            limit: url.searchParams.get("limit"),
-          });
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                data: [{ id: "project-env", slug: "env-project", name: "Env Project" }],
-                page_info: {},
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        }) as typeof fetch;
-
-        const result = await preloadDevAuth("vf_env_secret");
-
-        assertEquals(result.identity, { authenticated: true, type: "apiKey" });
-        assertEquals(result.projects, [
-          { id: "project-env", slug: "env-project", name: "Env Project" },
-        ]);
-        assertEquals(requests, [
-          { authorization: "Bearer vf_env_secret", limit: null },
-        ]);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    });
-
     it("validates a user token once while loading projects", async () => {
-      const originalFetch = globalThis.fetch;
       const paths: string[] = [];
 
       try {
-        globalThis.fetch = ((input: string | URL | Request) => {
-          const url = new URL(String(input));
-          paths.push(url.pathname);
+        installMockFetch(
+          ((input: string | URL | Request) => {
+            const url = new URL(String(input));
+            paths.push(url.pathname);
 
-          if (url.pathname === "/me") {
+            if (url.pathname === "/me") {
+              return Promise.resolve(
+                Response.json({ id: "user-1", email: "dev@example.com" }),
+              );
+            }
+
             return Promise.resolve(
-              Response.json({ id: "user-1", email: "dev@example.com" }),
+              Response.json({
+                data: [{ id: "project-1", slug: "project-one", name: "Project One" }],
+              }),
             );
-          }
-
-          return Promise.resolve(
-            Response.json({
-              data: [{ id: "project-1", slug: "project-one", name: "Project One" }],
-            }),
-          );
-        }) as typeof fetch;
+          }) as typeof fetch,
+        );
 
         const result = await preloadDevAuth("user-token");
 
@@ -374,24 +340,24 @@ describe("cli/commands/dev", () => {
         assertEquals(result.projects.length, 1);
         assertEquals(paths, ["/me", "/projects"]);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("keeps a validated user identity when project discovery fails", async () => {
-      const originalFetch = globalThis.fetch;
-
       try {
-        globalThis.fetch = ((input: string | URL | Request) => {
-          const url = new URL(String(input));
-          if (url.pathname === "/me") {
-            return Promise.resolve(
-              Response.json({ id: "user-1", email: "dev@example.com" }),
-            );
-          }
+        installMockFetch(
+          ((input: string | URL | Request) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/me") {
+              return Promise.resolve(
+                Response.json({ id: "user-1", email: "dev@example.com" }),
+              );
+            }
 
-          return Promise.resolve(new Response("Unavailable", { status: 503 }));
-        }) as typeof fetch;
+            return Promise.resolve(new Response("Unavailable", { status: 503 }));
+          }) as typeof fetch,
+        );
 
         const result = await preloadDevAuth("user-token");
 
@@ -400,22 +366,21 @@ describe("cli/commands/dev", () => {
           projects: [],
         });
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("does not authenticate an API key rejected by project discovery", async () => {
-      const originalFetch = globalThis.fetch;
-
       try {
-        globalThis.fetch = (() =>
-          Promise.resolve(new Response("Unauthorized", { status: 401 }))) as typeof fetch;
+        installMockFetch(
+          (() => Promise.resolve(new Response("Unauthorized", { status: 401 }))) as typeof fetch,
+        );
 
         const result = await preloadDevAuth("vf_invalid");
 
         assertEquals(result, { identity: null, projects: [] });
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });

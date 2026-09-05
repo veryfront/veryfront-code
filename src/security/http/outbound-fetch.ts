@@ -84,6 +84,7 @@ const URLPasswordGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pas
 const URLOriginGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
 const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
 const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
+const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
 const URLSearchGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")?.get;
 const URLHashGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
@@ -216,12 +217,16 @@ async function fetchWithHostTransport(
     fetchImpl: transport.fetch,
     pinnedFetch: transport.pinnedFetch,
     authorizeUrl: async (url) => {
-      if (url.protocol !== "http:" && url.protocol !== "https:") {
+      const protocol = readNativeURLString(url, URLProtocolGet);
+      if (protocol !== "http:" && protocol !== "https:") {
         throw new OutboundRequestBlockedError(
-          `Outbound request blocked: unsupported URL scheme ${url.protocol}`,
+          `Outbound request blocked: unsupported URL scheme ${protocol}`,
         );
       }
-      if (url.username.length > 0 || url.password.length > 0) {
+      if (
+        readNativeURLString(url, URLUsernameGet).length > 0 ||
+        readNativeURLString(url, URLPasswordGet).length > 0
+      ) {
         throw new OutboundRequestBlockedError(
           "Outbound request blocked: URL credentials are not allowed",
         );
@@ -336,6 +341,7 @@ async function fetchWithBoundaryErrors(
 function createOriginBoundFetchWithTransport(
   baseUrl: string,
   transport: OutboundFetchTransport,
+  allowHostInternalEgress = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
   const baseProtocol = readNativeURLString(base, URLProtocolGet);
@@ -346,7 +352,7 @@ function createOriginBoundFetchWithTransport(
     throw new TypeError("Provider base URL must not include credentials");
   }
   const baseOrigin = readNativeURLString(base, URLOriginGet);
-  const allowInternalEgress = isHostAllowedInternalProviderOrigin(base);
+  const allowInternalEgress = allowHostInternalEgress || isHostAllowedInternalProviderOrigin(base);
   // A primitive, not the URL object: passing `base` itself as the second URL()
   // argument would coerce it through a possibly-replaced URL.prototype.toString.
   const baseHref = readNativeURLString(base, URLHrefGet);
@@ -523,14 +529,24 @@ export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
   return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport());
 }
 
+/** @internal Bind a host-selected sandbox runtime origin while allowing private service DNS. */
+export function createHostInternalOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
+  return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), true);
+}
+
 function requestUrl(input: RequestInfo | URL): URL {
-  if (input instanceof Request) return new URL(input.url);
-  if (input instanceof URL) return input;
-  return new URL(input);
+  if (isNativeInstance(input, NativeRequest)) {
+    return new NativeURL(readNativeURLString(input as Request, RequestUrlGet));
+  }
+  if (isNativeInstance(input, NativeURL)) return input as URL;
+  return new NativeURL(input as string);
 }
 
 function requireExactHttpLoopbackUrl(url: URL): void {
-  if (url.protocol !== "http:" || !isExactLoopbackHostname(url.hostname)) {
+  if (
+    readNativeURLString(url, URLProtocolGet) !== "http:" ||
+    !isExactLoopbackHostname(readNativeURLString(url, URLHostnameGet))
+  ) {
     throw new OutboundRequestBlockedError(
       "Outbound loopback request requires an exact HTTP loopback host",
     );

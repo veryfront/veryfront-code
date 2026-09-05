@@ -13,6 +13,10 @@
 
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 import { defineError, retryWithBackoff, VeryfrontError } from "#veryfront/errors";
 import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -21,6 +25,8 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
@@ -211,6 +217,13 @@ function snapshotToolExecutionContext(
 // Per-request token resolution
 // ---------------------------------------------------------------------------
 
+// Captured before project code runs: `resolveRequestAuth` passes the
+// host-private stored login token through this validator, so a project that
+// replaces `String.prototype.charCodeAt` must not observe the credential from
+// the method receiver.
+const applyIntrinsic = Reflect.apply;
+const stringCharCodeAt = String.prototype.charCodeAt;
+
 function isValidApiToken(token: unknown): token is string {
   if (
     typeof token !== "string" ||
@@ -220,7 +233,7 @@ function isValidApiToken(token: unknown): token is string {
     return false;
   }
   for (let index = 0; index < token.length; index++) {
-    const code = token.charCodeAt(index);
+    const code = applyIntrinsic(stringCharCodeAt, token, [index]) as number;
     if (code < 0x21 || code > 0x7e) return false;
   }
   return true;
@@ -231,19 +244,47 @@ function isValidApiToken(token: unknown): token is string {
  * Proxy mode requires a valid request-scoped project token. Single-project
  * runtimes may use their process-wide environment token.
  */
-function resolveRequestToken(context: RemoteIntegrationExecutionContext): string | undefined {
+function resolveRequestAuth(
+  context: RemoteIntegrationExecutionContext,
+): { baseUrl: string; token: string | undefined } {
+  const baseUrl = getApiBaseUrlEnv();
   if (context.hasExplicitCredential) {
-    return isValidApiToken(context.authToken) ? context.authToken : undefined;
+    return {
+      baseUrl,
+      token: isValidApiToken(context.authToken) ? context.authToken : undefined,
+    };
   }
 
   const requestContext = getCurrentRequestContext();
   if (requestContext) {
-    return isValidApiToken(requestContext.token) ? requestContext.token : undefined;
+    const token = isValidApiToken(requestContext.token) ? requestContext.token : undefined;
+    return {
+      baseUrl: token !== undefined && token === getHostSecret("VERYFRONT_API_TOKEN")
+        ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
+        : baseUrl,
+      token,
+    };
   }
-  if (getEnvironmentConfig().proxyMode) return undefined;
+  if (getEnvironmentConfig().proxyMode) return { baseUrl, token: undefined };
 
+  // Single-project runtimes may also authenticate from a stored
+  // `veryfront login`. That credential is registered host-privately rather than
+  // exported into the process environment, so it never reaches the environment snapshot
+  // `getApiTokenEnv()` reads; `getHostEnv` is the only reader that resolves it
+  // and project code cannot reach it. Without this fallback a CLI-authenticated
+  // `dev`, `start`, or `eval` run discovers no integration tools and every call
+  // fails with `no_api_token`.
+  // An unusable exported value (blank, or otherwise not a valid token) must not
+  // shadow the stored credential, so the snapshot only wins when it is valid.
   const environmentToken = getApiTokenEnv();
-  return isValidApiToken(environmentToken) ? environmentToken : undefined;
+  if (isValidApiToken(environmentToken)) return { baseUrl, token: environmentToken };
+
+  const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
+  if (!isValidApiToken(hostToken)) return { baseUrl, token: undefined };
+  return {
+    baseUrl: requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl()),
+    token: hostToken,
+  };
 }
 
 function normalizeProjectSlug(projectSlug: unknown): string | undefined {
@@ -549,7 +590,17 @@ async function postIntegrationApi(
 ): Promise<Response> {
   signal.throwIfAborted();
 
-  return await fetch(requestUrl, {
+  // The credential may be the host-private stored login token, so the request
+  // goes through the host transport rather than `globalThis.fetch`. Locally
+  // loaded project code runs in this process and can replace the global, and a
+  // direct call would hand its replacement the `Authorization` header to read.
+  //
+  // This also puts the call under the host egress ceiling, which denies private
+  // and loopback destinations. A deployment that points `VERYFRONT_API_URL` /
+  // `VERYFRONT_API_BASE_URL` at an internal host must set
+  // `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; that is the intended disposition,
+  // since only the host process can set it and a project overlay cannot.
+  return await guardedOutboundFetch(requestUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -821,8 +872,7 @@ export async function getRemoteIntegrationToolDiscovery(
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
-  const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken(requestContext);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
   if (!baseUrl || !token) return { status: "ok", tools: [] };
 
   try {
@@ -923,8 +973,7 @@ export async function executeRemoteIntegrationTool(
     throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
   }
 
-  const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken(requestContext);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
   if (!baseUrl || !token) {
     return { error: "no_api_token", message: "No API token available" };
   }

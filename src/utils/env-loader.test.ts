@@ -8,6 +8,8 @@ import {
   __setEnvLoaderOsTypeForTests,
   getEnvSource,
   loadEnv,
+  markConfigFileSource,
+  markProcessEnvSource,
   supportsEnvFiles,
 } from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/logger.ts";
@@ -485,6 +487,27 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("keeps env-file attribution when Map.prototype.get is replaced", async () => {
+      const key = createKey("SOURCE_TAMPERED_MAP");
+      await writeEnvFile(".env", `${key}=from-file`);
+      await loadEnv({ cwd: tempDir, override: true });
+
+      const originalGet = Map.prototype.get;
+      Map.prototype.get = function () {
+        return undefined;
+      };
+      try {
+        assertEquals(getEnvSource(key), {
+          source: "env-file",
+          file: `${tempDir}/.env`,
+          expandedFromProcessEnv: false,
+        });
+      } finally {
+        Map.prototype.get = originalGet;
+        cleanupKeys(key);
+      }
+    });
+
     it("should flag a value expanded from the process environment", async () => {
       const secretKey = createKey("SOURCE_SHELL_SECRET");
       const key = createKey("SOURCE_EXPANDED");
@@ -594,6 +617,42 @@ describe("env-loader", () => {
         { source: "process" },
         "a case-sensitive host keeps the explicitly set uppercase value independent",
       );
+
+      cleanupKeys(key, lowerKey);
+    });
+
+    it("clears a differently-cased Windows env-file source after a process write", async () => {
+      const key = createKey("SOURCE_CASE_PROCESS_REPLACEMENT");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${lowerKey}=shared-value`);
+      await loadEnv({ cwd: tempDir, override: true });
+      setEnv(key, "shared-value");
+
+      withOsType("windows", () => {
+        markProcessEnvSource(key);
+        assertEquals(getEnvSource(key), { source: "process" });
+      });
+
+      cleanupKeys(key, lowerKey);
+    });
+
+    it("replaces a differently-cased Windows env-file source with config provenance", async () => {
+      const key = createKey("SOURCE_CASE_CONFIG_REPLACEMENT");
+      const lowerKey = key.toLowerCase();
+      const configFile = `${tempDir}/veryfront.json`;
+      await writeEnvFile(".env", `${lowerKey}=shared-value`);
+      await loadEnv({ cwd: tempDir, override: true });
+      setEnv(key, "shared-value");
+
+      withOsType("windows", () => {
+        markConfigFileSource(key, configFile);
+        assertEquals(getEnvSource(key), { source: "config-file", file: configFile });
+        assertEquals(
+          getEnvSource(lowerKey),
+          { source: "config-file", file: configFile },
+          "the stale lowercase env-file record must not mask the replacement",
+        );
+      });
 
       cleanupKeys(key, lowerKey);
     });

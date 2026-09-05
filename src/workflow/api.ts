@@ -21,9 +21,17 @@
 
 import { getWorkflowTenant } from "./executor/step-executor.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
+import {
+  setPrivateVeryfrontApiClientRequestToken,
+  VeryfrontApiClient,
+} from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { INITIALIZATION_ERROR, INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 
 /**
  * Validate that a project slug is safe and well-formed.
@@ -82,17 +90,21 @@ function getTenant() {
  * Create a VeryfrontApiClient configured for the current tenant.
  * Each call creates a new client instance configured with the current tenant's credentials.
  */
-function getClient(): VeryfrontApiClient {
+function getClient(options: { includeCredential?: boolean } = {}): VeryfrontApiClient {
   const tenant = getTenant();
 
   const client = new VeryfrontApiClient({
-    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    apiBaseUrl: tenant.token === getHostSecret("VERYFRONT_API_TOKEN")
+      ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
+      : getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
     proxyMode: true,
     projectId: tenant.projectId,
     projectSlug: tenant.projectSlug,
   });
 
-  client.setRequestToken(tenant.token);
+  if (options.includeCredential !== false) {
+    setPrivateVeryfrontApiClientRequestToken(client, tenant.token);
+  }
   client.setProjectSlug(tenant.projectSlug);
 
   if (tenant.productionMode && tenant.releaseId) {
@@ -104,6 +116,11 @@ function getClient(): VeryfrontApiClient {
   }
 
   return client;
+}
+
+function getCredentialFreeTenant() {
+  const { token: _token, ...tenant } = getTenant();
+  return tenant;
 }
 
 /**
@@ -193,11 +210,11 @@ export const api = {
    * Get the raw tenant context (for advanced use cases)
    * @internal
    */
-  _getTenant: getTenant,
+  _getTenant: getCredentialFreeTenant,
 
   /**
    * Get a configured API client (for advanced use cases)
    * @internal
    */
-  _getClient: getClient,
+  _getClient: () => getClient({ includeCredential: false }),
 };

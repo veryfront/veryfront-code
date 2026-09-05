@@ -11,6 +11,7 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostSecret, hasEnvFileValueSource } from "#veryfront/platform/compat/process/env.ts";
 import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -54,6 +55,7 @@ export function resolveCacheRequestAuthority(
   explicitApiToken?: string,
 ): ResolvedCacheAuthority {
   const reqCtx = getCacheRequestContext();
+  const hostPrivateToken = getHostSecret("VERYFRONT_API_TOKEN");
   const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
   const envToken = getEnvValue("VERYFRONT_API_TOKEN");
   const verifiedCredential = getVerifiedCacheApiCredential();
@@ -72,9 +74,14 @@ export function resolveCacheRequestAuthority(
     : verifiedRequestToken
     ? "verified-control-plane"
     : reqCtx?.token
-    ? "request"
+    ? reqCtx.token === hostPrivateToken ? "host-private" : "request"
     : hasRequestSelectedTenant
     ? "none"
+    : hostToken && hostToken !== hostPrivateToken &&
+        hasEnvFileValueSource("VERYFRONT_API_TOKEN")
+    ? "env-file"
+    : hostPrivateToken !== undefined && hostToken === hostPrivateToken
+    ? "host-private"
     : hostToken
     ? "host-env"
     : envToken

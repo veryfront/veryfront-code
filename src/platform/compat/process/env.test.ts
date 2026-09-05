@@ -2,12 +2,151 @@ import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
-import { registerTrustedProjectEnvSnapshot } from "./env.ts";
+import {
+  captureHostApiEnvironment,
+  clearEnvFileValueSources,
+  deleteEnv,
+  deleteHostSecret,
+  env,
+  getEnv,
+  getHostEnv,
+  getHostEnvExcludingEnvFile,
+  hasEnvFileValueSource,
+  markEnvFileValue,
+  registerTrustedProjectEnvSnapshot,
+  setEnv,
+  setHostSecret,
+} from "./env.ts";
 import { createProjectScopedDenoEnvView } from "./scoped-process-env.ts";
 
 const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("host environment access", () => {
+  it("hides a host-private credential from every project-reachable reader", () => {
+    const key = "VF_HOST_SECRET_TEST_TOKEN";
+    setHostSecret(key, "host-private-token");
+
+    try {
+      // Framework code reads it; project code — which reaches `getEnv()`, the
+      // bulk environment, and `Deno.env` — does not.
+      assertEquals(getHostEnv(key), "host-private-token");
+      assertEquals(getEnv(key), undefined);
+      assertEquals(env()[key], undefined);
+      if (isDeno) assertEquals(Deno.env.get(key), undefined);
+    } finally {
+      deleteHostSecret(key);
+    }
+
+    assertEquals(getHostEnv(key), undefined);
+  });
+
+  it("lets an exported variable win over a host-private credential", () => {
+    const key = "VF_HOST_SECRET_TEST_OVERRIDE";
+    setHostSecret(key, "host-private-token");
+    setEnv(key, "exported-token");
+
+    try {
+      assertEquals(getHostEnv(key), "exported-token");
+      assertEquals(getEnv(key), "exported-token");
+    } finally {
+      deleteHostSecret(key);
+      deleteEnv(key);
+    }
+  });
+
+  it("keeps host API routing at the value paired with a registered login", () => {
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example");
+    captureHostApiEnvironment();
+    setEnv("VERYFRONT_API_URL", "https://project-mutated.example");
+    setHostSecret("VERYFRONT_API_TOKEN", "host-private-token");
+
+    try {
+      assertEquals(
+        getHostEnvExcludingEnvFile("VERYFRONT_API_URL"),
+        "https://trusted-api.example",
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_API_URL");
+    }
+  });
+
+  it("recognizes a verified differently cased env-file key alias", () => {
+    const fileKey = "vf_env_file_case_alias";
+    const requestedKey = "VF_ENV_FILE_CASE_ALIAS";
+    setEnv(fileKey, "project-value");
+    markEnvFileValue(fileKey);
+
+    try {
+      setEnv(requestedKey, "shell-value");
+      assertEquals(hasEnvFileValueSource(requestedKey), false);
+
+      // Simulate the value identity a case-insensitive Windows environment
+      // presents when the file used a differently cased spelling.
+      setEnv(requestedKey, "project-value");
+      assertEquals(hasEnvFileValueSource(requestedKey), true);
+    } finally {
+      clearEnvFileValueSources();
+      deleteEnv(fileKey);
+      deleteEnv(requestedKey);
+    }
+  });
+
+  it("does not let a blank exported variable strand a host-private credential", () => {
+    const key = "VF_HOST_SECRET_TEST_BLANK";
+    setHostSecret(key, "host-private-token");
+    setEnv(key, "   ");
+
+    try {
+      // The CLI normalizes a blank `VERYFRONT_API_TOKEN` to "unset" before it
+      // registers the stored login token, so a blank export must not be treated
+      // as an authoritative value that hides the credential.
+      assertEquals(getHostEnv(key), "host-private-token");
+    } finally {
+      deleteHostSecret(key);
+      deleteEnv(key);
+    }
+  });
+
+  it("classifies a blank export without a mutable String.prototype hook", () => {
+    const key = "VF_HOST_SECRET_TEST_POISONED_TRIM";
+    const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
+    let poisonedCalls = 0;
+    setHostSecret(key, "host-private-token");
+    setEnv(key, "   ");
+    Object.defineProperty(String.prototype, "trim", {
+      configurable: true,
+      value: () => {
+        poisonedCalls += 1;
+        throw new Error("blank-value classification must not run a project hook");
+      },
+    });
+
+    try {
+      // `getHostEnv` is on the credential path, so a project that replaces
+      // `String.prototype.trim` must neither observe the read nor steer which
+      // value wins.
+      assertEquals(getHostEnv(key), "host-private-token");
+    } finally {
+      Object.defineProperty(String.prototype, "trim", originalTrim);
+      deleteHostSecret(key);
+      deleteEnv(key);
+    }
+
+    assertEquals(poisonedCalls, 0);
+  });
+
+  it("reports a blank exported variable verbatim when no credential is registered", () => {
+    const key = "VF_HOST_SECRET_TEST_BLANK_ONLY";
+    setEnv(key, "");
+
+    try {
+      assertEquals(getHostEnv(key), "");
+    } finally {
+      deleteEnv(key);
+    }
+  });
+
   it("creates an immutable scoped Deno environment facade", () => {
     const view = createProjectScopedDenoEnvView({
       get: () => undefined,

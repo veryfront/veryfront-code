@@ -4,6 +4,13 @@ import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
 
+// Captured before project code runs: `readToken` trims the stored login token
+// it reads from disk, so a project that replaces `String.prototype.trim` — or
+// `Reflect.apply` itself — must not observe the credential from the method
+// receiver or the apply arguments.
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+
 function getConfigDir(env: EnvironmentConfig = getEnvironmentConfig()): string {
   if (env.xdgConfigHome) return join(env.xdgConfigHome, CONFIG_DIR_NAME);
   if (!env.homeDir) throw new Error("Could not determine home directory");
@@ -21,7 +28,7 @@ export async function readToken(env?: EnvironmentConfig): Promise<string | null>
 
     if (!(await fs.exists(tokenPath))) return null;
     const content = await fs.readTextFile(tokenPath);
-    const token = content.trim();
+    const token = applyIntrinsic(stringTrim, content, []) as string;
     return token || null;
   } catch (error) {
     cliLogger.debug("Failed to read token:", error);

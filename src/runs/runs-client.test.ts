@@ -142,6 +142,14 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(client instanceof VeryfrontRunsClient, true);
   });
 
+  it("does not expose ambient connection resolution as a runtime method", () => {
+    const client = createRunsClient();
+    assertEquals(
+      (client as unknown as Record<string, unknown>).resolveConnection,
+      undefined,
+    );
+  });
+
   it("creates task runs through canonical /runs", async () => {
     mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
 
@@ -797,6 +805,21 @@ describe("VeryfrontRunsClient", () => {
       0,
       "the egress guard blocks before any fetch is dispatched",
     );
+  });
+
+  it("uses captured URL normalization after project prototype mutation", async () => {
+    mockFetch([jsonResponse(makeRun())]);
+    const originalReplace = String.prototype.replace;
+    String.prototype.replace = function () {
+      return "https://project-controlled.example";
+    };
+    try {
+      await createTestClient().get("run_11111111-1111-4111-8111-111111111111");
+    } finally {
+      String.prototype.replace = originalReplace;
+    }
+
+    assertStringIncludes(call(0).url, "https://93.184.216.34/runs/");
   });
 
   it("fails fast when auth is missing", async () => {

@@ -13,6 +13,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
+import { guardedExactHttpLoopbackOutboundFetch, guardedOutboundFetch } from "#cli/outbound-fetch";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -29,6 +30,11 @@ import {
   resolveApiUrlTrust,
 } from "#cli/shared/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
+import { getHostSecret } from "#cli/process-env";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -38,12 +44,28 @@ import {
 
 type ApiResult<T> = { ok: boolean; data?: T; error?: string; status: number };
 
+const NativeURL = URL;
+const applyIntrinsic = Reflect.apply;
+const stringReplace = String.prototype.replace;
+const urlPathnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
+const urlHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
+const urlProtocolGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")?.get;
+const urlHrefGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+
+function readUrl(url: URL, getter: ((this: URL) => string) | undefined): string {
+  if (!getter) throw new TypeError("Native URL accessor is unavailable");
+  return applyIntrinsic(getter, url, []) as string;
+}
+
 function validatedEndpoint(candidateApiBaseUrl: string): URL | ApiResult<never> {
-  const addDefaultRestPath = trimTrailingSlashes(new URL(candidateApiBaseUrl).pathname) === "";
-  const endpoint = new URL(resolveRestApiBaseUrl(candidateApiBaseUrl, addDefaultRestPath));
-  const loopback = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1" ||
-    endpoint.hostname === "[::1]" || endpoint.hostname === "::1";
-  if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) {
+  const candidate = new NativeURL(candidateApiBaseUrl);
+  const addDefaultRestPath = trimTrailingSlashes(readUrl(candidate, urlPathnameGetter)) === "";
+  const endpoint = new NativeURL(resolveRestApiBaseUrl(candidateApiBaseUrl, addDefaultRestPath));
+  const hostname = readUrl(endpoint, urlHostnameGetter);
+  const protocol = readUrl(endpoint, urlProtocolGetter);
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "[::1]" || hostname === "::1";
+  if (protocol !== "https:" && !(protocol === "http:" && loopback)) {
     return {
       ok: false,
       error: "The API endpoint must use HTTPS. HTTP is allowed only for a loopback endpoint.",
@@ -60,9 +82,23 @@ async function sendApiRequest<T>(
   token: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  const url = `${endpoint.toString().replace(/\/$/, "")}${path}`;
+  const endpointHref = readUrl(endpoint, urlHrefGetter);
+  const normalizedEndpoint = applyIntrinsic(stringReplace, endpointHref, [/\/$/, ""]) as string;
+  const url = `${normalizedEndpoint}${path}`;
   try {
-    const response = await fetch(url, {
+    // The credential may be the host-private stored login token, so the
+    // request goes through the host transport rather than `globalThis.fetch`.
+    // A project served by `veryfront dev` runs in this process and can replace
+    // the global, and a direct call would hand its replacement the
+    // `Authorization` header to read.
+    //
+    // Endpoint validation allows HTTP only for exact loopback hosts with an
+    // explicit credential. Keep that supported local API route constrained by
+    // the loopback guard, including on redirects.
+    const fetchEndpoint = readUrl(endpoint, urlProtocolGetter) === "http:"
+      ? guardedExactHttpLoopbackOutboundFetch
+      : guardedOutboundFetch;
+    const response = await fetchEndpoint(url, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
@@ -110,6 +146,14 @@ async function apiRequest<T>(
     ? candidates.find((entry) => entry.apiToken === options.token)
     : candidates[0];
   if (!candidate) {
+    const hostPrivateToken = getHostSecret("VERYFRONT_API_TOKEN");
+    if (hostPrivateToken) {
+      const hostEndpoint = validatedEndpoint(
+        requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl()),
+      );
+      if (!(hostEndpoint instanceof NativeURL)) return hostEndpoint;
+      return await sendApiRequest<T>(hostEndpoint, method, path, hostPrivateToken, options.body);
+    }
     const configFile = await readConfigJsonFile(projectDir);
     const trust = resolveApiUrlTrust(requestEnv, configFile, join(projectDir, "veryfront.json"));
     if (trust.repositorySteered) {
@@ -132,7 +176,7 @@ async function apiRequest<T>(
   } catch {
     return { ok: false, error: "The API endpoint must be a valid URL.", status: 400 };
   }
-  if (!(endpoint instanceof URL)) return endpoint;
+  if (!(endpoint instanceof NativeURL)) return endpoint;
   return await sendApiRequest<T>(endpoint, method, path, token, options.body);
 }
 

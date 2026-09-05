@@ -29,6 +29,7 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 
 export interface DevOptions {
@@ -221,6 +222,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         clearLocalCaches = false,
       } = options;
       const startTime = Date.now();
+
+      captureHostApiEnvironment();
 
       let doneResolve: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {

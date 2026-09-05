@@ -1,11 +1,15 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
 
+const applyIntrinsic = Reflect.apply;
+const stringReplace = String.prototype.replace;
+
 export function sandboxSessionRoute(
   apiUrl: string,
   sessionId: string,
   path = "",
 ): string {
-  const base = `${apiUrl.replace(/\/+$/, "")}/sandbox-sessions/${encodeURIComponent(sessionId)}`;
+  const normalizedApiUrl = applyIntrinsic(stringReplace, apiUrl, [/\/+$/, ""]) as string;
+  const base = `${normalizedApiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`;
   return path ? `${base}${path}` : base;
 }
 

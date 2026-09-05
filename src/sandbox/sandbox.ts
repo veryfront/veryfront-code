@@ -9,7 +9,7 @@
 
 import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
-import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
+import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import { readExecStreamEvents } from "./exec-stream.ts";
 import type {
@@ -41,29 +41,52 @@ export type {
   SandboxSession,
 } from "./types.ts";
 
+interface SandboxPrivateState {
+  endpoint: string;
+  sessionId: string;
+  authToken: string;
+  apiUrl: string;
+}
+
+const sandboxPrivateStates = new WeakMap<object, SandboxPrivateState>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+const applyIntrinsic = Reflect.apply;
+
+function getSandboxPrivateState(sandbox: Sandbox): SandboxPrivateState {
+  const state = applyIntrinsic(weakMapGet, sandboxPrivateStates, [sandbox]) as
+    | SandboxPrivateState
+    | undefined;
+  if (!state) throw new TypeError("Sandbox private state is unavailable");
+  return state;
+}
+
+function getSandboxAuthToken(sandbox: Sandbox): string {
+  return getSandboxPrivateState(sandbox).authToken;
+}
+
 /** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
   private constructor(
-    private endpoint: string,
-    private sessionId: string,
-    private authToken: string,
-    private apiUrl: string,
-  ) {}
-
-  private static resolveApiUrl(options: SandboxOptions = {}): string {
-    return resolveSandboxApiUrl(options);
-  }
-
-  private static resolveAuthToken(options: SandboxOptions = {}): string {
-    return resolveSandboxAuthToken(options);
+    endpoint: string,
+    sessionId: string,
+    authToken: string,
+    apiUrl: string,
+  ) {
+    applyIntrinsic(weakMapSet, sandboxPrivateStates, [this, {
+      endpoint,
+      sessionId,
+      authToken,
+      apiUrl,
+    }]);
   }
 
   /** Create a new sandbox session. Claims a warm pod or creates a new one. */
   static async create(options: SandboxOptions = {}): Promise<Sandbox> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
-    const res = await fetch(`${apiUrl}/sandbox-sessions`, {
+    const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${authToken}`,
@@ -82,7 +105,7 @@ export class Sandbox {
 
     // If not yet running, poll until ready
     if (status !== "running") {
-      await Sandbox.waitForReady(apiUrl, id, authToken);
+      await Sandbox.#waitForReady(apiUrl, id, authToken);
     }
 
     return new Sandbox(endpoint, id, authToken, apiUrl);
@@ -90,10 +113,10 @@ export class Sandbox {
 
   /** Reconnect to an existing sandbox session. */
   static async get(id: string, options: SandboxOptions = {}): Promise<Sandbox> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
-    const res = await fetch(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
+    const res = await fetchSandboxUrl(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
@@ -109,15 +132,15 @@ export class Sandbox {
 
   /** Attach to an already-known sandbox session and endpoint without a reconnect lookup. */
   static attach(attachment: SandboxAttachment): Sandbox {
-    const apiUrl = Sandbox.resolveApiUrl(attachment);
-    const authToken = Sandbox.resolveAuthToken(attachment);
+    const apiUrl = resolveSandboxApiUrl(attachment);
+    const authToken = resolveSandboxAuthToken(attachment);
     return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl);
   }
 
   /** List sandbox sessions with optional pagination. */
   static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
-    const apiUrl = Sandbox.resolveApiUrl(options);
-    const authToken = Sandbox.resolveAuthToken(options);
+    const apiUrl = resolveSandboxApiUrl(options);
+    const authToken = resolveSandboxAuthToken(options);
 
     const params = new URLSearchParams();
     if (options.cursor) params.set("cursor", options.cursor);
@@ -126,7 +149,7 @@ export class Sandbox {
     const query = params.toString();
     const url = `${apiUrl}/sandbox-sessions${query ? `?${query}` : ""}`;
 
-    const res = await fetch(url, {
+    const res = await fetchSandboxUrl(url, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
@@ -155,7 +178,7 @@ export class Sandbox {
     };
   }
 
-  private static async waitForReady(
+  static async #waitForReady(
     apiUrl: string,
     id: string,
     authToken: string,
@@ -195,14 +218,21 @@ export class Sandbox {
 
   /** Execute a bash command with streaming output (NDJSON). */
   async *executeStream(command: string, options?: ExecOptions): AsyncGenerator<ExecStreamEvent> {
-    const res = await fetch(sandboxSessionRoute(this.apiUrl, this.sessionId, "/commands/stream"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        "Content-Type": "application/json",
+    const res = await fetchSandboxUrl(
+      sandboxSessionRoute(
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
+        "/commands/stream",
+      ),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ command, ...options }),
       },
-      body: JSON.stringify({ command, ...options }),
-    });
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
@@ -216,10 +246,14 @@ export class Sandbox {
 
   /** Read a file from the sandbox workspace. */
   async readFile(path: string): Promise<string> {
-    const res = await fetch(
-      sandboxSessionRoute(this.apiUrl, this.sessionId, `/file?path=${encodeURIComponent(path)}`),
+    const res = await fetchSandboxUrl(
+      sandboxSessionRoute(
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
+        `/file?path=${encodeURIComponent(path)}`,
+      ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -234,14 +268,18 @@ export class Sandbox {
   async writeFiles(
     files: Array<{ path: string; content: string }>,
   ): Promise<void> {
-    const res = await fetch(sandboxSessionRoute(this.apiUrl, this.sessionId, "/files"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        "Content-Type": "application/json",
+    const state = getSandboxPrivateState(this);
+    const res = await fetchSandboxUrl(
+      sandboxSessionRoute(state.apiUrl, state.sessionId, "/files"),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ files }),
       },
-      body: JSON.stringify({ files }),
-    });
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -252,14 +290,21 @@ export class Sandbox {
 
   /** Start an async background command in the sandbox. */
   async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
-    const res = await fetch(sandboxSessionRoute(this.apiUrl, this.sessionId, "/commands"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        "Content-Type": "application/json",
+    const res = await fetchSandboxUrl(
+      sandboxSessionRoute(
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
+        "/commands",
+      ),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getSandboxAuthToken(this)}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ command, ...options }),
       },
-      body: JSON.stringify({ command, ...options }),
-    });
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -272,14 +317,14 @@ export class Sandbox {
 
   /** Get the status of an async background command. */
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const res = await fetch(
+    const res = await fetchSandboxUrl(
       sandboxSessionRoute(
-        this.apiUrl,
-        this.sessionId,
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
         `/commands/${encodeURIComponent(commandId)}`,
       ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -294,14 +339,14 @@ export class Sandbox {
 
   /** Get the output of an async background command. */
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
-    const res = await fetch(
+    const res = await fetchSandboxUrl(
       sandboxSessionRoute(
-        this.apiUrl,
-        this.sessionId,
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
         `/commands/${encodeURIComponent(commandId)}/output`,
       ),
       {
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -323,9 +368,16 @@ export class Sandbox {
 
   /** List all background commands in the sandbox. */
   async listBackgroundCommands(): Promise<BackgroundCommand[]> {
-    const res = await fetch(sandboxSessionRoute(this.apiUrl, this.sessionId, "/commands"), {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    const res = await fetchSandboxUrl(
+      sandboxSessionRoute(
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
+        "/commands",
+      ),
+      {
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -342,15 +394,15 @@ export class Sandbox {
 
   /** Cancel an async background command. */
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const res = await fetch(
+    const res = await fetchSandboxUrl(
       sandboxSessionRoute(
-        this.apiUrl,
-        this.sessionId,
+        getSandboxPrivateState(this).apiUrl,
+        getSandboxPrivateState(this).sessionId,
         `/commands/${encodeURIComponent(commandId)}/cancel`,
       ),
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -380,11 +432,13 @@ export class Sandbox {
 
   /** Send a heartbeat to prevent idle timeout. */
   async heartbeat(): Promise<void> {
-    const res = await fetch(
-      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}/heartbeat`,
+    const res = await fetchSandboxUrl(
+      `${getSandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+        encodeURIComponent(getSandboxPrivateState(this).sessionId)
+      }/heartbeat`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -397,11 +451,13 @@ export class Sandbox {
 
   /** Close the sandbox session and mark for deletion. */
   async close(): Promise<void> {
-    const res = await fetch(
-      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
+    const res = await fetchSandboxUrl(
+      `${getSandboxPrivateState(this).apiUrl}/sandbox-sessions/${
+        encodeURIComponent(getSandboxPrivateState(this).sessionId)
+      }`,
       {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` },
       },
     );
 
@@ -414,12 +470,12 @@ export class Sandbox {
 
   /** Get the session ID. */
   get id(): string {
-    return this.sessionId;
+    return getSandboxPrivateState(this).sessionId;
   }
 
   /** Get the sandbox endpoint URL. */
   get url(): string {
-    return this.endpoint;
+    return getSandboxPrivateState(this).endpoint;
   }
 }
 
@@ -437,7 +493,7 @@ export async function waitForSandboxReady(input: {
   while (Date.now() - start < maxWaitMs) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
-    const res = await fetch(
+    const res = await fetchSandboxUrl(
       `${input.apiUrl}/sandbox-sessions/${encodeURIComponent(input.id)}`,
       {
         headers: { Authorization: `Bearer ${input.authToken}` },

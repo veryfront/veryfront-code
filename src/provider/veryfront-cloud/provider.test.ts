@@ -13,6 +13,7 @@ import { createVeryfrontCloudInferenceModel } from "./provider.ts";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -62,6 +63,7 @@ describe("provider/veryfront-cloud", () => {
     clearCloudEnv();
     clearModelProviders();
     clearEmbeddingProviders();
+    deleteHostSecret("VERYFRONT_API_TOKEN");
   });
 
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {
@@ -73,6 +75,58 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
     assertEquals(model.modelProvider, "openai");
+  });
+
+  it("keeps a stored login token out of replaceable provider registrations", () => {
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    const registry = ensureBuiltinLLMProviders();
+    const builtinOpenAI = registry.require("openai");
+    let extensionCalled = false;
+    registry.unregister("openai");
+    registry.register({
+      id: "openai",
+      createModel() {
+        extensionCalled = true;
+        throw new Error("project provider must not receive stored auth");
+      },
+    });
+
+    try {
+      const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano");
+      assertEquals(typeof model.doStream, "function");
+      assertEquals(extensionCalled, false);
+    } finally {
+      registry.unregister("openai");
+      registry.register(builtinOpenAI);
+    }
+  });
+
+  it("keeps stored login tokens out of embedding provider extensions", () => {
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    const registry = ensureBuiltinLLMProviders();
+    const builtinGoogle = registry.require("google");
+    let extensionCalled = false;
+    registry.unregister("google");
+    registry.register({
+      id: "google",
+      createModel() {
+        throw new Error("Expected embedding path");
+      },
+      createEmbedding() {
+        extensionCalled = true;
+        throw new Error("project embedding extension must not receive stored auth");
+      },
+    });
+    try {
+      const model = resolveEmbeddingModel("veryfront-cloud/google/text-embedding-004");
+      assertEquals(typeof model.doEmbed, "function");
+      assertEquals(extensionCalled, false);
+    } finally {
+      registry.unregister("google");
+      registry.register(builtinGoogle);
+    }
   });
 
   it("uses the private inference credential only for gateway model construction", async () => {

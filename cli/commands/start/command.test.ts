@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
 import {
   createGlobalErrorLogContext,
@@ -28,6 +29,7 @@ function restoreEnv(): void {
     if (value === undefined) Deno.env.delete(key);
     else Deno.env.set(key, value);
   }
+  deleteHostSecret("VERYFRONT_API_TOKEN");
 }
 
 describe("commands/start/command", () => {
@@ -190,7 +192,10 @@ describe("commands/start/command", () => {
       });
 
       assertEquals(linkedProjectSlug, undefined);
-      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      // The stored login token is kept out of the process environment that
+      // locally served project code can read.
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), undefined);
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     });

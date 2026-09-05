@@ -1,5 +1,9 @@
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  getHostEnv,
+  getHostEnvExcludingEnvFile,
+  getHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   getCurrentVeryfrontCloudContext,
   type VeryfrontCloudContext,
@@ -80,6 +84,12 @@ export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
 /** Resolve the optional public API origin used for bearer-bound inference requests. */
 export function resolveVeryfrontPublicApiBaseUrlFromHostEnv(): string | undefined {
   return normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_PUBLIC_API_BASE_URL"));
+}
+
+function resolveHostCredentialApiBaseUrl(): string {
+  return normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")) ??
+    normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
+    DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
@@ -174,17 +184,26 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
     };
   }
 
+  const usesHostCredential = resolvedContext.apiToken !== undefined &&
+    resolvedContext.apiToken === getHostSecret("VERYFRONT_API_TOKEN");
   return {
-    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+    apiBaseUrl: usesHostCredential
+      ? resolveHostCredentialApiBaseUrl()
+      : resolveVeryfrontApiBaseUrlFromHostEnv(),
     ...resolvedContext,
   };
 }
 
 /** Resolve the trusted host identity used by direct server-side platform clients. */
 export function getVeryfrontCloudHostBootstrap(): VeryfrontCloudBootstrap {
+  const apiToken = getHostEnv("VERYFRONT_API_TOKEN");
+  const usesHostPrivateCredential = apiToken !== undefined &&
+    apiToken === getHostSecret("VERYFRONT_API_TOKEN");
   return {
-    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-    apiToken: getHostEnv("VERYFRONT_API_TOKEN"),
+    apiBaseUrl: usesHostPrivateCredential
+      ? resolveHostCredentialApiBaseUrl()
+      : resolveVeryfrontApiBaseUrlFromHostEnv(),
+    apiToken,
     projectSlug: getHostEnv("VERYFRONT_PROJECT_SLUG"),
     serviceLayer: normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
     hasRequestContext: false,

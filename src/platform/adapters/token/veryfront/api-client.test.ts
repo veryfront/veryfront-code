@@ -14,13 +14,17 @@ import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetc
 
 function createConfig(overrides: Partial<VeryfrontTokenConfig> = {}): VeryfrontTokenConfig {
   return {
-    apiBaseUrl: "http://127.0.0.1:19999",
+    apiBaseUrl: "https://api.example.com",
     apiToken: "test-token",
     projectSlug: "test-project",
     retry: { maxRetries: 0, initialDelay: 10, maxDelay: 50 },
     timeoutMs: 1000,
     ...overrides,
   };
+}
+
+function createUnreachableConfig(): VeryfrontTokenConfig {
+  return createConfig({ apiBaseUrl: "http://127.0.0.1:19999" });
 }
 
 describe("platform/adapters/token/veryfront/api-client", () => {
@@ -76,7 +80,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
 
   describe("get", () => {
     it("should throw VeryfrontError when API is unreachable", async () => {
-      const client = new TokenStorageApiClient(createConfig());
+      const client = new TokenStorageApiClient(createUnreachableConfig());
       await assertRejects(
         () => client.get("test-key"),
         VeryfrontError,
@@ -101,7 +105,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
 
   describe("set", () => {
     it("should throw VeryfrontError when API is unreachable", async () => {
-      const client = new TokenStorageApiClient(createConfig());
+      const client = new TokenStorageApiClient(createUnreachableConfig());
       await assertRejects(
         () => client.set("test-key", "test-value"),
         VeryfrontError,
@@ -111,7 +115,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
 
   describe("delete", () => {
     it("should throw VeryfrontError when API is unreachable", async () => {
-      const client = new TokenStorageApiClient(createConfig());
+      const client = new TokenStorageApiClient(createUnreachableConfig());
       await assertRejects(
         () => client.delete("test-key"),
         VeryfrontError,
@@ -121,7 +125,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
 
   describe("list", () => {
     it("should throw VeryfrontError when API is unreachable", async () => {
-      const client = new TokenStorageApiClient(createConfig());
+      const client = new TokenStorageApiClient(createUnreachableConfig());
       await assertRejects(
         () => client.list(),
         VeryfrontError,
@@ -129,7 +133,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
     });
 
     it("should throw VeryfrontError with prefix when API is unreachable", async () => {
-      const client = new TokenStorageApiClient(createConfig());
+      const client = new TokenStorageApiClient(createUnreachableConfig());
       await assertRejects(
         () => client.list("user:"),
         VeryfrontError,
@@ -154,7 +158,7 @@ describe("platform/adapters/token/veryfront/api-client", () => {
 
   describe("ping", () => {
     it("should return false when API is unreachable", async () => {
-      const client = new TokenStorageApiClient(createConfig());
+      const client = new TokenStorageApiClient(createUnreachableConfig());
       const result = await client.ping();
       assertEquals(result, false);
     });

@@ -28,6 +28,19 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_SEARCH_LIMIT = 100;
+const requestTokens = new WeakMap<object, string>();
+const IntrinsicReflectApply = Reflect.apply;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
+const WeakMapPrototypeDelete = WeakMap.prototype.delete;
+
+/** @internal Install a request credential without crossing the public prototype surface. */
+export function setPrivateVeryfrontApiClientRequestToken(
+  client: VeryfrontApiClient,
+  token: string,
+): void {
+  IntrinsicReflectApply(WeakMapPrototypeSet, requestTokens, [client, token]);
+}
 
 /**
  * File context for API operations.
@@ -45,7 +58,6 @@ export class VeryfrontApiClient {
     retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>>;
   };
   private operations: VeryfrontAPIOperations;
-  private requestToken?: string;
   private requestProjectSlug?: string;
   private requestContext?: FileContext;
   private requestBranch?: string | null;
@@ -71,7 +83,10 @@ export class VeryfrontApiClient {
         if (this.config.apiToken) return this.config.apiToken;
         throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
       }
-      if (this.requestToken) return this.requestToken;
+      const requestToken = IntrinsicReflectApply(WeakMapPrototypeGet, requestTokens, [this]) as
+        | string
+        | undefined;
+      if (requestToken !== undefined) return requestToken;
       if (this.config.apiToken) return this.config.apiToken;
       throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
     };
@@ -92,7 +107,7 @@ export class VeryfrontApiClient {
   }
 
   setRequestToken(token: string): void {
-    this.requestToken = token;
+    IntrinsicReflectApply(WeakMapPrototypeSet, requestTokens, [this, token]);
   }
 
   enableContextualToken(): void {
@@ -100,7 +115,7 @@ export class VeryfrontApiClient {
   }
 
   clearRequestToken(): void {
-    this.requestToken = undefined;
+    IntrinsicReflectApply(WeakMapPrototypeDelete, requestTokens, [this]);
   }
 
   setProjectSlug(slug: string): void {

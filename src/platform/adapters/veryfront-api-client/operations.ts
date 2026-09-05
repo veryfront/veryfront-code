@@ -10,6 +10,18 @@ import {
   type VeryfrontApiTransport,
 } from "../veryfront-api-transport.ts";
 import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
+
+const TokenBoundaryURL = URL;
+const tokenBoundaryApply = Reflect.apply;
+const tokenBoundaryOriginGetter = Object.getOwnPropertyDescriptor(
+  TokenBoundaryURL.prototype,
+  "origin",
+)!.get!;
 import {
   type DependencyArtifactAssetUploadResponse,
   type DependencyArtifactBuildResultResponse,
@@ -210,7 +222,7 @@ async function listAllFiles(
 }
 
 export class VeryfrontAPIOperations {
-  private tokenProvider: TokenProvider;
+  #tokenProvider: TokenProvider;
   private transport: VeryfrontApiTransport<unknown>;
 
   constructor(
@@ -219,22 +231,51 @@ export class VeryfrontAPIOperations {
     retryConfig: TransportRetryConfig,
     private projectId?: string,
   ) {
-    this.tokenProvider = typeof tokenOrProvider === "string"
+    this.#tokenProvider = typeof tokenOrProvider === "string"
       ? () => tokenOrProvider
       : tokenOrProvider;
     this.transport = createCanonicalVeryfrontApiTransport(
       apiBaseUrl,
-      () => this.tokenProvider(),
+      () => {
+        const token = this.#tokenProvider();
+        if (token === getHostSecret("VERYFRONT_API_TOKEN")) {
+          requireHostPrivateApiHttps(apiBaseUrl);
+          const selectedOrigin = tokenBoundaryApply(
+            tokenBoundaryOriginGetter,
+            new TokenBoundaryURL(apiBaseUrl),
+            [],
+          );
+          const hostOrigin = tokenBoundaryApply(
+            tokenBoundaryOriginGetter,
+            new TokenBoundaryURL(resolveHostOwnedApiBaseUrl()),
+            [],
+          );
+          if (selectedOrigin !== hostOrigin) {
+            throw API_CLIENT_ERROR.create({
+              detail: "Host-private credentials require the host API origin",
+              status: 401,
+            });
+          }
+        }
+        return token;
+      },
       retryConfig,
     );
   }
 
   setTokenProvider(provider: TokenProvider): void {
-    this.tokenProvider = provider;
+    this.#tokenProvider = provider;
   }
 
   getToken(): string {
-    return this.tokenProvider();
+    const token = this.#tokenProvider();
+    if (token === getHostSecret("VERYFRONT_API_TOKEN")) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Host-private credentials cannot be read",
+        status: 401,
+      });
+    }
+    return token;
   }
 
   setProjectId(projectId: string): void {

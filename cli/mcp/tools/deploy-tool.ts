@@ -13,6 +13,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { getEnvironmentConfig } from "veryfront/config";
 import { cwd } from "veryfront/platform";
+import { getHostEnv } from "#cli/process-env";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import type { DeployResult } from "../../shared/deployment/result.ts";
 
@@ -37,6 +38,32 @@ export type TriggerDeployResult =
   | ({ success: true } & DeployResult)
   | { success: false; error: string };
 
+// Captured before project code runs: the same normalization decides between an
+// exported token and the host-private stored login token everywhere in the CLI,
+// so a project that replaces `String.prototype.trim` must not be able to flip
+// that decision.
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+
+/**
+ * Resolve the API token the auth gate checks before deploying.
+ *
+ * The environment snapshot only carries an explicitly exported token; a
+ * stored `veryfront login` token is registered host-privately so project code
+ * served by `veryfront dev` cannot read it out of the process environment.
+ * Falling back to `getHostEnv` keeps the gate open for a CLI-authenticated
+ * session; deploy execution itself resolves the credential from the token
+ * store. A blank exported value must not shadow the stored credential, so the
+ * snapshot only wins when it is non-blank.
+ */
+function resolveApiToken(): string | undefined {
+  const exported = getEnvironmentConfig().apiToken;
+  if (exported !== undefined && (applyIntrinsic(stringTrim, exported, []) as string)) {
+    return exported;
+  }
+  return getHostEnv("VERYFRONT_API_TOKEN");
+}
+
 export interface TriggerDeployOptions {
   projectDir?: string;
   /** Deploy Execution override for tests; production uses createDeployProject(). */
@@ -53,8 +80,7 @@ export async function triggerDeploy(
   options: TriggerDeployOptions = {},
 ): Promise<TriggerDeployResult> {
   try {
-    const env = getEnvironmentConfig();
-    if (!env.apiToken) {
+    if (!resolveApiToken()) {
       return {
         success: false,
         error: "Not authenticated. Run 'veryfront login' first.",

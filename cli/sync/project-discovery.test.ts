@@ -15,6 +15,8 @@ import {
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import { deleteToken } from "../auth/token-store.ts";
+import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchRemoteProjects,
   getCurrentUser,
@@ -51,6 +53,43 @@ describe("project-discovery", () => {
   });
 
   describe("fetchRemoteProjects", () => {
+    it("returns a discovery error for an invalid explicit API URL", async () => {
+      const result = await fetchRemoteProjects(
+        "vf_test_explicit",
+        createTestEnvironmentConfig({ apiUrl: "invalid" }),
+      );
+      assertExists(result.error);
+      assertEquals(result.projects, []);
+    });
+
+    it("discovers projects on an explicitly authenticated loopback API", async () => {
+      for (const token of ["vf_test_explicit", "explicit-user-token"]) {
+        const paths: string[] = [];
+        const result = await withMockFetch(
+          async (input) => {
+            const path = new URL(String(input)).pathname;
+            paths.push(path);
+            return Response.json(
+              path === "/api/me"
+                ? { id: "user-123", email: "test@example.com" }
+                : { data: [{ id: "project-123", slug: "test-project", name: "Test Project" }] },
+            );
+          },
+          () =>
+            fetchRemoteProjects(
+              token,
+              createTestEnvironmentConfig({ apiUrl: "http://127.0.0.1:43210/api" }),
+            ),
+        );
+        assertEquals(result.error, undefined);
+        assertEquals(result.projects.length, 1);
+        assertEquals(
+          paths,
+          token.startsWith("vf_") ? ["/api/projects"] : ["/api/me", "/api/projects"],
+        );
+      }
+    });
+
     it("is a function", () => {
       assertEquals(typeof fetchRemoteProjects, "function");
     });
@@ -78,14 +117,15 @@ describe("project-discovery", () => {
     });
 
     it("returns projects for a valid project API key without requiring a user profile", async () => {
-      const originalFetch = globalThis.fetch;
       const authorizations: string[] = [];
 
-      try {
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const result = await withMockFetch(
+        (input, init) => {
           const url = new URL(String(input));
           assertEquals(url.pathname, "/projects");
-          authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+          authorizations.push(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization") ?? "",
+          );
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -95,20 +135,17 @@ describe("project-discovery", () => {
               { status: 200, headers: { "content-type": "application/json" } },
             ),
           );
-        }) as typeof fetch;
+        },
+        () => fetchRemoteProjects("vf_test_secret"),
+      );
 
-        const result = await fetchRemoteProjects("vf_test_secret");
-
-        assertEquals(authorizations, ["Bearer vf_test_secret"]);
-        assertEquals(result.user, null);
-        assertEquals(result.credentialType, "apiKey");
-        assertEquals(result.error, undefined);
-        assertEquals(result.projects, [
-          { id: "project-123", slug: "test-project", name: "Test Project" },
-        ]);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+      assertEquals(authorizations, ["Bearer vf_test_secret"]);
+      assertEquals(result.user, null);
+      assertEquals(result.credentialType, "apiKey");
+      assertEquals(result.error, undefined);
+      assertEquals(result.projects, [
+        { id: "project-123", slug: "test-project", name: "Test Project" },
+      ]);
     });
   });
 

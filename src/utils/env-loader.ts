@@ -1,6 +1,12 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/logger.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
-import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
+import {
+  clearEnvFileValueSource,
+  clearEnvFileValueSources,
+  getEnv,
+  markEnvFileValue,
+  setEnv,
+} from "#veryfront/platform/compat/process/env.ts";
 import { cwd as getCwd, getOsType } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
@@ -18,6 +24,13 @@ interface EnvSourceRecord {
 }
 
 const envSources = new Map<string, EnvSourceRecord>();
+const applyIntrinsic = Reflect.apply;
+const mapDelete = Map.prototype.delete;
+const mapForEach = Map.prototype.forEach;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
+const stringToLowerCase = String.prototype.toLowerCase;
 let envLoaded = false;
 let osTypeOverride: string | undefined;
 
@@ -54,7 +67,11 @@ export async function loadEnv(
         if (existing && !override) continue;
 
         setEnv(key, value);
-        envSources.set(key, { file, source: "env-file", expandedFromProcessEnv });
+        markEnvFileValue(key);
+        applyIntrinsic(mapSet, envSources, [
+          key,
+          { file, source: "env-file", expandedFromProcessEnv },
+        ]);
         loadedVars[key] = value;
         if (expandedFromProcessEnv) taintedLoadedVars.add(key);
         else taintedLoadedVars.delete(key);
@@ -288,11 +305,11 @@ function toFileSource(record: EnvSourceRecord): EnvSource {
  */
 function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | undefined {
   if (envLoaderOsType() !== "windows") return undefined;
-  const folded = key.toLowerCase();
+  const folded = applyIntrinsic(stringToLowerCase, key, []) as string;
 
   for (const [recordedKey, record] of envSources) {
     if (recordedKey === key) continue;
-    if (recordedKey.toLowerCase() !== folded) continue;
+    if ((applyIntrinsic(stringToLowerCase, recordedKey, []) as string) !== folded) continue;
     if (getEnv(recordedKey) !== value) continue;
     return record;
   }
@@ -301,7 +318,7 @@ function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | und
 }
 
 export function getEnvSource(key: string): EnvSource {
-  const record = envSources.get(key);
+  const record = applyIntrinsic(mapGet, envSources, [key]) as EnvSourceRecord | undefined;
   if (record) return toFileSource(record);
 
   const value = getEnv(key);
@@ -313,17 +330,38 @@ export function getEnvSource(key: string): EnvSource {
   return { source: "process" };
 }
 
+/** Remove stale provenance for every spelling of one Windows environment key. */
+function clearEnvSourceAliases(key: string): void {
+  applyIntrinsic(mapDelete, envSources, [key]);
+  if (envLoaderOsType() !== "windows") return;
+
+  const folded = applyIntrinsic(stringToLowerCase, key, []) as string;
+  applyIntrinsic(mapForEach, envSources, [
+    (_record: EnvSourceRecord, recordedKey: string) => {
+      if ((applyIntrinsic(stringToLowerCase, recordedKey, []) as string) === folded) {
+        applyIntrinsic(mapDelete, envSources, [recordedKey]);
+      }
+    },
+  ]);
+}
+
 /** Preserve config-file provenance when exporting a derived environment value. */
 export function markConfigFileSource(
   key: string,
   file: string,
 ): void {
-  envSources.set(key, { file, source: "config-file", expandedFromProcessEnv: false });
+  clearEnvFileValueSource(key);
+  clearEnvSourceAliases(key);
+  applyIntrinsic(mapSet, envSources, [
+    key,
+    { file, source: "config-file", expandedFromProcessEnv: false },
+  ]);
 }
 
 /** Record that a process write replaced any earlier file-derived value. */
 export function markProcessEnvSource(key: string): void {
-  envSources.delete(key);
+  clearEnvFileValueSource(key);
+  clearEnvSourceAliases(key);
 }
 
 /** Preserve env-file provenance when exporting a derived environment value. */
@@ -332,12 +370,14 @@ export function markEnvFileSource(
   file: string,
   expandedFromProcessEnv = false,
 ): void {
-  envSources.set(key, { file, source: "env-file", expandedFromProcessEnv });
+  markEnvFileValue(key);
+  applyIntrinsic(mapSet, envSources, [key, { file, source: "env-file", expandedFromProcessEnv }]);
 }
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
-  envSources.clear();
+  applyIntrinsic(mapClear, envSources, []);
+  clearEnvFileValueSources();
   osTypeOverride = undefined;
 }
 

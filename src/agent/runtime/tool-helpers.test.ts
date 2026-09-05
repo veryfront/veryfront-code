@@ -20,63 +20,70 @@ import {
 } from "./tool-helpers.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 
+/**
+ * Remote integration discovery goes through `guardedOutboundFetch`, which reads
+ * the captured host transport rather than `globalThis.fetch`. `withMockFetch`
+ * swaps both, so these helpers must route through it instead of hand-assigning
+ * the global.
+ */
 async function withMockRemoteIntegrationTools<T>(
   remoteToolNames: string[],
   callback: () => Promise<T>,
 ): Promise<T> {
-  const originalFetch = globalThis.fetch;
   const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
   const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-  globalThis.fetch = async () =>
-    Response.json({
+  const mockFetch = () =>
+    Promise.resolve(Response.json({
       tools: remoteToolNames.map((name) => ({
         name,
         description: `${name} description`,
         inputSchema: { type: "object", properties: {} },
       })),
-    });
+    }));
 
   try {
     Deno.env.set("VERYFRONT_API_URL", "https://api.test");
     Deno.env.set("VERYFRONT_API_TOKEN", "token");
-    return await callback();
+    return await withMockFetch(mockFetch, callback);
   } finally {
     if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
     else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
     if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
     else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-    globalThis.fetch = originalFetch;
   }
 }
 
 async function withContextOnlyRemoteIntegrationTools<T>(
   callback: () => Promise<T>,
 ): Promise<{ result: T; authorization: string | null }> {
-  const originalFetch = globalThis.fetch;
   const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
   const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
   let authorization: string | null = null;
-  globalThis.fetch = async (input, init) => {
-    authorization = new Request(input, init).headers.get("authorization");
-    return Response.json({
+  const mockFetch = (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ) => {
+    authorization = new Request(input, init as RequestInit).headers.get(
+      "authorization",
+    );
+    return Promise.resolve(Response.json({
       tools: [{
         name: "gmail__list_emails",
         description: "List emails",
         inputSchema: { type: "object", properties: {} },
       }],
-    });
+    }));
   };
 
   try {
     Deno.env.set("VERYFRONT_API_URL", "https://api.test");
     Deno.env.delete("VERYFRONT_API_TOKEN");
-    return { result: await callback(), authorization };
+    return { result: await withMockFetch(mockFetch, callback), authorization };
   } finally {
     if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
     else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
     if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
     else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-    globalThis.fetch = originalFetch;
   }
 }
 

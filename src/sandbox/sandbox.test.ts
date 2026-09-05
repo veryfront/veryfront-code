@@ -3,9 +3,14 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  deleteHostSecret,
+  markEnvFileValue,
+  setHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
+import {
   type FetchCall,
   headerValue,
-  installMockFetch,
+  installMockFetch as createSandboxFetchMock,
   jsonBody,
   jsonResponse,
   type MockResponseEntry,
@@ -15,6 +20,10 @@ import {
   SANDBOX_ENV_KEYS,
   textResponse,
 } from "./sandbox.test-helpers.ts";
+import {
+  installMockFetch as installHostMockFetch,
+  restoreMockFetch as restoreHostMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
@@ -22,9 +31,11 @@ import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
+import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 // Mock fetch for testing
-const originalFetch = globalThis.fetch;
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
 
@@ -35,7 +46,7 @@ function clearSandboxEnvironment(): void {
 function mockFetch(responses: MockResponseEntry[]) {
   fetchResponses = [...responses];
   fetchCalls = [];
-  globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
+  installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
 }
 
 async function countTextDecoderFlushes(action: () => Promise<void>): Promise<number> {
@@ -60,7 +71,16 @@ async function countTextDecoderFlushes(action: () => Promise<void>): Promise<num
 }
 
 describe("Sandbox", () => {
+  it("connects to an explicitly authenticated HTTP loopback sandbox", async () => {
+    mockFetch([
+      jsonResponse({ id: "session-1", endpoint: "http://localhost:43210", status: "running" }),
+    ]);
+    await Sandbox.create({ apiUrl: "http://localhost:43210", authToken: "explicit-token" });
+    assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer explicit-token");
+  });
+
   beforeEach(() => {
+    __resetEnvLoaderForTests();
     clearSandboxEnvironment();
     fetchCalls = [];
     fetchResponses = [];
@@ -68,8 +88,55 @@ describe("Sandbox", () => {
 
   afterEach(() => {
     restoreTimers();
-    globalThis.fetch = originalFetch;
+    restoreHostMockFetch();
     clearSandboxEnvironment();
+    deleteHostSecret("VERYFRONT_API_TOKEN");
+    __resetEnvLoaderForTests();
+  });
+
+  it("does not expose ambient authentication through a static class method", () => {
+    setEnv("VERYFRONT_API_URL", "https://api.test.com");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    assertEquals(
+      (Sandbox as unknown as Record<string, unknown>).resolveAuthToken,
+      undefined,
+    );
+    assertEquals((Sandbox as unknown as Record<string, unknown>).waitForReady, undefined);
+  });
+
+  it("does not expose lazy credential-bearing dispatch", () => {
+    const sandbox = Sandbox.createLazy({
+      authToken: "explicit-token",
+      apiUrl: "https://api.test.com",
+    });
+    assertEquals((sandbox as unknown as Record<string, unknown>).fetchControl, undefined);
+    assertEquals((sandbox as unknown as Record<string, unknown>).fetchExecStart, undefined);
+    assertEquals((sandbox as unknown as Record<string, unknown>).resolveDataPlaneRoute, undefined);
+    assertEquals(
+      (sandbox as unknown as Record<string, unknown>).resolveRuntimeEndpointFor,
+      undefined,
+    );
+  });
+
+  it("keeps the validated API origin in private instance state", async () => {
+    setEnv("VERYFRONT_API_URL", "https://api.test.com");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    mockFetch([
+      jsonResponse({
+        id: "session-1",
+        endpoint: "https://sandbox.example.com",
+        status: "running",
+      }),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = await Sandbox.create();
+
+    (sandbox as unknown as { apiUrl: string }).apiUrl = "https://attacker.example";
+    await sandbox.heartbeat();
+
+    assertEquals(fetchCalls[1]?.url, "https://api.test.com/sandbox-sessions/session-1/heartbeat");
+    assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
   });
 
   describe("create()", () => {
@@ -133,6 +200,120 @@ describe("Sandbox", () => {
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
     });
 
+    it("prefers a scoped cloud credential over ambient host auth", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "ambient-host-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-scoped-token",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await runWithVeryfrontCloudContext(
+        {
+          apiBaseUrl: "https://api.test.com",
+          apiToken: "scoped-cloud-token",
+        },
+        () => Sandbox.create(),
+      );
+
+      assertEquals(sandbox.id, "session-scoped-token");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer scoped-cloud-token");
+    });
+
+    it("rejects a scoped cloud credential on a different explicit origin", async () => {
+      await assertRejects(
+        () =>
+          runWithVeryfrontCloudContext(
+            {
+              apiBaseUrl: "https://scoped-api.example",
+              apiToken: "scoped-cloud-token",
+            },
+            () => Sandbox.create({ apiUrl: "https://other-api.example" }),
+          ),
+        Error,
+        "Sandbox auth must match the scoped Veryfront API URL",
+      );
+    });
+
+    it("rejects unrelated ambient credentials for a scoped API URL", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "ambient-host-token");
+      setEnv("VERYFRONT_API_URL", "https://host-api.example");
+      const createWithScopedUrl = () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "https://scoped-api.example" },
+          () => Sandbox.create(),
+        );
+
+      await assertRejects(
+        createWithScopedUrl,
+        Error,
+        "Sandbox auth must be supplied with the scoped Veryfront API URL",
+      );
+      await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "sandbox-test",
+              token: "request-token",
+            },
+            createWithScopedUrl,
+          ),
+        Error,
+        "Sandbox auth must be supplied with the scoped Veryfront API URL",
+      );
+    });
+
+    it("pairs project env-file sandbox credentials with their API URL", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_project_token");
+      setEnv("VERYFRONT_API_URL", "https://project-api.example");
+      markEnvFileValue("VERYFRONT_API_TOKEN");
+      markEnvFileValue("VERYFRONT_API_URL");
+      mockFetch([
+        jsonResponse({
+          id: "session-project-env",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create();
+
+      assertEquals(sandbox.id, "session-project-env");
+      assertEquals(fetchCalls[0]?.url, "https://project-api.example/sandbox-sessions");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_project_token");
+    });
+
+    it("rejects a stored login token paired with a project env-file sandbox URL", async () => {
+      setEnv("VERYFRONT_API_URL", "https://project-api.example");
+      markEnvFileValue("VERYFRONT_API_URL");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      await assertRejects(
+        () => Sandbox.create(),
+        VeryfrontError,
+        "Sandbox auth must be provided explicitly for a custom API URL",
+      );
+      assertEquals(fetchCalls, []);
+    });
+
+    it("rejects a stored login token when a blank env-file token marks the project URL", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "   ");
+      setEnv("VERYFRONT_API_URL", "https://project-api.example");
+      markEnvFileValue("VERYFRONT_API_TOKEN");
+      markEnvFileValue("VERYFRONT_API_URL");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      await assertRejects(
+        () => Sandbox.create(),
+        VeryfrontError,
+        "Sandbox auth must be provided explicitly for a custom API URL",
+      );
+      assertEquals(fetchCalls, []);
+    });
+
     it("should prefer request-scoped credentials over VERYFRONT_API_TOKEN", async () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
 
@@ -176,6 +357,152 @@ describe("Sandbox", () => {
       assertEquals(sandbox.id, "session-explicit-token");
 
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_explicit_token");
+    });
+
+    it("does not send a stored login token to a caller-selected API origin", async () => {
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      try {
+        await assertRejects(
+          () => Sandbox.create({ apiUrl: "https://caller-selected.example" }),
+          VeryfrontError,
+          "Sandbox auth must be provided explicitly for a custom API URL",
+        );
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+      assertEquals(fetchCalls, []);
+    });
+
+    it("uses the captured URL origin getter for stored-login trust", async () => {
+      const originalOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      Object.defineProperty(URL.prototype, "origin", {
+        get: () => "https://forged.example",
+        configurable: true,
+      });
+      try {
+        await assertRejects(
+          () => Sandbox.create({ apiUrl: "https://caller-selected.example" }),
+          VeryfrontError,
+          "Sandbox auth must be provided explicitly for a custom API URL",
+        );
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+        if (originalOrigin) Object.defineProperty(URL.prototype, "origin", originalOrigin);
+      }
+      assertEquals(fetchCalls, []);
+    });
+
+    it("keeps stored-login sandbox auth on the host transport", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      mockFetch([
+        jsonResponse({
+          id: "session-host-transport",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+      let ambientFetchCalled = false;
+      globalThis.fetch = () => {
+        ambientFetchCalled = true;
+        return Promise.reject(new Error("project fetch must not receive sandbox auth"));
+      };
+      try {
+        const sandbox = await Sandbox.create();
+        assertEquals(sandbox.id, "session-host-transport");
+        assertEquals(Object.hasOwn(sandbox, "authToken"), false);
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+
+      assertEquals(ambientFetchCalled, false);
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+    });
+
+    it("keeps a stored login token off the sandbox objects handed to project code", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      mockFetch([
+        textResponse("attached body"),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+      ]);
+
+      try {
+        // Both entry points hand a live object back with no request made, and a
+        // TypeScript `private` field is compile-time only: a served project can
+        // read an own property straight off the instance.
+        const lazy = Sandbox.createLazy();
+        const attached = Sandbox.attach({
+          id: "attached-host-secret",
+          endpoint: "https://attached.example.com",
+        });
+
+        for (const instance of [lazy, attached] as unknown as Record<string, unknown>[]) {
+          assertEquals(instance.authToken, undefined);
+          const ownValues = Object.getOwnPropertyNames(instance).map((name) => instance[name]);
+          assertEquals(ownValues.includes("stored-login-token"), false);
+        }
+
+        let replacementExecCalled = false;
+        const exposed = attached as unknown as Record<string, unknown>;
+        exposed.resolveDataPlaneRoute = () => ({
+          baseUrl: "https://attacker.example",
+          kind: "internal",
+        });
+        exposed.fetchExecStart = () => {
+          replacementExecCalled = true;
+          return Promise.resolve(ndjsonResponse([{ type: "exit", exitCode: 0 }]));
+        };
+
+        // The credential is still bound to the instance for framework use.
+        assertEquals(await attached.readFile("/workspace/note.txt"), "attached body");
+        assertEquals((await attached.executeCommand("true")).exitCode, 0);
+        assertEquals(replacementExecCalled, false);
+        assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+        assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer stored-login-token");
+        assertEquals(fetchCalls.some((call) => call.url.includes("attacker.example")), false);
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+    });
+
+    it("uses the captured URL constructor for stored-login sandbox transport", async () => {
+      const NativeURL = globalThis.URL;
+      const requests: string[] = [];
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      installHostMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({
+          id: "session-native-url",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }));
+      });
+      class ProjectURL extends NativeURL {
+        constructor(_url: string | URL, _base?: string | URL) {
+          super("https://project-controlled.example");
+        }
+      }
+      Object.defineProperty(globalThis, "URL", {
+        value: ProjectURL,
+        configurable: true,
+        writable: true,
+      });
+      try {
+        const sandbox = await Sandbox.create();
+        assertEquals(sandbox.id, "session-native-url");
+      } finally {
+        Object.defineProperty(globalThis, "URL", {
+          value: NativeURL,
+          configurable: true,
+          writable: true,
+        });
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+
+      assertEquals(requests, ["https://api.test.com/sandbox-sessions"]);
     });
 
     it("should poll until ready when not running", async () => {
@@ -224,7 +551,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => Sandbox.create({ apiUrl: "https://api.test.com" }),
         Error,
-        "Sandbox auth not configured",
+        "Sandbox auth must be provided explicitly for a custom API URL",
       );
 
       assertEquals(fetchCalls.length, 0);
@@ -354,6 +681,7 @@ describe("Sandbox", () => {
 
     it("should reconnect using VERYFRONT_API_TOKEN when authToken is omitted", async () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
 
       mockFetch([
         jsonResponse({ endpoint: "https://sandbox.example.com" }),
@@ -1032,56 +1360,165 @@ describe("Sandbox", () => {
   });
 
   describe("createLazy()", () => {
+    it("rejects a custom API origin for a host token carried by request context", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      await runWithRequestContext(
+        { projectSlug: "project", token: "stored-login-token" },
+        async () => {
+          await assertRejects(
+            async () => {
+              Sandbox.createLazy({ apiUrl: "https://attacker.example" });
+            },
+            Error,
+            "Sandbox auth must be provided explicitly for a custom API URL.",
+          );
+        },
+      );
+    });
+
+    it("keeps ambient auth out of the public lazy sandbox object", () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      const sandbox = Sandbox.createLazy();
+
+      assertEquals(Object.hasOwn(sandbox, "authToken"), false);
+      assertEquals("authToken" in sandbox, false);
+      assertEquals((sandbox as unknown as Record<string, unknown>).authHeaders, undefined);
+      assertEquals((sandbox as unknown as Record<string, unknown>).jsonHeaders, undefined);
+    });
+
+    it("rejects a caller runtime endpoint when authentication is ambient", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      mockFetch([
+        jsonResponse({
+          id: "session-1",
+          endpoint: "https://session-1.sandbox.veryfront.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        resolveRuntimeEndpoint: () => "https://attacker.example",
+        execStartMaxAttempts: 1,
+      });
+
+      await assertRejects(
+        () => sandbox.executeCommand("echo safe"),
+        Error,
+        "Custom sandbox runtime endpoints require an explicit authToken",
+      );
+
+      assertEquals(
+        fetchCalls.some((call) => new URL(call.url).origin === "https://attacker.example"),
+        false,
+      );
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer stored-login-token");
+    });
+
+    it("keeps an explicitly authenticated caller runtime endpoint behind egress policy", async () => {
+      const publicAddress = "192.0.2.1";
+      const transportFetch: typeof fetch = (input, _init) => {
+        const url = String(input);
+        if (url === "https://api.test.com/sandbox-sessions") {
+          return Promise.resolve(jsonResponse({
+            id: "session-1",
+            endpoint: "https://session-1.sandbox.veryfront.com",
+            status: "running",
+          }));
+        }
+        if (url.startsWith("https://api.test.com/sandbox-sessions/session-1")) {
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.resolve(ndjsonResponse([{ type: "exit", exitCode: 0 }]));
+      };
+
+      await __runWithOutboundFetchTransportForTests(
+        {
+          fetch: transportFetch,
+          pinnedFetch: (url, _addresses, init) => transportFetch(url, init),
+          resolveHost: (hostname) =>
+            Promise.resolve(
+              hostname === "metadata.internal" ? ["169.254.169.254"] : [publicAddress],
+            ),
+        },
+        async () => {
+          const sandbox = Sandbox.createLazy({
+            authToken: "test-token",
+            apiUrl: "https://api.test.com",
+            execStartMaxAttempts: 1,
+            resolveRuntimeEndpoint: () => "http://metadata.internal",
+          });
+          try {
+            await assertRejects(
+              () => sandbox.executeCommand("true"),
+              Error,
+              "egress blocked",
+            );
+          } finally {
+            await sandbox.close();
+          }
+        },
+        { allowedResolvedAddresses: [publicAddress] },
+      );
+    });
+
     it("waits long enough for pending sandbox sessions to survive operator reconcile lag", async () => {
       mockTimers({ advanceTimeByMs: true });
 
       let statusChecks = 0;
-      globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-        fetchCalls.push({ url, init });
+      installHostMockFetch(
+        ((input: string | URL | Request, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          fetchCalls.push({ url, init });
 
-        if (url === "https://api.test.com/sandbox-sessions" && init?.method === "POST") {
-          return Promise.resolve(jsonResponse({
-            id: "sandbox-1",
-            endpoint: "https://sandbox.example.com",
-            status: "pending",
-          }));
-        }
+          if (url === "https://api.test.com/sandbox-sessions" && init?.method === "POST") {
+            return Promise.resolve(jsonResponse({
+              id: "sandbox-1",
+              endpoint: "https://sandbox.example.com",
+              status: "pending",
+            }));
+          }
 
-        if (url === "https://api.test.com/sandbox-sessions/sandbox-1" && !init?.method) {
-          statusChecks += 1;
-          return Promise.resolve(jsonResponse({
-            endpoint: "https://sandbox.example.com",
-            status: statusChecks >= 85 ? "running" : "pending",
-          }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            (!init?.method || init.method === "GET")
+          ) {
+            statusChecks += 1;
+            return Promise.resolve(jsonResponse({
+              endpoint: "https://sandbox.example.com",
+              status: statusChecks >= 85 ? "running" : "pending",
+            }));
+          }
 
-        if (
-          url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat" &&
-          init?.method === "POST"
-        ) {
-          return Promise.resolve(jsonResponse({ ok: true }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat" &&
+            init?.method === "POST"
+          ) {
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
 
-        if (
-          url === "https://api.test.com/sandbox-sessions/sandbox-1/file?path=notes.txt" &&
-          !init?.method
-        ) {
-          return Promise.resolve(jsonResponse({ path: "notes.txt", content: "file-body" }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1/file?path=notes.txt" &&
+            (!init?.method || init.method === "GET")
+          ) {
+            return Promise.resolve(jsonResponse({ path: "notes.txt", content: "file-body" }));
+          }
 
-        if (
-          url === "https://api.test.com/sandbox-sessions/sandbox-1" && init?.method === "DELETE"
-        ) {
-          return Promise.resolve(jsonResponse({ ok: true }));
-        }
+          if (
+            url === "https://api.test.com/sandbox-sessions/sandbox-1" && init?.method === "DELETE"
+          ) {
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
 
-        throw new Error(`Unexpected fetch call: ${url} ${init?.method ?? "GET"}`);
-      }) as typeof fetch;
+          throw new Error(`Unexpected fetch call: ${url} ${init?.method ?? "GET"}`);
+        }) as typeof fetch,
+      );
 
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
@@ -1159,35 +1596,37 @@ describe("Sandbox", () => {
       let resolveCreate!: (response: Response) => void;
       let hasResolveCreate = false;
 
-      globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-        fetchCalls.push({ url, init });
+      installHostMockFetch(
+        ((input: string | URL | Request, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          fetchCalls.push({ url, init });
 
-        if (fetchCalls.length === 1) {
-          return new Promise<Response>((resolve) => {
-            resolveCreate = resolve;
-            hasResolveCreate = true;
-          });
-        }
+          if (fetchCalls.length === 1) {
+            return new Promise<Response>((resolve) => {
+              resolveCreate = resolve;
+              hasResolveCreate = true;
+            });
+          }
 
-        if (fetchCalls.length === 2) {
-          return Promise.resolve(
-            jsonResponse({
-              ok: true,
-            }),
-          );
-        }
+          if (fetchCalls.length === 2) {
+            return Promise.resolve(
+              jsonResponse({
+                ok: true,
+              }),
+            );
+          }
 
-        if (fetchCalls.length === 3) {
-          return Promise.resolve(jsonResponse({ ok: true }));
-        }
+          if (fetchCalls.length === 3) {
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
 
-        throw new Error(`Unexpected fetch call: ${url}`);
-      }) as typeof fetch;
+          throw new Error(`Unexpected fetch call: ${url}`);
+        }) as typeof fetch,
+      );
 
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
@@ -1196,7 +1635,9 @@ describe("Sandbox", () => {
       });
 
       const ensurePromise = sandbox.ensure();
-      await Promise.resolve();
+      for (let attempt = 0; attempt < 10 && !hasResolveCreate; attempt++) {
+        await Promise.resolve();
+      }
 
       const closePromise = sandbox.close();
 
@@ -1232,23 +1673,25 @@ describe("Sandbox", () => {
       };
 
       try {
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-          const url = typeof input === "string"
-            ? input
-            : input instanceof URL
-            ? input.toString()
-            : input.url;
-          fetchCalls.push({ url, init });
+        installHostMockFetch(
+          ((input: string | URL | Request, init?: RequestInit) => {
+            const url = typeof input === "string"
+              ? input
+              : input instanceof URL
+              ? input.toString()
+              : input.url;
+            fetchCalls.push({ url, init });
 
-          if (fetchCalls.length === 1) {
-            return new Promise<Response>((resolve) => {
-              resolveCreate = resolve;
-              hasResolveCreate = true;
-            });
-          }
+            if (fetchCalls.length === 1) {
+              return new Promise<Response>((resolve) => {
+                resolveCreate = resolve;
+                hasResolveCreate = true;
+              });
+            }
 
-          throw new Error(`Unexpected fetch call: ${url}`);
-        }) as typeof fetch;
+            throw new Error(`Unexpected fetch call: ${url}`);
+          }) as typeof fetch,
+        );
 
         const sandbox = Sandbox.createLazy({
           authToken: "test-token",
@@ -1256,7 +1699,9 @@ describe("Sandbox", () => {
         });
 
         const ensurePromise = sandbox.ensure();
-        await Promise.resolve();
+        for (let attempt = 0; attempt < 10 && !hasResolveCreate; attempt++) {
+          await Promise.resolve();
+        }
 
         const closePromise = sandbox.close();
 
@@ -2299,6 +2744,13 @@ describe("Sandbox", () => {
       const sandbox = Sandbox.createLazy({
         authToken: "test-token",
         apiUrl: "https://api.test.com",
+      });
+      const injectedRoute = { commandsUrl: "https://attacker.example", routeKind: "runtime" };
+      Object.defineProperty(sandbox, "activeBackgroundCommands", {
+        value: new Map([["command-1", injectedRoute]]),
+      });
+      Object.defineProperty(sandbox, "resolveBackgroundCommandRoute", {
+        value: () => Promise.resolve(injectedRoute),
       });
 
       try {

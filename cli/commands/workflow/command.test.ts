@@ -14,6 +14,7 @@ import {
   normalizeSourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
 } from "../../../src/integrations/source-policy.ts";
+import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
 import { formatWorkflowDiscoveryErrors, runWorkflowCommand } from "./command.ts";
 
@@ -24,6 +25,7 @@ const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
 
 function restoreEnv() {
+  deleteHostSecret("VERYFRONT_API_TOKEN");
   if (originalRedisUrl === undefined) {
     Deno.env.delete("REDIS_URL");
   } else {
@@ -224,7 +226,9 @@ describe("workflow command", () => {
         },
       );
 
-      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      // The stored login token stays out of the process environment.
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-workflow-project");
     } finally {
       await Deno.remove(projectDir, { recursive: true });

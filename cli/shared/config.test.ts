@@ -1026,6 +1026,47 @@ describe("resolveConfigWithAuth", () => {
     }
   });
 
+  it("treats a whitespace exported token as unset and uses the token store", async () => {
+    await withTempDir(async (configHome) => {
+      // `veryfront dev` normalizes a blank `VERYFRONT_API_TOKEN` to "unset"
+      // when it registers the stored login token, so the deploy path resolving
+      // credentials here must not treat the same blank export as an
+      // authoritative shell credential that shadows the token store.
+      const env = createMockEnv({
+        apiToken: "   ",
+        projectSlug: "test-project",
+        xdgConfigHome: configHome,
+      });
+      await saveToken("stored-user-token", env);
+
+      const config = await resolveConfigWithAuth("/tmp/test-dir", env);
+
+      assertEquals(config.apiToken, "stored-user-token");
+      assertEquals(config.apiTokenSource, "token-store");
+    });
+  });
+
+  it("does not expose an exported token to a project-replaced trim method", async () => {
+    const token = "test-shell-token";
+    const originalTrim = String.prototype.trim;
+    let observedToken = false;
+    String.prototype.trim = function () {
+      if (String(this) === token) observedToken = true;
+      return Reflect.apply(originalTrim, this, []);
+    };
+
+    try {
+      const config = await resolveConfigWithAuth(
+        "/tmp/test-dir",
+        createMockEnv({ apiToken: token, projectSlug: "test-project" }),
+      );
+      assertEquals(config.apiToken, token);
+      assertEquals(observedToken, false);
+    } finally {
+      String.prototype.trim = originalTrim;
+    }
+  });
+
   it("prefers veryfront.json token over project .env and token store for management commands", async () => {
     const tempDir = await Deno.makeTempDir();
     const configHome = await Deno.makeTempDir();

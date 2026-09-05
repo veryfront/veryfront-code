@@ -62,7 +62,7 @@ describe("workflow api", () => {
     );
   });
 
-  it("authenticates the client with the tenant token", async () => {
+  it("keeps the tenant token out of public workflow accessors", async () => {
     await runWithRequestContext(
       {
         projectSlug: "acme",
@@ -73,11 +73,13 @@ describe("workflow api", () => {
         environmentName: "preview",
       },
       async () => {
-        assertEquals(
-          api._getClient().getToken(),
-          "tenant-token",
-          "requests must carry the current tenant token",
+        assertThrows(
+          () => api._getClient().getToken(),
+          Error,
+          "No API token available",
+          "the public client view must not expose the request credential",
         );
+        assertEquals("token" in api._getTenant(), false);
       },
     );
   });

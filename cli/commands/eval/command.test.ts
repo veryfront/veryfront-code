@@ -40,6 +40,7 @@ import { stripAnsi } from "../../ui/ansi.ts";
 import {
   applyGatewayBillingGroupFinalization,
   createAgentAdapter,
+  createEvalToolExecutionContext,
   createResolvedEvalModelComparisonConfig,
   createToolAdapter,
   type EvalOptions,
@@ -60,6 +61,8 @@ import {
   runEvalWithGatewayBillingGroup,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
+import { deleteHostSecret, getHostEnv } from "#cli/process-env";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
@@ -70,7 +73,6 @@ const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
 const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
 const originalEvalExportRequired = Deno.env.get("VERYFRONT_EVAL_EXPORT_REQUIRED");
 const originalMlflowTrackingUri = Deno.env.get("MLFLOW_TRACKING_URI");
-const originalFetch = globalThis.fetch;
 const redactionEnvNames = [
   "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS",
   "VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS",
@@ -85,6 +87,7 @@ const originalRedactionEnv = Object.fromEntries(
 ) as Record<(typeof redactionEnvNames)[number], string | undefined>;
 
 function restoreEnv(): void {
+  deleteHostSecret("VERYFRONT_API_TOKEN");
   if (originalApiToken === undefined) {
     Deno.env.delete("VERYFRONT_API_TOKEN");
   } else {
@@ -148,7 +151,7 @@ function restoreEnv(): void {
     }
   }
 
-  globalThis.fetch = originalFetch;
+  restoreMockFetch();
 }
 
 function createReport(): EvalReport {
@@ -1954,11 +1957,45 @@ describe("eval CLI command helpers", () => {
         projectSlug: "configured-eval-project",
       });
 
-      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      // The stored login token never enters the process environment.
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_API_BASE_URL"), undefined);
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps the stored login token out of the project tool execution context", async () => {
+    // `createToolAdapter` passes this context straight to a project-defined
+    // `tool.execute()`. The stored login token is host-private so project code
+    // cannot read it; surfacing it here would hand it back.
+    const projectDir = await makeTempDir({ prefix: "vf-eval-command-" });
+    const configHome = await makeTempDir({ prefix: "vf-eval-auth-" });
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await saveToken("stored-token");
+      await hydrateEvalRuntimeAuth(projectDir, { projectSlug: "eval-project" });
+
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
+      const context = createEvalToolExecutionContext({ projectSlug: "eval-project" });
+      assertEquals("authToken" in context, false);
+      assertEquals(context.projectSlug, "eval-project");
+
+      // An explicitly exported token is already readable from `Deno.env` by the
+      // same project code, so it still reaches the context.
+      Deno.env.set("VERYFRONT_API_TOKEN", "exported-token");
+      assertEquals(
+        createEvalToolExecutionContext({ projectSlug: "eval-project" }).authToken,
+        "exported-token",
+      );
+    } finally {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
@@ -1993,7 +2030,7 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
     const requests: Request[] = [];
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    installMockFetch((input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       requests.push(request);
       return Promise.resolve(
@@ -2018,6 +2055,11 @@ describe("eval CLI command helpers", () => {
           },
         ),
       );
+    });
+    let ambientFetchCalled = false;
+    globalThis.fetch = () => {
+      ambientFetchCalled = true;
+      return Promise.reject(new Error("project fetch must not receive host billing auth"));
     };
 
     await assertRejects(
@@ -2036,6 +2078,7 @@ describe("eval CLI command helpers", () => {
     assertEquals(request.url, "https://api.test/ai/gateway/billing/finalize");
     assertEquals(request.headers.get("Authorization"), "Bearer test-token");
     assertEquals(await request.json(), { billing_group_id: "evalrun_test_model" });
+    assertEquals(ambientFetchCalled, false);
   });
 
   it("retries gateway billing finalization while usage capture is not ready", async () => {
@@ -2043,7 +2086,7 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
     const requests: Request[] = [];
     const sleeps: number[] = [];
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    installMockFetch((input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       requests.push(request);
       if (requests.length === 1) {
@@ -2083,7 +2126,7 @@ describe("eval CLI command helpers", () => {
           },
         ),
       );
-    };
+    });
 
     const finalization = await finalizeGatewayBillingGroup("evalrun_test_model", {
       retryDelaysMs: [25],
@@ -2104,7 +2147,7 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
     const requests: Request[] = [];
     const sleeps: number[] = [];
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    installMockFetch((input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       requests.push(request);
       if (requests.length <= 6) {
@@ -2144,7 +2187,7 @@ describe("eval CLI command helpers", () => {
           },
         ),
       );
-    };
+    });
 
     const finalization = await finalizeGatewayBillingGroup("evalrun_test_model", {
       sleep: (ms) => {
