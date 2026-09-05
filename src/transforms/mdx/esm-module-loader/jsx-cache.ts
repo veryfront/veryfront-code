@@ -236,7 +236,8 @@ const jsxArtifactActiveRefs = new Map<string, number>();
 const LAZY_JSX_ARTIFACT_RETENTION_MS = 10 * 60_000;
 const LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY = 8;
 const JSX_ARTIFACT_REFRESH_CONCURRENCY = 8;
-const lazyJsxArtifactExpirations = new Map<string, number>();
+const MAX_LAZY_JSX_ARTIFACTS = MAX_SERVED_ARTIFACT_MEMO_ENTRIES;
+const lazyJsxArtifactExpirations = new Map<string, { expiresAtMs: number; reservations: number }>();
 let lazyJsxArtifactHeartbeat: ReturnType<typeof setInterval> | undefined;
 let lazyJsxArtifactHeartbeatInFlight: Promise<void> | undefined;
 let activeJsxArtifactRefreshes = 0;
@@ -245,13 +246,13 @@ const jsxArtifactRefreshWaiters: Array<() => void> = [];
 async function withJsxArtifactRefreshSlot<T>(operation: () => Promise<T>): Promise<T> {
   if (activeJsxArtifactRefreshes >= JSX_ARTIFACT_REFRESH_CONCURRENCY) {
     await new Promise<void>((resolve) => jsxArtifactRefreshWaiters.push(resolve));
-  }
-  activeJsxArtifactRefreshes += 1;
+  } else activeJsxArtifactRefreshes += 1;
   try {
     return await operation();
   } finally {
-    activeJsxArtifactRefreshes -= 1;
-    jsxArtifactRefreshWaiters.shift()?.();
+    const next = jsxArtifactRefreshWaiters.shift();
+    if (next) next();
+    else activeJsxArtifactRefreshes -= 1;
   }
 }
 
@@ -296,8 +297,8 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
   const run = (async () => {
     const nowMs = Date.now();
     const artifactPaths: string[] = [];
-    for (const [artifactPath, expiresAtMs] of lazyJsxArtifactExpirations) {
-      if (expiresAtMs <= nowMs) {
+    for (const [artifactPath, retention] of lazyJsxArtifactExpirations) {
+      if (retention.reservations === 0 && retention.expiresAtMs <= nowMs) {
         lazyJsxArtifactExpirations.delete(artifactPath);
         continue;
       }
@@ -343,18 +344,54 @@ function ensureLazyJsxArtifactHeartbeat(): void {
   unrefTimer(lazyJsxArtifactHeartbeat);
 }
 
+function reserveLazyJsxArtifacts(paths: readonly string[]): (retain: boolean) => void {
+  const unique = [...new Set(paths)];
+  const additionalCount = () =>
+    unique.filter((path) => !lazyJsxArtifactExpirations.has(path)).length;
+  if (lazyJsxArtifactExpirations.size + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
+    const now = Date.now();
+    for (const [path, record] of lazyJsxArtifactExpirations) {
+      if (record.reservations === 0 && record.expiresAtMs <= now) {
+        lazyJsxArtifactExpirations.delete(path);
+      }
+    }
+  }
+  if (lazyJsxArtifactExpirations.size + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
+    throw new JsxCacheCapacityError("JSX lazy artifact retention capacity is exhausted");
+  }
+  const reservations = unique.map((path) => {
+    const record = lazyJsxArtifactExpirations.get(path) ?? { expiresAtMs: 0, reservations: 0 };
+    record.reservations++;
+    lazyJsxArtifactExpirations.set(path, record);
+    return { path, record };
+  });
+  if (reservations.length > 0) ensureLazyJsxArtifactHeartbeat();
+  let released = false;
+  return (retain) => {
+    if (released) return;
+    released = true;
+    const now = Date.now();
+    for (const { path, record } of reservations) {
+      if (lazyJsxArtifactExpirations.get(path) !== record) continue;
+      record.reservations--;
+      if (retain) {
+        record.expiresAtMs = Math.max(record.expiresAtMs, now + LAZY_JSX_ARTIFACT_RETENTION_MS);
+      }
+      if (record.reservations === 0 && record.expiresAtMs <= now) {
+        lazyJsxArtifactExpirations.delete(path);
+      }
+    }
+  };
+}
+
 function retainLazyJsxArtifact(artifactPath: string): void {
-  lazyJsxArtifactExpirations.set(
-    artifactPath,
-    Date.now() + LAZY_JSX_ARTIFACT_RETENTION_MS,
-  );
-  ensureLazyJsxArtifactHeartbeat();
+  reserveLazyJsxArtifacts([artifactPath])(true);
 }
 
 function isLazyJsxArtifactRetained(artifactPath: string, nowMs: number = Date.now()): boolean {
-  const expiresAtMs = lazyJsxArtifactExpirations.get(artifactPath);
-  if (expiresAtMs === undefined) return false;
-  if (expiresAtMs > nowMs) return true;
+  const retention = lazyJsxArtifactExpirations.get(artifactPath);
+  if (retention === undefined) return false;
+  if (retention.reservations > 0 || retention.expiresAtMs > nowMs) return true;
   lazyJsxArtifactExpirations.delete(artifactPath);
   return false;
 }
@@ -465,9 +502,10 @@ export async function retainJsxArtifactsReferencedIn(
     // Both static and lazy artifacts stay actively pinned until the parent
     // import settles. Lazy retention starts only at release, when the parent
     // module cache lifetime begins.
-    retainJsxArtifact(artifactPath);
   }
   if (artifactPaths.length === 0) return () => {};
+  const releaseLazyReservation = reserveLazyJsxArtifacts(lazyArtifactPaths);
+  for (const artifactPath of artifactPaths) retainJsxArtifact(artifactPath);
 
   // A module may import the same artifact under several specifiers; one
   // refresh per artifact is what "last use" needs, so the duplicates stay
@@ -486,6 +524,7 @@ export async function retainJsxArtifactsReferencedIn(
     await refreshAll();
   } catch (error) {
     for (const artifactPath of artifactPaths) releaseJsxArtifact(artifactPath);
+    releaseLazyReservation(false);
     throw error;
   }
   const heartbeat = setInterval(
@@ -507,7 +546,7 @@ export async function retainJsxArtifactsReferencedIn(
       markJsxArtifactServed(artifactPath, nowMs);
     }
     for (const artifactPath of artifactPaths) releaseJsxArtifact(artifactPath);
-    for (const artifactPath of lazyArtifactPaths) retainLazyJsxArtifact(artifactPath);
+    releaseLazyReservation(true);
   };
 }
 
@@ -1721,6 +1760,29 @@ export async function pruneSupersededJsxArtifacts(
  * lease tombstones and transition fences a recovery could not remove itself,
  * which nothing else in the directory accounts for.
  */
+async function readJsxArtifactDates(
+  directory: string,
+  names: readonly string[],
+): Promise<Array<{ name: string; modifiedAtMs: number }>> {
+  const dated: Array<{ name: string; modifiedAtMs: number }> = [];
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, names.length) },
+    async () => {
+      while (next < names.length) {
+        const index = next++;
+        const name = names[index]!;
+        const modifiedAtMs = await withJsxArtifactRefreshSlot(() =>
+          readArtifactModifiedAtMs(join(directory, name))
+        );
+        dated[index] = { name, modifiedAtMs };
+      }
+    },
+  );
+  await Promise.all(workers);
+  return dated;
+}
+
 async function collectExcessJsxArtifacts(
   esmCacheDir: string,
   currentByPrefix: ReadonlyMap<string, string>,
@@ -1837,14 +1899,11 @@ async function collectExcessJsxArtifacts(
   );
   if (directoryExcess > 0) {
     const protectedNames = new Set(currentByPrefix.values());
-    const datedArtifacts = await Promise.all(
+    const datedArtifacts = await readJsxArtifactDates(
+      esmCacheDir,
       allArtifactNames
         .filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX))
-        .filter((name) => !protectedNames.has(name))
-        .map(async (name) => ({
-          name,
-          modifiedAtMs: await readArtifactModifiedAtMs(join(esmCacheDir, name)),
-        })),
+        .filter((name) => !protectedNames.has(name)),
     );
     datedArtifacts.sort((left, right) => left.modifiedAtMs - right.modifiedAtMs);
     for (const { name, modifiedAtMs } of datedArtifacts) {
@@ -1885,12 +1944,7 @@ async function collectExcessJsxArtifacts(
     // The artifact just written, when there is one, counts against the window.
     const retained = MAX_JSX_CACHE_VARIANTS_PER_PATH - (currentByPrefix.has(prefix) ? 1 : 0);
 
-    const dated = await Promise.all(
-      variants.map(async (name) => ({
-        name,
-        modifiedAtMs: await readArtifactModifiedAtMs(join(esmCacheDir, name)),
-      })),
-    );
+    const dated = await readJsxArtifactDates(esmCacheDir, variants);
     dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
 
     for (const [index, { name, modifiedAtMs }] of dated.entries()) {

@@ -7,6 +7,7 @@ import {
   assertExists,
   assertNotEquals,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -1693,6 +1694,39 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("bounds artifact metadata reads across concurrent prune passes", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-workers-" });
+    const localFs = getLocalFs();
+    const originalStat = localFs.stat.bind(localFs);
+    let active = 0;
+    let peak = 0;
+    try {
+      const directories = [join(tempDir, "first"), join(tempDir, "second")];
+      for (const directory of directories) {
+        await mkdir(directory, { recursive: true });
+        await writeVariants(directory, "/source/shared.tsx", 40);
+      }
+      localFs.stat = async (path) => {
+        if (!path.endsWith(".mjs")) return originalStat(path);
+        active++;
+        peak = Math.max(peak, active);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          return await originalStat(path);
+        } finally {
+          active--;
+        }
+      };
+      await Promise.all(
+        directories.map((directory) => collectExcessJsxArtifacts(directory, new Map(), Date.now())),
+      );
+      assertEquals(peak <= __jsxCacheInternals.JSX_ARTIFACT_REFRESH_CONCURRENCY, true);
+    } finally {
+      localFs.stat = originalStat;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reclaims a stale transition only while owning the canonical lease", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-transition-owner-test-" });
     const artifactPath = join(tempDir, "jsx-transition-owner.mjs");
@@ -2277,6 +2311,20 @@ describe("jsx artifact references", () => {
     } finally {
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("bounds lazy artifact retention without evicting an existing reservation", () => {
+    const limit = __jsxCacheInternals.MAX_SERVED_ARTIFACT_MEMO_ENTRIES;
+    for (let index = 0; index < limit; index++) {
+      __jsxCacheInternals.retainLazyJsxArtifact(`/cache/project-${index}/jsx-lazy.mjs`);
+    }
+    assertThrows(
+      () => __jsxCacheInternals.retainLazyJsxArtifact("/cache/overflow/jsx-lazy.mjs"),
+      Error,
+      "retention capacity",
+    );
+    assertEquals(__jsxCacheInternals.isLazyArtifactRetained("/cache/project-0/jsx-lazy.mjs"), true);
+    __jsxCacheInternals.retainLazyJsxArtifact("/cache/project-0/jsx-lazy.mjs");
   });
 
   it("shares one bounded lazy heartbeat batch while storage is slow", async () => {
