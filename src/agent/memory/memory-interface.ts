@@ -48,7 +48,7 @@ export interface Memory<M extends MinimalMessage = MinimalMessage> {
 }
 
 /**
- * An isolated view of one input turn, including your backend's retention policy.
+ * An isolated view of one turn, including your backend's retention policy.
  *
  * Your backend must stage writes until commit. Commit must atomically verify
  * that the validated snapshot is still current and publish the staged state,
@@ -58,9 +58,9 @@ export interface Memory<M extends MinimalMessage = MinimalMessage> {
  * backend resources. Commit and rollback must be safe to call repeatedly.
  */
 export interface MemoryTransaction<M extends MinimalMessage = MinimalMessage> {
-  /** Stage input and apply the backend's retention policy without publishing it. */
+  /** Stage caller, assistant, or tool messages without publishing them. */
   add(message: M): Promise<void>;
-  /** Read the snapshot and staged input that validation must examine. */
+  /** Read the snapshot and staged messages that validation must examine. */
   getMessages(): Promise<M[]>;
   /** Atomically publish the validated view, rejecting concurrent changes. */
   commit(): Promise<void>;

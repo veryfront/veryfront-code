@@ -1,10 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import type { AgentContext, Message } from "#veryfront/agent/types.ts";
-import { registerTurnMessageValidator } from "#veryfront/agent/middleware/turn-validation.ts";
+import {
+  registerTurnMessageValidator,
+  registerTurnProviderRequestValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 import type { Memory, MemoryTransaction } from "./memory-interface.ts";
+import { ConversationMemory } from "./memory.ts";
 
 const message = (id: string): Message => ({
   id,
@@ -96,6 +105,192 @@ function prepare(memory: Memory<Message>, validate = true) {
 }
 
 describe("custom memory transactions", () => {
+  it("serializes built-in turns until rollback can no longer restore rejected input", async () => {
+    const store = new ConversationMemory<Message>({ type: "conversation" });
+    const runtime = new AgentRuntime("transaction-concurrency", {
+      model: "openai/gpt-4.1",
+      system: "You are helpful.",
+    });
+    Reflect.set(runtime, "memory", store);
+    const create = Reflect.get(runtime, "createTurnPersistence") as (
+      messages: Message[],
+      context: AgentContext,
+    ) => {
+      persist(): Promise<Message[]>;
+      validateProviderRequest(system: string, messages: Message[]): Promise<void>;
+    };
+    const turns = ["first", "second"].map((id) => {
+      const context: AgentContext = {
+        agentId: "transaction-concurrency",
+        input: [message(id)],
+        platform: {},
+      };
+      registerTurnProviderRequestValidator(
+        context,
+        (system) =>
+          system === "rejected" ? Promise.reject(new Error("rejected turn")) : Promise.resolve(),
+      );
+      return create.call(runtime, context.input as Message[], context);
+    });
+    const [firstTurn, secondTurn] = turns;
+    assertExists(firstTurn);
+    assertExists(secondTurn);
+    const firstMessages = await firstTurn.persist();
+    await firstTurn.validateProviderRequest("accepted", firstMessages);
+    let secondPrepared = false;
+    const second = secondTurn.persist().then((messages) => {
+      secondPrepared = true;
+      return messages;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assertEquals(secondPrepared, false);
+    await assertRejects(
+      () => firstTurn.validateProviderRequest("rejected", firstMessages),
+      Error,
+      "rejected turn",
+    );
+    const secondMessages = await second;
+    assertEquals(secondMessages.map(({ id }) => id), ["second"]);
+    await assertRejects(
+      () => secondTurn.validateProviderRequest("rejected", secondMessages),
+      Error,
+      "rejected turn",
+    );
+    assertEquals(await store.getMessages(), []);
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`commits input and assistant output together for ${mode}`, async () => {
+      const store = new TransactionMemory();
+      const runtime = new AgentRuntime("transaction-output", {
+        model: "hosted/transaction-output",
+        system: "You are helpful.",
+        skills: false,
+        maxSteps: 1,
+        middleware: [(context, next) => {
+          registerTurnMessageValidator(context, () => Promise.resolve());
+          return next();
+        }],
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: {
+              provider: "hosted",
+              modelId: "hosted/transaction-output",
+              doGenerate() {
+                assertEquals(store.version, 0);
+                return Promise.resolve({
+                  content: [{ type: "text" as const, text: "ok" }],
+                  finishReason: "stop" as const,
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                });
+              },
+              doStream() {
+                assertEquals(store.version, 0);
+                return Promise.resolve({
+                  stream: new ReadableStream({
+                    start(controller) {
+                      controller.enqueue({ type: "text-delta", text: "ok" });
+                      controller.enqueue({ type: "finish" });
+                      controller.close();
+                    },
+                  }),
+                });
+              },
+            },
+          }),
+      });
+      Reflect.set(runtime, "memory", store);
+      if (mode === "generate") {
+        assertEquals((await runtime.generate([message("attempted")])).text, "ok");
+      } else {
+        const output = await new Response(await runtime.stream([message("attempted")])).text();
+        assertStringIncludes(output, "message-finish");
+      }
+      assertEquals(store.stored.map(({ role }) => role), ["user", "user", "assistant"]);
+      assertEquals(store.version, 1);
+    });
+  }
+
+  it("finishes stream and replay cleanup when rollback fails", async () => {
+    const store = new TransactionMemory();
+    store.failRollback = true;
+    let replayFailures = 0;
+    const runtime = new AgentRuntime("transaction-stream", {
+      model: "hosted/transaction-stream",
+      system: "You are helpful.",
+      middleware: [(context, next) => {
+        registerTurnMessageValidator(context, () => Promise.resolve());
+        return next();
+      }],
+      resolveRuntimeState: () => {
+        throw new Error("runtime state failed");
+      },
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: {
+            provider: "hosted",
+            modelId: "hosted/transaction-stream",
+            async doGenerate() {
+              throw new Error("Unexpected dispatch");
+            },
+            async doStream() {
+              throw new Error("Unexpected dispatch");
+            },
+          },
+        }),
+      ...{
+        __vfProviderReplayCheckpointTurnFailed: () => {
+          replayFailures++;
+        },
+      },
+    });
+    Reflect.set(runtime, "memory", store);
+    const stream = await runtime.stream([message("attempted")]);
+    const output = await new Response(stream).text();
+    assertStringIncludes(output, "rollback failed");
+    assertEquals(replayFailures, 1);
+    assertEquals(Reflect.get(runtime, "status"), "error");
+  });
+
+  it("keeps rollback available when a later provider validation rejects", async () => {
+    const store = new TransactionMemory();
+    const runtime = new AgentRuntime("transaction-test", {
+      model: "openai/gpt-4.1",
+      system: "You are helpful.",
+    });
+    Reflect.set(runtime, "memory", store);
+    const context: AgentContext = {
+      agentId: "transaction-test",
+      input: [message("attempted")],
+      model: "openai/gpt-4.1",
+      data: {},
+      platform: {},
+    };
+    registerTurnProviderRequestValidator(context, (system) => {
+      if (system === "rejected") return Promise.reject(new Error("later validation rejected"));
+      return Promise.resolve();
+    });
+    const create = Reflect.get(runtime, "createTurnPersistence") as (
+      messages: Message[],
+      context: AgentContext,
+    ) => {
+      persist(): Promise<Message[]>;
+      finalize(): Promise<void>;
+      validateProviderRequest(system: string, messages: Message[]): Promise<void>;
+    };
+    const persistence = create.call(runtime, context.input as Message[], context);
+    const messages = await persistence.persist();
+    await persistence.validateProviderRequest("accepted", messages);
+    await assertRejects(
+      () => persistence.validateProviderRequest("rejected", messages),
+      Error,
+      "later validation rejected",
+    );
+    await persistence.finalize();
+    assertEquals(store.stored.map((value) => value.id), ["history"]);
+    assertEquals(store.rollbacks, 1);
+  });
+
   it("shares pending commits and rejects retries after a commit conflict", async () => {
     const store = new TransactionMemory();
     const gate = Promise.withResolvers<void>();

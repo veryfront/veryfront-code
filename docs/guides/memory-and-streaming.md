@@ -87,6 +87,10 @@ export default agent({
 When the conversation grows long, the agent compresses older messages into a
 summary while keeping recent messages intact.
 
+Response-cache middleware skips stateful agents. Each turn must use the current
+conversation and persist its assistant reply. Stateless agents can reuse cached
+responses.
+
 ### Custom memory transactions
 
 When transactional input validation is enabled, your custom `Memory` backend
@@ -98,9 +102,10 @@ the existing custom-memory interface still works.
 Import the `Memory` and `MemoryTransaction` types from `veryfront/agent`. Your
 transaction must provide these methods:
 
-- `getMessages()` reads a stable snapshot plus this transaction's staged input.
-- `add(message)` stages input and applies your retention or summarization policy
-  to that view. It must not publish the input to shared storage.
+- `getMessages()` reads a stable snapshot plus this transaction's staged messages.
+- `add(message)` stages caller input, assistant replies, and tool results and
+  applies your retention or summarization policy to that view. It must not publish
+  those messages to shared storage.
 - `commit()` atomically checks that the snapshot is still current and publishes
   the validated view. If another operation added messages, cleared history, or
   otherwise changed the snapshot, reject without publishing. A later attempt
@@ -115,6 +120,11 @@ when history returns to the same content. Do not implement rollback by calling
 `clear()` and replaying an earlier snapshot: that can resurrect deleted history
 or overwrite concurrent messages. Surface storage and rollback errors instead
 of reporting success.
+
+Veryfront keeps the transaction open through every provider validation in the
+turn. A later validation failure rolls back the staged turn. Commit runs after
+the turn finishes validation, so concurrent storage changes can reject commit
+even after the provider has produced output.
 
 The standalone `RedisMemory` class does not currently implement this transaction
 capability. If you connect it to transactional agent validation through a custom

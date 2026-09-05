@@ -70,6 +70,7 @@ import {
   getTurnProviderRequestValidator,
   type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
+import { disableResponseCacheForContext } from "#veryfront/agent/middleware/cache/cache.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -372,10 +373,7 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = 
         try {
           // Read array descriptors without invoking a Proxy's indexed get
           // traps. Provider-visible values must not retain the caller's array.
-          const descriptors = ObjectGetOwnPropertyDescriptors(candidate) as unknown as Record<
-            string,
-            PropertyDescriptor
-          >;
+          const descriptors = ObjectGetOwnPropertyDescriptors(candidate);
           const length = descriptors.length?.value;
           if (typeof length !== "number") throw new TypeError("Invalid array length");
           array.length = 0;
@@ -1718,6 +1716,7 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<{
     messages: Message[];
+    addMessage: (message: Message) => Promise<void>;
     commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
@@ -1738,15 +1737,10 @@ export class AgentRuntime {
     // the security middleware keep the pre-existing concurrency, and one slow
     // memory backend cannot hold up unrelated concurrent turns.
     //
-    // The queue covers only the turn-input commit, which is the write a
-    // caller controls. The assistant and tool `memory.add` calls inside the
-    // agent loop run outside it, so a long-running turn's model output can
-    // still land between another turn's validation and its write - those
-    // messages are model-authored and exempt from input validation, so they
-    // cannot forge a caller-controlled merge. Queueing is per runtime
-    // instance, so a hung memory backend delays other validated turns on the
-    // same agent; that is the same backend outage those turns would hit on
-    // their own write.
+    // Hold the queue through the whole validated turn. Built-in memory writes
+    // are visible before finalization, so another rollback snapshot must not
+    // capture messages this turn can still reject. Stateless turns bypass the
+    // queue; stateful conversations execute sequentially on each runtime.
     if (
       this.memory instanceof NoMemory || !context ||
       !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
@@ -1771,6 +1765,7 @@ export class AgentRuntime {
   ): {
     persisted: boolean;
     persist: () => Promise<Message[]>;
+    addMessage: (message: Message) => Promise<void>;
     commit: () => Promise<void>;
     finalize: () => Promise<void>;
     validationState: () => "pending" | "accepted" | "rejected";
@@ -1822,13 +1817,17 @@ export class AgentRuntime {
         return transaction.then(({ messages }) => messages);
       },
       commit,
+      addMessage: async (message: Message) => {
+        if (rejection) throw rejection.error;
+        await persistence.persist();
+        await (await transaction!).addMessage(message);
+      },
       finalize: () => validationState === "accepted" ? commit() : rollback(),
       validationState: () => validationState,
       validateProviderRequest: async (providerSystem: AgentSystem, messages: Message[]) => {
         if (rejection) throw rejection.error;
         try {
           await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
-          await commit();
         } catch (error) {
           rejection = { error };
           validationState = "rejected";
@@ -1846,6 +1845,7 @@ export class AgentRuntime {
     context?: AgentContext,
   ): Promise<{
     messages: Message[];
+    addMessage: (message: Message) => Promise<void>;
     commit: () => Promise<void>;
     rollback: () => Promise<void>;
     finalized: Promise<void>;
@@ -1912,6 +1912,7 @@ export class AgentRuntime {
     const finalization = Promise.withResolvers<void>();
     return {
       messages: persisted.length > 0 ? persisted : committedInputMessages,
+      addMessage: (message) => turnMemory.add(message),
       commit: async () => {
         if (isFinalized) return;
         isFinalized = true;
@@ -2127,6 +2128,7 @@ export class AgentRuntime {
           data: context,
           platform: detectPlatform(),
         };
+        if (!(this.memory instanceof NoMemory)) disableResponseCacheForContext(agentContext);
 
         // Persist only after the middleware chain accepted this turn. Committing
         // to memory first would store a rejected (hostile) message, and the next
@@ -2149,6 +2151,7 @@ export class AgentRuntime {
                     systemPrompt,
                     messages,
                     turnPersistence.validateProviderRequest,
+                    turnPersistence.addMessage,
                     {
                       agentId: this.id,
                       projectId: tryGetCacheKeyContext()?.projectId,
@@ -2301,6 +2304,7 @@ export class AgentRuntime {
         data: context,
         platform: detectPlatform(),
       };
+      if (!(this.memory instanceof NoMemory)) disableResponseCacheForContext(agentContext);
       const chain = new MiddlewareChain(this.config.middleware);
 
       // Persist only after the middleware chain accepted this turn, so a
@@ -2365,6 +2369,7 @@ export class AgentRuntime {
                       systemPrompt,
                       memoryMessages,
                       turnPersistence.validateProviderRequest,
+                      turnPersistence.addMessage,
                       controller,
                       encoder,
                       streamingCallbacks,
@@ -2425,7 +2430,11 @@ export class AgentRuntime {
             });
             closeSSEStream(controller);
           } catch (error) {
-            await turnPersistence.finalize();
+            try {
+              await turnPersistence.finalize();
+            } catch (finalizationError) {
+              error = finalizationError;
+            }
             try {
               await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
             } catch (failureHookError) {
@@ -2479,6 +2488,7 @@ export class AgentRuntime {
     systemPrompt: AgentSystem,
     messages: Message[],
     validateProviderRequest: TurnProviderRequestValidator,
+    persistMessage: (message: Message) => Promise<void>,
     toolContextBase: ToolExecutionContext | undefined,
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
@@ -2724,7 +2734,7 @@ export class AgentRuntime {
           timestamp: Date.now(),
         });
         currentMessages.push(assistantMessage);
-        await this.memory.add(assistantMessage);
+        await persistMessage(assistantMessage);
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
@@ -2744,7 +2754,7 @@ export class AgentRuntime {
             generatedToolResult.providerExecuted === true,
           );
           currentMessages.push(toolResultMessage);
-          await this.memory.add(toolResultMessage);
+          await persistMessage(toolResultMessage);
           throwIfAborted(abortSignal);
         };
 
@@ -2771,7 +2781,7 @@ export class AgentRuntime {
             error,
           );
           currentMessages.push(errorMessage);
-          await this.memory.add(errorMessage);
+          await persistMessage(errorMessage);
           return true;
         };
 
@@ -2851,7 +2861,7 @@ export class AgentRuntime {
                 toolCall.error,
               );
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await persistMessage(errorMessage);
               toolCalls.push(toolCall);
               return;
             }
@@ -2883,7 +2893,7 @@ export class AgentRuntime {
                   search.result,
                 );
                 currentMessages.push(toolResultMessage);
-                await this.memory.add(toolResultMessage);
+                await persistMessage(toolResultMessage);
                 checkpoint = search.checkpoint;
               } catch (error) {
                 toolCall.status = "error";
@@ -2894,7 +2904,7 @@ export class AgentRuntime {
                   toolCall.error,
                 );
                 currentMessages.push(errorMessage);
-                await this.memory.add(errorMessage);
+                await persistMessage(errorMessage);
                 toolCalls.push(toolCall);
                 return;
               }
@@ -2993,7 +3003,7 @@ export class AgentRuntime {
                 timestamp: Date.now(),
               };
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await persistMessage(errorMessage);
               toolCalls.push(toolCall);
               return;
             }
@@ -3090,7 +3100,7 @@ export class AgentRuntime {
                 result,
               );
               currentMessages.push(toolResultMessage);
-              await this.memory.add(toolResultMessage);
+              await persistMessage(toolResultMessage);
             } catch (error) {
               throwIfAborted(abortSignal);
               toolCall.status = "error";
@@ -3107,7 +3117,7 @@ export class AgentRuntime {
                 toolCall.error,
               );
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await persistMessage(errorMessage);
             }
 
             toolCalls.push(toolCall);
@@ -3151,6 +3161,7 @@ export class AgentRuntime {
     systemPrompt: AgentSystem,
     messages: Message[],
     validateProviderRequest: TurnProviderRequestValidator,
+    persistMessage: (message: Message) => Promise<void>,
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
     callbacks: {
@@ -3693,7 +3704,7 @@ export class AgentRuntime {
         latestAssistantText = stepAssistantText;
       }
       currentMessages.push(assistantMessage);
-      await this.memory.add(assistantMessage);
+      await persistMessage(assistantMessage);
       await persistProviderReplayCheckpointAfterTurn({
         emission: providerReplayCheckpointEmission,
         providerMetadata: readAttachedProviderMetadata(assistantMessage),
@@ -3713,7 +3724,7 @@ export class AgentRuntime {
           toolResult.providerExecuted === true,
         );
         currentMessages.push(toolResultMessage);
-        await this.memory.add(toolResultMessage);
+        await persistMessage(toolResultMessage);
         currentStepToolResults.set(
           toolResult.toolCallId,
           toolResultMessage.parts[0] as ToolResultPart,
@@ -3759,6 +3770,7 @@ export class AgentRuntime {
           status: "pending",
         };
         await this.recordToolError(
+          persistMessage,
           incompleteToolCall,
           `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
             `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
@@ -3819,6 +3831,7 @@ export class AgentRuntime {
             status: "pending",
           };
           await this.recordToolError(
+            persistMessage,
             interruptedBatchToolCall,
             "Tool execution skipped because another tool call in the same model step " +
               "was interrupted before its input completed.",
@@ -3940,6 +3953,7 @@ export class AgentRuntime {
           });
 
           await this.recordToolError(
+            persistMessage,
             toolCall,
             `Invalid tool arguments: ${capturedInput.parseError}`,
             controller,
@@ -3977,11 +3991,12 @@ export class AgentRuntime {
             });
             const toolResultMessage = createToolResultMessage(tc.id, tc.name, search.result);
             currentMessages.push(toolResultMessage);
-            await this.memory.add(toolResultMessage);
+            await persistMessage(toolResultMessage);
             checkpoint = search.checkpoint;
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           } catch (error) {
             await this.recordToolError(
+              persistMessage,
               toolCall,
               error instanceof Error ? error.message : String(error),
               controller,
@@ -4005,6 +4020,7 @@ export class AgentRuntime {
         });
         if (executionAuthority === undefined) {
           await this.recordToolError(
+            persistMessage,
             toolCall,
             toolNotVisibleError(tc.name),
             controller,
@@ -4025,6 +4041,7 @@ export class AgentRuntime {
         );
         if (!policyCheck.allowed) {
           await this.recordToolError(
+            persistMessage,
             toolCall,
             policyCheck.error,
             controller,
@@ -4118,12 +4135,13 @@ export class AgentRuntime {
           const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
             currentMessages.push(toolResultMessage);
-            await this.memory.add(toolResultMessage);
+            await persistMessage(toolResultMessage);
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
           const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
+            persistMessage,
             toolCall,
             errorStr,
             controller,
@@ -4205,6 +4223,7 @@ export class AgentRuntime {
    * Record a tool error and send SSE event.
    */
   private async recordToolError(
+    persistMessage: (message: Message) => Promise<void>,
     toolCall: ToolCall,
     errorStr: string,
     controller: ReadableStreamDefaultController,
@@ -4235,7 +4254,7 @@ export class AgentRuntime {
       errorStr,
     );
     currentMessages.push(errorMessage);
-    await this.memory.add(errorMessage);
+    await persistMessage(errorMessage);
   }
 
   /**

@@ -1026,6 +1026,44 @@ describe("resolveSecurityMiddleware", () => {
     );
   });
 
+  it("does not reuse cached replies for stateful conversations", async () => {
+    let calls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/stateful-cache",
+      doGenerate() {
+        calls++;
+        return Promise.resolve({
+          content: [{ type: "text" as const, text: `answer ${calls}` }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        });
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const assistant = agent({
+      id: "stateful-cache",
+      model: "hosted/stateful-cache",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [cacheMiddleware({ strategy: "memory" })],
+      resolveModelTransport: async () => ({ model }),
+    });
+    await assistant.generate({ input: "hello" });
+    await leaveCurrentMillisecond();
+    const response = await assistant.generate({ input: "hello" });
+    assertEquals(response.text, "answer 2");
+    assertEquals(calls, 2);
+    assertEquals(
+      (await assistant.getMemory().getMessages()).map(({ role }) => role),
+      ["user", "assistant", "user", "assistant"],
+    );
+  });
+
   it("accepts opaque caller metadata while detaching provider-relevant input", async () => {
     const model: ModelRuntime = {
       provider: "hosted",
