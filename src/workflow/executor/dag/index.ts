@@ -128,11 +128,9 @@ function collectBranchOwnerPaths(
         break;
       }
       case "branch": {
-        if (parentPath) {
-          const owners = target.get(node.id) ?? new Set<string>();
-          owners.add(parentPath);
-          target.set(node.id, owners);
-        }
+        const owners = target.get(node.id) ?? new Set<string>();
+        owners.add(parentPath);
+        target.set(node.id, owners);
         collectBranchOwnerPaths(node.config.then, parentPath, target);
         collectBranchOwnerPaths(node.config.else ?? [], parentPath, target);
         break;
@@ -145,6 +143,11 @@ function collectBranchOwnerPaths(
           collectBranchOwnerPaths(node.config.steps, parentPath, target);
         }
         break;
+      case "map": {
+        const wrapperNodes = collectStaticMapWrapperNodes(node);
+        if (wrapperNodes) collectBranchOwnerPaths(wrapperNodes, parentPath, target);
+        break;
+      }
     }
   }
 }
@@ -318,6 +321,21 @@ function collectStaticSubWorkflowReservation(
         );
       }
       return;
+    case "map": {
+      const wrapperNodes = collectStaticMapWrapperNodes(node);
+      if (wrapperNodes) {
+        collectStaticSubWorkflowReservations(
+          wrapperNodes,
+          parentPath,
+          reservations,
+          owners,
+          nodeStates,
+          branchOwnerPaths,
+          ancestorOwnerStatus,
+        );
+      }
+      return;
+    }
     case "subWorkflow": {
       const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
       owners.set(ownerPath, node.id);
@@ -430,6 +448,15 @@ function collectNodeSharedChildIds(
         }
       }
       break;
+    case "map": {
+      const wrapperNodes = collectStaticMapWrapperNodes(node);
+      if (!wrapperNodes) break;
+      for (const wrapperNode of wrapperNodes) {
+        childIds.add(wrapperNode.id);
+        collectNodeSharedChildIds(wrapperNode, parentPath, scope, childIds);
+      }
+      break;
+    }
   }
 }
 
@@ -470,8 +497,9 @@ function nodeHasUnknownSharedChildReservations(node: WorkflowNode): boolean {
       if (!Array.isArray(node.config.steps)) return true;
       return node.config.steps.some(nodeHasUnknownSharedChildReservations);
     case "map":
-      // Item count and generated namespaces resolve only at execution.
-      return true;
+      return collectStaticMapWrapperNodes(node)?.some(
+        nodeHasUnknownSharedChildReservations,
+      ) ?? true;
     default:
       return false;
   }
@@ -493,6 +521,10 @@ function nodeHasConditionalSharedChildReservations(node: WorkflowNode): boolean 
     case "loop":
       return Array.isArray(node.config.steps) &&
         node.config.steps.some(nodeHasConditionalSharedChildReservations);
+    case "map":
+      return collectStaticMapWrapperNodes(node)?.some(
+        nodeHasConditionalSharedChildReservations,
+      ) ?? false;
     default:
       return false;
   }
@@ -718,6 +750,7 @@ function createCompositeNodeStateView(
     declaredIds,
     allowedOwnerPaths,
   );
+  const allowedOwnerPathList = [...allowedOwnerPaths];
   const claimedLegacyIds = new Set<string>(scope.completedCompositeChildIds);
   const activeCompositeChildIds = new Set(
     nodeStates[compositeNodeId]?._activeCompositeChildIds ?? [],
@@ -738,7 +771,7 @@ function createCompositeNodeStateView(
     const ownerPath = state._subWorkflowOwnerPath;
     if (ownerPath !== undefined) {
       const allowed = ownerPath === parentPath && declaredIds.has(nodeId) ||
-        [...allowedOwnerPaths].some((candidate) => isSubWorkflowDescendant(ownerPath, candidate));
+        allowedOwnerPathList.some((candidate) => isSubWorkflowDescendant(ownerPath, candidate));
       if (allowed) visible[nodeId] = state;
       continue;
     }
@@ -826,6 +859,19 @@ function rebaseMapProcessorNode(
     id: wrapperId,
     config: rebaseCompositeDescendants(processor.config, processor.id, wrapperId),
   };
+}
+
+/** Return the generated map wrappers whose complete definitions are statically visible. */
+function collectStaticMapWrapperNodes(node: WorkflowNode): WorkflowNode[] | undefined {
+  if (node.config.type !== "map" || !Array.isArray(node.config.items)) return undefined;
+
+  const wrappers: WorkflowNode[] = [];
+  for (let index = 0; index < node.config.items.length; index++) {
+    const wrapper = rebaseMapProcessorNode(`${node.id}_${index}`, node.config.processor);
+    if (wrapper === undefined) return undefined;
+    wrappers.push(wrapper);
+  }
+  return wrappers;
 }
 
 function collectCompositeMapStateEvidence(

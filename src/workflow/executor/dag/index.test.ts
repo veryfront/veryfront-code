@@ -4066,7 +4066,7 @@ describe("DAGExecutor", () => {
       assertEquals(executed, []);
     });
 
-    it("serializes a workflow-definition map against a colliding sub-workflow", async () => {
+    it("rejects a static workflow-definition map colliding with a sub-workflow", async () => {
       const nodes: WorkflowNode[] = [
         {
           ...map("orders", {
@@ -4093,10 +4093,43 @@ describe("DAGExecutor", () => {
 
       const result = await executor.execute(nodes, createTestRun());
 
-      assertEquals(result.waiting, true);
-      assertEquals(result.nodeStates.orders?.status, "running");
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, false);
+      assertStringIncludes(result.error ?? "", 'child id "orders_0/review"');
+      assertEquals(result.errorCause?.slug, INVALID_ARGUMENT.slug);
+      assertEquals(result.nodeStates.orders, undefined);
       assertEquals(result.nodeStates.direct, undefined);
-      assertEquals(result.nodeStates["orders_0/review"]?.status, "running");
+    });
+
+    it("runs a fully static map alongside a non-colliding composite", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          ...map("orders", {
+            items: [{ id: 1 }],
+            processor: waitForApproval("approval", { message: "Review the order" }),
+          }),
+          dependsOn: [],
+        },
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("release-review", { message: "Review the release" })],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNodes?.map(({ nodeId }) => nodeId), [
+        "orders_0",
+        "release-review",
+      ]);
+      assertEquals(result.nodeStates.orders?.status, "running");
+      assertEquals(result.nodeStates.release?.status, "running");
     });
 
     it("does not seed a completed generated map wrapper into a later sub-workflow", async () => {
@@ -5314,6 +5347,79 @@ describe("DAGExecutor", () => {
       );
 
       assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["release-2"]?.status, "completed");
+      assertEquals(result.nodeStates["shared-review"]?.startedAt, originalStartedAt);
+    });
+
+    it("does not use an ownerless root branch selection for a nested legacy branch", async () => {
+      const originalStartedAt = new Date("2026-01-01T00:00:00.000Z");
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => false,
+            then: [],
+            else: [{ id: "root-result", config: { type: "step" } as any }],
+          } as any,
+        },
+        {
+          ...subWorkflow("release-1", {
+            workflow: {
+              id: "release-wf-1",
+              steps: [{
+                id: "gate",
+                config: {
+                  type: "branch",
+                  condition: () => true,
+                  then: [{ id: "publish", config: { type: "step" } as any }],
+                  else: [waitForApproval("shared-review", { message: "Unused review" })],
+                } as any,
+              }],
+            },
+          }),
+          dependsOn: ["gate"],
+        },
+        {
+          ...subWorkflow("release-2", {
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("shared-review", { message: "Active review" })],
+            },
+          }),
+          dependsOn: ["release-1"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            gate: {
+              nodeId: "gate",
+              status: "completed",
+              output: { branch: "else", result: {} },
+              attempt: 1,
+            },
+            "root-result": { nodeId: "root-result", status: "completed", attempt: 1 },
+            "release-1": { nodeId: "release-1", status: "completed", attempt: 1 },
+            publish: { nodeId: "publish", status: "completed", attempt: 1 },
+            "release-2": { nodeId: "release-2", status: "running", attempt: 1 },
+            "shared-review": {
+              nodeId: "shared-review",
+              status: "completed",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
       assertEquals(result.nodeStates["release-2"]?.status, "completed");
       assertEquals(result.nodeStates["shared-review"]?.startedAt, originalStartedAt);
     });
