@@ -1049,8 +1049,8 @@ describe("resolveSecurityMiddleware", () => {
       }],
     });
 
-    assertEquals(prompts[0]?.includes("https://example.com/resource"), true);
-    assertEquals(prompts[0]?.includes("https://example.com/result"), true);
+    const urls = [...prompts[0].matchAll(/"url":"([^"]+)"/g)].map((match) => match[1]);
+    assertEquals(urls, ["https://example.com/resource", "https://example.com/result"]);
     await assistant.generate({ input: "follow up" });
     assertEquals(prompts[1]?.includes("original payload"), true);
     assertEquals(prompts[1]?.includes("mutated payload"), false);

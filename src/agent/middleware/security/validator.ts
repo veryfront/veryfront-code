@@ -885,31 +885,30 @@ async function assertInputTextsValid(
 /** Reject only provider-assembly violations introduced by caller-owned layers. */
 async function assertProviderRunsValid(
   validator: InputValidator,
-  providerRuns: string[],
-  trustedRuns: string[],
+  providerRuns: { text: string; trustedPrefix: string }[],
   onViolation?: (violation: SecurityViolation) => void,
 ): Promise<void> {
   if (providerRuns.length === 0) return;
   const patternOnly = { checkCustomValidation: false } as const;
-  const [providerValidation, trustedValidation] = await Promise.all([
-    validateInputTexts(validator, { texts: [], assembled: providerRuns }, patternOnly),
-    validateInputTexts(validator, { texts: [], assembled: trustedRuns }, patternOnly),
-  ]);
-  const trustedPatterns = new Set(
-    trustedValidation.violations.flatMap((violation) =>
-      violation.pattern === undefined ? [] : [violation.pattern]
-    ),
-  );
-  const trustedReasons = new Set(
-    trustedValidation.violations.flatMap((violation) =>
-      violation.pattern === undefined ? [violation.reason] : []
-    ),
-  );
-  const introducedViolations = providerValidation.violations.filter((violation) =>
-    violation.pattern === undefined
-      ? !trustedReasons.has(violation.reason)
-      : !trustedPatterns.has(violation.pattern)
-  );
+  const introducedViolations: SecurityViolation[] = [];
+  for (const { text, trustedPrefix } of providerRuns) {
+    const validation = await validator.validate(text, { ...patternOnly, checkMaxLength: false });
+    for (const violation of validation.violations) {
+      const pattern = violation.pattern;
+      if (pattern === undefined) {
+        introducedViolations.push(violation);
+        continue;
+      }
+      const trustedMatches = patternOccurrences(trustedPrefix, pattern);
+      const introduced = patternOccurrences(text, pattern).some((match) =>
+        match.index + match.text.length > trustedPrefix.length ||
+        !trustedMatches.some((trusted) =>
+          trusted.index === match.index && trusted.text === match.text
+        )
+      );
+      if (introduced) introducedViolations.push(violation);
+    }
+  }
   if (introducedViolations.length > 0) {
     reportViolations(introducedViolations, onViolation);
     throw toError(
@@ -920,17 +919,37 @@ async function assertProviderRunsValid(
     );
   }
 
-  const trustedNeedsSanitization = trustedRuns.some((value) =>
-    (validator.sanitize(value) ?? value) !== value
-  );
-  if (!trustedNeedsSanitization) {
-    assertTextsNeedNoSanitization(
-      validator,
-      providerRuns,
-      "Provider-visible system instructions contain content sanitization removes",
-      onViolation,
+  for (const { text, trustedPrefix } of providerRuns) {
+    const expected = (validator.sanitize(trustedPrefix) ?? trustedPrefix) +
+      text.slice(trustedPrefix.length);
+    if ((validator.sanitize(text) ?? text) === expected) continue;
+    const violation: SecurityViolation = {
+      type: "input",
+      reason: "Provider-visible system instructions contain content sanitization removes",
+      content: text,
+    };
+    reportViolations([violation], onViolation);
+    throw toError(
+      createError({ type: "agent", message: `Input validation failed: ${violation.reason}` }),
     );
   }
+}
+
+function patternOccurrences(input: string, pattern: RegExp): { index: number; text: string }[] {
+  const matcher = new RegExp(pattern.source, pattern.global ? pattern.flags : `${pattern.flags}g`);
+  if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
+  const matches: { index: number; text: string }[] = [];
+  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
+    matches.push({ index: match.index, text: match[0] });
+    if (match[0].length === 0) {
+      matcher.lastIndex = advanceStringIndex(
+        input,
+        matcher.lastIndex,
+        matcher.unicode || matcher.unicodeSets,
+      );
+    }
+  }
+  return matches;
 }
 
 /**
@@ -1016,20 +1035,33 @@ export function securityMiddleware(
     registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
       const systemMessages = providerSystemMessages(providerSystem);
       const callerSystemMessages = messages.filter((message) => message.role === "system");
-      const providerRuns = extractMergedRunTexts(
-        [...systemMessages, ...messages],
-        new Set(systemMessages),
-        new Set(callerSystemMessages),
-      );
-      const trustedRuns = [
-        ...systemMessages.flatMap(extractMessageInputTextRegardlessOfRole),
-        ...systemMessages.flatMap(extractMessageAssembledTextsRegardlessOfRole),
-        ...extractMergedRunTexts(systemMessages),
-      ];
+      const trusted = new Set(systemMessages);
+      const callers = new Set(callerSystemMessages);
+      const providerRuns: { text: string; trustedPrefix: string }[] = [];
+      for (const run of extractMergedSystemRuns([...systemMessages, ...messages])) {
+        if (
+          !run.some((message) => trusted.has(message)) ||
+          !run.some((message) => callers.has(message))
+        ) continue;
+        // Runtime layers precede caller messages in every provider assembly.
+        // Preserve the exact prefix for each separator variant, not merely the
+        // identity of a pattern that happened to match some trusted text.
+        for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+          for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+            const assemble = (layers: Message[]) =>
+              layers.map((message) => messageTextParts(message).join(partSeparator)).join(
+                runSeparator,
+              );
+            providerRuns.push({
+              text: assemble(run),
+              trustedPrefix: assemble(run.filter((message) => trusted.has(message))),
+            });
+          }
+        }
+      }
       await assertProviderRunsValid(
         inputValidator,
         providerRuns,
-        trustedRuns,
         config.onViolation,
       );
     });

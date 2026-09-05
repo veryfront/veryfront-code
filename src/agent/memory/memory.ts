@@ -17,7 +17,9 @@ interface RollbackObserver<M> {
   add(message: M): void;
   clear(): void;
 }
-const memoryRollbackFactories = new WeakMap<object, () => MemoryRollback>();
+// Each factory retains its message type; the heterogeneous registry erases
+// that type until captureMemoryRollback retrieves it with the same memory.
+const memoryRollbackFactories = new WeakMap<object, () => unknown>();
 
 function rollbackValuesEqual(
   left: unknown,
@@ -92,7 +94,7 @@ function registerMemoryRollbackFactory<M extends MinimalMessage>(
   memory: Memory<M>,
   factory: () => MemoryRollback<M>,
 ): void {
-  memoryRollbackFactories.set(memory, factory as unknown as () => MemoryRollback);
+  memoryRollbackFactories.set(memory, factory);
 }
 
 /** @internal Capture an exact built-in memory state before a transactional write. */
