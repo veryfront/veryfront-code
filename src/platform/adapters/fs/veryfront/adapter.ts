@@ -1200,6 +1200,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             // snapshot is published rather than after, so no read can observe
             // the new generation while the old derived entries still stand.
             await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
+              this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(warmupContext)),
               this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(warmupContext)),
               this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(warmupContext)),
               this.cache.deleteByPrefixAsync(buildFileListCacheKey(warmupContext)),

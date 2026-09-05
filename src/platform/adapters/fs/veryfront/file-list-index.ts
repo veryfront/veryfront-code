@@ -22,6 +22,7 @@ export class FileListIndex {
   private pathSet: Set<string> | null = null;
   private indexScopeKey: string | null = null;
   private indexSnapshotVersion: number | undefined;
+  private indexSourceList: Array<FileListCacheEntry> | null = null;
   private indexBuiltAt = 0;
   private indexFresh = false;
   private readyPromise: Promise<void> | null = null;
@@ -49,6 +50,7 @@ export class FileListIndex {
     this.pathSet = null;
     this.indexScopeKey = null;
     this.indexSnapshotVersion = undefined;
+    this.indexSourceList = null;
     this.indexBuiltAt = 0;
     this.indexFresh = false;
     logger.debug("Cleared file list index", { indexedWithContent });
@@ -240,11 +242,12 @@ export class FileListIndex {
 
     const currentIndex = this.index;
     const currentPathSet = this.pathSet;
-    const matchesCurrentIndex = currentIndex && currentPathSet &&
-      fileList.length === currentPathSet.size &&
-      fileList.every((file) =>
-        currentPathSet.has(file.path) && currentIndex.get(file.path) === file.content
-      );
+    const matchesCurrentIndex = currentIndex !== null && currentPathSet !== null &&
+      (fileList === this.indexSourceList ||
+        (fileList.length === currentPathSet.size &&
+          fileList.every((file) =>
+            currentPathSet.has(file.path) && currentIndex.get(file.path) === file.content
+          )));
     if (
       matchesCurrentIndex &&
       this.indexScopeKey === (cacheKey ?? null) &&
@@ -275,6 +278,7 @@ export class FileListIndex {
     this.pathSet = pathSet;
     this.indexScopeKey = cacheKey ?? null;
     this.indexSnapshotVersion = stableSnapshotVersion;
+    this.indexSourceList = fileList;
     this.indexBuiltAt = Date.now();
     this.indexFresh = true;
 

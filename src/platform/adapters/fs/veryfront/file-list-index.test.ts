@@ -168,7 +168,7 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
 
   describe("index reuse", () => {
     it("tracks the fetched listing across local snapshot versions", async () => {
-      const files = [{ path: "a.ts", content: "v1" }];
+      let files = [{ path: "a.ts", content: "v1" }];
       let snapshotVersion = 1;
       const index = new FileListIndex(
         () => Promise.resolve(files),
@@ -176,7 +176,7 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       );
 
       assertEquals(await index.lookup("a.ts"), "v1");
-      files[0]!.content = "v2";
+      files = [{ path: "a.ts", content: "v2" }];
       assertEquals(
         await index.lookup("a.ts"),
         "v2",
@@ -184,7 +184,7 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       );
 
       snapshotVersion += 1;
-      files[0]!.content = "v3";
+      files = [{ path: "a.ts", content: "v3" }];
       assertEquals(
         await index.lookup("a.ts"),
         "v3",
