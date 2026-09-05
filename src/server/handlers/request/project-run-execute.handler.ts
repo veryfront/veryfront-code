@@ -34,7 +34,8 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
-import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
 import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
   EvalAgentAdapter,
@@ -69,8 +70,23 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   message: "Knowledge ingest logs were truncated",
 });
 const ReflectApply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
+const NumberIsFinite = Number.isFinite;
+const NumberParseInt = Number.parseInt;
+const MathTrunc = Math.trunc;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeTrim = String.prototype.trim;
+const NativeRequest = Request;
+const RequestPrototypeClone = Request.prototype.clone;
+const RequestPrototypeJson = Request.prototype.json;
+const ParseHostedChatRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse;
+
+function getOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -181,7 +197,7 @@ export interface ProjectRunExecuteHandlerDeps {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {
@@ -763,22 +779,68 @@ function resolveEvalAgUiEndpoint(
   return getLocalAgUiEndpoint(req);
 }
 
+/**
+ * Read the tool allowlist and step budget the eval adapter forwarded for a run.
+ *
+ * The hosted AG-UI path derives the same values from `runtimeOverrides` and
+ * applies them to runtime creation, so the localized path must apply them too:
+ * an eval that requests a constrained tool surface must not reach the source
+ * agent's full configured tools and MCP servers.
+ */
+async function readLocalEvalRuntimeRestrictions(
+  request: Request,
+): Promise<AgUiRuntimeRestrictions | undefined> {
+  let body: unknown;
+  try {
+    const cloned = ReflectApply(RequestPrototypeClone, request, []) as Request;
+    body = await (ReflectApply(RequestPrototypeJson, cloned, []) as Promise<unknown>);
+  } catch {
+    // The AG-UI handler rejects a body it cannot parse, so there is nothing to
+    // restrict here.
+    return undefined;
+  }
+
+  if (!isRecord(body) || !isRecord(body.forwardedProps)) return undefined;
+  const veryfront = body.forwardedProps.veryfront;
+  if (!isRecord(veryfront)) return undefined;
+  const runtimeOverrides = veryfront.runtimeOverrides;
+  if (runtimeOverrides === undefined) return undefined;
+
+  const parsed = ParseHostedChatRuntimeOverrides(runtimeOverrides);
+  if (!parsed.success) {
+    // Fail closed: forwarded restrictions that cannot be read must not degrade
+    // into an unrestricted eval run.
+    throw INVALID_ARGUMENT.create({ detail: "Eval runtime overrides are invalid" });
+  }
+
+  const { allowedTools, maxSteps } = parsed.data;
+  if (allowedTools === undefined && maxSteps === undefined) return undefined;
+  return {
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  };
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
+  runtimeRestrictions?: AgUiRuntimeRestrictions;
 }): AgentServiceEvalAdapterConfig["fetch"] | undefined {
   if (!input.agentId || !isLocalAgUiEndpoint(input.endpoint)) return undefined;
 
   const agent = agentRegistry.get(input.agentId);
   if (!agent) return undefined;
 
-  const handler = createAgUiHandler({
-    agent,
-    context: { runIdBindsToolAuthorization: false },
-  });
   return async (requestInput, init) => {
-    const request = new Request(requestInput, init);
+    const request = new NativeRequest(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
+    const runtimeRestrictions = input.runtimeRestrictions ??
+      await readLocalEvalRuntimeRestrictions(request);
+    const handler = createAgUiHandler({
+      agent,
+      context: { runIdBindsToolAuthorization: false },
+      ...(runtimeRestrictions ? { runtimeRestrictions } : {}),
+    });
     return await handler(request);
   };
 }
@@ -1038,10 +1100,17 @@ function getStringArrayConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string[] {
-  for (const key of keys) {
-    const value = config[key];
-    if (Array.isArray(value)) {
-      return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
+    const value = getOwnDataProperty(config, key);
+    if (ArrayIsArray(value)) {
+      const strings: string[] = [];
+      for (let valueIndex = 0; valueIndex < value.length; valueIndex++) {
+        const item = value[valueIndex];
+        if (typeof item === "string" && item.length > 0) strings[strings.length] = item;
+      }
+      return strings;
     }
   }
 
@@ -1052,8 +1121,10 @@ function getStringConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string | undefined {
-  for (const key of keys) {
-    const value = config[key];
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
+    const value = getOwnDataProperty(config, key);
     if (typeof value === "string" && value.length > 0) return value;
   }
 
@@ -1256,12 +1327,17 @@ function getNumberConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): number | undefined {
-  for (const key of keys) {
-    const value = config[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() !== "") {
-      const parsed = Number.parseInt(value, 10);
-      if (Number.isFinite(parsed)) return parsed;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
+    const value = getOwnDataProperty(config, key);
+    if (typeof value === "number" && NumberIsFinite(value)) return value;
+    if (
+      typeof value === "string" &&
+      ReflectApply(StringPrototypeTrim, value, []) !== ""
+    ) {
+      const parsed = NumberParseInt(value, 10);
+      if (NumberIsFinite(parsed)) return parsed;
     }
   }
   return undefined;
@@ -1273,7 +1349,7 @@ function getPositiveIntConfig(
 ): number | undefined {
   const value = getNumberConfig(config, keys);
   if (value === undefined) return undefined;
-  const normalized = Math.trunc(value);
+  const normalized = MathTrunc(value);
   return normalized > 0 ? normalized : undefined;
 }
 
@@ -1336,7 +1412,14 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
-  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId });
+  const allowedTools = getStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
+  const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
+  const hasMaxSteps = maxSteps != null;
+  const runtimeRestrictions = {
+    allowedTools,
+    ...(hasMaxSteps ? { maxSteps } : {}),
+  };
+  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
 
   return {
     endpoint,
@@ -1360,8 +1443,8 @@ function createEvalAdapterConfig(input: {
       getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
-    allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
-    maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
+    allowedTools,
+    maxSteps,
     fetch: managedEndpointContext && agentId
       ? bindTrustedLocalEvalFetch(
         createDurableEvalAgentFetch({

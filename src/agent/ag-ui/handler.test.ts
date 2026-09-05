@@ -9,6 +9,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { type AgUiCompletion, AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
 import { AgentRuntime, RunResumeSessionManager } from "../index.ts";
+import { createEphemeralAgent } from "../factory.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
+import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 
 const encoder = new TextEncoder();
@@ -480,6 +487,330 @@ describe("agent/ag-ui-handler", () => {
       // The injected path injects publishDataEvent and wraps the stream once,
       // so the event must surface exactly once (no double-emit).
       assertEquals(body.match(/"name":"test\.report"/g)?.length, 1);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("runs a restricted AG-UI request through a framework-built restricted agent", async () => {
+    const originalStream = AgentRuntime.prototype.stream;
+    let publicStreamCalls = 0;
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      publicStreamCalls += 1;
+      throw new Error("a restricted AG-UI run must not use mutable public stream dispatch");
+    } as typeof AgentRuntime.prototype.stream;
+
+    let observedToolNames: string[] = [];
+    let observedPrompt = "";
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: (options) => {
+        observedToolNames = (options.tools ?? []).map((definition) => definition.name).toSorted();
+        observedPrompt = JSON.stringify(options.prompt ?? "");
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "restricted" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    try {
+      registerSkill(
+        "ag-ui-restricted-skill",
+        {
+          id: "ag-ui-restricted-skill",
+          metadata: { name: "ag-ui-restricted-skill", description: "Never reachable here" },
+          rootPath: "/test/skills/ag-ui-restricted-skill",
+        },
+      );
+
+      const restrictedAgent = createEphemeralAgent({
+        id: "ag-ui-restricted-eval",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "You are helpful.",
+        environmentContext: "Environment: the AG-UI restriction fixture.",
+        tools: {
+          ag_ui_allowed_lookup: tool({
+            id: "ag_ui_allowed_lookup",
+            description: "Allowed by the eval ceiling.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+          ag_ui_denied_delete: tool({
+            id: "ag_ui_denied_delete",
+            description: "Denied by the eval ceiling.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+        },
+        providerTools: ["web_search", "web_fetch"],
+        skills: true,
+        maxSteps: 20,
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+      restrictedAgent.clearMemory = () => {
+        throw new Error("a restricted run must not call mutable source-agent methods");
+      };
+
+      // Unrestricted, this agent does advertise the skill catalog, so the
+      // assertion below is about the ceiling and not about an empty registry.
+      const unrestrictedSystem = getEffectiveAgentSystem(restrictedAgent);
+      const resolvedSystem = typeof unrestrictedSystem === "function"
+        ? await unrestrictedSystem()
+        : unrestrictedSystem;
+      const unrestrictedPrompt = typeof resolvedSystem === "string"
+        ? resolvedSystem
+        : flattenSystemInstructions(resolvedSystem);
+      assertStringIncludes(unrestrictedPrompt, "ag-ui-restricted-skill");
+
+      const handler = createAgUiHandler({
+        agent: restrictedAgent,
+        runtimeRestrictions: {
+          allowedTools: ["ag_ui_allowed_lookup", "web_fetch"],
+          maxSteps: 2,
+        },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_restricted_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            forwardedProps: {
+              veryfront: {
+                runtimeOverrides: { allowedTools: ["ag_ui_denied_delete"], maxSteps: 40 },
+              },
+            },
+          }),
+        }),
+      );
+
+      const body = await response.text();
+      assertStringIncludes(body, "restricted");
+      // Only the allowlisted local tool and provider tool reach the model, and
+      // the request's own forwarded props never widen the ceiling.
+      assertEquals(observedToolNames, ["ag_ui_allowed_lookup", "web_fetch"]);
+      // The framework composes the restricted prompt, so authored environment
+      // context survives...
+      assertStringIncludes(observedPrompt, "Environment: the AG-UI restriction fixture.");
+      // ...while the skill catalog stays out, because the ceiling excluded the
+      // skill loader that would make it actionable.
+      assertEquals(observedPrompt.includes("available_skills"), false);
+      assertEquals(observedPrompt.includes("ag-ui-restricted-skill"), false);
+      // The run dispatches through the framework-owned private capability.
+      assertEquals(publicStreamCalls, 0);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+      skillRegistryInternal.clearAll();
+    }
+  });
+
+  it("preserves a factory-assigned agent id on the rebuilt restricted agent", async () => {
+    const observedAgentIds: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: () =>
+        Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "identity-preserved" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        }),
+    };
+
+    // No `config.id`: the factory assigns `agent.id` and leaves `config.id`
+    // undefined, so rebuilding the restricted agent from the config alone
+    // would mint a fresh id, hiding owner-scoped registry tools and skills
+    // and handing hooks such as `resolveModelTransport` the wrong identity.
+    const agent = createEphemeralAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "You are helpful.",
+      resolveModelTransport: (request) => {
+        observedAgentIds.push(request.agentId);
+        return Promise.resolve({ model });
+      },
+    });
+
+    const handler = createAgUiHandler({
+      agent,
+      runtimeRestrictions: { allowedTools: [], maxSteps: 2 },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_identity_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "identity-preserved");
+    assertEquals(observedAgentIds, [agent.id]);
+  });
+
+  it("refuses injected client tools on a restricted AG-UI run", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      sessionManager,
+      runtimeRestrictions: { allowedTools: [] },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_injected_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+          tools: [{ name: "client_confirm" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(testAgent.capturedMessages.length, 0);
+  });
+
+  it("allows injected client tools under a step-only restriction and applies the bound", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    let publicStreamCalls = 0;
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      publicStreamCalls += 1;
+      throw new Error("a restricted AG-UI run must not use mutable public stream dispatch");
+    } as typeof AgentRuntime.prototype.stream;
+
+    // The model always answers with a tool call, so the agent loop never
+    // finishes on its own and exits through the max-steps path.
+    let modelCalls = 0;
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "test",
+      modelId: "test/step-restricted",
+      doGenerate: () => {
+        throw new Error("Expected the streaming path");
+      },
+      doStream: () => {
+        modelCalls++;
+        const parts: unknown[] = [
+          { type: "text-delta", id: `text-${modelCalls}`, delta: "stepped" },
+          {
+            type: "tool-call",
+            toolCallId: `call-${modelCalls}`,
+            toolName: "step_noop_tool",
+            input: {},
+          },
+          {
+            type: "finish",
+            finishReason: "tool-calls",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ];
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              for (const part of parts) controller.enqueue(part);
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+
+    try {
+      const stepAgent = createEphemeralAgent({
+        id: "ag-ui-step-restricted",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "You are helpful.",
+        tools: {
+          step_noop_tool: tool({
+            id: "step_noop_tool",
+            description: "Succeeds without side effects.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ ok: true }),
+          }),
+        },
+        maxSteps: 20,
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+
+      const handler = createAgUiHandler({
+        agent: stepAgent,
+        sessionManager,
+        runtimeRestrictions: { maxSteps: 3 },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_restricted_steps_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      const body = await response.text();
+      assertEquals(response.status, 200);
+      assertStringIncludes(body, "stepped");
+      // No allowlist exists for the injected tools to bypass, so the run
+      // proceeds with the merged tool surface -- but under the narrowed step
+      // bound: 3 model calls instead of the configured 20.
+      assertEquals(modelCalls, 3);
+      // The narrowed run dispatches through the framework-owned private
+      // capability, so a replaced prototype method cannot escape the ceiling.
+      assertEquals(publicStreamCalls, 0);
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }

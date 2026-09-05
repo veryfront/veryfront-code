@@ -5,6 +5,8 @@ export const AGENT_DELEGATE_TOOL_PREFIX = "agent_";
 
 /** Provider tool-call names allow only this charset, max 64 chars. */
 const PROVIDER_TOOL_NAME_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
 
 /** Whether a delegate id produces a provider-safe `agent_{id}` tool name. */
 export function isProviderSafeDelegateId(delegateId: string): boolean {
@@ -22,8 +24,10 @@ export function normalizeAgentDelegateIds(
 
   const normalized: string[] = [];
   const seen = new Set<string>();
-  for (const value of delegates) {
-    const delegateId = value.trim();
+  for (let index = 0; index < delegates.length; index++) {
+    const value = delegates[index];
+    if (value === undefined) continue;
+    const delegateId = applyIntrinsic(stringTrim, value, []) as string;
     if (!delegateId || seen.has(delegateId)) {
       continue;
     }

@@ -3,6 +3,14 @@ import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-pol
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
+const ArraySort = Array.prototype.sort;
+const SetAdd = Set.prototype.add;
+const SetHas = Set.prototype.has;
+
+function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
+  return ReflectApply(SetHas, set, [value]);
+}
+
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
@@ -540,7 +548,11 @@ export function createToolExposurePlan(input: {
   bootstrapToolNames?: ReadonlySet<string>;
   maxVisibleTools?: number;
 }): ToolExposurePlan {
-  const authorized = [...input.authorized];
+  const authorized: ToolDefinition[] = [];
+  for (let index = 0; index < input.authorized.length; index++) {
+    const tool = input.authorized[index];
+    if (tool !== undefined) authorized[authorized.length] = tool;
+  }
   if (input.mode === "eager") {
     return {
       authorized,
@@ -549,14 +561,24 @@ export function createToolExposurePlan(input: {
       loadedToolNames: input.state.loadedToolNames,
     };
   }
-  if (authorized.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME)) {
-    throw new Error(`"${TOOL_SEARCH_TOOL_NAME}" is reserved by the Veryfront runtime`);
+  for (let index = 0; index < authorized.length; index++) {
+    if (authorized[index]?.name === TOOL_SEARCH_TOOL_NAME) {
+      throw new Error(`"${TOOL_SEARCH_TOOL_NAME}" is reserved by the Veryfront runtime`);
+    }
   }
 
   const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
-  const bootstrapCount = authorized.filter((tool) => bootstrap.has(tool.name)).length;
-  const loadable = authorized.filter((tool) => !bootstrap.has(tool.name));
-  const loadableNames = new Set(loadable.map((tool) => tool.name));
+  let bootstrapCount = 0;
+  const loadable: ToolDefinition[] = [];
+  const loadableNames = new Set<string>();
+  for (let index = 0; index < authorized.length; index++) {
+    const tool = authorized[index]!;
+    if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
+    else {
+      loadable[loadable.length] = tool;
+      ReflectApply(SetAdd, loadableNames, [tool.name]);
+    }
+  }
   const loadedCapacity = input.maxVisibleTools === undefined
     ? undefined
     : Math.max(0, input.maxVisibleTools - bootstrapCount);
@@ -565,16 +587,29 @@ export function createToolExposurePlan(input: {
     : Math.max(0, loadedCapacity - (loadable.length > loadedCapacity ? 1 : 0));
   pruneLoadedToolNames(input.state, loadableNames);
   retainNewestLoadedToolNames(input.state, maxLoadedTools);
-  const visible = authorized
-    .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name));
-  const visibleNames = new Set(visible.map((tool) => tool.name));
-  const deferred = loadable
-    .filter((tool) => !visibleNames.has(tool.name))
-    .sort((left, right) => compareAscii(left.name, right.name));
-  if (deferred.length > 0) {
-    visible.push(createToolSearchDefinition());
+  const visible: ToolDefinition[] = [];
+  const visibleNames = new Set<string>();
+  for (let index = 0; index < authorized.length; index++) {
+    const tool = authorized[index]!;
+    if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
+      visible[visible.length] = tool;
+      ReflectApply(SetAdd, visibleNames, [tool.name]);
+    }
   }
-  visible.sort((left, right) => compareAscii(left.name, right.name));
+  const deferred: ToolDefinition[] = [];
+  for (let index = 0; index < loadable.length; index++) {
+    const tool = loadable[index]!;
+    if (!setHas(visibleNames, tool.name)) deferred[deferred.length] = tool;
+  }
+  ReflectApply(ArraySort, deferred, [
+    (left: ToolDefinition, right: ToolDefinition) => compareAscii(left.name, right.name),
+  ]);
+  if (deferred.length > 0) {
+    visible[visible.length] = createToolSearchDefinition();
+  }
+  ReflectApply(ArraySort, visible, [
+    (left: ToolDefinition, right: ToolDefinition) => compareAscii(left.name, right.name),
+  ]);
 
   return {
     authorized,
