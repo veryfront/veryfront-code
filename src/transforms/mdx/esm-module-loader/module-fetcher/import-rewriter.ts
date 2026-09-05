@@ -4,8 +4,8 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/import-rewriter
  */
 
-import { dirname, join, resolve } from "#veryfront/compat/path";
-import { FRAMEWORK_ROOT } from "../constants.ts";
+import { dirname, resolve } from "#veryfront/compat/path";
+import { isFrameworkSourceFile } from "../constants.ts";
 import {
   DEFAULT_REACT_VERSION,
   type ImportSpecifierInfo,
@@ -140,22 +140,19 @@ async function findExistingFrameworkRelativeTarget(
 
 export async function rewriteDntImports(code: string, sourceFilePath: string): Promise<string> {
   // Only needed for framework files that come from the npm package.
-  // IMPORTANT: Use FRAMEWORK_ROOT + "src/" or dist/framework-src to avoid matching project source files
-  // that live under FRAMEWORK_ROOT (e.g., projects/myproject/components/...).
+  // IMPORTANT: `isFrameworkSourceFile` matches only the framework source roots,
+  // never `FRAMEWORK_ROOT` itself, so project source that lives beneath it
+  // (e.g. projects/myproject/components/...) is not treated as framework source.
   // Without this, project relative imports get rewritten to absolute file:// source
   // paths with .js extensions, which fail because actual files are .tsx/.ts.
-  const frameworkSrcRoot = join(FRAMEWORK_ROOT, "src") + "/";
-  const embeddedSrcRoot = join(FRAMEWORK_ROOT, "dist", "framework-src") + "/";
-  const isFrameworkFile = sourceFilePath.startsWith(frameworkSrcRoot) ||
-    sourceFilePath.startsWith(embeddedSrcRoot) ||
-    sourceFilePath.includes("/node_modules/");
+  const isFrameworkSource = isFrameworkSourceFile(sourceFilePath);
+  const isFrameworkFile = isFrameworkSource || sourceFilePath.includes("/node_modules/");
   if (!isFrameworkFile) {
     return code;
   }
 
   const sourceDir = dirname(sourceFilePath);
-  const needsFrameworkSourceFallback = sourceFilePath.startsWith(frameworkSrcRoot) ||
-    sourceFilePath.startsWith(embeddedSrcRoot);
+  const needsFrameworkSourceFallback = isFrameworkSource;
 
   let rewritten = code;
   const patterns = [

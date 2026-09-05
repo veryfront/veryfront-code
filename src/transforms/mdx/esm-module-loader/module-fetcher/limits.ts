@@ -41,9 +41,19 @@ export class ModuleImportLimitError extends Error {
 }
 
 export class ModuleSourceLimitError extends Error {
-  constructor(modulePath: string, sizeBytes: number, maxBytes: number) {
+  /**
+   * `modulePath` reaches error logs and compile-error output, so callers that
+   * hold a local filesystem path must pass a redacted identity instead.
+   *
+   * `sizeBytes` is undefined when a strict bounded reader rejected the source
+   * without ever measuring it: refusing to read past the ceiling is the point,
+   * so the size is genuinely unknown rather than omitted.
+   */
+  constructor(modulePath: string, sizeBytes: number | undefined, maxBytes: number) {
     super(
-      `MDX module "${modulePath}" exceeds the source-size limit (${sizeBytes} bytes, max ${maxBytes})`,
+      sizeBytes === undefined
+        ? `MDX module "${modulePath}" exceeds the source-size limit (max ${maxBytes} bytes)`
+        : `MDX module "${modulePath}" exceeds the source-size limit (${sizeBytes} bytes, max ${maxBytes})`,
     );
     this.name = "ModuleSourceLimitError";
   }
@@ -52,5 +62,11 @@ export class ModuleSourceLimitError extends Error {
 export function assertMdxModuleImportCount(modulePath: string, count: number): void {
   if (count > MAX_MDX_MODULE_IMPORTS_PER_FILE) {
     throw new ModuleImportLimitError(modulePath, count);
+  }
+}
+
+export function assertMdxModuleSourceSize(modulePath: string, sizeBytes: number): void {
+  if (sizeBytes > MAX_MDX_MODULE_CODE_BYTES) {
+    throw new ModuleSourceLimitError(modulePath, sizeBytes, MAX_MDX_MODULE_CODE_BYTES);
   }
 }
