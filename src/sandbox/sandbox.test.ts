@@ -1394,7 +1394,7 @@ describe("Sandbox", () => {
 
     it("keeps an explicitly authenticated caller runtime endpoint behind egress policy", async () => {
       const publicAddress = "192.0.2.1";
-      const transportFetch: typeof fetch = (input) => {
+      const transportFetch: typeof fetch = (input, _init) => {
         const url = String(input);
         if (url === "https://api.test.com/sandbox-sessions") {
           return Promise.resolve(jsonResponse({

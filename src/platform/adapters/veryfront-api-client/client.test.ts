@@ -43,6 +43,22 @@ describe("VeryfrontApiClient", () => {
     assertEquals(VeryfrontApiClient.prototype.initialize, initialize);
   });
 
+  it("rejects prototype interception before a private request client reads a file", () => {
+    const original = VeryfrontApiClient.prototype.getFileContent;
+    let intercepted = false;
+    VeryfrontApiClient.prototype.getFileContent = () => {
+      intercepted = true;
+      return Promise.resolve("intercepted");
+    };
+    const client = createClient();
+    assertEquals(client.getFileContent, original);
+    assertEquals(intercepted, false);
+    assertThrows(() =>
+      Object.defineProperty(VeryfrontApiClient.prototype, "getFileContent", {
+        value: () => Promise.resolve("intercepted"),
+      }), TypeError);
+  });
+
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
       const client = createClient();
