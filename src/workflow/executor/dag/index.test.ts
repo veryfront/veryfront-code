@@ -15,6 +15,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertNotEquals,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -5217,6 +5218,142 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["release-2"]?.status, "running");
       assertEquals(result.nodeStates.review?.status, "running");
       assertEquals(result.waiting, true);
+    });
+
+    it("does not seed an unreached active child from an earlier completed branch", async () => {
+      const originalStartedAt = new Date("2026-01-01T00:00:00.000Z");
+      const nodes: WorkflowNode[] = [
+        {
+          id: "producer",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [
+              waitForApproval("group/a", { message: "Approve A" }),
+              {
+                ...waitForApproval("group/b", { message: "Approve B" }),
+                dependsOn: ["group/a"],
+              },
+            ],
+            else: [],
+          } as any,
+        },
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-wf",
+              steps: [
+                waitForApproval("group/a", { message: "Approve release A" }),
+                {
+                  ...waitForApproval("group/b", { message: "Approve release B" }),
+                  dependsOn: ["group/a"],
+                },
+              ],
+            },
+          }),
+          dependsOn: ["producer"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            producer: {
+              nodeId: "producer",
+              status: "completed",
+              output: { branch: "then", result: {} },
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "group/a": {
+              nodeId: "group/a",
+              status: "completed",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              completedAt: new Date(),
+            },
+            "group/b": {
+              nodeId: "group/b",
+              status: "completed",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              completedAt: new Date(),
+            },
+            release: {
+              nodeId: "release",
+              status: "running",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              _activeCompositeChildIds: ["group/a"],
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "group/b");
+      assertEquals(result.nodeStates["group/a"]?.startedAt, originalStartedAt);
+      assertEquals(result.nodeStates["group/b"]?.status, "running");
+      assertNotEquals(result.nodeStates["group/b"]?.startedAt, originalStartedAt);
+    });
+
+    it("prefers an active legacy child over a completed static sibling", async () => {
+      const originalStartedAt = new Date("2026-01-01T00:00:00.000Z");
+      const nodes: WorkflowNode[] = [
+        subWorkflow("release-1", {
+          workflow: {
+            id: "release-wf-1",
+            steps: [waitForApproval("review", { message: "Approve the first release" })],
+          },
+        }),
+        {
+          ...subWorkflow("release-2", {
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("review", { message: "Approve the second release" })],
+            },
+          }),
+          dependsOn: ["release-1"],
+        },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "release-1": {
+              nodeId: "release-1",
+              status: "completed",
+              attempt: 1,
+              completedAt: new Date(),
+            },
+            "release-2": {
+              nodeId: "release-2",
+              status: "running",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              _activeCompositeChildIds: ["review"],
+            },
+            review: {
+              nodeId: "review",
+              status: "completed",
+              attempt: 1,
+              startedAt: originalStartedAt,
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates["release-2"]?.status, "completed");
+      assertEquals(result.nodeStates.review?.startedAt, originalStartedAt);
     });
 
     it("keeps ownerless state when only an untaken earlier branch reserves its id", async () => {

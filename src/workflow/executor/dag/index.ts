@@ -963,13 +963,24 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
   scope: ExecutionScope,
 ): Set<string> {
   const producedNodeIds = new Set<string>();
-  const currentReservations = scope.subWorkflowNodeReservations.get(ownerPath) ?? new Set<string>();
   const currentOwnerIsActive = scope.resumedSubWorkflowOwnerPaths.has(ownerPath);
+  const currentOwnerNodeId = scope.subWorkflowReservationOwners.get(ownerPath);
+  const recordedReachedNodeIds = currentOwnerNodeId === undefined
+    ? undefined
+    : nodeStates[currentOwnerNodeId]?._activeCompositeChildIds;
+  // Checkpoints written before reach evidence existed can only retain the
+  // legacy all-reservations behavior; new waits persist the precise subset.
+  const currentOwnerReachedNodeIds = new Set(
+    currentOwnerIsActive
+      ? recordedReachedNodeIds ?? scope.subWorkflowNodeReservations.get(ownerPath) ?? []
+      : [],
+  );
+  const isReachedByCurrentOwner = (nodeId: string, state: NodeState): boolean =>
+    currentOwnerIsActive && currentOwnerReachedNodeIds.has(nodeId) &&
+    state._subWorkflowOwnerPath === undefined;
   for (const nodeId of scope.completedCompositeChildIds) {
-    if (
-      currentOwnerIsActive && currentReservations.has(nodeId) &&
-      nodeStates[nodeId]?._subWorkflowOwnerPath === undefined
-    ) continue;
+    const state = nodeStates[nodeId];
+    if (state && isReachedByCurrentOwner(nodeId, state)) continue;
     producedNodeIds.add(nodeId);
   }
   for (const [owner, ids] of scope.subWorkflowNodeIds) {
@@ -989,10 +1000,7 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
     // legacy child could be its output; treating it as previously produced is
     // conservative and prevents a later sibling from bypassing its own wait.
     for (const [nodeId, state] of Object.entries(nodeStates)) {
-      if (
-        currentOwnerIsActive && currentReservations.has(nodeId) &&
-        state._subWorkflowOwnerPath === undefined
-      ) continue;
+      if (isReachedByCurrentOwner(nodeId, state)) continue;
       if (state._subWorkflowOwnerPath === undefined) producedNodeIds.add(nodeId);
     }
   }
@@ -1006,7 +1014,11 @@ function collectPreviouslyProducedSubWorkflowNodeIds(
     const ownerNodeId = scope.subWorkflowReservationOwners.get(owner);
     const ownerStatus = reservationOwnerStatus(owner, ownerNodeId, nodeStates, scope);
     if (ownerStatus === undefined || ownerStatus === "pending") continue;
-    for (const id of ids) producedNodeIds.add(id);
+    for (const id of ids) {
+      const state = nodeStates[id];
+      if (state && isReachedByCurrentOwner(id, state)) continue;
+      producedNodeIds.add(id);
+    }
   }
   return producedNodeIds;
 }
@@ -2354,6 +2366,16 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
+      ...(waiting
+        ? {
+          _activeCompositeChildIds: [
+            ...new Set([
+              ...(nodeStates[node.id]?._activeCompositeChildIds ?? []),
+              ...Object.keys(result.nodeStates),
+            ]),
+          ],
+        }
+        : {}),
     };
 
     this.config.onNodeComplete?.(node.id, state);
