@@ -39,7 +39,7 @@ export async function* readPinnedDirectory(
 function openPosixLibrary() {
   const darwin = Deno.build.os === "darwin";
   const inode64Suffix = darwin && Deno.build.arch === "x86_64" ? "$INODE64" : "";
-  return Deno.dlopen(
+  const library = Deno.dlopen(
     darwin ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
     {
       open: { parameters: ["buffer", "i32"], result: "i32" },
@@ -49,7 +49,24 @@ function openPosixLibrary() {
       pread: { parameters: ["i32", "buffer", "usize", "i64"], result: "isize" },
       pwrite: { parameters: ["i32", "buffer", "usize", "i64"], result: "isize" },
       ftruncate: { parameters: ["i32", "i64"], result: "i32" },
-      fstat: { name: "fstat" + inode64Suffix, parameters: ["i32", "buffer"], result: "i32" },
+      fstat: {
+        name: "fstat" + inode64Suffix,
+        parameters: ["i32", "buffer"],
+        result: "i32",
+        optional: !darwin,
+      },
+      legacyFstat: {
+        name: "__fxstat",
+        parameters: ["i32", "i32", "buffer"],
+        result: "i32",
+        optional: true,
+      },
+      legacyFstatat: {
+        name: "__fxstatat",
+        parameters: ["i32", "i32", "buffer", "buffer", "i32"],
+        result: "i32",
+        optional: true,
+      },
       fdopendir: {
         name: "fdopendir" + inode64Suffix,
         parameters: ["i32"],
@@ -65,9 +82,30 @@ function openPosixLibrary() {
         name: "fstatat" + inode64Suffix,
         parameters: ["i32", "buffer", "buffer", "i32"],
         result: "i32",
+        optional: !darwin,
       },
     },
   );
+  // Older glibc exports the versioned entrypoints rather than fstat/fstatat.
+  // The x86-64 stat ABI is version 1; the generic AArch64 ABI is version 0.
+  const version = Deno.build.arch === "x86_64" ? 1 : 0;
+  return {
+    close: () => library.close(),
+    symbols: {
+      ...library.symbols,
+      fstat: (fd: number, info: Uint8Array<ArrayBuffer>) =>
+        library.symbols.fstat?.(fd, info) ??
+          library.symbols.legacyFstat?.(version, fd, info) ?? -1,
+      fstatat: (
+        fd: number,
+        name: Uint8Array<ArrayBuffer>,
+        info: Uint8Array<ArrayBuffer>,
+        flags: number,
+      ) =>
+        library.symbols.fstatat?.(fd, name, info, flags) ??
+          library.symbols.legacyFstatat?.(version, fd, name, info, flags) ?? -1,
+    },
+  };
 }
 
 function posixError(library: ReturnType<typeof openPosixLibrary>): Error {

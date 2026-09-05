@@ -586,6 +586,18 @@ function sameFileIdentity(opened: StableFileIdentity, current: StableFileIdentit
   return opened.device === current.device && opened.inode === current.inode;
 }
 
+function failedCreation(error: unknown, path: string): SafeFileGuardError {
+  const reason = error instanceof SafeFileGuardError
+    ? error.message
+    : "File creation did not finish.";
+  return new SafeFileGuardError(
+    `${reason} A newly created file may remain at ${
+      JSON.stringify(parsePath(path).base)
+    }. Inspect it before retrying.`,
+    { cause: error },
+  );
+}
+
 async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r+" | "wx+") {
   if (Deno.build.os === "windows") {
     if (mode !== "wx+") return await openNativeFile(path, mode);
@@ -611,6 +623,8 @@ async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r
         await file.close();
         throw error;
       }
+    } catch (error) {
+      throw failedCreation(error, path);
     } finally {
       created.close();
     }
@@ -650,8 +664,10 @@ async function writeTextFileInsideProjectWithNativeHandle(
   // the opened identity and current in-project path agree. A parent swapped to
   // a junction or symlink can redirect this open, but never a later write.
   let file: Awaited<ReturnType<typeof openProjectFile>>;
+  let created = false;
   try {
     file = await openProjectFile(path, projectRoot, requireMissing ? "wx+" : "r+");
+    created = requireMissing;
   } catch (error) {
     if (
       requireMissing || !allowMissing || (Deno.build.os === "windows" && !isNotFoundError(error))
@@ -659,6 +675,7 @@ async function writeTextFileInsideProjectWithNativeHandle(
     // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
     // planted at the path, so creating an absent manifest stays contained.
     file = await openProjectFile(path, projectRoot, "wx+");
+    created = true;
   }
   try {
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
@@ -706,6 +723,8 @@ async function writeTextFileInsideProjectWithNativeHandle(
         "Refusing to finish a write because the destination path changed.",
       );
     }
+  } catch (error) {
+    throw created ? failedCreation(error, path) : error;
   } finally {
     await file.close();
   }

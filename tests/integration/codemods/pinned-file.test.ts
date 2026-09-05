@@ -8,6 +8,59 @@ import {
 } from "../../../scripts/codemods/pinned-directory.ts";
 
 describe("pinned file operations", () => {
+  it("uses legacy stat bindings when modern glibc symbols are unavailable", async () => {
+    if (Deno.build.os !== "linux") return;
+    const root = await Deno.realPath(await makeTempDir());
+    const originalDlopen = Deno.dlopen;
+    const legacyCalls = new Set<string>();
+    try {
+      await Deno.writeTextFile(`${root}/app.ts`, "original");
+      Deno.dlopen = ((path: string | URL, symbols: Deno.ForeignLibraryInterface) => {
+        const bindings = { ...symbols };
+        for (const name of ["fstat", "fstatat"]) {
+          if (name in bindings) {
+            bindings[name] = { ...bindings[name], name: "veryfront_missing_stat_symbol" };
+          }
+        }
+        const library = originalDlopen(path, bindings);
+        return new Proxy(library, {
+          get(nativeLibrary, key) {
+            if (key === "symbols") {
+              return new Proxy(nativeLibrary.symbols, {
+                get(symbols, symbol) {
+                  const fn = Reflect.get(symbols, symbol);
+                  if (typeof fn !== "function") return fn;
+                  return (...values: unknown[]) => {
+                    if (symbol === "legacyFstat" || symbol === "legacyFstatat") {
+                      legacyCalls.add(symbol);
+                      assertEquals(values[0], Deno.build.arch === "x86_64" ? 1 : 0);
+                    }
+                    const result = Reflect.apply(fn, undefined, values);
+                    if (symbol === "readdir_r" && values[1] instanceof Uint8Array) {
+                      // DT_UNKNOWN forces the fstatat fallback as well.
+                      values[1][18] = 0;
+                    }
+                    return result;
+                  };
+                },
+              });
+            }
+            const value = Reflect.get(nativeLibrary, key, nativeLibrary);
+            return typeof value === "function" ? value.bind(nativeLibrary) : value;
+          },
+        });
+      }) as typeof Deno.dlopen;
+      const names: string[] = [];
+      for await (const entry of readPinnedDirectory(root, root)) names.push(entry.name);
+      assertEquals(names, ["app.ts"]);
+      await writeTextFileInsideProject(`${root}/app.ts`, root, "updated");
+      assertEquals(await Deno.readTextFile(`${root}/app.ts`), "updated");
+      assertEquals([...legacyCalls].sort(), ["legacyFstat", "legacyFstatat"]);
+    } finally {
+      Deno.dlopen = originalDlopen;
+      await Deno.remove(root, { recursive: true });
+    }
+  });
   it("preserves access through execute-only POSIX ancestors", async () => {
     if (Deno.build.os === "windows") return;
     const base = await Deno.realPath(await makeTempDir());

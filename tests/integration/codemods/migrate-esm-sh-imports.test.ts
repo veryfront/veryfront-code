@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { parse } from "npm:@babel/parser@7.29.2";
 import { stat as statNativeFile } from "node:fs/promises";
@@ -20,7 +26,7 @@ import { readPinnedDirectory } from "../../../scripts/codemods/pinned-directory.
 // CLI option parsing
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod accepts the deno task separator", () => {
+it("esm-sh codemod accepts the deno task separator", () => {
   assertEquals(parseCliOptions(["--", "--dry-run", "./project"]), {
     projectDir: "./project",
     dryRun: true,
@@ -28,7 +34,7 @@ Deno.test("esm-sh codemod accepts the deno task separator", () => {
   });
 });
 
-Deno.test("esm-sh codemod rejects multiple positional arguments", () => {
+it("esm-sh codemod rejects multiple positional arguments", () => {
   let threw = false;
   try {
     parseCliOptions(["./a", "./b"]);
@@ -38,7 +44,7 @@ Deno.test("esm-sh codemod rejects multiple positional arguments", () => {
   assert(threw);
 });
 
-Deno.test("esm-sh codemod preserves a drive-relative report root", () => {
+it("esm-sh codemod preserves a drive-relative report root", () => {
   assertEquals(joinReportPath("C:", "app.ts", true), "C:app.ts");
   assertEquals(joinReportPath("C:\\project", "app.ts", true), "C:\\project/app.ts");
   assertEquals(joinReportPath("C:\\", "app.ts", true), "C:\\app.ts");
@@ -48,7 +54,7 @@ Deno.test("esm-sh codemod preserves a drive-relative report root", () => {
 // No-op cases
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod leaves unrelated imports unchanged", () => {
+it("esm-sh codemod leaves unrelated imports unchanged", () => {
   const source = 'import { x } from "veryfront/ui";\nexport const v = x;\n';
   const result = migrateEsmShImports(source);
   assertEquals(result, {
@@ -61,7 +67,7 @@ Deno.test("esm-sh codemod leaves unrelated imports unchanged", () => {
   });
 });
 
-Deno.test("esm-sh codemod leaves non-esm.sh URLs untouched", () => {
+it("esm-sh codemod leaves non-esm.sh URLs untouched", () => {
   const source = 'import { x } from "https://cdn.skypack.dev/pkg@1.0.0";\n';
   const result = migrateEsmShImports(source);
   assertEquals(result.changed, false);
@@ -71,7 +77,7 @@ Deno.test("esm-sh codemod leaves non-esm.sh URLs untouched", () => {
 // Versioned URL → bare specifier + pin
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod rewrites a versioned esm.sh import to bare + pin", () => {
+it("esm-sh codemod rewrites a versioned esm.sh import to bare + pin", () => {
   const source = 'import { something } from "https://esm.sh/some-pkg@1.2.3";\n';
   const result = migrateEsmShImports(source);
 
@@ -83,7 +89,7 @@ Deno.test("esm-sh codemod rewrites a versioned esm.sh import to bare + pin", () 
   assertEquals(result.rewrites, [{ from: "https://esm.sh/some-pkg@1.2.3", to: "some-pkg" }]);
 });
 
-Deno.test("esm-sh codemod rewrites an export-from with a versioned URL", () => {
+it("esm-sh codemod rewrites an export-from with a versioned URL", () => {
   const source = 'export { Foo } from "https://esm.sh/lib@2.0.0";\n';
   const result = migrateEsmShImports(source);
 
@@ -92,7 +98,7 @@ Deno.test("esm-sh codemod rewrites an export-from with a versioned URL", () => {
   assertEquals(result.pins, { lib: "2.0.0" });
 });
 
-Deno.test("esm-sh codemod rewrites an export-all with a versioned URL", () => {
+it("esm-sh codemod rewrites an export-all with a versioned URL", () => {
   const source = 'export * from "https://esm.sh/lib@3.1.0";\n';
   const result = migrateEsmShImports(source);
 
@@ -105,7 +111,7 @@ Deno.test("esm-sh codemod rewrites an export-all with a versioned URL", () => {
 // Unversioned URL → bare specifier + needs-resolution
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod rewrites an unversioned URL to bare and records needs-resolution", () => {
+it("esm-sh codemod rewrites an unversioned URL to bare and records needs-resolution", () => {
   const source = 'import { something } from "https://esm.sh/some-pkg";\n';
   const result = migrateEsmShImports(source);
 
@@ -115,7 +121,7 @@ Deno.test("esm-sh codemod rewrites an unversioned URL to bare and records needs-
   assertEquals(result.needsResolution, ["some-pkg"]);
 });
 
-Deno.test("esm-sh codemod does not request resolution when the same file provides a pin", () => {
+it("esm-sh codemod does not request resolution when the same file provides a pin", () => {
   const source = [
     'import { a } from "https://esm.sh/some-pkg";',
     'import { b } from "https://esm.sh/some-pkg@1.2.3/subpath";',
@@ -131,7 +137,7 @@ Deno.test("esm-sh codemod does not request resolution when the same file provide
 // Scoped package with subpath
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles a scoped package with a subpath", () => {
+it("esm-sh codemod handles a scoped package with a subpath", () => {
   const source = 'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist/index";\n';
   const result = migrateEsmShImports(source);
 
@@ -141,7 +147,7 @@ Deno.test("esm-sh codemod handles a scoped package with a subpath", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod handles scoped package without version and with subpath", () => {
+it("esm-sh codemod handles scoped package without version and with subpath", () => {
   const source = 'import type { Bar } from "https://esm.sh/@scope/pkg/types";\n';
   const result = migrateEsmShImports(source);
 
@@ -151,7 +157,7 @@ Deno.test("esm-sh codemod handles scoped package without version and with subpat
   assertEquals(result.needsResolution, ["@scope/pkg"]);
 });
 
-Deno.test("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
+it("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
   const source = 'import { x } from "https://esm.sh/v135/zod@3.22.4";\n';
   const result = migrateEsmShImports(source);
 
@@ -160,7 +166,7 @@ Deno.test("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
   assertEquals(result.pins, { zod: "3.22.4" });
 });
 
-Deno.test("esm-sh codemod handles esm.sh stable prefix", () => {
+it("esm-sh codemod handles esm.sh stable prefix", () => {
   const source = 'import { x } from "https://esm.sh/stable/zod@3.22.4/lib/index.js";\n';
   const result = migrateEsmShImports(source);
 
@@ -170,7 +176,7 @@ Deno.test("esm-sh codemod handles esm.sh stable prefix", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod skips stable-prefixed react imports", () => {
+it("esm-sh codemod skips stable-prefixed react imports", () => {
   const source = 'import React from "https://esm.sh/stable/react@18.3.1/index.js";\n';
   const result = migrateEsmShImports(source);
 
@@ -184,7 +190,7 @@ Deno.test("esm-sh codemod skips stable-prefixed react imports", () => {
 // Unsafe URL forms
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod leaves behavior-changing query options untouched", () => {
+it("esm-sh codemod leaves behavior-changing query options untouched", () => {
   const source = [
     'import worker from "https://esm.sh/pkg@1.2.3?worker";',
     'import raw from "https://esm.sh/pkg@1.2.3?raw";',
@@ -199,7 +205,7 @@ Deno.test("esm-sh codemod leaves behavior-changing query options untouched", () 
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
+it("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
   const source = [
     'import gh from "https://esm.sh/gh/owner/repository@1.2.3";',
     'import github from "https://esm.sh/github.com/owner/repository@1.2.3";',
@@ -221,7 +227,7 @@ Deno.test("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
+it("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
   const source = String.raw`import value from 'https://esm.sh/pkg@1.2.3/foo\'bar';` + "\n";
   const result = migrateEsmShImports(source);
 
@@ -232,7 +238,7 @@ Deno.test("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
   parse(result.code, { sourceType: "module" });
 });
 
-Deno.test("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
+it("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
   const source = [
     'import parent from "https://esm.sh/pkg@1.2.3/../evil";',
     'import current from "https://esm.sh/pkg@1.2.3/./feature";',
@@ -250,7 +256,7 @@ Deno.test("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod leaves tags, partial versions, and ranges untouched", () => {
+it("esm-sh codemod leaves tags, partial versions, and ranges untouched", () => {
   const source = [
     'import tagged from "https://esm.sh/pkg@next";',
     'import major from "https://esm.sh/pkg@4";',
@@ -266,7 +272,7 @@ Deno.test("esm-sh codemod leaves tags, partial versions, and ranges untouched", 
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod accepts exact prerelease and build SemVer pins", () => {
+it("esm-sh codemod accepts exact prerelease and build SemVer pins", () => {
   const source = [
     'import prerelease from "https://esm.sh/pkg-a@1.2.3-rc.1";',
     'import build from "https://esm.sh/pkg-b@2.0.0+build.7";',
@@ -285,7 +291,7 @@ Deno.test("esm-sh codemod accepts exact prerelease and build SemVer pins", () =>
 // Dynamic import()
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod rewrites a dynamic import() specifier", () => {
+it("esm-sh codemod rewrites a dynamic import() specifier", () => {
   const source = `const mod = await import("https://esm.sh/some-pkg@3.0.0");\n`;
   const result = migrateEsmShImports(source);
 
@@ -295,7 +301,7 @@ Deno.test("esm-sh codemod rewrites a dynamic import() specifier", () => {
   assertEquals(result.pins, { "some-pkg": "3.0.0" });
 });
 
-Deno.test("esm-sh codemod rewrites a dynamic import() nested inside a function", () => {
+it("esm-sh codemod rewrites a dynamic import() nested inside a function", () => {
   const source = `
 async function load() {
   const { foo } = await import("https://esm.sh/foo-lib@1.0.0");
@@ -313,7 +319,7 @@ async function load() {
 // React specifiers skipped
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod skips react esm.sh imports", () => {
+it("esm-sh codemod skips react esm.sh imports", () => {
   const source = [
     'import React from "https://esm.sh/react@18.2.0";',
     'import ReactDOM from "https://esm.sh/react-dom@18.2.0";',
@@ -326,7 +332,7 @@ Deno.test("esm-sh codemod skips react esm.sh imports", () => {
   assertStringIncludes(result.code, "https://esm.sh/react-dom@18.2.0");
 });
 
-Deno.test("esm-sh codemod skips react while rewriting other packages", () => {
+it("esm-sh codemod skips react while rewriting other packages", () => {
   const source = [
     'import React from "https://esm.sh/react@18.2.0";',
     'import { something } from "https://esm.sh/other-pkg@1.0.0";',
@@ -344,7 +350,7 @@ Deno.test("esm-sh codemod skips react while rewriting other packages", () => {
 // Idempotency
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod is idempotent: second run produces no changes", () => {
+it("esm-sh codemod is idempotent: second run produces no changes", () => {
   const source = [
     'import { something } from "https://esm.sh/some-pkg@1.2.3";',
     'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist/index?target=es2022";',
@@ -362,7 +368,7 @@ Deno.test("esm-sh codemod is idempotent: second run produces no changes", () => 
   assertEquals(second.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod is idempotent for dynamic imports", () => {
+it("esm-sh codemod is idempotent for dynamic imports", () => {
   const source = `const m = await import("https://esm.sh/pkg@4.0.0");\n`;
 
   const first = migrateEsmShImports(source);
@@ -376,7 +382,7 @@ Deno.test("esm-sh codemod is idempotent for dynamic imports", () => {
 // Conflict detection via mergeEsmShPins
 // ---------------------------------------------------------------------------
 
-Deno.test("mergeEsmShPins: existing exact pin beats URL-derived version", () => {
+it("mergeEsmShPins: existing exact pin beats URL-derived version", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { "some-pkg": "1.0.0" },
     { "some-pkg": "2.0.0" },
@@ -387,7 +393,7 @@ Deno.test("mergeEsmShPins: existing exact pin beats URL-derived version", () => 
   assertEquals(conflicts, [{ pkg: "some-pkg", existing: "1.0.0", fromVersion: "2.0.0" }]);
 });
 
-Deno.test("mergeEsmShPins: existing range entry beats URL-derived exact version", () => {
+it("mergeEsmShPins: existing range entry beats URL-derived exact version", () => {
   // Policy: never modify user-authored entries, whether exact or a range.
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { "some-pkg": "^1.0.0" },
@@ -399,7 +405,7 @@ Deno.test("mergeEsmShPins: existing range entry beats URL-derived exact version"
   assertEquals(conflicts, [{ pkg: "some-pkg", existing: "^1.0.0", fromVersion: "1.2.3" }]);
 });
 
-Deno.test("mergeEsmShPins: new package not in existing deps is added", () => {
+it("mergeEsmShPins: new package not in existing deps is added", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { existing: "0.1.0" },
     { "new-pkg": "3.0.0" },
@@ -410,7 +416,7 @@ Deno.test("mergeEsmShPins: new package not in existing deps is added", () => {
   assertEquals(conflicts, []);
 });
 
-Deno.test("mergeEsmShPins: matching version in existing deps causes no conflict", () => {
+it("mergeEsmShPins: matching version in existing deps causes no conflict", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { "some-pkg": "1.0.0" },
     { "some-pkg": "1.0.0" },
@@ -420,13 +426,13 @@ Deno.test("mergeEsmShPins: matching version in existing deps causes no conflict"
   assertEquals(conflicts, []);
 });
 
-Deno.test("mergeEsmShPins: empty new pins leaves existing deps unchanged", () => {
+it("mergeEsmShPins: empty new pins leaves existing deps unchanged", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins({ "a": "1.0.0" }, {});
   assertEquals(updatedDeps, { "a": "1.0.0" });
   assertEquals(conflicts, []);
 });
 
-Deno.test("mergeEsmShPins: new pins are inserted in sorted key order", () => {
+it("mergeEsmShPins: new pins are inserted in sorted key order", () => {
   const { updatedDeps } = mergeEsmShPins(
     { "zod": "3.23.8", "axios": "1.7.0" },
     { "lodash": "4.17.21", "chalk": "5.3.0" },
@@ -434,7 +440,7 @@ Deno.test("mergeEsmShPins: new pins are inserted in sorted key order", () => {
   assertEquals(Object.keys(updatedDeps), ["axios", "chalk", "lodash", "zod"]);
 });
 
-Deno.test("mergeEsmShPins: no insertion preserves the existing key order", () => {
+it("mergeEsmShPins: no insertion preserves the existing key order", () => {
   // An idempotent re-run must not rewrite package.json just to re-order keys.
   const { updatedDeps } = mergeEsmShPins(
     { "zod": "3.23.8", "axios": "1.7.0" },
@@ -447,7 +453,7 @@ Deno.test("mergeEsmShPins: no insertion preserves the existing key order", () =>
 // Intra-file version conflicts
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod records an intra-file version conflict instead of silently dropping", () => {
+it("esm-sh codemod records an intra-file version conflict instead of silently dropping", () => {
   // Same package imported at two different versions in one file.
   // Both specifiers are rewritten to the same bare form; the first version wins
   // for the pin, and the second is recorded as a conflict.
@@ -470,7 +476,7 @@ Deno.test("esm-sh codemod records an intra-file version conflict instead of sile
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod does not conflict when same package appears at same version twice", () => {
+it("esm-sh codemod does not conflict when same package appears at same version twice", () => {
   const source = [
     'import { a } from "https://esm.sh/pkg@1.0.0";',
     'import { b } from "https://esm.sh/pkg@1.0.0";',
@@ -487,7 +493,7 @@ Deno.test("esm-sh codemod does not conflict when same package appears at same ve
 // Mixed scenarios
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles multiple imports in one file", () => {
+it("esm-sh codemod handles multiple imports in one file", () => {
   const source = [
     'import { a } from "https://esm.sh/pkg-a@1.0.0";',
     'import { b } from "https://esm.sh/pkg-b";',
@@ -505,7 +511,7 @@ Deno.test("esm-sh codemod handles multiple imports in one file", () => {
   assertEquals(result.rewrites.length, 3);
 });
 
-Deno.test("esm-sh codemod keeps a static import URL untouched alongside a dynamic one", () => {
+it("esm-sh codemod keeps a static import URL untouched alongside a dynamic one", () => {
   const source = `
 import { x } from "https://esm.sh/pkg@1.0.0";
 const y = import("https://esm.sh/pkg@1.0.0");
@@ -518,7 +524,7 @@ const y = import("https://esm.sh/pkg@1.0.0");
   assertEquals(result.pins, { pkg: "1.0.0" });
 });
 
-Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
+it("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
   const source = [
     'import { a } from "https://esm.sh/pkg-a@1.0.0";',
     'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist?target=es2022";',
@@ -538,7 +544,7 @@ Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
 // readProjectPackageJson
 // ---------------------------------------------------------------------------
 
-Deno.test("readProjectPackageJson returns null parseError when file is absent", async () => {
+it("readProjectPackageJson returns null parseError when file is absent", async () => {
   const dir = await makeTempDir();
   try {
     const result = await readProjectPackageJson(`${dir}/package.json`, await Deno.realPath(dir));
@@ -549,7 +555,7 @@ Deno.test("readProjectPackageJson returns null parseError when file is absent", 
   }
 });
 
-Deno.test("readProjectPackageJson returns parseError for corrupt JSON, leaving file intact", async () => {
+it("readProjectPackageJson returns parseError for corrupt JSON, leaving file intact", async () => {
   const dir = await makeTempDir();
   const pkgPath = `${dir}/package.json`;
   const corrupt = "{ not valid json }";
@@ -566,7 +572,7 @@ Deno.test("readProjectPackageJson returns parseError for corrupt JSON, leaving f
   }
 });
 
-Deno.test("readProjectPackageJson returns parseError for unreadable file, not null", async () => {
+it("readProjectPackageJson returns parseError for unreadable file, not null", async () => {
   const dir = await makeTempDir();
   const pkgPath = `${dir}/package.json`;
   try {
@@ -599,7 +605,7 @@ Deno.test("readProjectPackageJson returns parseError for unreadable file, not nu
   }
 });
 
-Deno.test("readProjectPackageJson extracts dependencies from a valid file", async () => {
+it("readProjectPackageJson extracts dependencies from a valid file", async () => {
   const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
@@ -614,7 +620,7 @@ Deno.test("readProjectPackageJson extracts dependencies from a valid file", asyn
   }
 });
 
-Deno.test("manifest writes remain bound to the file identity that was read", async () => {
+it("manifest writes remain bound to the file identity that was read", async () => {
   const project = await makeTempDir();
   const pkgPath = `${project}/package.json`;
   try {
@@ -640,7 +646,7 @@ Deno.test("manifest writes remain bound to the file identity that was read", asy
   }
 });
 
-Deno.test("guarded manifest read errors do not expose resolved paths", async () => {
+it("guarded manifest read errors do not expose resolved paths", async () => {
   const project = await makeTempDir();
   const outside = await makeTempDir();
   const pkgPath = `${project}/package.json`;
@@ -660,7 +666,7 @@ Deno.test("guarded manifest read errors do not expose resolved paths", async () 
   }
 });
 
-Deno.test("readProjectPackageJson collects declarations from other dependency fields", async () => {
+it("readProjectPackageJson collects declarations from other dependency fields", async () => {
   const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
@@ -688,7 +694,7 @@ Deno.test("readProjectPackageJson collects declarations from other dependency fi
   }
 });
 
-Deno.test("readProjectPackageJson returns parseError for malformed devDependencies", async () => {
+it("readProjectPackageJson returns parseError for malformed devDependencies", async () => {
   const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
@@ -707,7 +713,7 @@ Deno.test("readProjectPackageJson returns parseError for malformed devDependenci
 // filterNeedsResolution
 // ---------------------------------------------------------------------------
 
-Deno.test("filterNeedsResolution removes packages that are already pinned", () => {
+it("filterNeedsResolution removes packages that are already pinned", () => {
   const result = filterNeedsResolution(["pkg-a", "pkg-b", "pkg-c"], {
     "pkg-a": "1.0.0",
   });
@@ -715,11 +721,11 @@ Deno.test("filterNeedsResolution removes packages that are already pinned", () =
   assertEquals(result, ["pkg-b", "pkg-c"]);
 });
 
-Deno.test("filterNeedsResolution returns all when no packages are pinned", () => {
+it("filterNeedsResolution returns all when no packages are pinned", () => {
   assertEquals(filterNeedsResolution(["b", "a"], {}), ["a", "b"]);
 });
 
-Deno.test("filterNeedsResolution: package pinned in one file not in needsResolution for another", () => {
+it("filterNeedsResolution: package pinned in one file not in needsResolution for another", () => {
   // Simulate: file-1 imports pkg@1.0.0 (versioned), file-2 imports pkg (unversioned).
   // After aggregation allPins has pkg, so pkg must NOT appear in needsResolution.
   const allNeedsResolution = new Set(["pkg", "other-pkg"]);
@@ -732,7 +738,7 @@ Deno.test("filterNeedsResolution: package pinned in one file not in needsResolut
 // main() integration: abort on corrupt/unreadable package.json
 // ---------------------------------------------------------------------------
 
-Deno.test("source parse errors identify the file that could not be migrated", async () => {
+it("source parse errors identify the file that could not be migrated", async () => {
   const dir = await makeTempDir();
   const srcPath = `${dir}/broken.ts`;
   try {
@@ -756,7 +762,7 @@ Deno.test("source parse errors identify the file that could not be migrated", as
   }
 });
 
-Deno.test(
+it(
   "corrupt package.json aborts run: source files are not modified",
   async () => {
     const dir = await makeTempDir();
@@ -783,9 +789,9 @@ Deno.test(
   },
 );
 
-Deno.test(
+describe(
   "invalid package.json shapes abort without modifying source or manifest",
-  async (testContext) => {
+  () => {
     const cases = [
       { name: "array root", manifest: "[]\n" },
       { name: "null root", manifest: "null\n" },
@@ -797,7 +803,7 @@ Deno.test(
     ];
 
     for (const testCase of cases) {
-      await testContext.step(testCase.name, async () => {
+      it(testCase.name, async () => {
         const dir = await makeTempDir();
         const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
         try {
@@ -823,7 +829,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "happy path: package.json written before source files, both updated",
   async () => {
     const dir = await makeTempDir();
@@ -855,7 +861,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "main creates package.json for a project that has no manifest",
   async () => {
     const project = await makeTempDir();
@@ -879,7 +885,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "main reports why a source file could not be read",
   async () => {
     const project = await makeTempDir();
@@ -917,7 +923,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "manifest read failures are not reported as symlink problems",
   async () => {
     const project = await makeTempDir();
@@ -958,7 +964,7 @@ Deno.test(
 // main() integration: symlinked paths must never be followed
 // ---------------------------------------------------------------------------
 
-Deno.test(
+it(
   "package.json symlink pointing outside the project aborts without writing through the link",
   async () => {
     const project = await makeTempDir();
@@ -990,7 +996,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "dangling package.json symlink aborts instead of creating the target file",
   async () => {
     const project = await makeTempDir();
@@ -1029,7 +1035,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "symlinked source files and directories are not collected or rewritten",
   async () => {
     const project = await makeTempDir();
@@ -1060,7 +1066,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "collection skips symlinked entries even when readDir reports them as files",
   async () => {
     // The skip must not rely on the runtime declining to classify a link as a
@@ -1093,7 +1099,7 @@ Deno.test(
   },
 );
 
-Deno.test("collection revalidates a directory before recursive traversal", async () => {
+it("collection revalidates a directory before recursive traversal", async () => {
   const project = await makeTempDir();
   const outside = await makeTempDir();
   const nested = `${project}/nested`;
@@ -1124,7 +1130,7 @@ Deno.test("collection revalidates a directory before recursive traversal", async
   }
 });
 
-Deno.test("assertPathInsideProject rejects an out-of-project real path", async () => {
+it("assertPathInsideProject rejects an out-of-project real path", async () => {
   const project = await makeTempDir();
   const outside = await makeTempDir();
   try {
@@ -1160,7 +1166,7 @@ Deno.test("assertPathInsideProject rejects an out-of-project real path", async (
   }
 });
 
-Deno.test(
+it(
   "assertPathInsideProject rejects a missing file whose parent escapes the project",
   async () => {
     const project = await makeTempDir();
@@ -1190,7 +1196,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "assertPathInsideProject accepts children of a root that already ends in a separator",
   async () => {
     const separator = Deno.build.os === "windows" ? "\\" : "/";
@@ -1207,7 +1213,7 @@ Deno.test(
   },
 );
 
-Deno.test("missing POSIX filenames may contain a literal backslash", async () => {
+it("missing POSIX filenames may contain a literal backslash", async () => {
   if (Deno.build.os === "windows") return;
   const project = await makeTempDir();
   try {
@@ -1221,7 +1227,7 @@ Deno.test("missing POSIX filenames may contain a literal backslash", async () =>
   }
 });
 
-Deno.test("project writes support regular files on Windows", async () => {
+it("project writes support regular files on Windows", async () => {
   if (Deno.build.os !== "windows") return;
 
   const project = await makeTempDir();
@@ -1235,7 +1241,7 @@ Deno.test("project writes support regular files on Windows", async () => {
   }
 });
 
-Deno.test("project writes create a missing manifest", async () => {
+it("project writes create a missing manifest", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
@@ -1249,12 +1255,12 @@ Deno.test("project writes create a missing manifest", async () => {
   }
 });
 
-Deno.test("a failed manifest creation does not unlink through a revalidated path", async () => {
+it("a failed manifest creation does not unlink through a revalidated path", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
     const projectRoot = await Deno.realPath(project);
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         writeTextFileInsideProject(target, projectRoot, "{}\n", {
           allowMissing: true,
@@ -1264,13 +1270,16 @@ Deno.test("a failed manifest creation does not unlink through a revalidated path
       Error,
       "changed after being read",
     );
+    assertStringIncludes(error.message, '"package.json"');
+    assertStringIncludes(error.message, "Inspect it before retrying");
+    assert(!error.message.includes(project), "creation errors must not expose absolute paths");
     assertEquals(await Deno.readTextFile(target), "");
   } finally {
     await Deno.remove(project, { recursive: true });
   }
 });
 
-Deno.test("a manifest that appears after analysis is not overwritten", async () => {
+it("a manifest that appears after analysis is not overwritten", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
@@ -1293,7 +1302,7 @@ Deno.test("a manifest that appears after analysis is not overwritten", async () 
   }
 });
 
-Deno.test("creating a missing manifest never follows a planted symlink", async () => {
+it("creating a missing manifest never follows a planted symlink", async () => {
   const project = await makeTempDir();
   const outside = await makeTempDir();
   const target = `${outside}/planted.json`;
@@ -1318,7 +1327,7 @@ Deno.test("creating a missing manifest never follows a planted symlink", async (
   }
 });
 
-Deno.test("assertPathInsideProject rejects a path that is not a regular file", async () => {
+it("assertPathInsideProject rejects a path that is not a regular file", async () => {
   const project = await makeTempDir();
   try {
     // A directory stands in for any non-regular entry. A FIFO planted as
@@ -1337,7 +1346,7 @@ Deno.test("assertPathInsideProject rejects a path that is not a regular file", a
   }
 });
 
-Deno.test("project writes reject a file replaced after its source was read", async () => {
+it("project writes reject a file replaced after its source was read", async () => {
   const project = await makeTempDir();
   const target = `${project}/app.ts`;
   const replacement = `${project}/replacement.ts`;
@@ -1365,7 +1374,7 @@ Deno.test("project writes reject a file replaced after its source was read", asy
   }
 });
 
-Deno.test("project writes reject an in-place edit after analysis", async () => {
+it("project writes reject an in-place edit after analysis", async () => {
   const project = await makeTempDir();
   const target = `${project}/app.ts`;
   try {
@@ -1394,7 +1403,7 @@ Deno.test("project writes reject an in-place edit after analysis", async () => {
   }
 });
 
-Deno.test("project writes use bigint identity stats when number-valued inode stats lose precision", async () => {
+it("project writes use bigint identity stats when number-valued inode stats lose precision", async () => {
   if (Deno.build.os === "windows") return;
   const project = await makeTempDir();
   const target = `${project}/app.ts`;
@@ -1425,7 +1434,7 @@ Deno.test("project writes use bigint identity stats when number-valued inode sta
 // main() integration: version conflicts are preflighted
 // ---------------------------------------------------------------------------
 
-Deno.test(
+it(
   "report paths keep the project directory spelling the caller passed",
   async () => {
     // Traversal and writes use the resolved root, but the report must echo the
@@ -1468,7 +1477,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "POSIX report paths preserve literal backslashes in file names",
   async () => {
     if (Deno.build.os === "windows") return;
@@ -1508,7 +1517,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "POSIX report paths preserve a trailing backslash in the project name",
   async () => {
     if (Deno.build.os === "windows") return;
@@ -1547,7 +1556,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "intra-file version conflict leaves source and package.json unchanged",
   async () => {
     // Same package at two different versions in one file: an intra-file conflict.
@@ -1574,7 +1583,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "cross-file version conflict skips both package rewrites and reports the conflicting file",
   async () => {
     // Two files import the same package at different versions. The run completes,
@@ -1627,7 +1636,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "devDependencies version disagreement is a conflict: source and manifest unchanged",
   async () => {
     // A URL-derived pin that disagrees with a devDependencies declaration must
@@ -1678,7 +1687,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "matching devDependencies version is not a conflict: pin lands in dependencies",
   async () => {
     // The runtime import justifies a `dependencies` entry; an agreeing
@@ -1708,7 +1717,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "package.json range conflict leaves its import untouched and reports the conflict",
   async () => {
     // A project has "lodash": "^4.17.0" in package.json and imports
@@ -1762,7 +1771,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "mixed versioned+unversioned imports: conflict specifier points at the versioned URL",
   async () => {
     // A file imports the same package both without and with a version.  The
@@ -1825,7 +1834,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "unversioned subpath containing version text does not mask conflict specifier",
   async () => {
     const dir = await makeTempDir();
@@ -1879,7 +1888,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "default conflict handling still migrates independent packages",
   async () => {
     const dir = await makeTempDir();
@@ -1911,7 +1920,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "--fail-on-conflict exits before any source or package.json write",
   async () => {
     const dir = await makeTempDir();
@@ -1947,7 +1956,7 @@ Deno.test(
 // Prototype-key collision safety (Fix 1)
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles a package name that collides with Object.prototype key", () => {
+it("esm-sh codemod handles a package name that collides with Object.prototype key", () => {
   // "hasOwnProperty", "toString", "constructor" etc. are inherited from
   // Object.prototype.  The `in` operator would report them as present on any
   // plain object, causing a spurious conflict even on first encounter.
@@ -1968,7 +1977,7 @@ Deno.test("esm-sh codemod handles a package name that collides with Object.proto
   assertEquals(result.conflicts, []);
 });
 
-Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, no prototype pollution', () => {
+it('mergeEsmShPins: package named "__proto__" is stored as own property, no prototype pollution', () => {
   // If updatedDeps is a regular object, `updatedDeps["__proto__"] = version`
   // triggers the inherited setter and mutates the object's prototype instead
   // of creating an own property.  With a null-prototype object the key is
@@ -1997,7 +2006,7 @@ Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, 
 // Non-top-level import declaration (Fix 2)
 // ---------------------------------------------------------------------------
 
-Deno.test(
+it(
   "esm-sh codemod rewrites an import declaration in a non-top-level position",
   () => {
     // allowImportExportEverywhere lets the parser accept import declarations
@@ -2018,7 +2027,7 @@ Deno.test(
   },
 );
 
-Deno.test("collection does not enumerate a replacement symlink between identity checks", async () => {
+it("collection does not enumerate a replacement symlink between identity checks", async () => {
   const project = await makeTempDir();
   const outside = await makeTempDir();
   const nested = `${project}/nested`;
@@ -2059,7 +2068,7 @@ Deno.test("collection does not enumerate a replacement symlink between identity 
   }
 });
 
-Deno.test("pinned enumeration keeps reading the opened directory after its path is replaced", async () => {
+it("pinned enumeration keeps reading the opened directory after its path is replaced", async () => {
   const parent = await Deno.realPath(await makeTempDir());
   const project = `${parent}/project`;
   const saved = `${parent}/saved`;
@@ -2084,7 +2093,7 @@ Deno.test("pinned enumeration keeps reading the opened directory after its path 
   }
 });
 
-Deno.test("pinned enumeration rejects symlinked parent components", async () => {
+it("pinned enumeration rejects symlinked parent components", async () => {
   const project = await Deno.realPath(await makeTempDir());
   const outside = await makeTempDir();
   try {
@@ -2105,7 +2114,7 @@ Deno.test("pinned enumeration rejects symlinked parent components", async () => 
   }
 });
 
-Deno.test("pinned enumeration preserves leading BOM characters in filenames", async () => {
+it("pinned enumeration preserves leading BOM characters in filenames", async () => {
   const root = await Deno.realPath(await makeTempDir());
   try {
     await Deno.writeTextFile(`${root}/app.ts`, "export {};");
@@ -2118,7 +2127,7 @@ Deno.test("pinned enumeration preserves leading BOM characters in filenames", as
   }
 });
 
-Deno.test("codemod migrates BOM-prefixed source without a false content-change rejection", async () => {
+it("codemod migrates BOM-prefixed source without a false content-change rejection", async () => {
   const project = await makeTempDir();
   try {
     await Deno.writeTextFile(
