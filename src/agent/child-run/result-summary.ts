@@ -481,7 +481,8 @@ function sourceCommentEnd(text: string, index: number): number | null | undefine
   if (text[index] !== "/") return undefined;
   if (text[index + 1] === "/") {
     const newline = text.indexOf("\n", index + 2);
-    return newline === -1 ? text.length : newline;
+    // A scan-window cutoff does not prove that the source comment ended.
+    return newline === -1 ? null : newline;
   }
   if (text[index + 1] === "*") {
     const end = text.indexOf("*/", index + 2);

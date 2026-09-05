@@ -1008,6 +1008,16 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("withholds prefix facts when lookahead ends inside a line comment", () => {
+      const prefix = 'tools: ["bogus_tool", //';
+      const text = prefix + "p".repeat(32_000 - prefix.length + 5) +
+        "\n{garbage}]\n" + "p".repeat(130_000);
+      assertEquals(
+        buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+        undefined,
+      );
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
