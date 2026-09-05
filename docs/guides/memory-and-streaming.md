@@ -126,6 +126,12 @@ turn. A later validation failure rolls back the staged turn. Commit runs after
 the turn finishes validation, so concurrent storage changes can reject commit
 even after the provider has produced output.
 
+Validated turns on one stateful agent runtime run sequentially until commit or
+rollback finishes. Your delegation graph must not call back into an ancestor
+runtime with an active validated turn. Veryfront rejects that cycle before it
+waits on memory, so the cycle cannot block later turns. Independent concurrent
+calls still wait for their turn normally.
+
 The standalone `RedisMemory` class does not currently implement this transaction
 capability. If you connect it to transactional agent validation through a custom
 adapter, that adapter must supply atomic transactions. Its existing standalone

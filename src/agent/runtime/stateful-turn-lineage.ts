@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { AGENT_ERROR } from "#veryfront/errors";
 
 interface TurnFrame {
   runtime: object;
@@ -48,9 +49,10 @@ export function enterSerializedTurn(runtime: object): () => void {
   // Also follow existing queue dependencies: independently started roots can
   // deadlock when each delegates to the other's occupied runtime.
   if (parent && previous && reaches(previous, parent)) {
-    throw new Error(
-      "Stateful delegation cannot wait on an active ancestor or cyclic queue. Use an acyclic delegate graph.",
-    );
+    throw AGENT_ERROR.create({
+      detail:
+        "Stateful delegation cannot wait on an active ancestor or cyclic queue. Use an acyclic delegate graph.",
+    });
   }
   frame.active = true;
   frame.waitingOn = previous;
