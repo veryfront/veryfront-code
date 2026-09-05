@@ -2430,7 +2430,8 @@ export class AgentRuntime {
                 : {}),
             });
             closeSSEStream(controller);
-          } catch (error) {
+          } catch (streamError) {
+            let error = streamError;
             try {
               await turnPersistence.finalize();
             } catch (finalizationError) {
