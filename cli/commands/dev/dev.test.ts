@@ -9,9 +9,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
 import {
   createSelectedProjectPushOptions,
+  loginForDevShortcut,
   preloadDevAuth,
   startDevServerOnFreePort,
 } from "./command.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { UntrustedApiUrlCredentialError } from "#cli/shared/config";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -308,63 +311,28 @@ describe("cli/commands/dev", () => {
   });
 
   describe("initial authentication", () => {
-    it("preloads project sync from a resolved environment API key", async () => {
-      const originalFetch = globalThis.fetch;
-      const requests: Array<{ authorization: string; limit: string | null }> = [];
-
-      try {
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-          const url = new URL(String(input));
-          requests.push({
-            authorization: new Headers(init?.headers).get("authorization") ?? "",
-            limit: url.searchParams.get("limit"),
-          });
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                data: [{ id: "project-env", slug: "env-project", name: "Env Project" }],
-                page_info: {},
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            ),
-          );
-        }) as typeof fetch;
-
-        const result = await preloadDevAuth("vf_env_secret");
-
-        assertEquals(result.identity, { authenticated: true, type: "apiKey" });
-        assertEquals(result.projects, [
-          { id: "project-env", slug: "env-project", name: "Env Project" },
-        ]);
-        assertEquals(requests, [
-          { authorization: "Bearer vf_env_secret", limit: null },
-        ]);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    });
-
     it("validates a user token once while loading projects", async () => {
-      const originalFetch = globalThis.fetch;
       const paths: string[] = [];
 
       try {
-        globalThis.fetch = ((input: string | URL | Request) => {
-          const url = new URL(String(input));
-          paths.push(url.pathname);
+        installMockFetch(
+          ((input: string | URL | Request) => {
+            const url = new URL(String(input));
+            paths.push(url.pathname);
 
-          if (url.pathname === "/me") {
+            if (url.pathname === "/me") {
+              return Promise.resolve(
+                Response.json({ id: "user-1", email: "dev@example.com" }),
+              );
+            }
+
             return Promise.resolve(
-              Response.json({ id: "user-1", email: "dev@example.com" }),
+              Response.json({
+                data: [{ id: "project-1", slug: "project-one", name: "Project One" }],
+              }),
             );
-          }
-
-          return Promise.resolve(
-            Response.json({
-              data: [{ id: "project-1", slug: "project-one", name: "Project One" }],
-            }),
-          );
-        }) as typeof fetch;
+          }) as typeof fetch,
+        );
 
         const result = await preloadDevAuth("user-token");
 
@@ -372,24 +340,24 @@ describe("cli/commands/dev", () => {
         assertEquals(result.projects.length, 1);
         assertEquals(paths, ["/me", "/projects"]);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("keeps a validated user identity when project discovery fails", async () => {
-      const originalFetch = globalThis.fetch;
-
       try {
-        globalThis.fetch = ((input: string | URL | Request) => {
-          const url = new URL(String(input));
-          if (url.pathname === "/me") {
-            return Promise.resolve(
-              Response.json({ id: "user-1", email: "dev@example.com" }),
-            );
-          }
+        installMockFetch(
+          ((input: string | URL | Request) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/me") {
+              return Promise.resolve(
+                Response.json({ id: "user-1", email: "dev@example.com" }),
+              );
+            }
 
-          return Promise.resolve(new Response("Unavailable", { status: 503 }));
-        }) as typeof fetch;
+            return Promise.resolve(new Response("Unavailable", { status: 503 }));
+          }) as typeof fetch,
+        );
 
         const result = await preloadDevAuth("user-token");
 
@@ -398,22 +366,21 @@ describe("cli/commands/dev", () => {
           projects: [],
         });
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("does not authenticate an API key rejected by project discovery", async () => {
-      const originalFetch = globalThis.fetch;
-
       try {
-        globalThis.fetch = (() =>
-          Promise.resolve(new Response("Unauthorized", { status: 401 }))) as typeof fetch;
+        installMockFetch(
+          (() => Promise.resolve(new Response("Unauthorized", { status: 401 }))) as typeof fetch,
+        );
 
         const result = await preloadDevAuth("vf_invalid");
 
         assertEquals(result, { identity: null, projects: [] });
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });
@@ -439,5 +406,42 @@ describe("cli/commands/dev: --port 0", () => {
     } finally {
       console.log = originalLog;
     }
+  });
+});
+
+describe("cli/commands/dev: auth shortcut", () => {
+  it("prints a login refusal instead of rejecting", async () => {
+    const logged: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+
+    try {
+      // The keyboard handler never awaits the shortcut, so a rejection here
+      // escapes as an unhandled rejection and the developer never reads why
+      // Veryfront refused to send a credential to the configured endpoint.
+      const result = await loginForDevShortcut(() =>
+        Promise.reject(
+          new UntrustedApiUrlCredentialError(
+            "veryfront.json selects a repository-configured API endpoint.",
+          ),
+        )
+      );
+
+      assertEquals(result, null);
+      assert(
+        logged.some((line) =>
+          line.includes("veryfront.json selects a repository-configured API endpoint.")
+        ),
+        `expected the refusal on the dev output, got ${JSON.stringify(logged)}`,
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  it("returns the identity when login succeeds", async () => {
+    const identity = { authenticated: true, type: "apiKey" } as const;
+
+    assertEquals(await loginForDevShortcut(() => Promise.resolve(identity)), identity);
   });
 });

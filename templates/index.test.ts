@@ -1308,6 +1308,123 @@ describe("chat starters scaffold a Markdown renderer", () => {
     }
   });
 
+  it("hardens the URLs the renderer emits", async () => {
+    // Assistant answers are untrusted input. A bare `<ReactMarkdown>` renders
+    // Markdown images as auto-loading `<img>` tags and links with any
+    // http(s) URL, so a prompt-injected answer becomes a zero-click beacon to
+    // an attacker-controlled host. Every scaffolded renderer must pass a URL
+    // policy (`urlTransform`), stop images from auto-loading (an `img`
+    // component override), and emit links that neither leak the opener nor
+    // pass referrers (`rel="noopener noreferrer ..."`).
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const renderer = files?.find((file) => file.path === "app/markdown-renderer.tsx");
+      assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
+
+      assertStringIncludes(
+        renderer.content,
+        "urlTransform",
+        `${name} renderer must constrain URL schemes with urlTransform`,
+      );
+      assertStringIncludes(
+        renderer.content,
+        "img:",
+        `${name} renderer must override img so images do not auto-load`,
+      );
+      assertStringIncludes(
+        renderer.content,
+        "noopener noreferrer",
+        `${name} renderer must emit rel="noopener noreferrer" links`,
+      );
+
+      // A Markdown image can carry its own link (`[![alt](src)](href)`), which
+      // react-markdown renders through the `a` override. An anchor in the `img`
+      // override would nest inside it: invalid HTML that the browser repairs
+      // into a different tree than React rendered, so hydration mismatches.
+      const imgStart = renderer.content.indexOf("img:");
+      const imgOverride = renderer.content.slice(
+        imgStart,
+        renderer.content.indexOf("),", imgStart),
+      );
+      assertEquals(
+        imgOverride.includes("<a"),
+        false,
+        `${name} img override must render inert markup, not a nested anchor`,
+      );
+    }
+  });
+
+  /**
+   * Pull `sanitizeUrl` out of a scaffolded renderer so its policy can be
+   * exercised directly. The renderer itself imports npm parsers and JSX, so it
+   * cannot be imported here; the URL policy is a self-contained function.
+   */
+  async function loadSanitizeUrl(source: string): Promise<(url: string) => string> {
+    const start = source.indexOf("function sanitizeUrl");
+    assertEquals(start >= 0, true, "renderer must declare a top-level sanitizeUrl");
+    const end = source.indexOf("\n}", start);
+    assertEquals(end > start, true, "sanitizeUrl must close at column zero");
+    const declaration = source.slice(start, end + 2);
+    const module = await import(
+      `data:application/typescript;charset=utf-8,${encodeURIComponent(`export ${declaration}`)}`
+    ) as { sanitizeUrl: (url: string) => string };
+    return module.sanitizeUrl;
+  }
+
+  it("drops dangerous schemes even when they are obfuscated", async () => {
+    // Passing `urlTransform` replaces react-markdown's own defaultUrlTransform,
+    // so this function is the only scheme guard left in the scaffold. Browsers
+    // ignore ASCII spaces and control characters while parsing a URL, so a
+    // destination written as `[x](java&#9;script:alert(1))` arrives here as
+    // `java\tscript:alert(1)` and still navigates to `javascript:` when
+    // clicked. The policy has to normalize before it matches.
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const renderer = files?.find((file) => file.path === "app/markdown-renderer.tsx");
+      assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
+      const sanitizeUrl = await loadSanitizeUrl(renderer.content);
+
+      for (
+        const blocked of [
+          "javascript:alert(1)",
+          "java\tscript:alert(1)",
+          "java\nscript:alert(1)",
+          " javascript:alert(1)",
+          "\u0001javascript:alert(1)",
+          "JaVaScRiPt:alert(1)",
+          "data:text/html,<script>alert(1)</script>",
+          " data:text/html,x",
+          "vbscript:msgbox(1)",
+          "file:///etc/passwd",
+        ]
+      ) {
+        assertEquals(
+          sanitizeUrl(blocked),
+          "",
+          `${name} renderer must drop ${JSON.stringify(blocked)}`,
+        );
+      }
+
+      for (
+        const allowed of [
+          "https://example.com/a?b=1#c",
+          "http://example.com/a",
+          "mailto:someone@example.com",
+          "/relative/path",
+          "./sibling.md#anchor",
+          "#anchor-only",
+          "path/to/a:b",
+        ]
+      ) {
+        assertEquals(
+          sanitizeUrl(allowed),
+          allowed,
+          `${name} renderer must keep ${JSON.stringify(allowed)}`,
+        );
+      }
+    }
+  });
+
   it("aliases the pinned parser specifiers for consumer tsc", async () => {
     for (const name of await chatTemplates()) {
       const files = await getTemplate(name);

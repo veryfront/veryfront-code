@@ -6,6 +6,7 @@
  * @module ai/workflow/executor/dag/types
  */
 
+import type { VeryfrontError } from "#veryfront/errors";
 import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts";
 import type { CheckpointManager, CheckpointOwnership } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
@@ -43,6 +44,18 @@ export interface ExecutionScope {
   resumingWait: boolean;
   /** Declared node ids in this graph and every graph that contains it. */
   declaredNodeIds: ReadonlySet<string>;
+  /** Child node ids owned by each sub-workflow node, preventing sibling state leakage. */
+  subWorkflowNodeIds: Map<string, Set<string>>;
+  /** Ownerless child ids produced by completed non-sub-workflow composites. */
+  completedCompositeChildIds: Set<string>;
+  /** Child node ids reserved before concurrent sub-workflow execution begins. */
+  subWorkflowNodeReservations: Map<string, Set<string>>;
+  /** Sub-workflow node owning each reservation path. */
+  subWorkflowReservationOwners: Map<string, string>;
+  /** Owner paths already running when this wait-resume pass began. */
+  resumedSubWorkflowOwnerPaths: Set<string>;
+  /** Slash-safe encoded owner path of the graph currently being executed. */
+  subWorkflowPath: string;
   /**
    * True while every enclosing composite carries its child states back into
    * the root run's node-state map (parallel, branch, subWorkflow, map). Loop
@@ -133,6 +146,13 @@ export interface DAGExecutionResult {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
+  /**
+   * Registry-typed cause for a refusal reported through `error` rather than
+   * thrown, so a caller classifying failures by slug sees the same kind of
+   * error it would have seen from a throw. Set only where the states and
+   * context patch earlier batches produced must still be returned.
+   */
+  errorCause?: VeryfrontError;
 }
 
 /** Internal result used when a composite node executes a child graph. */
@@ -144,6 +164,8 @@ export interface NodeExecutionResult {
   state: NodeState;
   contextPatch: ContextPatch;
   waiting: boolean;
+  /** Registry-typed cause propagated from a failed child graph. */
+  errorCause?: VeryfrontError;
   /**
    * The node that actually suspended, when this node is a composite whose child
    * graph is waiting. An approval is built from `nodeStates[waitingNode].input`,

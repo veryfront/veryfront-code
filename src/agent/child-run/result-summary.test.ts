@@ -415,6 +415,16 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("withholds facts when whitespace exhausts delimiter lookahead", () => {
+      for (const prefix of ["tools: [", "tool_ids: [", 'tools: [{"id":']) {
+        const value = '"bogus_tool"';
+        const text = prefix + " ".repeat(32_000 - prefix.length - value.length) + value +
+          "     x" + "x".repeat(130_000);
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
     it("retains a complete array scalar with valid continuation at the head cutoff", () => {
       const prefix = 'tools: ["valid_tool"';
       const text = prefix + " ".repeat(32_000 - prefix.length) + "]\n" +

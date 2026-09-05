@@ -16,7 +16,7 @@ import { validateProviderConfig } from "veryfront/discovery";
 import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
@@ -29,6 +29,8 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import { captureHostApiEnvironment } from "#cli/process-env";
+import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 
 export interface DevOptions {
   port: number;
@@ -77,14 +79,55 @@ function authStatus(identity: AuthIdentity): string {
 
 export async function preloadDevAuth(
   apiToken?: string,
+  projectDir?: string,
 ): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
-  if (!apiToken) return { identity: null, projects: [] };
+  const env = getEnvironmentConfig();
+  const trust = resolveApiUrlTrust(env, null);
+  const candidates = await resolveApiCredentialCandidatesForAuth(
+    env,
+    projectDir,
+    true,
+  );
+  const candidate = apiToken
+    ? candidates.find((entry) => entry.apiToken === apiToken)
+    : candidates[0];
 
-  const result = await fetchRemoteProjects(apiToken);
+  // Direct callers can supply an explicit token without loading it into the
+  // process environment. That remains valid only when the repository did not
+  // choose the destination. A repository-steered destination requires the
+  // resolver's source-qualified token and its paired validation environment.
+  if (!candidate && (!apiToken || trust.repositorySteered)) {
+    return { identity: null, projects: [] };
+  }
+
+  const result = await fetchRemoteProjects(
+    candidate?.apiToken ?? apiToken,
+    candidate?.validationEnv ?? env,
+  );
   const identity = result.credentialType === "apiKey"
     ? result.error ? null : { authenticated: true, type: "apiKey" } as const
     : result.user;
   return { identity, projects: result.projects };
+}
+
+/**
+ * Run the interactive login behind the `a` shortcut and report a refusal.
+ *
+ * The keyboard handler dispatches shortcuts without awaiting them, so a
+ * rejection escapes as an unhandled promise rejection and tears the dev server
+ * down. `login()` now refuses when a repository chose the API endpoint, and
+ * that refusal is exactly the message the developer must read, so print it on
+ * the dev output line instead of letting it escape.
+ */
+export async function loginForDevShortcut(
+  attemptLogin: () => Promise<AuthIdentity | null> = login,
+): Promise<AuthIdentity | null> {
+  try {
+    return await attemptLogin();
+  } catch (err) {
+    console.log(`  ${errorColor("✗")} ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 export function createSelectedProjectPushOptions(
@@ -180,6 +223,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       } = options;
       const startTime = Date.now();
 
+      captureHostApiEnvironment();
+
       let doneResolve: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {
         doneResolve = resolve;
@@ -219,10 +264,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         projectDir,
         config?.projectSlug ?? config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       );
-      const runtimeAuth = await applyRuntimeAuthContext({
-        linkedProjectSlug,
-      });
-      const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken).catch(() => ({
+      const runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken, projectDir).catch(() => ({
         identity: null,
         projects: [],
       }));
@@ -424,11 +467,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             }
 
             console.log(`  ${dim("Opening browser...")}`);
-            const result = await login();
+            const result = await loginForDevShortcut();
             if (!result) return;
 
             identity = result;
-            const projectResult = await fetchRemoteProjects();
+            const projectResult = await preloadDevAuth(undefined, projectDir);
             projects = projectResult.projects;
             console.log(
               `  ✓ ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,

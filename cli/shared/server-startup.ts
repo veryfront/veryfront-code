@@ -1,3 +1,4 @@
+import { getHostSecret } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
 import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import {
@@ -30,6 +31,11 @@ export interface StartCliProxyModeServerOptions {
 }
 
 const LOCAL_CLI_PROXY_MODE_ENV = "VERYFRONT_CLI_LOCAL_PROXY_MODE";
+// Captured before project code runs: this normalization decides between an
+// exported token and the host-private stored login token, so a project that
+// replaces `String.prototype.trim` must not be able to flip that decision.
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
 
 export function prepareCliProxyModeEnvironment(host: HostRuntime = liveHostRuntime()): void {
   // Proxy mode must be set before config loading/bootstrap.
@@ -57,7 +63,16 @@ export function buildDiscoveryConfig(
   options: StartCliProxyModeServerOptions,
   host: HostRuntime = liveHostRuntime(),
 ): DiscoveryOptions {
-  const token = host.env.get("VERYFRONT_API_TOKEN") ?? "";
+  // `applyRuntimeAuthContext` registers a stored CLI login token host-privately
+  // instead of exporting it, so fall back to that store when the developer has
+  // not exported `VERYFRONT_API_TOKEN` themselves. A defined-but-blank export
+  // counts as "not exported" here, matching the normalization the CLI used when
+  // it decided to register the stored token.
+  const rawExportedToken = host.env.get("VERYFRONT_API_TOKEN");
+  const exportedToken = rawExportedToken === undefined
+    ? ""
+    : applyIntrinsic(stringTrim, rawExportedToken, []) as string;
+  const token = exportedToken ? exportedToken : (getHostSecret("VERYFRONT_API_TOKEN") ?? "");
   const slug = host.env.get("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
 
   return {

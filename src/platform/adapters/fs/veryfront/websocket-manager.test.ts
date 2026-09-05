@@ -11,6 +11,7 @@ import {
   parsePokeWebSocketMessage,
 } from "./websocket-manager-helpers.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import { clearAllPendingInvalidations, isPrefixBeingInvalidated } from "./invalidation-state.ts";
 
 interface TimerEntry {
   delay: number;
@@ -109,22 +110,32 @@ function createWebSocketManager(options: {
   apiBaseUrl?: string;
   /** Branch this preview is pinned to; `null` previews the default branch. */
   branch?: string | null;
+  /** Request-scoped branch override on a reused contextual adapter. */
+  effectiveBranch?: string | null;
+  getEffectiveContentContext?: () => {
+    sourceType: "branch";
+    projectSlug: string;
+    branch?: string;
+  };
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
     files: Array<{ path: string; content?: string }>,
   ) => Promise<{ hash: string; assetPath: string } | undefined>;
   clearMemoryCaches?: () => void;
+  getFileListCacheKey?: () => string | undefined;
   getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot?: (
     cacheKey: string,
     files: Array<{ path: string; content?: string }>,
     expectedSnapshotVersion?: number,
   ) => Promise<number | undefined>;
+  cache?: Partial<FileCache>;
 } = {}): WebSocketManager {
   const cache = {
     deleteByPrefixAsync: async () => 0,
     deleteByPrefixAndSuffixAsync: async () => 0,
+    ...options.cache,
   } as unknown as FileCache;
 
   const client = {
@@ -148,9 +159,16 @@ function createWebSocketManager(options: {
       projectSlug: "test-project",
       branch,
     }),
+    getEffectiveContentContext: options.getEffectiveContentContext ??
+      (options.effectiveBranch === undefined ? undefined : () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: options.effectiveBranch ?? undefined,
+      })),
     getContentSource: () => ({ type: "branch", branch }),
     getProjectDir: () => undefined,
     clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
+    getFileListCacheKey: options.getFileListCacheKey,
     getSourceSnapshotVersion: options.getSourceSnapshotVersion,
     replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => 0),
     pregenerateStyles: options.pregenerateStyles,
@@ -256,6 +274,7 @@ describe("WebSocketManager", () => {
   };
 
   beforeEach(() => {
+    clearAllPendingInvalidations();
     MockWebSocket.instances = [];
     nextTimerId = 1;
     scheduledTimers = new Map<ReturnType<typeof setTimeout>, TimerEntry>();
@@ -295,6 +314,7 @@ describe("WebSocketManager", () => {
   });
 
   afterEach(() => {
+    clearAllPendingInvalidations();
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
       originalWebSocket;
     globalThis.setTimeout = originalSetTimeout;
@@ -921,9 +941,10 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("ignores pokes scoped to a different branch", () => {
+  it("invalidates a poked branch without reloading a different active branch", async () => {
     let clearCalls = 0;
     let reloadCalls = 0;
+    const deletedPrefixes: string[] = [];
     const manager = createWebSocketManager({
       branch: "feature-x",
       clearMemoryCaches: () => {
@@ -932,6 +953,12 @@ describe("WebSocketManager", () => {
       invalidationCallbacks: {
         triggerReload: () => {
           reloadCalls++;
+        },
+      },
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          deletedPrefixes.push(prefix);
+          return Promise.resolve(0);
         },
       },
     });
@@ -944,7 +971,245 @@ describe("WebSocketManager", () => {
 
     assertEquals(clearCalls, 0, "a poke for another branch must not flush the preview caches");
     assertEquals(reloadCalls, 0, "a poke for another branch must not republish a reload");
+    await Promise.resolve();
+    assertEquals(deletedPrefixes, [
+      "file:branch:test-project:main",
+      "stat:branch:test-project:main",
+      "dir:branch:test-project:main",
+      "files:branch:test-project:main",
+    ]);
 
+    manager.dispose();
+  });
+
+  it("blocks all derived reads until an inactive branch cache clear completes", async () => {
+    const deletions = new Map<string, PromiseWithResolvers<number>>();
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          const deletion = Promise.withResolvers<number>();
+          deletions.set(prefix, deletion);
+          return deletion.promise;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    for (
+      const prefix of [
+        "file:branch:test-project:main",
+        "stat:branch:test-project:main",
+        "dir:branch:test-project:main",
+      ]
+    ) {
+      assertEquals(isPrefixBeingInvalidated(prefix), true);
+    }
+
+    for (const deletion of deletions.values()) deletion.resolve(0);
+    await flushMicrotasks();
+
+    for (
+      const prefix of [
+        "file:branch:test-project:main",
+        "stat:branch:test-project:main",
+        "dir:branch:test-project:main",
+      ]
+    ) {
+      assertEquals(isPrefixBeingInvalidated(prefix), false);
+    }
+    manager.dispose();
+  });
+
+  it("retains derived read blocks when an inactive branch cache clear fails", async () => {
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      cache: {
+        deleteByPrefixAsync: (prefix: string) =>
+          prefix.startsWith("stat:")
+            ? Promise.reject(new Error("cache unavailable"))
+            : Promise.resolve(0),
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+    await flushMicrotasks();
+
+    for (
+      const prefix of [
+        "file:branch:test-project:main",
+        "stat:branch:test-project:main",
+        "dir:branch:test-project:main",
+      ]
+    ) {
+      assertEquals(isPrefixBeingInvalidated(prefix), true);
+    }
+    manager.dispose();
+  });
+
+  it("retains the accepted request branch through debounced invalidation", async () => {
+    let clearCalls = 0;
+    let effectiveBranch = "feature-x";
+    let reloadBranch: string | null | undefined;
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      clearMemoryCaches: () => {
+        clearCalls++;
+      },
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          reloadBranch = context?.branch;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "feature-x" });
+
+    assertEquals(clearCalls, 1);
+    effectiveBranch = "feature-y";
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+    assertEquals(reloadBranch, "feature-x");
+    manager.dispose();
+  });
+
+  it("queues selective invalidations separately for overlapping request branches", async () => {
+    let effectiveBranch = "feature-a";
+    const reloadBranches: Array<string | null | undefined> = [];
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => reloadBranches.push(context?.branch),
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/a.tsx"], branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+    deliverPoke(socket, { changedPaths: ["app/b.tsx"], branchName: "feature-b" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    for (let attempt = 0; attempt < 20 && reloadBranches.length < 2; attempt++) {
+      await Promise.resolve();
+    }
+    assertEquals(reloadBranches, ["feature-a", "feature-b"]);
+    manager.dispose();
+  });
+
+  it("continues queued branch invalidations after one batch fails", async () => {
+    let effectiveBranch = "feature-a";
+    const reloadBranches: Array<string | null | undefined> = [];
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          if (context?.branch === "feature-a") throw new Error("first branch reload failed");
+          reloadBranches.push(context?.branch);
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/a.tsx"], branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+    deliverPoke(socket, { changedPaths: ["app/b.tsx"], branchName: "feature-b" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    for (let attempt = 0; attempt < 20 && reloadBranches.length < 1; attempt++) {
+      await Promise.resolve();
+    }
+    assertEquals(reloadBranches, ["feature-b"]);
+    manager.dispose();
+  });
+
+  it("retains the accepted request branch through full invalidation", async () => {
+    let effectiveBranch = "feature-a";
+    let reloadBranch: string | null | undefined;
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          reloadBranch = context?.branch;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+    assertEquals(reloadBranch, "feature-a");
+    manager.dispose();
+  });
+
+  it("continues queued full branch invalidations after one batch fails", async () => {
+    let effectiveBranch = "feature-a";
+    const reloadBranches: Array<string | null | undefined> = [];
+    const manager = createWebSocketManager({
+      branch: "main",
+      getEffectiveContentContext: () => ({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: effectiveBranch,
+      }),
+      invalidationCallbacks: {
+        triggerReload: (_paths, context) => {
+          if (context?.branch === "feature-a") throw new Error("first branch reload failed");
+          reloadBranches.push(context?.branch);
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { branchName: "feature-a" });
+    effectiveBranch = "feature-b";
+    deliverPoke(socket, { branchName: "feature-b" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    for (let attempt = 0; attempt < 20 && reloadBranches.length < 1; attempt++) {
+      await Promise.resolve();
+    }
+    assertEquals(reloadBranches, ["feature-b"]);
     manager.dispose();
   });
 
@@ -1036,6 +1301,7 @@ describe("WebSocketManager", () => {
     } ? T | undefined
       : never;
     let capturedChangedPaths: string[] | undefined;
+    const styleEvents: string[] = [];
 
     const manager = createWebSocketManager({
       client: {
@@ -1048,15 +1314,25 @@ describe("WebSocketManager", () => {
         }],
       },
       invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
         triggerReload: (changedPaths, project) => {
           capturedChangedPaths = changedPaths;
           capturedProject = project;
         },
       },
-      pregenerateStyles: async () => ({
-        hash: "hash-1",
-        assetPath: "/_vf/css/hash-1.css",
-      }),
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+      pregenerateStyles: async () => {
+        styleEvents.push("pregenerate");
+        return {
+          hash: "hash-1",
+          assetPath: "/_vf/css/hash-1.css",
+        };
+      },
     });
 
     manager.connect("project-1");
@@ -1082,6 +1358,95 @@ describe("WebSocketManager", () => {
     assertEquals(capturedChangedPaths, ["app/page.tsx"]);
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
+    // The CSS caches are dropped once, after the new source snapshot is
+    // installed: clearing before that would only drop entries a concurrent
+    // request can refill from the snapshot the poke is replacing.
+    assertEquals(styleEvents, [
+      "replace-snapshot",
+      "invalidate",
+      "pregenerate",
+    ]);
+
+    manager.dispose();
+  });
+
+  it("does not clear the CSS caches twice when style pre-generation fails", async () => {
+    // The catch around the snapshot swap exists for a poke that never reached
+    // the clear. Style pre-generation runs after it, so a throw there must not
+    // drop the caches a second time.
+    const styleEvents: string[] = [];
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: async () => [{
+          path: "app/page.tsx",
+          type: "page",
+          size: 32,
+          updated_at: "2026-03-22T00:00:00.000Z",
+          content: "<div class='text-red-500'/>",
+        }],
+      },
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
+      },
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+      pregenerateStyles: () => {
+        styleEvents.push("pregenerate-failed");
+        return Promise.reject(new Error("pre-generation failed"));
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(styleEvents, [
+      "replace-snapshot",
+      "invalidate",
+      "pregenerate-failed",
+    ]);
+
+    manager.dispose();
+  });
+
+  it("clears the CSS caches when the source fetch fails before any clear ran", async () => {
+    const styleEvents: string[] = [];
+
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => Promise.reject(new Error("fetch failed")),
+      },
+      invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
+      },
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(styleEvents, ["invalidate"]);
 
     manager.dispose();
   });
@@ -1091,6 +1456,7 @@ describe("WebSocketManager", () => {
     const releaseFetch = Promise.withResolvers<ProjectFile[]>();
     let sourceSnapshotVersion = 1;
     let replacementVersion: number | undefined;
+    let replacementCacheKey: string | undefined;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => {
@@ -1101,8 +1467,10 @@ describe("WebSocketManager", () => {
       clearMemoryCaches: () => {
         sourceSnapshotVersion++;
       },
+      getFileListCacheKey: () => "files:branch:test-project:feature",
       getSourceSnapshotVersion: () => sourceSnapshotVersion,
-      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+      replaceSourceSnapshot: (cacheKey, _files, expectedSnapshotVersion) => {
+        replacementCacheKey = cacheKey;
         replacementVersion = expectedSnapshotVersion;
         return Promise.resolve(
           expectedSnapshotVersion === sourceSnapshotVersion ? sourceSnapshotVersion : undefined,
@@ -1134,6 +1502,7 @@ describe("WebSocketManager", () => {
       2,
       "replacement must receive the generation captured before the file-list fetch",
     );
+    assertEquals(replacementCacheKey, "files:branch:test-project:main");
     manager.dispose();
   });
 
@@ -1287,6 +1656,7 @@ describe("WebSocketManager", () => {
     }>();
     let sourceSnapshotVersion = 1;
     let replacementVersion: number | undefined;
+    let replacementCacheKey: string | undefined;
     let pregenerateCalls = 0;
     let publishedStyleHash: string | undefined;
     let reloadCalls = 0;
@@ -1301,8 +1671,10 @@ describe("WebSocketManager", () => {
       clearMemoryCaches: () => {
         sourceSnapshotVersion++;
       },
+      getFileListCacheKey: () => "files:branch:test-project:feature",
       getSourceSnapshotVersion: () => sourceSnapshotVersion,
-      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+      replaceSourceSnapshot: (cacheKey, _files, expectedSnapshotVersion) => {
+        replacementCacheKey = cacheKey;
         replacementVersion = expectedSnapshotVersion;
         if (expectedSnapshotVersion !== sourceSnapshotVersion) {
           return Promise.resolve(undefined);
@@ -1363,6 +1735,7 @@ describe("WebSocketManager", () => {
       3,
       "replacement must receive the generation captured after the full invalidation clear",
     );
+    assertEquals(replacementCacheKey, "files:branch:test-project:main");
     assertEquals(pregenerateCalls, 1);
     assertEquals(publishedStyleHash, undefined);
     assertEquals(reloadCalls, 0, "a superseded full invalidation must not publish a reload");

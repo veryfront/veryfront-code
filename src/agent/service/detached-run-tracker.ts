@@ -93,6 +93,8 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
         activeExecutions.delete(runId);
         untrackRun(runId);
       });
+      // Only waitForDrain (shutdown) reads this promise. Without a rejection handler, a failure triggers an unhandled rejection and crashes the process.
+      trackedExecution.catch(() => {});
 
       activeExecutions.set(runId, trackedExecution);
     },

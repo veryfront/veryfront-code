@@ -1,13 +1,42 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/logger.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
-import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
-import { cwd as getCwd } from "#veryfront/platform/compat/process/lifecycle.ts";
+import {
+  clearEnvFileValueSource,
+  clearEnvFileValueSources,
+  getEnv,
+  markEnvFileValue,
+  setEnv,
+} from "#veryfront/platform/compat/process/env.ts";
+import { cwd as getCwd, getOsType } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("env");
 
-const envSources = new Map<string, string>();
+interface EnvSourceRecord {
+  file: string;
+  source: "env-file" | "config-file";
+  /**
+   * True when `$NAME` expansion pulled part of this value out of the real
+   * process environment. The file supplied the template, but the secret came
+   * from the operator's shell, so the value is not purely repository content.
+   */
+  expandedFromProcessEnv: boolean;
+}
+
+const envSources = new Map<string, EnvSourceRecord>();
+const applyIntrinsic = Reflect.apply;
+const mapDelete = Map.prototype.delete;
+const mapForEach = Map.prototype.forEach;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
+const stringToLowerCase = String.prototype.toLowerCase;
 let envLoaded = false;
+let osTypeOverride: string | undefined;
+
+function envLoaderOsType(): string {
+  return osTypeOverride ?? getOsType();
+}
 
 /** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
 export async function loadEnv(
@@ -22,6 +51,8 @@ export async function loadEnv(
 
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
+  const loadedVars: Record<string, string> = {};
+  const taintedLoadedVars = new Set<string>();
 
   let loadedCount = 0;
   let totalVars = 0;
@@ -29,14 +60,21 @@ export async function loadEnv(
   for (const file of envFiles) {
     try {
       const content = await readTextFile(file);
-      const vars = parseEnvFile(content);
+      const vars = parseEnvFile(content, loadedVars, taintedLoadedVars);
 
-      for (const [key, value] of Object.entries(vars)) {
+      for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
         const existing = getEnv(key);
         if (existing && !override) continue;
 
         setEnv(key, value);
-        envSources.set(key, file);
+        markEnvFileValue(key);
+        applyIntrinsic(mapSet, envSources, [
+          key,
+          { file, source: "env-file", expandedFromProcessEnv },
+        ]);
+        loadedVars[key] = value;
+        if (expandedFromProcessEnv) taintedLoadedVars.add(key);
+        else taintedLoadedVars.delete(key);
         totalVars++;
 
         // Log only the key name and value length — never any part of the value.
@@ -46,8 +84,14 @@ export async function loadEnv(
           logger.debug(`[env] ${key} (${value.length} chars)`);
         }
         if (key === "VERYFRONT_API_BASE_URL") {
-          // Hybrid setups can embed userinfo credentials in the URL; strip them.
-          logger.info(`VERYFRONT_API_BASE_URL loaded: ${sanitizeUrlCredentials(value)}`);
+          // Hybrid setups can embed userinfo credentials in the URL. An
+          // expansion can also place an arbitrary shell secret in any URL
+          // component, which structural URL sanitization cannot identify.
+          logger.info(
+            expandedFromProcessEnv
+              ? "VERYFRONT_API_BASE_URL loaded from an expanded project env value"
+              : `VERYFRONT_API_BASE_URL loaded: ${sanitizeUrlCredentials(value)}`,
+          );
         }
       }
 
@@ -68,82 +112,141 @@ export async function loadEnv(
   );
 }
 
-function parseEnvFile(content: string): Record<string, string> {
-  const vars: Record<string, string> = {};
-  const lines = content.split("\n");
-
-  let currentKey: string | null = null;
-  let currentValue = "";
-  let inMultiline = false;
-  let quoteChar: '"' | "'" | null = null;
-
-  for (let line of lines) {
-    if (inMultiline) {
-      const endQuoteIndex = line.indexOf(quoteChar!);
-      if (endQuoteIndex === -1) {
-        currentValue += `\n${line}`;
-        continue;
-      }
-
-      currentValue += `\n${line.substring(0, endQuoteIndex)}`;
-      vars[currentKey!] = expandVariables(currentValue, vars);
-
-      currentKey = null;
-      currentValue = "";
-      inMultiline = false;
-      quoteChar = null;
-      continue;
-    }
-
-    line = line.trim();
-    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
-
-    const equalIndex = line.indexOf("=");
-    if (equalIndex === -1) continue;
-
-    const key = line.substring(0, equalIndex).trim();
-    let value = line.substring(equalIndex + 1).trim();
-
-    if (value.startsWith('"') || value.startsWith("'")) {
-      quoteChar = value[0] as '"' | "'";
-      value = value.substring(1);
-
-      const endQuoteIndex = value.indexOf(quoteChar);
-      if (endQuoteIndex !== -1) {
-        vars[key] = expandVariables(value.substring(0, endQuoteIndex), vars);
-        continue;
-      }
-
-      currentKey = key;
-      currentValue = value;
-      inMultiline = true;
-      continue;
-    }
-
-    // Strip inline comments only when the `#` is preceded by whitespace. A `#`
-    // that is part of the value itself (e.g. a URL fragment like
-    // `rediss://host:6379/0#pool=5`) has no leading space and must be preserved.
-    const commentMatch = value.match(/\s#/);
-    if (commentMatch?.index !== undefined) {
-      value = value.substring(0, commentMatch.index).trim();
-    }
-
-    vars[key] = expandVariables(value, vars);
-  }
-
-  return vars;
+/** One `.env` entry, with the provenance of the value after expansion. */
+interface ParsedEnvEntry {
+  value: string;
+  expandedFromProcessEnv: boolean;
 }
 
-function expandVariables(value: string, vars: Record<string, string>): string {
-  value = value.replace(/\$\{([^}]+)\}/g, (_, varName: string) => {
-    return vars[varName] ?? getEnv(varName) ?? "";
-  });
+interface EnvParserState {
+  currentKey: string | null;
+  currentValue: string;
+  inMultiline: boolean;
+  quoteChar: '"' | "'" | null;
+}
 
-  value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName: string) => {
-    return vars[varName] ?? getEnv(varName) ?? "";
-  });
+function parseEnvLine(
+  originalLine: string,
+  state: EnvParserState,
+  record: (key: string, raw: string) => void,
+): void {
+  if (state.inMultiline) {
+    const endQuoteIndex = originalLine.indexOf(state.quoteChar!);
+    if (endQuoteIndex === -1) {
+      state.currentValue += `\n${originalLine}`;
+      return;
+    }
+    state.currentValue += `\n${originalLine.substring(0, endQuoteIndex)}`;
+    record(state.currentKey!, state.currentValue);
+    state.currentKey = null;
+    state.currentValue = "";
+    state.inMultiline = false;
+    state.quoteChar = null;
+    return;
+  }
 
-  return value;
+  const line = originalLine.trim();
+  if (!line || line.startsWith("#") || line.startsWith("//")) return;
+  const equalIndex = line.indexOf("=");
+  if (equalIndex === -1) return;
+
+  const key = line.substring(0, equalIndex).trim();
+  let value = line.substring(equalIndex + 1).trim();
+  if (value.startsWith('"') || value.startsWith("'")) {
+    state.quoteChar = value[0] as '"' | "'";
+    value = value.substring(1);
+    const endQuoteIndex = value.indexOf(state.quoteChar);
+    if (endQuoteIndex !== -1) record(key, value.substring(0, endQuoteIndex));
+    else {
+      state.currentKey = key;
+      state.currentValue = value;
+      state.inMultiline = true;
+    }
+    return;
+  }
+
+  const commentMatch = value.match(/\s#/);
+  if (commentMatch?.index !== undefined) value = value.substring(0, commentMatch.index).trim();
+  record(key, value);
+}
+
+function parseEnvFile(
+  content: string,
+  priorVars: Readonly<Record<string, string>> = {},
+  priorTaintedVars: ReadonlySet<string> = new Set(),
+): Record<string, ParsedEnvEntry> {
+  const entries: Record<string, ParsedEnvEntry> = {};
+  const caseInsensitive = envLoaderOsType() === "windows";
+  const normalizeKey = (key: string) => caseInsensitive ? key.toLowerCase() : key;
+  // Plain values for `$NAME` references to entries loaded from earlier project
+  // env files or declared earlier in this file.
+  const vars: Record<string, string> = {};
+  for (const [key, value] of Object.entries(priorVars)) vars[normalizeKey(key)] = value;
+  // Keys whose value already carries something from the process environment.
+  // Referencing one of them taints the referring value in turn.
+  const tainted = new Set<string>();
+  for (const key of priorTaintedVars) tainted.add(normalizeKey(key));
+
+  const record = (key: string, raw: string): void => {
+    const { value, expandedFromProcessEnv } = expandVariables(
+      raw,
+      vars,
+      tainted,
+      caseInsensitive,
+    );
+    const normalizedKey = normalizeKey(key);
+    entries[key] = { value, expandedFromProcessEnv };
+    vars[normalizedKey] = value;
+    if (expandedFromProcessEnv) tainted.add(normalizedKey);
+    else tainted.delete(normalizedKey);
+  };
+
+  const state: EnvParserState = {
+    currentKey: null,
+    currentValue: "",
+    inMultiline: false,
+    quoteChar: null,
+  };
+  for (const line of content.split("\n")) parseEnvLine(line, state, record);
+
+  return entries;
+}
+
+/**
+ * Substitute `$NAME` and `${NAME}` references, reporting where they resolved.
+ *
+ * A reference resolves against earlier entries in the same file first and falls
+ * back to the real process environment. That fallback is how a checked-in
+ * `.env` can quote the operator's own shell secret, so the caller is told when
+ * it happened: the resulting value is no longer purely repository content.
+ */
+function expandVariables(
+  value: string,
+  vars: Record<string, string>,
+  taintedVars: ReadonlySet<string>,
+  caseInsensitive = false,
+): { value: string; expandedFromProcessEnv: boolean } {
+  let expandedFromProcessEnv = false;
+
+  const substitute = (varName: string): string => {
+    const lookupName = caseInsensitive ? varName.toLowerCase() : varName;
+    const fromFile = vars[lookupName];
+    if (fromFile !== undefined) {
+      if (taintedVars.has(lookupName)) expandedFromProcessEnv = true;
+      return fromFile;
+    }
+    const fromProcess = getEnv(varName);
+    if (fromProcess !== undefined) {
+      expandedFromProcessEnv = true;
+      return fromProcess;
+    }
+    return "";
+  };
+
+  value = value.replace(/\$\{([^}]+)\}/g, (_, varName: string) => substitute(varName));
+  value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName: string) => substitute(varName));
+
+  return { value, expandedFromProcessEnv };
 }
 
 /** Check whether `.env` file loading is supported in the current runtime. */
@@ -161,19 +264,123 @@ export function hasEnvLoaded(): boolean {
   return envLoaded;
 }
 
-export function getEnvSource(
-  key: string,
-): { source: "env-file"; file: string } | { source: "process" } | { source: "unset" } {
-  const file = envSources.get(key);
-  if (file) return { source: "env-file", file };
+/** Where a variable's value came from, for callers that must trust one origin. */
+export type EnvSource =
+  | {
+    source: "env-file";
+    file: string;
+    /**
+     * True when `$NAME` expansion copied part of the value out of the process
+     * environment. The file chose the shape, the shell supplied the secret, so
+     * such a value must not be treated as content the repository owns.
+     */
+    expandedFromProcessEnv: boolean;
+  }
+  | { source: "config-file"; file: string }
+  | { source: "process" }
+  | { source: "unset" };
+
+function toFileSource(record: EnvSourceRecord): EnvSource {
+  if (record.source === "config-file") {
+    return { source: "config-file", file: record.file };
+  }
+  return {
+    source: "env-file",
+    file: record.file,
+    expandedFromProcessEnv: record.expandedFromProcessEnv,
+  };
+}
+
+/**
+ * Find a differently-cased `.env` entry that set this very variable.
+ *
+ * Windows process environment names are case-insensitive, so a `.env` line
+ * written as `veryfront_api_url=...` sets the real `VERYFRONT_API_URL` while
+ * provenance was recorded under the spelling the file used. Callers that must
+ * trust one origin would then read repository content as an operator shell
+ * value. The alias is confirmed against the live environment instead of
+ * assumed from the platform: both spellings must resolve to the same value, so
+ * on a case-sensitive host this only matches when the file really did supply
+ * the value being asked about.
+ */
+function findAliasedEnvSource(key: string, value: string): EnvSourceRecord | undefined {
+  if (envLoaderOsType() !== "windows") return undefined;
+  const folded = applyIntrinsic(stringToLowerCase, key, []) as string;
+
+  for (const [recordedKey, record] of envSources) {
+    if (recordedKey === key) continue;
+    if ((applyIntrinsic(stringToLowerCase, recordedKey, []) as string) !== folded) continue;
+    if (getEnv(recordedKey) !== value) continue;
+    return record;
+  }
+
+  return undefined;
+}
+
+export function getEnvSource(key: string): EnvSource {
+  const record = applyIntrinsic(mapGet, envSources, [key]) as EnvSourceRecord | undefined;
+  if (record) return toFileSource(record);
 
   const value = getEnv(key);
-  if (value !== undefined) return { source: "process" };
+  if (value === undefined) return { source: "unset" };
 
-  return { source: "unset" };
+  const aliased = findAliasedEnvSource(key, value);
+  if (aliased) return toFileSource(aliased);
+
+  return { source: "process" };
+}
+
+/** Remove stale provenance for every spelling of one Windows environment key. */
+function clearEnvSourceAliases(key: string): void {
+  applyIntrinsic(mapDelete, envSources, [key]);
+  if (envLoaderOsType() !== "windows") return;
+
+  const folded = applyIntrinsic(stringToLowerCase, key, []) as string;
+  applyIntrinsic(mapForEach, envSources, [
+    (_record: EnvSourceRecord, recordedKey: string) => {
+      if ((applyIntrinsic(stringToLowerCase, recordedKey, []) as string) === folded) {
+        applyIntrinsic(mapDelete, envSources, [recordedKey]);
+      }
+    },
+  ]);
+}
+
+/** Preserve config-file provenance when exporting a derived environment value. */
+export function markConfigFileSource(
+  key: string,
+  file: string,
+): void {
+  clearEnvFileValueSource(key);
+  clearEnvSourceAliases(key);
+  applyIntrinsic(mapSet, envSources, [
+    key,
+    { file, source: "config-file", expandedFromProcessEnv: false },
+  ]);
+}
+
+/** Record that a process write replaced any earlier file-derived value. */
+export function markProcessEnvSource(key: string): void {
+  clearEnvFileValueSource(key);
+  clearEnvSourceAliases(key);
+}
+
+/** Preserve env-file provenance when exporting a derived environment value. */
+export function markEnvFileSource(
+  key: string,
+  file: string,
+  expandedFromProcessEnv = false,
+): void {
+  markEnvFileValue(key);
+  applyIntrinsic(mapSet, envSources, [key, { file, source: "env-file", expandedFromProcessEnv }]);
 }
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
-  envSources.clear();
+  applyIntrinsic(mapClear, envSources, []);
+  clearEnvFileValueSources();
+  osTypeOverride = undefined;
+}
+
+export function __setEnvLoaderOsTypeForTests(os: string | undefined): void {
+  osTypeOverride = os;
 }

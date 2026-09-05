@@ -5,6 +5,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import type { VeryfrontAPIConfig } from "./types.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 
 const baseConfig = {
   apiBaseUrl: "http://test.api",
@@ -21,6 +23,31 @@ type ResolvedRetryConfig = {
 };
 
 describe("VeryfrontApiClient", () => {
+  it("does not expose the stored login token through contextual client accessors", async () => {
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    try {
+      const client = createClient();
+      client.enableContextualToken();
+      await runWithRequestContext(
+        { projectSlug: "project", token: "stored-login-token" },
+        async () => {
+          assertThrows(() => client.getToken(), Error, "Host-private credentials cannot be read");
+          const operations =
+            (client as unknown as { operations: { getToken(): string; tokenProvider?: unknown } })
+              .operations;
+          assertThrows(
+            () => operations.getToken(),
+            Error,
+            "Host-private credentials cannot be read",
+          );
+          assertEquals(operations.tokenProvider, undefined);
+        },
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
   it("seals every shared API client prototype reachable from a public instance", () => {
     const client = createClient();
     const operations = (client as unknown as { operations: object }).operations;
@@ -43,6 +70,22 @@ describe("VeryfrontApiClient", () => {
     assertEquals(VeryfrontApiClient.prototype.initialize, initialize);
   });
 
+  it("rejects prototype interception before a private request client reads a file", () => {
+    const original = VeryfrontApiClient.prototype.getFileContent;
+    let intercepted = false;
+    VeryfrontApiClient.prototype.getFileContent = () => {
+      intercepted = true;
+      return Promise.resolve("intercepted");
+    };
+    const client = createClient();
+    assertEquals(client.getFileContent, original);
+    assertEquals(intercepted, false);
+    assertThrows(() =>
+      Object.defineProperty(VeryfrontApiClient.prototype, "getFileContent", {
+        value: () => Promise.resolve("intercepted"),
+      }), TypeError);
+  });
+
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
       const client = createClient();
@@ -53,6 +96,47 @@ describe("VeryfrontApiClient", () => {
       const client = createClient();
       client.setRequestToken("request-token");
       assertEquals(client.getToken(), "request-token");
+    });
+
+    it("async-local request auth takes priority over a mutable client token", async () => {
+      const client = createClient();
+      client.setRequestToken("later-request-token");
+      client.enableContextualToken();
+
+      await runWithRequestContext(
+        { projectSlug: "request-project", token: "captured-request-token" },
+        () => {
+          assertEquals(client.getToken(), "captured-request-token");
+          return Promise.resolve();
+        },
+      );
+    });
+
+    it("uses the config token for an empty async-local token", async () => {
+      const client = createClient();
+      client.setRequestToken("another-request-token");
+      client.enableContextualToken();
+
+      await runWithRequestContext(
+        { projectSlug: "request-project", token: "" },
+        () => {
+          assertEquals(client.getToken(), "config-token");
+          return Promise.resolve();
+        },
+      );
+    });
+
+    it("preserves an explicit client token unless contextual auth is enabled", async () => {
+      const client = createClient();
+      client.setRequestToken("explicit-token");
+
+      await runWithRequestContext(
+        { projectSlug: "request-project", token: "ambient-token" },
+        () => {
+          assertEquals(client.getToken(), "explicit-token");
+          return Promise.resolve();
+        },
+      );
     });
 
     it("clearRequestToken reverts to config token", () => {

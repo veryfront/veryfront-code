@@ -5,7 +5,10 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
+  getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
+import { deleteHostSecret, setHostSecret } from "#cli/process-env";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
 import {
   remoteFileTools,
   vfRemoteCloneProject,
@@ -407,7 +410,7 @@ describe("cli/mcp/remote-file-tools", () => {
   describe("tool execute happy-path behavior", () => {
     const resetEnv = () => {
       _setEnvironmentConfigForTesting({
-        apiBaseUrl: "https://api.remote-vf.test",
+        apiBaseUrl: "https://api.remote-vf.test/api",
         apiToken: "token-123",
         nodeEnv: "test",
         veryfrontEnv: "test",
@@ -437,29 +440,20 @@ describe("cli/mcp/remote-file-tools", () => {
         updated_at: "2024-01-01T00:00:00.000Z",
       };
 
-      const result = await withMockFetch(async () => {
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestMethod = request.method;
+        requestAuth = request.headers.get("Authorization") ?? "";
         return new Response(
           JSON.stringify(response),
           { headers: { "Content-Type": "application/json" } },
         );
       }, async () => {
-        const originalFetch = globalThis.fetch;
-        globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
-          const request = new Request(input, init);
-          requestUrl = request.url;
-          requestMethod = request.method;
-          requestAuth = request.headers.get("Authorization") ?? "";
-          return originalFetch(input, init);
-        };
-
-        try {
-          return await vfRemoteGetFile.execute({
-            project: "my-project",
-            path: "pages/index.tsx",
-          });
-        } finally {
-          globalThis.fetch = originalFetch;
-        }
+        return await vfRemoteGetFile.execute({
+          project: "my-project",
+          path: "pages/index.tsx",
+        });
       });
 
       assertEquals(requestUrl, "https://api.remote-vf.test/api/my-project/files/pages/index.tsx");
@@ -468,6 +462,122 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(result.success, true);
       assertEquals(result.file?.path, "pages/index.tsx");
       assertEquals(result.file?.size, 42);
+    });
+
+    it("prefers the host-private credential over a blank exported token", async () => {
+      resetEnv();
+      // The environment snapshot keeps a whitespace-only export verbatim, and
+      // the CLI treats that as "unset" when it registers the stored login
+      // token host-privately. The blank export must not shadow it.
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiToken: "   ",
+      });
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      const originalBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = getEnv("VERYFRONT_API_URL");
+      deleteEnv("VERYFRONT_API_BASE_URL");
+      deleteEnv("VERYFRONT_API_URL");
+
+      let requestAuth = "";
+      let requestUrl = "";
+      try {
+        await withMockFetch(async (input, init) => {
+          const request = new Request(input, init);
+          requestUrl = request.url;
+          requestAuth = request.headers.get("Authorization") ?? "";
+          return new Response(
+            JSON.stringify({
+              id: "1",
+              path: "pages/index.tsx",
+              content: "export default function Page() {}",
+              size: 42,
+              type: "file",
+              updated_at: "2024-01-01T00:00:00.000Z",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }, async () => {
+          return await vfRemoteGetFile.execute({
+            project: "my-project",
+            path: "pages/index.tsx",
+          });
+        });
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+        if (originalBaseUrl === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl);
+        if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+        else setEnv("VERYFRONT_API_URL", originalApiUrl);
+      }
+
+      assertEquals(requestAuth, "Bearer stored-login-token");
+      assertEquals(
+        requestUrl,
+        "https://api.veryfront.com/api/my-project/files/pages/index.tsx",
+      );
+    });
+
+    it("preserves an explicitly configured REST base path", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiBaseUrl: "https://gateway.example/v1",
+      });
+      let requestUrl = "";
+
+      try {
+        const result = await withMockFetch(async (input) => {
+          requestUrl = String(input);
+          return Response.json({ files: [] });
+        }, () => vfRemoteListFiles.execute({ project: "my-project", limit: 50 }));
+
+        assertEquals(requestUrl.startsWith("https://gateway.example/v1/my-project/files?"), true);
+        assertEquals(result.success, true);
+      } finally {
+        _resetEnvironmentConfig();
+      }
+    });
+
+    it("does not send a token to a non-loopback HTTP endpoint", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiBaseUrl: "http://remote.example/api",
+      });
+      let fetchCalls = 0;
+
+      try {
+        const result = await withMockFetch(() => {
+          fetchCalls++;
+          return Promise.resolve(Response.json({ data: [] }));
+        }, () => vfRemoteListFiles.execute({ project: "my-project", limit: 50 }));
+
+        assertEquals(fetchCalls, 0);
+        assertEquals(result.success, false);
+        assertEquals(result.error?.includes("must use HTTPS"), true);
+      } finally {
+        _resetEnvironmentConfig();
+      }
+    });
+
+    it("allows an explicit token at an exact HTTP loopback API endpoint", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiBaseUrl: "http://localhost:4321/api",
+      });
+      let requestUrl = "";
+      try {
+        const result = await withMockFetch((input) => {
+          requestUrl = String(input);
+          return Promise.resolve(Response.json({ files: [] }));
+        }, () => vfRemoteListFiles.execute({ project: "my-project", limit: 50 }));
+        assertEquals(result.success, true);
+        assertEquals(new URL(requestUrl).origin, "http://localhost:4321");
+      } finally {
+        _resetEnvironmentConfig();
+      }
     });
 
     it("returns error response when API responds with unauthorized JSON error", async () => {

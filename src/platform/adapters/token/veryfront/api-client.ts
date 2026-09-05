@@ -58,6 +58,10 @@ export class TokenStorageApiClient {
       retry: { maxRetries, initialDelay, maxDelay },
       timeoutMs: config.timeoutMs,
       defaultHeaders: { "Accept": "application/json" },
+      // Always use the framework's captured host transport. In local dev this
+      // client can carry a host-private stored login token after project code
+      // has run in the same realm and replaced globalThis.fetch.
+      outboundPolicy: {},
 
       onResponse: async (response, _init, _url, signal) => {
         // 5xx / 429: throw to trigger retry logic. Cancel the body first so

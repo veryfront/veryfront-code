@@ -32,6 +32,20 @@ const MAX_BLOB_USER_METADATA_BYTES = 64 * 1024;
 const MAX_BLOB_METADATA_ENVELOPE_BYTES = 4 * 1024;
 const MAX_BLOB_METADATA_SIDECAR_BYTES = 128 * 1024;
 const textEncoder = new TextEncoder();
+// Stored-login credentials are attached after project code may have loaded.
+// Construct and mutate their header container through captured intrinsics.
+const NativeHeaders = Headers;
+const applyIntrinsic = Reflect.apply;
+const headersHas = NativeHeaders.prototype.has;
+const headersSet = NativeHeaders.prototype.set;
+const NativeURL = URL;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")?.get;
+const stringReplace = String.prototype.replace;
+
+function readUrlOrigin(url: URL): string {
+  if (!urlOriginGetter) throw new TypeError("Native URL origin getter is unavailable");
+  return applyIntrinsic(urlOriginGetter, url, []) as string;
+}
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -363,7 +377,9 @@ function normalizePrefix(prefix: string | undefined): string {
 }
 
 function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  const normalizedBase = applyIntrinsic(stringReplace, base, [/\/+$/, ""]) as string;
+  const normalizedPath = applyIntrinsic(stringReplace, path, [/^\/+/, ""]) as string;
+  return `${normalizedBase}/${normalizedPath}`;
 }
 
 function mapBlobMetadataToRef(blob: BlobMetadata): BlobRef {
@@ -470,7 +486,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     data: string | Uint8Array | Blob | ReadableStream,
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     const scope = createRequestScope(resolved.requestTimeoutMs);
     try {
       const optionSnapshot = snapshotStoreBlobOptions(options);
@@ -525,10 +541,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         });
       }
 
-      await this.uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
+      await this.#uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
 
       try {
-        await this.uploadFile(
+        await this.#uploadFile(
           metadataPath,
           "application/json",
           metadataBytes.byteLength,
@@ -544,7 +560,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         });
 
         try {
-          await this.deleteUpload(dataPath, resolved);
+          await this.#deleteUpload(dataPath, resolved);
         } catch (cleanupError) {
           logger.warn("Failed to clean up primary upload after metadata failure", {
             id,
@@ -563,8 +579,8 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
-    const resolved = this.resolveConfig();
-    return this.downloadUpload(this.getDataPath(id, resolved.prefix), resolved);
+    const resolved = this.#resolveConfig();
+    return this.#downloadUpload(this.getDataPath(id, resolved.prefix), resolved);
   }
 
   async getText(id: string): Promise<string | null> {
@@ -580,12 +596,12 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   async delete(id: string): Promise<void> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     await Promise.all([
-      this.deleteUpload(this.getMetadataPath(id, resolved.prefix), resolved, {
+      this.#deleteUpload(this.getMetadataPath(id, resolved.prefix), resolved, {
         ignoreNotFound: true,
       }),
-      this.deleteUpload(this.getDataPath(id, resolved.prefix), resolved, { ignoreNotFound: true }),
+      this.#deleteUpload(this.getDataPath(id, resolved.prefix), resolved, { ignoreNotFound: true }),
     ]);
   }
 
@@ -594,15 +610,20 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   async stat(id: string): Promise<BlobRef | null> {
-    const resolved = this.resolveConfig();
+    const resolved = this.#resolveConfig();
     const dataPath = this.getDataPath(id, resolved.prefix);
     const metadataPath = this.getMetadataPath(id, resolved.prefix);
-    const metadataJson = await this.downloadUploadText(metadataPath, resolved);
+    const metadataJson = await this.#downloadUploadText(metadataPath, resolved);
 
     if (metadataJson) {
       try {
         const ref = mapBlobMetadataToRef(BlobMetadataSchema.parse(JSON.parse(metadataJson)));
-        return await attachSignedUrl(ref, dataPath, resolved, this.getDownloadUrl.bind(this));
+        return await attachSignedUrl(
+          ref,
+          dataPath,
+          resolved,
+          (path, config) => this.#getDownloadUrl(path, config),
+        );
       } catch (error) {
         logger.warn("Failed to parse blob metadata sidecar, falling back to upload metadata", {
           id,
@@ -612,11 +633,16 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       }
     }
 
-    const upload = await this.getUploadMetadata(dataPath, resolved);
+    const upload = await this.#getUploadMetadata(dataPath, resolved);
     if (!upload) return null;
 
     const ref = mapUploadMetadataToRef(upload, id);
-    return await attachSignedUrl(ref, dataPath, resolved, this.getDownloadUrl.bind(this));
+    return await attachSignedUrl(
+      ref,
+      dataPath,
+      resolved,
+      (path, config) => this.#getDownloadUrl(path, config),
+    );
   }
 
   /**
@@ -630,8 +656,8 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
    * one page, pagination will need wiring here.
    */
   async list(): Promise<BlobRef[]> {
-    const resolved = this.resolveConfig();
-    const raw = await this.requestJson(
+    const resolved = this.#resolveConfig();
+    const raw = await this.#requestJson(
       "GET",
       `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads`,
       resolved,
@@ -656,7 +682,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
-  private resolveConfig(): ResolvedConfig {
+  #resolveConfig(): ResolvedConfig {
     const bootstrap = getVeryfrontCloudBootstrap();
     const hostBootstrap = getVeryfrontCloudHostBootstrap();
     if (this.config.apiBaseUrl && !this.config.apiToken) {
@@ -723,7 +749,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     return `${prefix}${id}${META_SUFFIX}`;
   }
 
-  private async uploadFile(
+  async #uploadFile(
     path: string,
     mimeType: string,
     size: number,
@@ -732,7 +758,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     signal?: AbortSignal,
   ): Promise<void> {
     const upload = UploadCreateResponseSchema.parse(
-      await this.requestJson(
+      await this.#requestJson(
         "POST",
         `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads`,
         resolved,
@@ -748,8 +774,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       ),
     );
 
-    const headers = new Headers(upload.required_headers);
-    if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
+    const headers = new NativeHeaders(upload.required_headers);
+    if (!applyIntrinsic(headersHas, headers, ["Content-Type"])) {
+      applyIntrinsic(headersSet, headers, ["Content-Type", mimeType]);
+    }
 
     const scope = signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
     const requestSignal = signal ?? scope?.signal;
@@ -779,11 +807,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     }
   }
 
-  private async getUploadMetadata(
+  async #getUploadMetadata(
     path: string,
     resolved: ResolvedConfig,
   ): Promise<UploadMetadataResponse | null> {
-    const raw = await this.requestJson(
+    const raw = await this.#requestJson(
       "GET",
       `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads/${encodeURIComponent(path)}`,
       resolved,
@@ -797,12 +825,12 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     return UploadMetadataResponseSchema.parse(raw);
   }
 
-  private async deleteUpload(
+  async #deleteUpload(
     path: string,
     resolved: ResolvedConfig,
     options: { ignoreNotFound?: boolean } = {},
   ): Promise<void> {
-    await this.requestJson(
+    await this.#requestJson(
       "DELETE",
       `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads/${encodeURIComponent(path)}`,
       resolved,
@@ -813,13 +841,13 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     );
   }
 
-  private async getDownloadUrl(
+  async #getDownloadUrl(
     path: string,
     resolved: ResolvedConfig,
   ): Promise<{ signedUrl: string; expiresAt: Date } | null> {
     const ttl = resolved.downloadTtl;
     const query = ttl ? `?ttl=${encodeURIComponent(String(ttl))}` : "";
-    const raw = await this.requestJson(
+    const raw = await this.#requestJson(
       "GET",
       `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads/${
         encodeURIComponent(path)
@@ -837,11 +865,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     };
   }
 
-  private async downloadUpload(
+  async #downloadUpload(
     path: string,
     resolved: ResolvedConfig,
   ): Promise<ReadableStream | null> {
-    const download = await this.getDownloadUrl(path, resolved);
+    const download = await this.#getDownloadUrl(path, resolved);
     if (!download) return null;
 
     const scope = createRequestScope(resolved.requestTimeoutMs);
@@ -872,16 +900,16 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     }
   }
 
-  private async downloadUploadText(
+  async #downloadUploadText(
     path: string,
     resolved: ResolvedConfig,
   ): Promise<string | null> {
-    const stream = await this.downloadUpload(path, resolved);
+    const stream = await this.#downloadUpload(path, resolved);
     if (!stream) return null;
     return new Response(stream).text();
   }
 
-  private async requestJson(
+  async #requestJson(
     method: string,
     path: string,
     resolved: ResolvedConfig,
@@ -893,19 +921,20 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       signal?: AbortSignal;
     } = {},
   ): Promise<unknown | null> {
-    const headers = new Headers(options.headers);
-    headers.set("Authorization", `Bearer ${resolved.apiToken}`);
+    const headers = new NativeHeaders(options.headers);
+    applyIntrinsic(headersSet, headers, ["Authorization", `Bearer ${resolved.apiToken}`]);
 
     const scope = options.signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
     const signal = options.signal ?? scope?.signal;
     if (!signal) throw new TypeError("Blob request signal is unavailable");
+    const apiOrigin = readUrlOrigin(new NativeURL(resolved.apiBaseUrl));
     try {
       const response = await guardedOutboundFetch(
         joinUrl(resolved.apiBaseUrl, path),
         { method, headers, body: options.body, redirect: "error", signal },
         {
           authorizeUrl: (target) => {
-            if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
+            if (readUrlOrigin(target) !== apiOrigin) {
               throw new OutboundRequestBlockedError(
                 "Veryfront Cloud Blob request blocked: destination origin is not authorized",
               );

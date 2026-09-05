@@ -6,12 +6,16 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
   type FetchCall,
-  installMockFetch,
+  installMockFetch as createSandboxFetchMock,
   jsonResponse,
   type MockResponseEntry,
   ndjsonResponse,
   textResponse,
 } from "../sandbox/sandbox.test-helpers.ts";
+import {
+  installMockFetch as installHostMockFetch,
+  restoreMockFetch as restoreHostMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { detectRuntime, getSkillScriptExecutor, LocalScriptExecutor } from "./executor.ts";
 
 const SKILL_ENV_KEYS = [
@@ -20,7 +24,6 @@ const SKILL_ENV_KEYS = [
   "VERYFRONT_API_URL",
 ] as const;
 
-const originalFetch = globalThis.fetch;
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
 
@@ -37,7 +40,7 @@ function clearSkillEnv(): void {
 function mockFetch(responses: MockResponseEntry[]): void {
   fetchCalls = [];
   fetchResponses = [...responses];
-  globalThis.fetch = installMockFetch({ calls: fetchCalls, responses: fetchResponses });
+  installHostMockFetch(createSandboxFetchMock({ calls: fetchCalls, responses: fetchResponses }));
 }
 
 function pendingErrorNdjsonResponse(error: Error): {
@@ -67,7 +70,7 @@ describe("src/skill/executor", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreHostMockFetch();
     clearSkillEnv();
   });
 

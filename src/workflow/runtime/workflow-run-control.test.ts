@@ -10,6 +10,7 @@ import type {
   WorkflowContext,
   WorkflowRun,
 } from "../types.ts";
+import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
@@ -943,6 +944,40 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals((await backend.getRun(run.id))?.status, "waiting");
   });
 
+  it("fails a run under the slug a returned refusal carries", async () => {
+    // The executor returns some refusals instead of throwing so earlier
+    // batches' states survive. A caller classifying failures by slug must see
+    // the same kind of error either way, not a generic orchestration failure.
+    const backend = new MemoryBackend();
+    const run = { ...createRun("returned-typed-refusal"), status: "running" as const };
+    await backend.createRun(run);
+    const refusal = INVALID_ARGUMENT.create({
+      detail: 'Concurrent sub-workflow nodes "a" and "b" both declare child id "review"',
+    });
+    const errors: Error[] = [];
+
+    const outcome = await execute(
+      backend,
+      run,
+      () => ({
+        completed: false,
+        waiting: false,
+        context: { input: {} },
+        nodeStates: {},
+        error: refusal.message,
+        errorCause: refusal,
+      }),
+      { onError: (_run, error) => void errors.push(error) },
+    );
+
+    assertEquals(outcome.status, "failed");
+    const [reported] = errors;
+    assertExists(reported);
+    assertEquals(reported instanceof VeryfrontError, true);
+    assertEquals((reported as VeryfrontError).slug, INVALID_ARGUMENT.slug);
+    assertEquals((await backend.getRun(run.id))?.error?.message, refusal.message);
+  });
+
   it("retains a stalled approval node while its decision is reconciling", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("stalled-decided-approval"), status: "running" as const };
@@ -1631,6 +1666,14 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     const run = {
       ...createRun("reconcile-optional-decision-fields"),
       status: "waiting" as const,
+      nodeStates: {
+        review: {
+          nodeId: "review",
+          status: "running" as const,
+          attempt: 1,
+          _subWorkflowOwnerPath: "release-2",
+        },
+      },
     };
     await backend.createRun(run);
 
@@ -1663,6 +1706,45 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
       approver: "reviewer",
       data: { confirmed: true },
     });
+    assertEquals(persisted?.nodeStates.review?._subWorkflowOwnerPath, "release-2");
+  });
+
+  it("keeps the recorded attempt and clears the failure when an approval lands", async () => {
+    // The wait was retried before a decision arrived. The approval outcome must
+    // record the attempt that actually ran, not reset the count to 1, and must
+    // drop the error the earlier attempt left behind.
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-retried-approval"),
+      status: "waiting" as const,
+      nodeStates: {
+        review: {
+          nodeId: "review",
+          status: "running" as const,
+          attempt: 3,
+          error: "approval wait was interrupted",
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: run.id,
+        approvalId: "approval-retried",
+        nodeId: "review",
+        decision: { approved: true, approver: "reviewer" },
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(persisted?.nodeStates.review?.status, "completed");
+    assertEquals(persisted?.nodeStates.review?.attempt, 3);
+    assertEquals(persisted?.nodeStates.review?.error, undefined);
   });
 
   it("reports a deleted run as terminal when env hydration loses its update", async () => {

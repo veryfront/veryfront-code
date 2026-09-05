@@ -9,10 +9,28 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import type { DependencyWritebackTarget } from "./package-registry.ts";
 
 const logger = rendererLogger.component("npm-registry-client");
+// Captured before project code runs. The write-back may authenticate with the
+// host-private stored login token, and the destination it is sent to is derived
+// from host-scoped strings here. A project that replaces
+// `String.prototype.replace` must not be able to rewrite that destination and
+// receive the developer's credential, nor flip a blank/non-blank
+// classification through a replaced `String.prototype.trim`.
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+
+function isBlank(value: string | undefined): boolean {
+  return value === undefined || (applyIntrinsic(stringTrim, value, []) as string) === "";
+}
 const SEMVER_NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
 const SEMVER_PRERELEASE_IDENTIFIER =
   `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
@@ -398,8 +416,26 @@ export async function postDependencyResolution(
     "../../config/environment-config.ts"
   );
   const config = getEnvironmentConfig();
-  const apiBaseUrl = config.apiBaseUrl;
-  const apiToken = authToken || config.apiToken;
+  // The environment snapshot only carries an explicitly exported token; a
+  // stored `veryfront login` token is registered host-privately so project
+  // code cannot read it out of the process environment. Falling back to
+  // `getHostEnv` keeps the write-back authenticated for a CLI-authenticated
+  // dev session, and a blank exported value must not shadow that credential.
+  const snapshotToken = isBlank(config.apiToken) ? undefined : config.apiToken;
+  const environmentToken = authToken || snapshotToken;
+  const hostToken = environmentToken ? undefined : getHostEnv("VERYFRONT_API_TOKEN");
+  const apiToken = environmentToken || hostToken;
+  // The host-private credential must only be sent to a host-owned API origin.
+  // `config.apiBaseUrl` can come from the project-scoped environment
+  // (`VERYFRONT_API_BASE_URL`), and pairing the developer's stored login token
+  // with a project-chosen destination would hand the credential to that
+  // origin. Token and endpoint must come from the same authority: when the
+  // host token wins, the destination resolves from the host environment (or
+  // the default API base), never from the snapshot.
+  const apiBaseUrl =
+    hostToken || apiToken !== undefined && apiToken === getHostSecret("VERYFRONT_API_TOKEN")
+      ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
+      : config.apiBaseUrl;
 
   if (!apiBaseUrl || !apiToken) {
     logger.debug("Skipping dependency resolution write-back: no API config", { projectId });
@@ -411,7 +447,16 @@ export async function postDependencyResolution(
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    const res = await fetch(url, {
+    // The credential may be the host-private stored login token, so the request
+    // goes through the host transport rather than `globalThis.fetch`. A project
+    // served in this process can replace the global, and a direct call would
+    // hand it the `Authorization` header to read.
+    //
+    // This also puts the write-back under the host egress ceiling, which denies
+    // private and loopback destinations. A deployment whose API base is
+    // internal must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; the write-back
+    // is best-effort, so a blocked request degrades to a logged skip.
+    const res = await guardedOutboundFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

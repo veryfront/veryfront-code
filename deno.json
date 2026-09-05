@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1256-rc",
+  "version": "0.1.1257",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -398,6 +398,7 @@
     "#cli/host-runtime": "./src/platform/compat/process/host-runtime.ts",
     "#cli/platform-runtime": "./src/platform/compat/runtime.ts",
     "#cli/process-env": "./src/platform/compat/process/env.ts",
+    "#cli/outbound-fetch": "./src/security/http/outbound-fetch.ts",
     "#cli/process-command": "./src/platform/compat/process/command.ts",
     "#cli/process-lifecycle": "./src/platform/compat/process/lifecycle.ts",
     "#cli/logger-config": "./src/utils/logger/logger.ts",

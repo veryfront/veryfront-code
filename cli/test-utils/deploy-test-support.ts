@@ -68,16 +68,31 @@ export function projectConfigText(): string {
   return JSON.stringify({ projectSlug: PROJECT_SLUG, apiUrl: CONTROL_PLANE }, null, 2) + "\n";
 }
 
-export async function createPushedProject(): Promise<{ projectDir: string; commitSha: string }> {
+/**
+ * A committed project whose push receipt describes exactly the checked-out tree.
+ *
+ * `extraFiles` are committed with the rest of the source and folded into the
+ * receipt digest, so a suite that needs a file beyond the default two still
+ * starts from a clean checkout: writing that file after the receipt would leave
+ * uncommitted changes, which deploy now refuses as source the push never saw.
+ */
+export async function createPushedProject(
+  extraFiles: readonly DeployReleaseFile[] = [],
+): Promise<{ projectDir: string; commitSha: string; files: DeployReleaseFile[] }> {
   const projectDir = await Deno.makeTempDir();
   await Deno.mkdir(`${projectDir}/app`, { recursive: true });
   await Deno.writeTextFile(`${projectDir}/veryfront.json`, projectConfigText());
   await Deno.writeTextFile(`${projectDir}/app/page.tsx`, APP_ROUTE_CONTENT);
+  for (const file of extraFiles) {
+    await Deno.writeTextFile(`${projectDir}/${file.path}`, file.content);
+  }
   const commitSha = await commitProject(projectDir);
-  const sourceDigest = await computeSourceDigest([
+  const files: DeployReleaseFile[] = [
     { path: "app/page.tsx", content: APP_ROUTE_CONTENT },
     { path: "veryfront.json", content: projectConfigText() },
-  ]);
+    ...extraFiles,
+  ];
+  const sourceDigest = await computeSourceDigest(files);
   await writePushReceipt(projectDir, {
     controlPlane: CONTROL_PLANE,
     projectId: PROJECT_ID,
@@ -87,7 +102,7 @@ export async function createPushedProject(): Promise<{ projectDir: string; commi
     sourceDigest,
     clean: true,
   });
-  return { projectDir, commitSha };
+  return { projectDir, commitSha, files };
 }
 
 export async function createUnlinkedPushedProject(): Promise<{
@@ -164,6 +179,26 @@ export function readyManifest(routes: Record<string, { modules: string[]; css: s
   };
 }
 
+/**
+ * Run `fn` with the ambient GitHub Actions commit SHA out of the environment.
+ *
+ * Deploy fixtures commit their own throwaway repository under a temp directory,
+ * so a CI job's `GITHUB_SHA` describes a completely different repository.
+ * `resolveGitSource` fails closed when the environment SHA and the checkout's
+ * HEAD disagree, which would otherwise make every fixture look like a dirty,
+ * commit-less checkout on CI and nowhere else.
+ */
+export async function withoutAmbientCommitSha<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = Deno.env.get("GITHUB_SHA");
+  try {
+    Deno.env.delete("GITHUB_SHA");
+    return await fn();
+  } finally {
+    if (saved === undefined) Deno.env.delete("GITHUB_SHA");
+    else Deno.env.set("GITHUB_SHA", saved);
+  }
+}
+
 export async function withDeployEnv<T>(
   fn: () => Promise<T>,
   overrides: Record<string, string | null> = {},
@@ -173,6 +208,9 @@ export async function withDeployEnv<T>(
     VERYFRONT_API_URL: CONTROL_PLANE,
     VERYFRONT_PROJECT_SLUG: null,
     VERYFRONT_PROJECT_ID: null,
+    // Fixtures own a temp Git repository of their own; see
+    // {@link withoutAmbientCommitSha}.
+    GITHUB_SHA: null,
     ...overrides,
   };
   const keys = Object.keys(defaults);

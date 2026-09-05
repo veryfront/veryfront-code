@@ -761,7 +761,6 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
   const incompatible = runtime === "node"
     ? [
       "src/issues/**",
-      "src/cache/backend.test.ts",
       ...DENO_ONLY_TESTS,
       "src/proxy/handler.test.ts",
       "src/proxy/oauth-client.test.ts",

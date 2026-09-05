@@ -1,6 +1,14 @@
 import { getApiUrl } from "../shared/constants.ts";
 import { readToken } from "../auth/token-store.ts";
 import { isApiKeyToken, type UserInfo, validateCredential, validateToken } from "../auth/login.ts";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { guardedExactHttpLoopbackOutboundFetch, guardedOutboundFetch } from "#cli/outbound-fetch";
+import { getHostSecret } from "#cli/process-env";
+
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+const NativeURL = URL;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
 
 export interface RemoteProject {
   id: string;
@@ -17,8 +25,14 @@ export interface ProjectDiscoveryResult {
   error?: string;
 }
 
-export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDiscoveryResult> {
-  const token = apiToken?.trim() || await readToken();
+export async function fetchRemoteProjects(
+  apiToken?: string,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+): Promise<ProjectDiscoveryResult> {
+  const normalizedToken = apiToken === undefined
+    ? undefined
+    : applyIntrinsic(stringTrim, apiToken, []) as string;
+  const token = normalizedToken || await readToken();
 
   if (!token) {
     return {
@@ -29,7 +43,18 @@ export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDis
   }
 
   const apiKeyCredential = isApiKeyToken(token);
-  const user = apiKeyCredential ? null : await validateToken(token);
+  const apiUrl = getApiUrl(env);
+  let explicitLoopback = false;
+  if (normalizedToken && token !== getHostSecret("VERYFRONT_API_TOKEN")) {
+    try {
+      const origin = applyIntrinsic(urlOriginGetter, new NativeURL(apiUrl), []) as string;
+      explicitLoopback = /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin);
+    } catch {
+      // Keep invalid URL failures inside the existing discovery error path.
+    }
+  }
+  const transport = explicitLoopback ? guardedExactHttpLoopbackOutboundFetch : guardedOutboundFetch;
+  const user = apiKeyCredential ? null : await validateToken(token, env, { transport });
 
   if (!apiKeyCredential && !user) {
     return {
@@ -40,7 +65,7 @@ export async function fetchRemoteProjects(apiToken?: string): Promise<ProjectDis
   }
 
   try {
-    const response = await fetch(`${getApiUrl()}/projects`, {
+    const response = await transport(`${apiUrl}/projects`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

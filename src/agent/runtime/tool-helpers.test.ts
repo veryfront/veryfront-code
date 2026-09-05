@@ -20,63 +20,70 @@ import {
 } from "./tool-helpers.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 
+/**
+ * Remote integration discovery goes through `guardedOutboundFetch`, which reads
+ * the captured host transport rather than `globalThis.fetch`. `withMockFetch`
+ * swaps both, so these helpers must route through it instead of hand-assigning
+ * the global.
+ */
 async function withMockRemoteIntegrationTools<T>(
   remoteToolNames: string[],
   callback: () => Promise<T>,
 ): Promise<T> {
-  const originalFetch = globalThis.fetch;
   const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
   const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-  globalThis.fetch = async () =>
-    Response.json({
+  const mockFetch = () =>
+    Promise.resolve(Response.json({
       tools: remoteToolNames.map((name) => ({
         name,
         description: `${name} description`,
         inputSchema: { type: "object", properties: {} },
       })),
-    });
+    }));
 
   try {
     Deno.env.set("VERYFRONT_API_URL", "https://api.test");
     Deno.env.set("VERYFRONT_API_TOKEN", "token");
-    return await callback();
+    return await withMockFetch(mockFetch, callback);
   } finally {
     if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
     else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
     if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
     else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-    globalThis.fetch = originalFetch;
   }
 }
 
 async function withContextOnlyRemoteIntegrationTools<T>(
   callback: () => Promise<T>,
 ): Promise<{ result: T; authorization: string | null }> {
-  const originalFetch = globalThis.fetch;
   const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
   const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
   let authorization: string | null = null;
-  globalThis.fetch = async (input, init) => {
-    authorization = new Request(input, init).headers.get("authorization");
-    return Response.json({
+  const mockFetch = (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ) => {
+    authorization = new Request(input, init as RequestInit).headers.get(
+      "authorization",
+    );
+    return Promise.resolve(Response.json({
       tools: [{
         name: "gmail__list_emails",
         description: "List emails",
         inputSchema: { type: "object", properties: {} },
       }],
-    });
+    }));
   };
 
   try {
     Deno.env.set("VERYFRONT_API_URL", "https://api.test");
     Deno.env.delete("VERYFRONT_API_TOKEN");
-    return { result: await callback(), authorization };
+    return { result: await withMockFetch(mockFetch, callback), authorization };
   } finally {
     if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
     else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
     if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
     else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
-    globalThis.fetch = originalFetch;
   }
 }
 
@@ -551,6 +558,45 @@ describe("tool-helpers", () => {
   });
 
   describe("getAvailableTools", () => {
+    it("does not insert tool definitions through a patched array push", async () => {
+      toolRegistryInternal.clearAll();
+      const originalPush = Array.prototype.push;
+      toolRegistry.register(
+        "allowed_lookup",
+        tool({
+          id: "allowed_lookup",
+          description: "Allowed lookup",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => "ok",
+        }),
+      );
+      Array.prototype.push = function (...items: unknown[]): number {
+        const length = Reflect.apply(originalPush, this, items) as number;
+        const first = items[0] as { name?: unknown } | undefined;
+        if (first?.name === "allowed_lookup") {
+          Reflect.apply(originalPush, this, [{
+            name: "denied_delete",
+            description: "Injected denied tool",
+            parameters: { type: "object", properties: {} },
+          }]);
+        }
+        return length;
+      };
+
+      let definitions;
+      try {
+        definitions = await getAvailableTools(
+          { allowed_lookup: true },
+          { includeIntegrationTools: false },
+        );
+      } finally {
+        Array.prototype.push = originalPush;
+        toolRegistryInternal.clearAll();
+      }
+
+      assertEquals(definitions.map((definition) => definition.name), ["allowed_lookup"]);
+    });
+
     it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
       toolRegistryInternal.clearAll();
 
@@ -1010,6 +1056,53 @@ describe("tool-helpers", () => {
       } finally {
         toolRegistryInternal.clearAll();
       }
+    });
+
+    it("enforces remote tool allowlists through captured membership", async () => {
+      toolRegistryInternal.clearAll();
+      const calls: string[] = [];
+      const remoteSource: RemoteToolSource = {
+        id: "docs",
+        listTools: () =>
+          Promise.resolve([
+            { name: "search_docs", description: "Search", parameters: {} },
+            { name: "delete_docs", description: "Delete", parameters: {} },
+          ]),
+        executeTool: (name) => {
+          calls.push(name);
+          return Promise.resolve(name);
+        },
+      };
+      const originalIncludes = Array.prototype.includes;
+      let definitions: Awaited<ReturnType<typeof getAvailableTools>> = [];
+      let executionError: unknown;
+      try {
+        Array.prototype.includes = () => true;
+        definitions = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          allowedRemoteToolNames: ["search_docs"],
+          remoteToolSources: [remoteSource],
+        });
+        try {
+          await executeConfiguredTool(
+            "delete_docs",
+            {},
+            undefined,
+            undefined,
+            ["search_docs"],
+            [remoteSource],
+          );
+        } catch (error) {
+          executionError = error;
+        }
+      } finally {
+        Array.prototype.includes = originalIncludes;
+        toolRegistryInternal.clearAll();
+      }
+
+      assertEquals(definitions.map((definition) => definition.name), ["search_docs"]);
+      assertEquals((executionError as { slug?: string })?.slug, "permission-denied");
+      assertEquals(calls, []);
     });
 
     it("merges generic remote MCP tool sources into available tools", async () => {

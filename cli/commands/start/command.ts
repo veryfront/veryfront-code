@@ -1,4 +1,5 @@
 import { onGlobalError } from "#cli/process-lifecycle";
+import { getHostEnv } from "#cli/process-env";
 import { cwd, getEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { isAbsolute, join, resolve } from "veryfront/platform/path";
@@ -7,7 +8,7 @@ import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 
 const logger = cliLogger.component("global");
 
@@ -144,7 +145,7 @@ export async function hydrateStartRuntimeAuth(
   selectedProject: StartProjectSelection,
 ): Promise<string | undefined> {
   const linkedProjectSlug = await resolveLinkedProjectSlug(selectedProject.projectDir);
-  await applyRuntimeAuthContext({ linkedProjectSlug });
+  await applyQualifiedRuntimeAuth(selectedProject.projectDir, linkedProjectSlug);
   return linkedProjectSlug;
 }
 
@@ -156,9 +157,9 @@ export async function hydrateStartRuntimeAuth(
  * project instead.
  *
  * A plain login token is deliberately not enough. `applyRuntimeAuthContext`
- * puts the stored CLI login token in `VERYFRONT_API_TOKEN` before this runs, so
- * accepting it would mean that merely being logged in pushes `veryfront start`
- * into a proxy mode it cannot actually serve from.
+ * resolves the stored CLI login token before this runs, so accepting it would
+ * mean that merely being logged in pushes `veryfront start` into a proxy mode
+ * it cannot actually serve from.
  */
 export function hasProxyCredentials(
   read: (name: string) => string | undefined = getEnv,
@@ -187,7 +188,8 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
       apiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") ?? "",
       previewApiClientId: getEnv("VERYFRONT_PROXY_API_CLIENT_ID") ?? "",
       previewApiClientSecret: getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") ?? "",
-      apiToken: getEnv("VERYFRONT_API_TOKEN") ?? "",
+      // Host-scoped: the CLI login token is kept out of the process env.
+      apiToken: getHostEnv("VERYFRONT_API_TOKEN") ?? "",
       localProjects: Object.fromEntries(localProjects),
     };
 

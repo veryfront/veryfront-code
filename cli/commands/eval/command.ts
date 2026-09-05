@@ -41,7 +41,8 @@ import {
   getCurrentVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
-import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
 import {
@@ -59,6 +60,7 @@ import {
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
+import { createOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -321,19 +323,23 @@ export async function finalizeGatewayBillingGroup(
 
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS;
   const sleepFn = options.sleep ?? sleep;
+  const hostTransport = createOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
 
   for (let attempt = 0;; attempt += 1) {
     let response: Response;
     try {
-      response = await fetch(joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${bootstrap.apiToken}`,
-          "Content-Type": "application/json",
-          ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
+      response = await hostTransport(
+        joinApiUrl(bootstrap.apiBaseUrl, "ai/gateway/billing/finalize"),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bootstrap.apiToken}`,
+            "Content-Type": "application/json",
+            ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
+          },
+          body: JSON.stringify({ billing_group_id: billingGroupId }),
         },
-        body: JSON.stringify({ billing_group_id: billingGroupId }),
-      });
+      );
     } catch (error) {
       cliLogger.warn(
         `Gateway billing finalization skipped for ${billingGroupId}: ${
@@ -591,19 +597,29 @@ export async function hydrateEvalRuntimeAuth(
   projectDir: string,
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
-  return await applyRuntimeAuthContext({
-    linkedProjectSlug: await resolveLinkedProjectSlug(
+  return await applyQualifiedRuntimeAuth(
+    projectDir,
+    await resolveLinkedProjectSlug(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
     ),
-  });
+  );
 }
 
-function createEvalToolExecutionContext(
+export function createEvalToolExecutionContext(
   config: EvalRuntimeAuthConfig | null | undefined,
 ): ToolExecutionContext {
   const projectSlug = resolveEvalRuntimeProjectSlug(config);
-  const authToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  // Only an explicitly exported token reaches this context. `createToolAdapter`
+  // hands it to a project-defined `tool.execute()`, and a stored `veryfront
+  // login` token is registered host-privately precisely so project code cannot
+  // read it — putting it here would hand it back. An exported value is already
+  // readable by the same code through `Deno.env`, so it stays.
+  //
+  // Framework-owned integration handling does not need it either: when the
+  // context carries no credential, `resolveRequestToken()` in
+  // `src/integrations/remote-tools.ts` resolves the host-private token itself.
+  const authToken = getEnv("VERYFRONT_API_TOKEN");
   return {
     ...(projectSlug ? { projectSlug } : {}),
     ...(authToken ? { authToken } : {}),

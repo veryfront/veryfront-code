@@ -946,7 +946,8 @@ function isValidIncompleteArrayPrefix(
     if (value.status === "invalid") return false;
     if (value.status === "incomplete") return true;
     index = skipWhitespace(validationBody, value.next);
-    if (index >= validationBody.length) return true;
+    // Whitespace at the artificial end does not establish a value delimiter.
+    if (index >= validationBody.length) return false;
     if (validationBody[index] === "]") return index >= fieldBody.length;
     if (validationBody[index] !== ",") return false;
     index += 1;
@@ -1024,7 +1025,8 @@ function scanIncompleteLeadingObjectToolIds(
     if (member.status === "incomplete") break;
     addObjectMemberToolId(ids, member, member.next <= fieldBody.length);
     index = skipWhitespace(validationBody, member.next);
-    if (index >= validationBody.length || validationBody[index] === "}") break;
+    if (index >= validationBody.length) return undefined;
+    if (validationBody[index] === "}") break;
     if (validationBody[index] !== ",") return undefined;
     index += 1;
   }

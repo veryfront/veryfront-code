@@ -713,6 +713,8 @@ export {
   hostedChatRequestSchema,
   hostedChatRuntimeOverridesSchema,
   hostedDurableRootRunDescriptorSchema,
+  MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS,
+  MAX_HOSTED_CHAT_REQUEST_MESSAGES,
 } from "./hosted/chat-request.ts";
 export {
   getForwardedHostedModelId,
@@ -1788,7 +1790,10 @@ export {
   type AgUiOnComplete,
   type AgUiRequest,
   AgUiRequestSchema,
+  type AgUiRuntimeRestrictions,
+  applyAgUiRuntimeRestrictions,
   createAgUiHandler,
+  hasAgUiRuntimeRestrictions,
 } from "./ag-ui/handler.ts";
 export {
   createHostedFormInputTool,

@@ -16,6 +16,7 @@ import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
 } from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 
 const RUN_ID = "run_checkpoint_1";
@@ -146,7 +147,7 @@ describe("run-scoped provider replay checkpoint persistence", () => {
       runId: RUN_ID,
       runEventAppendToken: "<TOKEN>",
       fetch: (_input, init) => {
-        bodies.push(String(init?.body));
+        bodies.push(String(observeFetchRequestInit(init).body));
         return Promise.resolve(new Response(null, { status: 200 }));
       },
     });
@@ -202,7 +203,7 @@ describe("run-scoped provider replay checkpoint persistence", () => {
       runId: RUN_ID,
       runEventAppendToken: "<TOKEN>",
       fetch: (_input, init) => {
-        capturedBody = String(init?.body);
+        capturedBody = String(observeFetchRequestInit(init).body);
         return Promise.resolve(new Response(null, { status: 200 }));
       },
     });
@@ -263,7 +264,7 @@ describe("run-scoped provider replay checkpoint persistence", () => {
       runId: RUN_ID,
       runEventAppendToken: "<TOKEN>",
       fetch: (_input, init) => {
-        capturedBody = String(init?.body);
+        capturedBody = String(observeFetchRequestInit(init).body);
         return Promise.resolve(new Response(null, { status: 200 }));
       },
     });

@@ -15,6 +15,7 @@ import { cursor, screen } from "../ui/ansi.ts";
 import { dim } from "../ui/colors.ts";
 import { getTerminalWidth } from "../ui/layout.ts";
 import { formatError } from "../utils/string.ts";
+import { resolveApiCredentialCandidatesForAuth } from "../shared/config.ts";
 
 import type { App, AppConfig } from "./types.ts";
 import {
@@ -40,7 +41,7 @@ import {
 } from "./views/index.ts";
 import { createLauncher, createPlatformHost, type Launcher } from "./actions.ts";
 import { generateRandomSlug } from "./utils.ts";
-import { isApiKeyIdentity, login, logout, validateToken } from "../auth/login.ts";
+import { isApiKeyIdentity, login, logout } from "../auth/login.ts";
 import { readToken } from "../auth/token-store.ts";
 import { fetchRemoteProjects } from "../sync/index.ts";
 import { pullCommand } from "../commands/pull/index.ts";
@@ -64,6 +65,13 @@ const TEMPLATES: Array<{ id: InitTemplate; name: string; description: string }> 
   { id: "saas-starter", name: "AI SaaS", description: "Auth + chat + per-user memory" },
   { id: "minimal", name: "Minimal", description: "Blank canvas" },
 ];
+
+async function fetchQualifiedRemoteProjects() {
+  const candidate = (await resolveApiCredentialCandidatesForAuth())[0];
+  return candidate
+    ? await fetchRemoteProjects(candidate.apiToken, candidate.validationEnv)
+    : { user: null, projects: [], error: "No authorized credential is available." };
+}
 
 /**
  * Create the CLI app
@@ -97,14 +105,9 @@ export function createApp(config: AppConfig): App {
   // Check for existing auth
   void (async () => {
     try {
-      const token = await readToken();
-      if (!token) return;
-
-      const user = await validateToken(token);
-      if (!user) return;
-
-      const result = await fetchRemoteProjects();
-      state = setRemoteProjects(result.projects)(setRemoteUser(user)(state));
+      const result = await fetchQualifiedRemoteProjects();
+      if (!result.user) return;
+      state = setRemoteProjects(result.projects)(setRemoteUser(result.user)(state));
     } catch {
       // Auth check failed - non-fatal
     }
@@ -295,7 +298,7 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    const result = await fetchRemoteProjects();
+    const result = await fetchQualifiedRemoteProjects();
     update(setRemoteUser(user));
     update(setRemoteProjects(result.projects));
     update(addLog("info", `Logged in as ${user.email}`));

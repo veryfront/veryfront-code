@@ -2,11 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { HOST_INTERNAL_EGRESS_OVERRIDE_ENV } from "#veryfront/security/http/outbound-fetch.ts";
 import { MAX_INTEGRATION_TOOL_LIST_ATTEMPTS } from "./limits.ts";
 import {
   __subscribeLogRecordEmitter,
@@ -29,6 +32,7 @@ const DISCOVERY_FAILURE_MESSAGE = "Failed to fetch remote integration tool defin
 const ENV_KEYS = [
   "PROXY_MODE",
   "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_URL",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
 ] as const;
@@ -111,6 +115,255 @@ describe("integrations/remote-tools", () => {
     }, async () => await getRemoteIntegrationToolDefinitions());
 
     assertEquals(definitions, []);
+  });
+
+  it("discovers integration tools from a host-private stored login token", async () => {
+    // `applyRuntimeAuthContext` keeps a stored `veryfront login` token out of
+    // the process environment, so the environment snapshot carries nothing and
+    // only `getHostEnv` resolves the credential. Single-project runtimes must
+    // still authenticate discovery with it.
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    try {
+      const discovery = await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+
+      assertEquals(authorization, "Bearer stored-login-token");
+      // A reached catalog returns "ok"; without the credential discovery would
+      // short-circuit to an empty catalog before any request is made.
+      assertEquals(discovery.status, "ok");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
+  it("binds a stored login token to the host-owned API origin", async () => {
+    setRemoteToolEnv({});
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let requestedUrl = "";
+    try {
+      await runWithProjectEnv(
+        { VERYFRONT_API_BASE_URL: "https://project-controlled.example/api" },
+        () =>
+          withMockFetch(async (input) => {
+            requestedUrl = String(input);
+            return Response.json({ tools: [] });
+          }, () => getRemoteIntegrationToolDiscovery()),
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
+    assertEquals(
+      requestedUrl,
+      "https://api.veryfront.com/integrations/tools/list",
+    );
+  });
+
+  it("does not let a replaced URL constructor redirect a stored login token", async () => {
+    const NativeURL = globalThis.URL;
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    let requestedUrl = "";
+    class ProjectURL extends NativeURL {
+      constructor(_input: string | URL, _base?: string | URL) {
+        super("https://attacker.example");
+      }
+    }
+    Object.defineProperty(globalThis, "URL", {
+      value: ProjectURL,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      await withMockFetch(async (input) => {
+        requestedUrl = String(input);
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+    } finally {
+      Object.defineProperty(globalThis, "URL", {
+        value: NativeURL,
+        configurable: true,
+        writable: true,
+      });
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
+    assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
+  });
+
+  it("binds a request-context host token to the host integration API", async () => {
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    let requestedUrl = "";
+    try {
+      await runWithRequestContext(
+        { projectSlug: "project", token: "stored-login-token" },
+        () =>
+          runWithProjectEnv(
+            { VERYFRONT_API_BASE_URL: "https://attacker.example" },
+            () => {
+              refreshEnvironmentConfig();
+              return withMockFetch(async (input) => {
+                requestedUrl = String(input);
+                return Response.json({ tools: [] });
+              }, () => getRemoteIntegrationToolDiscovery());
+            },
+          ),
+      );
+      assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
+  it("routes the stored login token through the host transport, not globalThis.fetch", async () => {
+    // Locally loaded project code runs in this realm and can replace
+    // `globalThis.fetch` before integration discovery or execution. The
+    // integration API dispatch must not hand the host-private credential's
+    // `Authorization` header to that replacement.
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    let hostileFetchCalls = 0;
+    try {
+      const discovery = await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, async () => {
+        // Deliberate hostile replacement, not a test stub: the mock transport
+        // installed by `withMockFetch` must still carry the request while this
+        // project-style hook observes nothing.
+        const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch")!;
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: (): Promise<Response> => {
+            hostileFetchCalls += 1;
+            return Promise.resolve(Response.json({ tools: [] }));
+          },
+        });
+        try {
+          return await getRemoteIntegrationToolDiscovery();
+        } finally {
+          Object.defineProperty(globalThis, "fetch", originalFetch);
+        }
+      });
+
+      // The request still authenticates through the host transport, and the
+      // replaced global never ran.
+      assertEquals(discovery.status, "ok");
+      assertEquals(authorization, "Bearer stored-login-token");
+      assertEquals(hostileFetchCalls, 0);
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
+  it("validates the stored login token without a mutable String.prototype hook", async () => {
+    // Project code served by `veryfront dev` runs in this realm and can replace
+    // `String.prototype.charCodeAt` before integration discovery. Token
+    // validation must never hand the host-private credential to such a hook as
+    // its method receiver.
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    const originalCharCodeAt = Object.getOwnPropertyDescriptor(
+      String.prototype,
+      "charCodeAt",
+    )!;
+    let observedCredential = 0;
+    Object.defineProperty(String.prototype, "charCodeAt", {
+      configurable: true,
+      writable: true,
+      value: function (this: unknown, index: number): number {
+        if (this === "stored-login-token") observedCredential += 1;
+        return Reflect.apply(originalCharCodeAt.value, this, [index]);
+      },
+    });
+
+    let authorization = "";
+    try {
+      await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+    } finally {
+      Object.defineProperty(String.prototype, "charCodeAt", originalCharCodeAt);
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
+    // The credential still authenticates discovery, and the poisoned hook never
+    // received it as a receiver.
+    assertEquals(authorization, "Bearer stored-login-token");
+    assertEquals(observedCredential, 0);
+  });
+
+  it("does not let a blank exported token shadow the stored login token", async () => {
+    // The environment snapshot keeps a whitespace-only export verbatim, and the
+    // CLI treats that as "unset" when it registers the stored token.
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "   ",
+    });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    try {
+      await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+
+      assertEquals(authorization, "Bearer stored-login-token");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
+  it("blocks an internal API base unless the host enables internal egress", async () => {
+    // Routing the credentialed integration API through `guardedOutboundFetch`
+    // puts it under the host egress ceiling, which denies private and loopback
+    // destinations by default. Pinning both halves here: a developer or
+    // self-hosted deployment that points `VERYFRONT_API_BASE_URL` at an
+    // internal host must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`, and once
+    // it is set the request goes through unchanged.
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "http://127.0.0.1:8787",
+      VERYFRONT_API_TOKEN: "token",
+    });
+
+    let requests = 0;
+    const respond = () => {
+      requests += 1;
+      return Promise.resolve(Response.json({ tools: [] }));
+    };
+
+    const blocked = await withMockFetch(
+      respond,
+      () => getRemoteIntegrationToolDiscovery(),
+    );
+    assertEquals(blocked, { status: "unavailable", reason: "request_failed" });
+    assertEquals(requests, 0);
+
+    setEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+    try {
+      const allowed = await withMockFetch(
+        respond,
+        () => getRemoteIntegrationToolDiscovery(),
+      );
+      assertEquals(allowed, { status: "ok", tools: [] });
+      assertEquals(requests, 1);
+    } finally {
+      deleteEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV);
+    }
   });
 
   it("memoizes a typed empty integration catalog for the current run", async () => {

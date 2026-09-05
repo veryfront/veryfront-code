@@ -56,6 +56,34 @@ Use `integrationRequirements` only for explicit access that scheduled workflow
 runs require. Veryfront does not infer integration requirements from workflow
 steps, nested workflows, agents, tools, or source text.
 
+### Nested workflows
+
+When using `subWorkflow`, child node IDs are scoped to that sub-workflow while
+the run is executing. A child ID must not collide with a node ID in an enclosing
+workflow. Keep sibling sub-workflows' child IDs distinct as well; completed child
+state is retained for resuming the owning sub-workflow and is never reused by a
+different sibling.
+
+Two sub-workflows that can run at the same time and declare the same child ID
+fail the run before either one starts. Give them distinct child IDs, or add a
+dependency so they run in sequence, which is allowed.
+
+Veryfront can only compare child IDs it can read from the definition. Child IDs
+exist only once the node runs when a `subWorkflow` builds its `steps` from a
+callback, when a `branch` that can reach a sub-workflow selects its arm, when a
+sub-workflow sits inside a `map`, or when a `loop` or `map` builds its steps from
+a callback.
+
+Workflow ID references are not supported in this execution context,
+so pass the `WorkflowDefinition` object instead. Veryfront runs the first
+callback-defined producer alone and defers other composite producers to a later batch.
+
+A `loop` or `map` with callback steps is deferred
+even when it contains no sub-workflow, because its contents are unknown before it
+runs. Nodes whose child IDs are visible in the definition still run in parallel
+with each other. Two consequences to expect: throughput drops around these nodes,
+and their approvals are raised one run at a time instead of together.
+
 ## Workflow context persistence
 
 Workflow context must be JSON-representable. Veryfront stores suspended workflow

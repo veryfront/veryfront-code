@@ -4,9 +4,11 @@ import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import { computeContentDigest, writeSyncTarget } from "../../sync/state.ts";
 import { deployCommand } from "./command.ts";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import type { DeploymentRoutingConvergence } from "../../shared/deployment/control-plane.ts";
@@ -33,6 +35,11 @@ const OTHER_PROJECT_ID = "770e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 const PUSHED_SOURCE = "export const value = 1;\n";
+/** A stable stand-in for the version id the control plane assigns each file. */
+function remoteVersionId(path: string): string {
+  return `version-${path}`;
+}
+
 const STALE_SOURCE = "export const value = 2;\n";
 
 async function runGit(projectDir: string, ...args: string[]) {
@@ -71,6 +78,8 @@ async function commitProject(projectDir: string) {
 async function withDeployEnv<T>(
   projectDir: string,
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
+  /** Extra source committed with the rest, so the checkout still starts clean. */
+  extraFiles: Readonly<Record<string, string>> = {},
 ): Promise<T> {
   const envKeys = [
     "GITHUB_SHA",
@@ -85,10 +94,14 @@ async function withDeployEnv<T>(
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
+    for (const [path, content] of Object.entries(extraFiles)) {
+      await Deno.writeTextFile(`${projectDir}/${path}`, content);
+    }
     const commitSha = await commitProject(projectDir);
     const sourceDigest = await computeSourceDigest([
       { path: "app.ts", content: PUSHED_SOURCE },
       { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+      ...Object.entries(extraFiles).map(([path, content]) => ({ path, content })),
     ]);
 
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
@@ -117,17 +130,30 @@ function createDeployFetchHandler(options: {
   releaseSource?: string;
   sourceDigest: string;
   uploadedPaths?: string[];
+  uploadedFiles?: Map<string, string>;
+  deletedPaths?: string[];
+  releaseFiles?: Map<string, string>;
   branchCreates?: string[];
+  onRequest?: (request: Request) => void | Promise<void>;
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
-  const uploadedFiles = new Map<string, string>();
+  const uploadedFiles = options.uploadedFiles ?? new Map<string, string>();
+  const remoteFileList = () => ({
+    data: [...uploadedFiles].map(([path, content]) => ({
+      path,
+      content,
+      version_id: remoteVersionId(path),
+    })),
+    page_info: {},
+  });
 
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = new URL(request.url);
     const requestKey = `${request.method} ${url.pathname}${url.search}`;
     options.requests.push(requestKey);
+    await options.onRequest?.(request);
 
     if (request.method === "GET" && url.hostname === "my-project.production.veryfront.com") {
       return new Response("ready");
@@ -156,16 +182,10 @@ function createDeployFetchHandler(options: {
       });
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
-      return Response.json({
-        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
-        page_info: {},
-      });
+      return Response.json(remoteFileList());
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/files`) {
-      return Response.json({
-        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
-        page_info: {},
-      });
+      return Response.json(remoteFileList());
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
@@ -187,6 +207,16 @@ function createDeployFetchHandler(options: {
       const body = await request.clone().json() as { content: string };
       uploadedFiles.set(path, body.content);
       options.uploadedPaths?.push(path);
+      return Response.json({});
+    }
+    if (
+      request.method === "DELETE" &&
+      (url.pathname.startsWith(`/api/projects/${PROJECT_ID}/files/`) ||
+        url.pathname.startsWith("/api/projects/my-project/files/"))
+    ) {
+      const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+      uploadedFiles.delete(path);
+      options.deletedPaths?.push(path);
       return Response.json({});
     }
     if (request.method === "GET" && url.pathname.endsWith("/environments")) {
@@ -221,6 +251,15 @@ function createDeployFetchHandler(options: {
       });
     }
     if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)) {
+      if (options.releaseFiles) {
+        return Response.json({
+          data: [...options.releaseFiles].map(([path, body]) => ({
+            path,
+            data: JSON.stringify({ body, path }),
+          })),
+          page_info: {},
+        });
+      }
       return Response.json({
         data: [
           {
@@ -286,6 +325,10 @@ async function withInferredDeployEnv<T>(
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
 ): Promise<T> {
   const envKeys = [
+    // This fixture commits a repository of its own under a temp directory, so
+    // a CI job's GITHUB_SHA names an unrelated commit; resolveGitSource fails
+    // closed when it disagrees with HEAD.
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -294,6 +337,7 @@ async function withInferredDeployEnv<T>(
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"missing-app"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
@@ -371,7 +415,6 @@ it("deploys production from the existing verified push without mutating source",
         clean: true,
         pushedAt: "2026-07-10T09:20:00.000Z",
       });
-      await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
 
       const requests: string[] = [];
       const uploadedPaths: string[] = [];
@@ -419,6 +462,265 @@ it("deploys production from the existing verified push without mutating source",
       }
     });
   }
+});
+
+it("re-pushes uncommitted work instead of redeploying the source it replaced", async () => {
+  // An edit that never reaches a commit leaves HEAD matching the receipt, so
+  // no commit check can see it. veryfront up used to take the receipt's word
+  // and serve the previous upload while reporting the edited source as live.
+  // This drives the refreshing source `up` asks for, end to end: the refresh
+  // push, the targeted prune of a file this checkout deleted, and the release
+  // built from the resulting remote tree.
+  const projectDir = await makeTempDir();
+  const STUDIO_SOURCE = "export default function StudioPage() { return null; }\n";
+  const LEGACY_SOURCE = "export const legacy = true;\n";
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha,
+      sourceDigest,
+      localSourceDigest: sourceDigest,
+      localPaths: ["app.ts", "legacy.ts", "veryfront.json"],
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await writeSyncTarget(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      files: {
+        "legacy.ts": {
+          digest: await computeContentDigest(LEGACY_SOURCE),
+          versionId: remoteVersionId("legacy.ts"),
+        },
+      },
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+    // A tracked file deleted here must be pruned from the branch; a remote-only
+    // file nobody deleted must survive.
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+    const deletedPaths: string[] = [];
+    const uploadedFiles = new Map<string, string>([
+      ["legacy.ts", LEGACY_SOURCE],
+      ["studio-page.tsx", STUDIO_SOURCE],
+    ]);
+    const refreshedSourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: STALE_SOURCE },
+      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+      { path: "studio-page.tsx", content: STUDIO_SOURCE },
+    ]);
+    let pushStarted = false;
+    let deletedDuringPush = false;
+
+    await withMockFetch(
+      createDeployFetchHandler({
+        requests,
+        sourceDigest: refreshedSourceDigest,
+        uploadedPaths,
+        uploadedFiles,
+        deletedPaths,
+        releaseFiles: uploadedFiles,
+        releaseSource: STALE_SOURCE,
+        async onRequest() {
+          if (!pushStarted || deletedDuringPush) return;
+          deletedDuringPush = true;
+          await Deno.remove(`${projectDir}/legacy.ts`);
+        },
+      }),
+      () =>
+        boundedDeployProject().execute({
+          projectDir,
+          branch: "main",
+          environment: "production",
+          mode: "apply",
+          source: { kind: "ensure-pushed", refreshStaleSource: true },
+        }, {
+          onEvent(event) {
+            if (
+              event.kind === "step" && event.step === "push-source" && event.phase === "started"
+            ) {
+              pushStarted = true;
+            }
+          },
+        }),
+    );
+
+    assertEquals(uploadedPaths.includes("app.ts"), true);
+    assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
+    assertEquals(deletedPaths, ["legacy.ts"]);
+    assertEquals(uploadedFiles.get("studio-page.tsx"), STUDIO_SOURCE);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  }, { "legacy.ts": LEGACY_SOURCE });
+});
+
+it("refreshes changed digest-only source outside Git", async () => {
+  const projectDir = await makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await Deno.remove(`${projectDir}/.git`, { recursive: true });
+    Deno.env.delete("GITHUB_SHA");
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: null,
+      sourceDigest,
+      localSourceDigest: sourceDigest,
+      clean: false,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await writeSyncTarget(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      files: {
+        "app.ts": {
+          digest: await computeContentDigest(PUSHED_SOURCE),
+          versionId: remoteVersionId("app.ts"),
+        },
+        "veryfront.json": {
+          digest: await computeContentDigest('{"projectSlug":"my-project"}\n'),
+          versionId: remoteVersionId("veryfront.json"),
+        },
+      },
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+    const requests: string[] = [];
+    const uploadedFiles = new Map<string, string>([
+      ["app.ts", PUSHED_SOURCE],
+      ["veryfront.json", '{"projectSlug":"my-project"}\n'],
+    ]);
+    const refreshedSourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: STALE_SOURCE },
+      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+    ]);
+
+    await withMockFetch(
+      createDeployFetchHandler({
+        requests,
+        sourceDigest: refreshedSourceDigest,
+        uploadedFiles,
+        releaseFiles: uploadedFiles,
+        releaseSource: STALE_SOURCE,
+      }),
+      () =>
+        boundedDeployProject().execute({
+          projectDir,
+          branch: "main",
+          environment: "production",
+          mode: "apply",
+          source: { kind: "ensure-pushed", refreshStaleSource: true },
+        }),
+    );
+
+    assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), true);
+  });
+});
+
+it("refuses to promote a receipt the working tree no longer matches", async () => {
+  // veryfront deploy promotes a reviewed push, and CI runs it after an
+  // explicit veryfront push. An accidentally dirty checkout must fail rather
+  // than upload unreviewed bytes to an environment.
+  const projectDir = await makeTempDir();
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              deployProject: boundedDeployProject(),
+            }),
+        ),
+      Error,
+      "uncommitted changes",
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      false,
+    );
+  });
+});
+
+it("promotes the recorded push from a dirty worktree when deploy names a project", async () => {
+  // Naming a project promotes what that project already has and never uploads
+  // this directory, so a local edit is not evidence about the pushed source and
+  // must neither be promoted nor refuse the promotion. Only the deploy that
+  // owns the local source refreshes it.
+  const projectDir = await makeTempDir();
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        deployCommand({
+          projectSlug: "my-project",
+          projectDir,
+          branch: "main",
+          env: "production",
+          dryRun: false,
+          force: false,
+          quiet: true,
+          deployProject: boundedDeployProject(),
+        }),
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  });
 });
 
 it("defaults omitted deploy branch to main instead of promoting a feature push receipt", async () => {
@@ -884,13 +1186,21 @@ it("reports dry-run deploy actions from the verified push state in human and JSO
 
 it("uses canonical production read-back in human and JSON modes", async () => {
   const projectDir = await Deno.makeTempDir();
-  const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+  // GITHUB_SHA is cleared for the same reason as in withDeployEnv: this
+  // fixture's Git repository is not the one a CI job is checked out on.
+  const envKeys = [
+    "GITHUB_SHA",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+  ];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const requests: string[] = [];
   let environmentReads = 0;
   let environmentUrlReads = 0;
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     const currentReleaseSource = "export default function Dashboard() { return null; }\n";
     await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
@@ -1223,13 +1533,10 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     await firstReleaseSourceRead;
     {
       using time = new FakeTime();
-      let deploymentSettled = false;
       const deploymentError = deployment.then(
         () => undefined,
         (error: unknown) => error,
-      ).finally(() => {
-        deploymentSettled = true;
-      });
+      );
 
       resumeReleaseSourceRead();
       await time.tickAsync(0);
@@ -1238,18 +1545,15 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         // The deploy flow now does more pre-mutation verification before this
         // poll starts. Keep the read budget fixed at 20, but allow enough fake
         // clock ticks for the async chain to issue all reads under load.
-        !deploymentSettled && tick < 60;
+        releaseSourceReads < 20 && tick < 60;
         tick++
       ) {
         await time.tickAsync(500);
       }
-      for (let tick = 0; !deploymentSettled && tick < 10; tick++) {
-        await time.tickAsync(0);
-      }
       assertEquals(
-        deploymentSettled,
-        true,
-        "release-source polling did not settle inside its fixed read budget",
+        releaseSourceReads,
+        20,
+        "release-source polling did not reach its fixed read budget",
       );
       const error = await deploymentError;
       assertEquals(error instanceof Error, true);
@@ -1294,12 +1598,18 @@ it("uses canonical production read-back in human and JSON modes", async () => {
 
 it("deploys production from a dirty worktree when the pushed digest matches the release", async () => {
   const projectDir = await Deno.makeTempDir();
-  const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+  const envKeys = [
+    "GITHUB_SHA",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+  ];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const releaseSource = "export default function Dashboard() { return null; }\n";
   const requests: string[] = [];
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
@@ -1534,6 +1844,18 @@ it("does not rewrite an existing local project link during dry-run deploy", asyn
     });
     const linkPath = `${projectDir}/.veryfront/project.json`;
     const originalLink = await Deno.readTextFile(linkPath);
+    const sourceDigest = await computeSourceDigest([]);
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "canonical-slug",
+      branch: "main",
+      commitSha: null,
+      sourceDigest,
+      localSourceDigest: sourceDigest,
+      localPaths: [],
+      clean: false,
+    });
 
     await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -1639,6 +1961,8 @@ it("does not claim dry-run deploy would push source when source push is skipped"
 it("uses an alternative slug when inferred first deploy project creation conflicts", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
+    // See withDeployEnv: the temp repository below is not the CI checkout.
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -1650,6 +1974,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
   let inferredProjectLookups = 0;
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"taken-app"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
@@ -1819,6 +2144,8 @@ it("uses an alternative slug when inferred first deploy project creation conflic
 it("collects configured app and pages routes when projectDir has a trailing slash", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
+    // See withDeployEnv: the temp repository below is not the CI checkout.
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -1827,6 +2154,7 @@ it("collects configured app and pages routes when projectDir has a trailing slas
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.mkdir(`${projectDir}/src/site`, { recursive: true });
     await Deno.mkdir(`${projectDir}/src/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");

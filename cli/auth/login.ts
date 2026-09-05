@@ -13,7 +13,11 @@ import {
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
 } from "../shared/constants.ts";
-import { type ApiTokenSource, resolveApiCredentialCandidatesForAuth } from "../shared/config.ts";
+import {
+  type ApiTokenSource,
+  assertApiUrlAcceptsNewCredential,
+  resolveApiCredentialCandidatesForAuth,
+} from "../shared/config.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -24,6 +28,19 @@ import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { basename, isAbsolute, relative } from "veryfront/platform/path";
 import { cwd, getEnv } from "veryfront/platform";
+
+const applyIntrinsic = Reflect.apply;
+const stringTrim = String.prototype.trim;
+const stringStartsWith = String.prototype.startsWith;
+const stringReplace = String.prototype.replace;
+
+function trimString(value: string): string {
+  return applyIntrinsic(stringTrim, value, []) as string;
+}
+
+function replaceString(value: string, pattern: RegExp, replacement: string): string {
+  return applyIntrinsic(stringReplace, value, [pattern, replacement]) as string;
+}
 
 /**
  * Describe where an API-token credential actually came from.
@@ -88,6 +105,10 @@ export interface CredentialValidationOptions {
    * behaviour for callers that are already the user's main action.
    */
   timeoutMs?: number;
+  /** Host-owned API origin paired with a private credential. */
+  apiBaseUrl?: string;
+  /** Host-owned transport used when a private credential crosses the project boundary. */
+  transport?: typeof fetch;
 }
 
 /**
@@ -250,10 +271,12 @@ export async function validateToken(
   env: EnvironmentConfig = getEnvironmentConfig(),
   options: CredentialValidationOptions = {},
 ): Promise<UserInfo | null> {
-  if (!token.trim()) return null;
+  if (!trimString(token)) return null;
 
   try {
-    const response = await fetch(`${getApiUrl(env).replace(/\/$/, "")}/me`, {
+    const apiBaseUrl = options.apiBaseUrl ?? getApiUrl(env);
+    const transport = options.transport ?? fetch;
+    const response = await transport(`${replaceString(apiBaseUrl, /\/$/, "")}/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       signal: requestSignal(options),
     });
@@ -313,7 +336,7 @@ export async function validateToken(
 }
 
 export function isApiKeyToken(token: string): boolean {
-  return token.startsWith("vf_");
+  return applyIntrinsic(stringStartsWith, token, ["vf_"]) as boolean;
 }
 
 export function isApiKeyIdentity(identity: AuthIdentity): identity is ApiKeyIdentity {
@@ -328,9 +351,11 @@ async function validateApiKey(
   if (!isApiKeyToken(token)) return false;
 
   try {
-    const url = new URL(`${getApiUrl(env).replace(/\/$/, "")}/projects`);
+    const apiBaseUrl = options.apiBaseUrl ?? getApiUrl(env);
+    const transport = options.transport ?? fetch;
+    const url = new URL(`${replaceString(apiBaseUrl, /\/$/, "")}/projects`);
     url.searchParams.set("limit", "1");
-    const response = await fetch(url, {
+    const response = await transport(url, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       signal: requestSignal(options),
     });
@@ -732,6 +757,13 @@ export async function login(
       return null;
     }
   }
+
+  // Past this point login mints a new credential and validates it against
+  // `env`, whose apiUrl a cloned project `.env` may have chosen. A new token is
+  // always the developer's own, never something the repository supplied, so
+  // there is no candidate that could make this host acceptable: stop instead of
+  // handing the token to it.
+  await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
     cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");

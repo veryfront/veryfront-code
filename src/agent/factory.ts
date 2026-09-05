@@ -71,6 +71,11 @@ import {
 } from "./runtime/call-context.ts";
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicArrayFilter = Array.prototype.filter;
+const IntrinsicObjectEntries = Object.entries;
+const IntrinsicObjectKeys = Object.keys;
+
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
@@ -163,7 +168,9 @@ function resolveProviderToolsConfiguration(
     return providerTools;
   }
 
-  return providerTools.filter((toolName) => toolSelection[toolName] !== false);
+  return IntrinsicReflectApply(IntrinsicArrayFilter, providerTools, [
+    (toolName: string) => toolSelection[toolName] !== false,
+  ]) as string[];
 }
 
 /** Everything the public surface closes over, named so the closure is visible. */
@@ -345,7 +352,8 @@ function resolveToolsConfiguration(input: {
   let merged = config.tools;
 
   ensureBuiltinSchemaValidator();
-  for (const registration of SKILL_TOOL_REGISTRATIONS) {
+  for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
+    const registration = SKILL_TOOL_REGISTRATIONS[index]!;
     if (!toolRegistry.has(registration.id)) {
       toolRegistryInternal.registerShared(registration.id, registration.create());
     }
@@ -358,7 +366,8 @@ function resolveToolsConfiguration(input: {
     } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
-    for (const registration of SKILL_TOOL_REGISTRATIONS) {
+    for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
+      const registration = SKILL_TOOL_REGISTRATIONS[index]!;
       if (skillTools === "disable" || skillTools === "omit") {
         if (configuredTools[registration.id] !== false) {
           delete configuredTools[registration.id];
@@ -378,7 +387,7 @@ function resolveToolsConfiguration(input: {
         resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
       });
     }
-    const hasConfiguredTools = Object.keys(configuredTools).length > 0;
+    const hasConfiguredTools = IntrinsicObjectKeys(configuredTools).length > 0;
     merged = hasConfiguredTools || config.tools !== undefined ? configuredTools : undefined;
   }
 
@@ -391,7 +400,7 @@ function resolveToolsConfiguration(input: {
     }
     if (delegates.length > 0) {
       const delegateTools = buildAgentDelegateTools({ delegates, selfId: id });
-      for (const toolName of Object.keys(delegateTools)) {
+      for (const toolName of IntrinsicObjectKeys(delegateTools)) {
         if (merged?.[toolName] === false) {
           delete delegateTools[toolName];
         }
@@ -693,7 +702,17 @@ function assertPlatformCompatible(config: AgentConfig, id: string): void {
 function registerConfiguredLocalTools(config: AgentConfig): void {
   if (!config.tools || config.tools === true) return;
 
-  for (const [name, entry] of Object.entries(config.tools)) {
+  const entries = IntrinsicReflectApply(IntrinsicObjectEntries, Object, [config.tools]) as Array<
+    [string, (typeof config.tools)[string]]
+  >;
+  // Project code may have patched Array.prototype[Symbol.iterator]. Consume
+  // the captured Object.entries result by own numeric positions so an iterator
+  // cannot inject an additional tool while a restricted agent is rebuilt.
+  for (let index = 0; index < entries.length; index++) {
+    const pair = entries[index];
+    if (pair === undefined) continue;
+    const name = pair[0];
+    const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);

@@ -59,7 +59,12 @@ describe("workflow/runtime/public-run", () => {
       child: nestedUserOutput,
     };
     const nodeStates: Record<string, NodeState> = {
-      step: completedState("step", nestedUserOutput),
+      step: {
+        ...completedState("step", nestedUserOutput),
+        _subWorkflowOwnerPath: "internal-owner",
+        _activeCompositeChildIds: ["waiting-child"],
+        _completedCompositeChildIds: ["finished-child"],
+      },
       parent: completedState("parent", contextShapedUserOutput),
       "parent/child": completedState("parent/child", "unrelated ordinary step"),
       mapLike: completedState("mapLike", [contextShapedUserOutput]),
@@ -216,6 +221,11 @@ describe("workflow/runtime/public-run", () => {
       nestedUserOutput,
     ]);
     assertEquals(projected.checkpoints[0]?.context.env, undefined);
+    for (const states of [projected.nodeStates, projected.checkpoints[0]!.nodeStates]) {
+      assertEquals(states.step?._subWorkflowOwnerPath, undefined);
+      assertEquals(states.step?._activeCompositeChildIds, undefined);
+      assertEquals(states.step?._completedCompositeChildIds, undefined);
+    }
     assertEquals(projected.checkpoints[0]?.context._tenant, undefined);
     assertEquals(projected.checkpoints[0]?.context.parallel, {
       child: nestedUserOutput,

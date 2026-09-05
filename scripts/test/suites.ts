@@ -88,6 +88,7 @@ export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_URL",
+  "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_PROJECT_SLUG",
   "AG_UI_EVAL_PROJECT_SLUG",
   "TENANT_PROJECT_SLUG",
@@ -111,7 +112,7 @@ export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
 
 // Git's repository-local environment (git rev-parse --local-env-vars) must not
 // follow a pre-push hook into the independent repositories created by tests.
-const GIT_REPOSITORY_ENV_KEYS = [
+const GIT_REPOSITORY_ENV_KEYS: readonly string[] = Object.freeze([
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_COMMON_DIR",
   "GIT_CONFIG",
@@ -129,7 +130,7 @@ const GIT_REPOSITORY_ENV_KEYS = [
   "GIT_REPLACE_REF_BASE",
   "GIT_SHALLOW_FILE",
   "GIT_WORK_TREE",
-];
+]);
 
 export function buildTestProcessEnv(
   parentEnv: Readonly<Record<string, string>>,

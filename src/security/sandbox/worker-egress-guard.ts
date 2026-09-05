@@ -36,6 +36,8 @@ const HeadersSet = NativeHeaders.prototype.set;
 const StringEndsWith = String.prototype.endsWith;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
+const StringToLowerCase = String.prototype.toLowerCase;
+const StringTrim = String.prototype.trim;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
 const RequestGetters = Object.freeze({
   body: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "body")?.get,
@@ -151,7 +153,12 @@ function isObject(value: unknown): value is Record<PropertyKey, unknown> {
 
 export function isInternalEgressOverrideEnabled(value: string | undefined): boolean {
   if (value === undefined) return false;
-  switch (value.trim().toLowerCase()) {
+  const normalized = IntrinsicReflectApply(
+    StringToLowerCase,
+    IntrinsicReflectApply(StringTrim, value, []),
+    [],
+  ) as string;
+  switch (normalized) {
     case "1":
     case "true":
     case "yes":

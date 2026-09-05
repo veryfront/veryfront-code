@@ -34,7 +34,8 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
-import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
 import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
   EvalAgentAdapter,
@@ -68,6 +69,24 @@ const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
   level: "warn",
   message: "Knowledge ingest logs were truncated",
 });
+const ReflectApply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
+const NumberIsFinite = Number.isFinite;
+const NumberParseInt = Number.parseInt;
+const MathTrunc = Math.trunc;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const NumberPrototypeToString = Number.prototype.toString;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeTrim = String.prototype.trim;
+const NativeRequest = Request;
+const RequestPrototypeClone = Request.prototype.clone;
+const RequestPrototypeJson = Request.prototype.json;
+const ParseHostedChatRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse;
+
+function getOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -146,7 +165,8 @@ export interface ProjectRunExecuteHandlerDeps {
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
-    config?: WorkflowClientConfig,
+    config: WorkflowClientConfig | undefined,
+    options: { projectId: string } & ProjectWorkflowRedisTargetScope,
   ): WorkflowClientView | Promise<WorkflowClientView>;
   runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
   createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
@@ -177,7 +197,7 @@ export interface ProjectRunExecuteHandlerDeps {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
 }
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {
@@ -220,6 +240,42 @@ function parseOptionalNullableString(value: unknown, fieldName: string): string 
   return value;
 }
 
+/**
+ * Reject runtime target selections that carry no identifier for their kind.
+ *
+ * `validateRuntimeAgentTargetSelection` already treats these combinations as
+ * invalid for the same selection, but that check runs on the agent invocation
+ * contract, not on this wire format. Without it here, an `environment` target
+ * missing its environment id — or a `preview_branch` target missing its branch
+ * id — canonicalizes to the empty identifier, so every such request shares one
+ * durable workflow namespace and can see another target's runs and approval
+ * decision claims. An identifier belonging to a different kind is rejected for
+ * the same reason: it is a malformed selection, not a namespace.
+ *
+ * A `main_branch` selection, or an omitted kind, is left alone. Omitted kinds
+ * still reach this handler alongside a `runtimeTargetEnvironmentId` that
+ * `executeTaskRun` reads as the legacy environment override, and
+ * `canonicalWorkflowRedisTarget` already drops identifiers the default branch
+ * does not own, so those cannot fork the namespace.
+ */
+function validateRuntimeTargetSelection(
+  kind: ProjectRunExecuteRequest["runtimeTargetKind"],
+  environmentId: string | null | undefined,
+  branchId: string | null | undefined,
+): void {
+  if (kind === "environment" && (!environmentId || branchId)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "environment target requires runtimeTargetEnvironmentId and no runtimeTargetBranchId",
+    });
+  }
+  if (kind === "preview_branch" && (!branchId || environmentId)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail:
+        "preview_branch target requires runtimeTargetBranchId and no runtimeTargetEnvironmentId",
+    });
+  }
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
@@ -253,21 +309,30 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
+  const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
+  const runtimeTargetEnvironmentId = parseOptionalNullableString(
+    value.runtimeTargetEnvironmentId,
+    "runtimeTargetEnvironmentId",
+  );
+  const runtimeTargetBranchId = parseOptionalNullableString(
+    value.runtimeTargetBranchId,
+    "runtimeTargetBranchId",
+  );
+  validateRuntimeTargetSelection(
+    runtimeTargetKind,
+    runtimeTargetEnvironmentId,
+    runtimeTargetBranchId,
+  );
+
   return {
     runId,
     kind,
     target,
     projectId,
     runtimeAgUiEndpoint: parseOptionalUrl(value.runtimeAgUiEndpoint, "runtimeAgUiEndpoint"),
-    runtimeTargetKind: parseRuntimeTargetKind(value.runtimeTargetKind),
-    runtimeTargetEnvironmentId: parseOptionalNullableString(
-      value.runtimeTargetEnvironmentId,
-      "runtimeTargetEnvironmentId",
-    ),
-    runtimeTargetBranchId: parseOptionalNullableString(
-      value.runtimeTargetBranchId,
-      "runtimeTargetBranchId",
-    ),
+    runtimeTargetKind,
+    runtimeTargetEnvironmentId,
+    runtimeTargetBranchId,
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
@@ -313,8 +378,97 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
   };
 }
 
+/**
+ * Build the Redis key prefix for one project's durable workflow state on one
+ * runtime target.
+ *
+ * Hosted project runtimes share a single Redis instance, so every durable
+ * workflow key must be namespaced per project and runtime target. Without this
+ * isolation the approval decision claim recovery scan in one runtime can
+ * enumerate and resume runs that belong to a different project, environment,
+ * or preview branch. Characters outside a conservative allowlist are escaped
+ * so distinct identifiers cannot produce colliding prefixes or Redis SCAN
+ * glob metacharacters.
+ */
+function encodeWorkflowRedisScope(value: string): string {
+  let encoded = "";
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    const allowed = codeUnit >= 48 && codeUnit <= 57 ||
+      codeUnit >= 65 && codeUnit <= 90 ||
+      codeUnit >= 97 && codeUnit <= 122 ||
+      codeUnit === 45 || codeUnit === 95;
+    encoded += allowed
+      ? value[index]
+      : `.${ReflectApply(NumberPrototypeToString, codeUnit, [16]) as string}.`;
+  }
+  return encoded;
+}
+
+export interface ProjectWorkflowRedisTargetScope {
+  runtimeTargetKind?: ProjectRunExecuteRequest["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
+  runtimeTargetBranchId?: string | null;
+}
+
+/**
+ * Reduce a runtime target selection to its one canonical form.
+ *
+ * `runtimeTargetKind` is optional on the wire and an omitted kind means the
+ * default branch, exactly as `resolveControlPlaneBranchBinding` treats it. The
+ * identifier fields are also only meaningful for the kind that owns them. If
+ * either were encoded verbatim, two wire representations of the same target
+ * would derive different Redis namespaces and approval recovery started under
+ * one representation could not see runs waiting under the other.
+ */
+function canonicalWorkflowRedisTarget(
+  target: ProjectWorkflowRedisTargetScope,
+): { kind: string; environmentId: string; branchId: string } {
+  const kind = target.runtimeTargetKind ?? "main_branch";
+  return {
+    kind,
+    environmentId: kind === "environment" ? target.runtimeTargetEnvironmentId ?? "" : "",
+    branchId: kind === "preview_branch" ? target.runtimeTargetBranchId ?? "" : "",
+  };
+}
+
+export function projectWorkflowRedisPrefix(
+  projectId: string,
+  target: ProjectWorkflowRedisTargetScope = {},
+): string {
+  const canonical = canonicalWorkflowRedisTarget(target);
+  const projectScope = encodeWorkflowRedisScope(projectId);
+  const targetKind = encodeWorkflowRedisScope(canonical.kind);
+  const environmentScope = encodeWorkflowRedisScope(canonical.environmentId);
+  const branchScope = encodeWorkflowRedisScope(canonical.branchId);
+  return `vf:workflow:project:${projectScope}:target:${targetKind}:environment:${environmentScope}:branch:${branchScope}:`;
+}
+
+export function projectWorkflowRedisConfig(
+  projectId: string,
+  target: ProjectWorkflowRedisTargetScope = {},
+): {
+  prefix: string;
+  streamKey: string;
+  groupName: string;
+} {
+  if (!projectId) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Durable workflow persistence requires a project scope",
+    });
+  }
+
+  const prefix = projectWorkflowRedisPrefix(projectId, target);
+  return {
+    prefix,
+    streamKey: `${prefix}stream`,
+    groupName: `${prefix}workers`,
+  };
+}
+
 async function createRuntimeWorkflowClient(
-  config?: WorkflowClientConfig,
+  config: WorkflowClientConfig | undefined,
+  options: { projectId: string } & ProjectWorkflowRedisTargetScope,
 ): Promise<WorkflowClientView> {
   const clientConfig = withRuntimeStepRegistries(config);
   const redisUrl = getHostEnv("REDIS_URL")?.trim();
@@ -324,7 +478,11 @@ async function createRuntimeWorkflowClient(
     });
   }
 
-  const backend = new RedisBackend({ url: redisUrl, debug: config?.debug });
+  const backend = new RedisBackend({
+    url: redisUrl,
+    ...projectWorkflowRedisConfig(options.projectId, options),
+    debug: config?.debug,
+  });
   if (backend.initialize) {
     await backend.initialize();
   }
@@ -444,7 +602,15 @@ async function executeWorkflowRun(
     };
   }
 
-  const client = await deps.createWorkflowClient(withRuntimeStepRegistries({ debug: ctx.debug }));
+  const client = await deps.createWorkflowClient(
+    withRuntimeStepRegistries({ debug: ctx.debug }),
+    {
+      projectId: request.projectId,
+      runtimeTargetKind: request.runtimeTargetKind,
+      runtimeTargetEnvironmentId: request.runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: request.runtimeTargetBranchId,
+    },
+  );
   try {
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
@@ -613,22 +779,68 @@ function resolveEvalAgUiEndpoint(
   return getLocalAgUiEndpoint(req);
 }
 
+/**
+ * Read the tool allowlist and step budget the eval adapter forwarded for a run.
+ *
+ * The hosted AG-UI path derives the same values from `runtimeOverrides` and
+ * applies them to runtime creation, so the localized path must apply them too:
+ * an eval that requests a constrained tool surface must not reach the source
+ * agent's full configured tools and MCP servers.
+ */
+async function readLocalEvalRuntimeRestrictions(
+  request: Request,
+): Promise<AgUiRuntimeRestrictions | undefined> {
+  let body: unknown;
+  try {
+    const cloned = ReflectApply(RequestPrototypeClone, request, []) as Request;
+    body = await (ReflectApply(RequestPrototypeJson, cloned, []) as Promise<unknown>);
+  } catch {
+    // The AG-UI handler rejects a body it cannot parse, so there is nothing to
+    // restrict here.
+    return undefined;
+  }
+
+  if (!isRecord(body) || !isRecord(body.forwardedProps)) return undefined;
+  const veryfront = body.forwardedProps.veryfront;
+  if (!isRecord(veryfront)) return undefined;
+  const runtimeOverrides = veryfront.runtimeOverrides;
+  if (runtimeOverrides === undefined) return undefined;
+
+  const parsed = ParseHostedChatRuntimeOverrides(runtimeOverrides);
+  if (!parsed.success) {
+    // Fail closed: forwarded restrictions that cannot be read must not degrade
+    // into an unrestricted eval run.
+    throw INVALID_ARGUMENT.create({ detail: "Eval runtime overrides are invalid" });
+  }
+
+  const { allowedTools, maxSteps } = parsed.data;
+  if (allowedTools === undefined && maxSteps === undefined) return undefined;
+  return {
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  };
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
+  runtimeRestrictions?: AgUiRuntimeRestrictions;
 }): AgentServiceEvalAdapterConfig["fetch"] | undefined {
   if (!input.agentId || !isLocalAgUiEndpoint(input.endpoint)) return undefined;
 
   const agent = agentRegistry.get(input.agentId);
   if (!agent) return undefined;
 
-  const handler = createAgUiHandler({
-    agent,
-    context: { runIdBindsToolAuthorization: false },
-  });
   return async (requestInput, init) => {
-    const request = new Request(requestInput, init);
+    const request = new NativeRequest(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
+    const runtimeRestrictions = input.runtimeRestrictions ??
+      await readLocalEvalRuntimeRestrictions(request);
+    const handler = createAgUiHandler({
+      agent,
+      context: { runIdBindsToolAuthorization: false },
+      ...(runtimeRestrictions ? { runtimeRestrictions } : {}),
+    });
     return await handler(request);
   };
 }
@@ -888,10 +1100,17 @@ function getStringArrayConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string[] {
-  for (const key of keys) {
-    const value = config[key];
-    if (Array.isArray(value)) {
-      return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
+    const value = getOwnDataProperty(config, key);
+    if (ArrayIsArray(value)) {
+      const strings: string[] = [];
+      for (let valueIndex = 0; valueIndex < value.length; valueIndex++) {
+        const item = value[valueIndex];
+        if (typeof item === "string" && item.length > 0) strings[strings.length] = item;
+      }
+      return strings;
     }
   }
 
@@ -902,8 +1121,10 @@ function getStringConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string | undefined {
-  for (const key of keys) {
-    const value = config[key];
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
+    const value = getOwnDataProperty(config, key);
     if (typeof value === "string" && value.length > 0) return value;
   }
 
@@ -1106,12 +1327,17 @@ function getNumberConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): number | undefined {
-  for (const key of keys) {
-    const value = config[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() !== "") {
-      const parsed = Number.parseInt(value, 10);
-      if (Number.isFinite(parsed)) return parsed;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (key === undefined) continue;
+    const value = getOwnDataProperty(config, key);
+    if (typeof value === "number" && NumberIsFinite(value)) return value;
+    if (
+      typeof value === "string" &&
+      ReflectApply(StringPrototypeTrim, value, []) !== ""
+    ) {
+      const parsed = NumberParseInt(value, 10);
+      if (NumberIsFinite(parsed)) return parsed;
     }
   }
   return undefined;
@@ -1123,7 +1349,7 @@ function getPositiveIntConfig(
 ): number | undefined {
   const value = getNumberConfig(config, keys);
   if (value === undefined) return undefined;
-  const normalized = Math.trunc(value);
+  const normalized = MathTrunc(value);
   return normalized > 0 ? normalized : undefined;
 }
 
@@ -1186,7 +1412,14 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
-  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId });
+  const allowedTools = getStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
+  const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
+  const hasMaxSteps = maxSteps != null;
+  const runtimeRestrictions = {
+    allowedTools,
+    ...(hasMaxSteps ? { maxSteps } : {}),
+  };
+  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
 
   return {
     endpoint,
@@ -1210,8 +1443,8 @@ function createEvalAdapterConfig(input: {
       getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
-    allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
-    maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
+    allowedTools,
+    maxSteps,
     fetch: managedEndpointContext && agentId
       ? bindTrustedLocalEvalFetch(
         createDurableEvalAgentFetch({

@@ -1,4 +1,5 @@
 export {
+  capturePushSourceDigest,
   createStagedPushOptions,
   generateBranchName,
   parsePushArgs,

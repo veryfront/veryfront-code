@@ -128,7 +128,9 @@ describe("deploy command adapters", () => {
       environment: "production",
       releaseName: "release-from-options",
       mode: "apply",
-      source: { kind: "already-pushed" },
+      // skipSourcePush suppresses the upload, not the stale-source gate: this
+      // directory is still the deployed project's source.
+      source: { kind: "already-pushed", verifyLocalSource: true },
     });
     assertEquals(human.result, sentinelResult);
     assertEquals(json.result, sentinelResult);
@@ -314,7 +316,9 @@ describe("deploy --project", () => {
     assertEquals(observedRequests.length, 1);
     const [request] = observedRequests;
     assertEquals(request?.projectSlug, "codersociety");
-    assertEquals(request?.source, { kind: "already-pushed" });
+    // A project named by slug is not this directory's project, so the working
+    // tree is not its source and must not be read as evidence about it.
+    assertEquals(request?.source, { kind: "already-pushed", verifyLocalSource: false });
 
     const humanOutput = stripAnsi(output.join("\n"));
     assertEquals(humanOutput.includes("for project codersociety"), true);

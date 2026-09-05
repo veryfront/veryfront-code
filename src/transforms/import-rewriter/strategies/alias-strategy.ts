@@ -6,10 +6,36 @@ import type {
 } from "../types.ts";
 import { appendDependencyPinningPathKey, normalizeExtension } from "../url-builder.ts";
 import { getProjectRelativePath } from "../project-paths.ts";
+import {
+  assertContainedProjectAliasPath,
+  isContainedProjectAliasPath,
+} from "#veryfront/transforms/shared/alias-containment.ts";
 
-/** Rewrite a project alias through the canonical SSR module-path rule. */
+// Every alias rewrite here composes its URL by concatenating the authored `@/`
+// path onto a prefix, so containment has to be checked before composition.
+// Without it, `@/../_veryfront/modules/foo` is emitted as
+// `/_vf_modules/../_veryfront/modules/foo.js` and the browser or the SSR
+// importer normalizes it straight back out of the transport, turning the
+// import into a same-origin fetch of an arbitrary path that is then cached as
+// an executable module. `transforms/esm/specifier-resolver.ts` already refuses
+// the same input; the rule itself lives in
+// `transforms/shared/alias-containment.ts` so the two cannot drift.
+
+/**
+ * Rewrite a project alias through the canonical SSR module-path rule, or null
+ * when the specifier is not a `@/` alias or its path would leave the module
+ * transport.
+ *
+ * This returns null rather than throwing on an uncontained path because it is
+ * also used for read-only classification — `isUnresolvedTenantImport` in
+ * `rendering/orchestrator/module-loader` normalizes an already-failed
+ * specifier through it — where a throw would replace a diagnostic with a
+ * crash. Callers that actually emit the result reject the specifier instead:
+ * `AliasStrategy.rewrite` below throws on the same input.
+ */
 export function rewriteSsrProjectAliasSpecifier(specifier: string): string | null {
   if (!specifier.startsWith("@/")) return null;
+  if (!isContainedProjectAliasPath(specifier.slice(2))) return null;
   let normalizedPath = normalizeExtension(specifier.slice(2));
   if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
     normalizedPath = `${normalizedPath}.js`;
@@ -27,6 +53,7 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const path = info.specifier.slice(2);
+    assertContainedProjectAliasPath(path);
 
     // SSR uses /_vf_modules/ paths for HTTP module resolution
     if (ctx.target === "ssr") {

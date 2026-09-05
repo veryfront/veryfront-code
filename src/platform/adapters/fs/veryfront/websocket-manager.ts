@@ -49,6 +49,16 @@ type WebSocketFactory = (
   protocols?: string | string[],
 ) => WebSocket;
 
+interface PreviewInvalidationToken {
+  entries: Array<{ prefix: string; version: number }>;
+}
+
+interface PendingSelectiveInvalidation {
+  contentContext: ResolvedContentContext | null;
+  changedPaths: Set<string>;
+  token: PreviewInvalidationToken;
+}
+
 function createIntrinsicWebSocket(
   url: string,
   protocols?: string | string[],
@@ -99,9 +109,11 @@ interface WebSocketDeps {
   defaultBranchName?: string;
 
   getContentContext: () => ResolvedContentContext | null;
+  getEffectiveContentContext?: () => ResolvedContentContext | null;
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
+  getFileListCacheKey?: () => string | undefined;
   getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot: (
     cacheKey: string,
@@ -121,13 +133,18 @@ export class WebSocketManager {
   private wsLastPong = currentTime();
   private invalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingChangedPaths = new Set<string>();
+  private pendingSelectiveInvalidations = new Map<string, PendingSelectiveInvalidation>();
+  private pendingFullInvalidations = new Map<
+    string,
+    { contentContext: ResolvedContentContext | null; token: PreviewInvalidationToken }
+  >();
 
   private wsConnectionId: string | null = null;
   private wsConsecutiveFailures = 0;
   private wsErrorLogged = false;
   private disposed = false;
-  private previewInvalidationVersion = 0;
+  private nextPreviewInvalidationVersion = 0;
+  private previewInvalidationVersions = new Map<string, number>();
   private activePreviewInvalidationPrefixes = new Set<string>();
   private pokeMetrics = {
     received: 0,
@@ -157,24 +174,58 @@ export class WebSocketManager {
     return getPreviewInvalidationPrefixesHelper(contentContext);
   }
 
-  private beginPreviewInvalidation(contentContext: ResolvedContentContext | null): void {
-    const prefixes = this.getPreviewInvalidationPrefixes(contentContext);
-    if (prefixes.length === 0) return;
+  private getActiveContentContext(): ResolvedContentContext | null {
+    return this.deps.getEffectiveContentContext?.() ?? this.deps.getContentContext();
+  }
 
-    this.previewInvalidationVersion++;
+  private clearPersistentBranchCache(branch: string): void {
+    const context: ResolvedContentContext = {
+      sourceType: "branch",
+      projectSlug: this.deps.projectSlug,
+      branch,
+    };
+    const pendingPrefixes = [
+      buildFileCacheKeyPrefix(context),
+      buildStatCacheKeyPrefix(context),
+      buildDirCacheKeyPrefix(context),
+    ];
+    const deletionPrefixes = [...pendingPrefixes, buildFileListCacheKey(context)];
+    for (const prefix of pendingPrefixes) addPendingInvalidation(prefix);
+    void Promise.all(
+      deletionPrefixes.map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix)),
+    ).then(
+      () => {
+        for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
+      },
+      (error) =>
+        logger.error("Branch poke cache invalidation failed", {
+          projectSlug: this.deps.projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+    );
+  }
+
+  private beginPreviewInvalidation(
+    contentContext: ResolvedContentContext | null,
+  ): PreviewInvalidationToken {
+    const prefixes = this.getPreviewInvalidationPrefixes(contentContext);
+    const entries: PreviewInvalidationToken["entries"] = [];
 
     for (const prefix of prefixes) {
+      const version = ++this.nextPreviewInvalidationVersion;
+      this.previewInvalidationVersions.set(prefix, version);
+      entries.push({ prefix, version });
       if (this.activePreviewInvalidationPrefixes.has(prefix)) continue;
       addPendingInvalidation(prefix);
       this.activePreviewInvalidationPrefixes.add(prefix);
     }
+    return { entries };
   }
 
-  private completePreviewInvalidation(prefixes: string[], version: number): void {
-    if (prefixes.length === 0) return;
-    if (version !== this.previewInvalidationVersion) return;
-
-    for (const prefix of prefixes) {
+  private completePreviewInvalidation(token: PreviewInvalidationToken): void {
+    for (const { prefix, version } of token.entries) {
+      if (this.previewInvalidationVersions.get(prefix) !== version) continue;
+      this.previewInvalidationVersions.delete(prefix);
       if (!this.activePreviewInvalidationPrefixes.delete(prefix)) continue;
       removePendingInvalidation(prefix);
     }
@@ -357,6 +408,15 @@ export class WebSocketManager {
       this.selectiveInvalidationTimer = null;
     }
 
+    for (const pending of this.pendingSelectiveInvalidations.values()) {
+      this.completePreviewInvalidation(pending.token);
+    }
+    for (const pending of this.pendingFullInvalidations.values()) {
+      this.completePreviewInvalidation(pending.token);
+    }
+    this.pendingSelectiveInvalidations.clear();
+    this.pendingFullInvalidations.clear();
+
     if (!this.ws) return;
 
     // Detach handlers before closing to prevent onclose from scheduling a reconnect
@@ -393,7 +453,7 @@ export class WebSocketManager {
           undefined)
         : undefined;
 
-      const contentContext = this.deps.getContentContext();
+      const contentContext = this.getActiveContentContext();
 
       const rawBranchId = payload.branchId;
       const pokeBranchId: string | null | undefined = typeof rawBranchId === "string" ||
@@ -455,6 +515,7 @@ export class WebSocketManager {
 
       if (!isProductionMode) {
         if (normalizedBranchName && normalizedBranchName !== currentBranch) {
+          this.clearPersistentBranchCache(normalizedBranchName);
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
             { hasCurrentBranch: currentBranch !== null },
@@ -525,7 +586,7 @@ export class WebSocketManager {
         isPublishPoke,
       });
 
-      this.beginPreviewInvalidation(contentContext);
+      const previewInvalidationToken = this.beginPreviewInvalidation(contentContext);
       this.deps.invalidationCallbacks.clearDomainCache?.();
       this.deps.clearMemoryCaches();
       logger.debug("All in-memory caches cleared immediately on POKE");
@@ -535,12 +596,16 @@ export class WebSocketManager {
       }
 
       if (changedPaths?.length) {
-        this.scheduleSelectiveInvalidation(changedPaths);
+        this.scheduleSelectiveInvalidation(
+          changedPaths,
+          contentContext,
+          previewInvalidationToken,
+        );
         return;
       }
 
       logger.debug("No changedPaths provided - using full invalidation");
-      this.scheduleInvalidation();
+      this.scheduleInvalidation(contentContext, previewInvalidationToken);
     } catch (error) {
       logger.debug("WebSocket message parse error", { error });
     }
@@ -646,8 +711,19 @@ export class WebSocketManager {
     })();
   }
 
-  private scheduleInvalidation(): void {
+  private invalidationContextKey(contentContext: ResolvedContentContext | null): string {
+    return contentContext ? buildFileListCacheKey(contentContext) : "none";
+  }
+
+  private scheduleInvalidation(
+    contentContext: ResolvedContentContext | null,
+    token: PreviewInvalidationToken,
+  ): void {
     if (this.invalidationTimer) clearTimeout(this.invalidationTimer);
+    this.pendingFullInvalidations.set(this.invalidationContextKey(contentContext), {
+      contentContext,
+      token,
+    });
 
     logger.debug("Scheduling invalidation", {
       debounceMs: INVALIDATION_DEBOUNCE_MS,
@@ -655,39 +731,99 @@ export class WebSocketManager {
 
     this.invalidationTimer = setTimeout(() => {
       this.invalidationTimer = null;
-      this.performInvalidation();
+      const pending = [...this.pendingFullInvalidations.values()];
+      this.pendingFullInvalidations.clear();
+      void (async () => {
+        for (const invalidation of pending) {
+          try {
+            await this.performInvalidation(invalidation.contentContext, invalidation.token);
+          } catch (error) {
+            logger.error("Queued full invalidation failed", {
+              projectSlug: this.deps.projectSlug,
+              error,
+            });
+          }
+        }
+      })();
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  private scheduleSelectiveInvalidation(changedPaths: string[]): void {
-    for (const path of changedPaths) this.pendingChangedPaths.add(path);
+  private scheduleSelectiveInvalidation(
+    changedPaths: string[],
+    contentContext: ResolvedContentContext | null,
+    token: PreviewInvalidationToken,
+  ): void {
+    const contextKey = this.invalidationContextKey(contentContext);
+    const pending = this.pendingSelectiveInvalidations.get(contextKey) ?? {
+      contentContext,
+      changedPaths: new Set<string>(),
+      token,
+    };
+    for (const path of changedPaths) pending.changedPaths.add(path);
+    pending.token = token;
+    this.pendingSelectiveInvalidations.set(contextKey, pending);
 
     if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
 
     logger.debug("Scheduling selective invalidation", {
       newPaths: changedPaths.length,
-      totalPending: this.pendingChangedPaths.size,
+      totalPending: [...this.pendingSelectiveInvalidations.values()].reduce(
+        (count, invalidation) => count + invalidation.changedPaths.size,
+        0,
+      ),
       debounceMs: INVALIDATION_DEBOUNCE_MS,
     });
 
     this.selectiveInvalidationTimer = setTimeout(() => {
       this.selectiveInvalidationTimer = null;
-      this.performSelectiveInvalidation();
+      const scheduled = [...this.pendingSelectiveInvalidations.values()];
+      this.pendingSelectiveInvalidations.clear();
+      void (async () => {
+        for (const invalidation of scheduled) {
+          try {
+            await this.performSelectiveInvalidation(
+              [...invalidation.changedPaths],
+              invalidation.contentContext,
+              invalidation.token,
+            );
+          } catch (error) {
+            logger.error("Queued selective invalidation failed", {
+              projectSlug: this.deps.projectSlug,
+              error,
+            });
+          }
+        }
+      })();
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  private async performSelectiveInvalidation(): Promise<void> {
-    const startTime = currentTime();
-    const changedPaths = Array.from(this.pendingChangedPaths);
-    this.pendingChangedPaths.clear();
+  /**
+   * Drop this project's compiled and prepared CSS caches, including the style
+   * scans keyed by project scope. Returns nothing when no callback is wired.
+   */
+  private clearProjectCSSCaches(): Promise<void> | undefined {
+    if (!this.deps.invalidationCallbacks.clearProjectCSSCache || !this.deps.projectSlug) {
+      return undefined;
+    }
+    return Promise.resolve(
+      this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
+    );
+  }
 
-    const contentContext = this.deps.getContentContext();
+  private async performSelectiveInvalidation(
+    changedPaths: string[],
+    contentContext: ResolvedContentContext | null,
+    previewInvalidationToken: PreviewInvalidationToken,
+  ): Promise<void> {
+    const startTime = currentTime();
     const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
-    const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
-    const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
+    // Set before the clear is awaited, not after: the catch below is the
+    // fallback for a poke that never reached the clear, so a clear that ran and
+    // failed must not be retried there either.
+    let clearedProjectCSSCaches = false;
 
     try {
       logger.debug("Performing selective invalidation", {
@@ -765,10 +901,11 @@ export class WebSocketManager {
         );
       }
 
-      if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        invalidations.push(
-          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
-        );
+      // A branch poke clears the CSS caches after `replaceSourceSnapshot`
+      // installs the new sources instead of here, so a concurrent request
+      // cannot refill them from the snapshot this poke is replacing.
+      if (contentContext?.sourceType !== "branch") {
+        invalidations.push(this.clearProjectCSSCaches());
       }
 
       const pendingInvalidations = invalidations.filter(
@@ -781,13 +918,18 @@ export class WebSocketManager {
       if (contentContext?.sourceType === "branch") {
         await this.deps.cache.deleteByPrefixAsync("files:branch:");
         try {
-          const files = await this.deps.client.listAllFiles();
+          const files = await this.deps.client.listAllFiles({}, {
+            type: "branch",
+            name: contentContext.branch ?? "main",
+          });
           const cacheKey = buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,
             sourceSnapshotVersion,
           );
+          clearedProjectCSSCaches = true;
+          await this.clearProjectCSSCaches();
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
           } else {
@@ -808,6 +950,12 @@ export class WebSocketManager {
             });
           }
         } catch (error) {
+          // Only the file fetch and the snapshot replacement run before the
+          // clear above; a throw from either means nothing cleared the CSS
+          // caches for this poke. Later steps (style pre-generation, the
+          // snapshot version re-read) throw after the clear has already run, so
+          // repeating it there would just drop the caches twice.
+          if (!clearedProjectCSSCaches) await this.clearProjectCSSCaches();
           logger.warn("Failed to fetch files during selective invalidation", {
             error,
           });
@@ -853,10 +1001,7 @@ export class WebSocketManager {
       succeeded = true;
     } finally {
       if (succeeded) {
-        this.completePreviewInvalidation(
-          previewInvalidationPrefixes,
-          previewInvalidationVersion,
-        );
+        this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }
@@ -864,14 +1009,17 @@ export class WebSocketManager {
     }
   }
 
-  private async performInvalidation(): Promise<void> {
+  private async performInvalidation(
+    contentContext: ResolvedContentContext | null,
+    previewInvalidationToken: PreviewInvalidationToken,
+  ): Promise<void> {
     const startTime = currentTime();
-    const contentContext = this.deps.getContentContext();
-    const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
-    const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
+    // See the selective path: set before the await so a failed clear is not
+    // retried by the catch that exists for pokes which never reached it.
+    let clearedProjectCSSCaches = false;
 
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
@@ -948,10 +1096,10 @@ export class WebSocketManager {
         );
       }
 
-      if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        invalidations.push(
-          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
-        );
+      // See the selective path: a branch poke clears the CSS caches after the
+      // new snapshot is installed instead of here.
+      if (contentContext?.sourceType !== "branch") {
+        invalidations.push(this.clearProjectCSSCaches());
       }
 
       const pendingInvalidations = invalidations.filter(
@@ -975,13 +1123,18 @@ export class WebSocketManager {
 
       if (contentContext?.sourceType === "branch") {
         try {
-          const files = await this.deps.client.listAllFiles();
+          const files = await this.deps.client.listAllFiles({}, {
+            type: "branch",
+            name: contentContext.branch ?? "main",
+          });
           const cacheKey = buildFileListCacheKey(contentContext);
           const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,
             sourceSnapshotVersion,
           );
+          clearedProjectCSSCaches = true;
+          await this.clearProjectCSSCaches();
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
           } else {
@@ -1002,6 +1155,10 @@ export class WebSocketManager {
             });
           }
         } catch (error) {
+          // See the selective path: only the file fetch and the snapshot
+          // replacement run before the clear above, so a throw from a later
+          // step must not clear a second time.
+          if (!clearedProjectCSSCaches) await this.clearProjectCSSCaches();
           logger.warn("Failed to fetch files during invalidation", { error });
         }
       }
@@ -1042,10 +1199,7 @@ export class WebSocketManager {
       succeeded = true;
     } finally {
       if (succeeded) {
-        this.completePreviewInvalidation(
-          previewInvalidationPrefixes,
-          previewInvalidationVersion,
-        );
+        this.completePreviewInvalidation(previewInvalidationToken);
         if (!reloadSuperseded) {
           this.deps.invalidationCallbacks.evictCurrentAdapter?.();
         }

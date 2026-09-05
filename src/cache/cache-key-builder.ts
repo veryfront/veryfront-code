@@ -8,6 +8,13 @@ import { currentRequestContext } from "#veryfront/platform/request-context-acces
 type MultiProjectRequestContextType = NonNullable<ReturnType<typeof currentRequestContext>>;
 const trustedRequestContextAccessor = currentRequestContext;
 const registryScopeOwners = new WeakMap<object, object>();
+const IntrinsicEncodeURIComponent = encodeURIComponent;
+const IntrinsicReflectApply = Reflect.apply;
+const NumberPrototypeToString = Number.prototype.toString;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypePadStart = String.prototype.padStart;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
 export type { CacheKeyContext };
 
@@ -19,10 +26,8 @@ export interface RegistryScopeContext {
 
 function encodeRegistryScopeSegment(value: string): string {
   try {
-    return encodeURIComponent(value);
-  } catch (error) {
-    if (!(error instanceof URIError)) throw error;
-
+    return IntrinsicEncodeURIComponent(value);
+  } catch {
     // encodeURIComponent rejects lone UTF-16 surrogates. Project identity comes
     // from external boundaries, so keep this encoder total without collapsing
     // malformed strings onto the replacement character. `%uXXXX` cannot collide
@@ -30,24 +35,35 @@ function encodeRegistryScopeSegment(value: string): string {
     let encoded = "";
     let chunkStart = 0;
     for (let index = 0; index < value.length; index++) {
-      const codeUnit = value.charCodeAt(index);
+      const codeUnit = IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
       const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
       const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
 
       if (
         isHighSurrogate && index + 1 < value.length &&
-        value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff
+        (IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index + 1]) as number) >=
+          0xdc00 &&
+        (IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index + 1]) as number) <= 0xdfff
       ) {
         index++;
         continue;
       }
       if (!isHighSurrogate && !isLowSurrogate) continue;
 
-      encoded += encodeURIComponent(value.slice(chunkStart, index));
-      encoded += `%u${codeUnit.toString(16).toUpperCase().padStart(4, "0")}`;
+      encoded += IntrinsicEncodeURIComponent(
+        IntrinsicReflectApply(StringPrototypeSlice, value, [chunkStart, index]) as string,
+      );
+      const hex = IntrinsicReflectApply(NumberPrototypeToString, codeUnit, [16]) as string;
+      const upperHex = IntrinsicReflectApply(StringPrototypeToUpperCase, hex, []) as string;
+      encoded += `%u${IntrinsicReflectApply(StringPrototypePadStart, upperHex, [
+        4,
+        "0",
+      ]) as string}`;
       chunkStart = index + 1;
     }
-    return encoded + encodeURIComponent(value.slice(chunkStart));
+    return encoded + IntrinsicEncodeURIComponent(
+      IntrinsicReflectApply(StringPrototypeSlice, value, [chunkStart]) as string,
+    );
   }
 }
 
@@ -76,7 +92,6 @@ export function buildVersionedRegistryScopeId(
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
-const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
 const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;

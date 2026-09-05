@@ -1484,6 +1484,17 @@ describe("globalThis.__vf_multi_project_adapter", () => {
     );
   });
 
+  it("exposes no request credential through the global compatibility bridge", async () => {
+    await runWithRequestContext(
+      { projectSlug: "project", token: "private-request-token", productionMode: false },
+      () => {
+        assertEquals(getCurrentRequestContext()?.token, "private-request-token");
+        assertEquals(globalThis.__vf_multi_project_adapter?.getCurrentRequestContext()?.token, "");
+        return Promise.resolve();
+      },
+    );
+  });
+
   it("should have getRequestScopedFile function", () => {
     assertEquals(typeof globalThis.__vf_multi_project_adapter!.getRequestScopedFile, "function");
   });

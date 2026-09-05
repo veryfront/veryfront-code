@@ -3,6 +3,7 @@ import { createGoogleProviderModel } from "@veryfront/ext-llm-google";
 
 import { createError, toError } from "#veryfront/errors";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 
 import type { ModelRuntime } from "../types.ts";
 import {
@@ -87,11 +88,12 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
 function createVeryfrontCloudModelInternal(
   modelId: string,
   inferenceCredential?: string,
-  options: { assertInferenceCredentialActive?: () => void } = {},
+  options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
     inferenceCredential,
+    options.apiBaseUrl,
   );
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
@@ -100,15 +102,18 @@ function createVeryfrontCloudModelInternal(
       ? { assertInferenceCredentialActive: options.assertInferenceCredentialActive }
       : {}),
   });
+  const usesHostPrivateCredential = inferenceCredential === undefined &&
+    getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
+  const useFirstPartyTransport = inferenceCredential !== undefined || usesHostPrivateCredential;
   // Native provider request builders require a credential, but the guarded
   // gateway fetch owns the real run-scoped token and replaces native auth.
-  const providerCredential = inferenceCredential
+  const providerCredential = useFirstPartyTransport
     ? `vf-placeholder-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
     : apiToken;
   // Project extensions may replace registry providers. A signed inference
   // credential therefore uses only first-party transports that project code
   // cannot replace; ordinary project credentials retain extension behavior.
-  const registry = inferenceCredential ? undefined : ensureBuiltinLLMProviders();
+  const registry = useFirstPartyTransport ? undefined : ensureBuiltinLLMProviders();
 
   switch (provider) {
     case "anthropic": {
@@ -125,7 +130,7 @@ function createVeryfrontCloudModelInternal(
           provider,
         );
       }
-      if (inferenceCredential) {
+      if (useFirstPartyTransport) {
         return wrapVeryfrontCloudModel(
           createAnthropicProviderModel(upstreamModelId, {
             credential: providerCredential,
@@ -153,7 +158,7 @@ function createVeryfrontCloudModelInternal(
           provider,
         );
       }
-      if (inferenceCredential) {
+      if (useFirstPartyTransport) {
         return wrapVeryfrontCloudModel(
           createGoogleProviderModel(upstreamModelId, {
             credential: providerCredential,
@@ -176,7 +181,7 @@ function createVeryfrontCloudModelInternal(
           `openai/${upstreamModelId}`,
         );
       if (shouldUseOpenAIResponsesRuntime(upstreamModelId)) {
-        if (inferenceCredential) {
+        if (useFirstPartyTransport) {
           return wrapVeryfrontCloudModel(
             createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
               apiToken: providerCredential,
@@ -209,7 +214,7 @@ function createVeryfrontCloudModelInternal(
         );
       }
 
-      if (inferenceCredential) {
+      if (useFirstPartyTransport) {
         return wrapVeryfrontCloudModel(
           createVeryfrontCloudOpenAIModel(upstreamModelId, {
             apiToken: providerCredential,
@@ -250,7 +255,7 @@ function createVeryfrontCloudModelInternal(
 
     case "mistral":
     case "moonshotai": {
-      if (inferenceCredential) {
+      if (useFirstPartyTransport) {
         return wrapVeryfrontCloudModel(
           createVeryfrontCloudOpenAIModel(upstreamModelId, {
             apiToken: providerCredential,
@@ -310,7 +315,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 export function createVeryfrontCloudInferenceModel(
   modelId: string,
   inferenceCredential: string,
-  options: { assertInferenceCredentialActive?: () => void } = {},
+  options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
   return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
 }

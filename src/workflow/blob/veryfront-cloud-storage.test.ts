@@ -5,6 +5,12 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
+import {
+  deleteEnv,
+  deleteHostSecret,
+  setEnv,
+  setHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 
 const FIXED_NOW = new Date("2026-03-08T12:00:00.000Z");
 
@@ -217,8 +223,76 @@ function createMockUploadService(
 }
 
 describe("VeryfrontCloudBlobStorage", () => {
+  it("does not expose ambient credential resolution as a runtime method", () => {
+    const storage = new VeryfrontCloudBlobStorage();
+    assertEquals((storage as unknown as Record<string, unknown>).resolveConfig, undefined);
+    assertEquals((storage as unknown as Record<string, unknown>).requestJson, undefined);
+  });
+
   afterEach(() => {
     restoreMockFetch();
+    deleteHostSecret("VERYFRONT_API_TOKEN");
+    try {
+      deleteEnv("VERYFRONT_API_BASE_URL");
+    } catch {
+      // expected: env may already be unset
+    }
+  });
+
+  it("does not expose a stored token to replaced Headers intrinsics", async () => {
+    const NativeHeaders = Headers;
+    const nativeSet = NativeHeaders.prototype.set;
+    const token = "stored-login-token";
+    let observedCredential = 0;
+    let authorization: string | null = null;
+    setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+    setHostSecret("VERYFRONT_API_TOKEN", token);
+
+    class ProjectHeaders extends NativeHeaders {
+      constructor(init?: HeadersInit) {
+        super(init);
+        for (const [, value] of this) {
+          if (value.includes(token)) observedCredential += 1;
+        }
+      }
+    }
+    Object.defineProperty(globalThis, "Headers", {
+      value: ProjectHeaders,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(NativeHeaders.prototype, "set", {
+      configurable: true,
+      writable: true,
+      value: function (this: Headers, name: string, value: string): void {
+        if (value.includes(token)) observedCredential += 1;
+        Reflect.apply(nativeSet, this, [name, value]);
+      },
+    });
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        authorization = new NativeHeaders(init?.headers).get("Authorization");
+        return Promise.resolve(Response.json({ data: [] }));
+      }) as typeof fetch,
+    );
+
+    try {
+      const storage = new VeryfrontCloudBlobStorage({ projectSlug: "demo-project" });
+      assertEquals(await storage.list(), []);
+      assertEquals(authorization, `Bearer ${token}`);
+      assertEquals(observedCredential, 0);
+    } finally {
+      Object.defineProperty(globalThis, "Headers", {
+        value: NativeHeaders,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(NativeHeaders.prototype, "set", {
+        value: nativeSet,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 
   it("stores, retrieves, stats, and deletes blobs via project uploads", async () => {

@@ -7,6 +7,7 @@ import {
   getCachedWithBatching,
   getRequestCacheContext,
   getRequestCacheStats,
+  parseRequestCachedValue,
   runWithCacheBatching,
   setInRequestCache,
 } from "./request-cache-batcher.ts";
@@ -44,6 +45,23 @@ function createMockBackend(
 }
 
 describe("cache/request-cache-batcher", () => {
+  it("reuses parsed values while the request-local raw value is unchanged", async () => {
+    let parseCalls = 0;
+    await runWithCacheBatching(async () => {
+      const parse = (raw: string) => {
+        parseCalls++;
+        return JSON.parse(raw) as { value: number };
+      };
+      const first = parseRequestCachedValue("manifest", '{"value":1}', parse);
+      const second = parseRequestCachedValue("manifest", '{"value":1}', parse);
+      const changed = parseRequestCachedValue("manifest", '{"value":2}', parse);
+
+      assertEquals(first, second);
+      assertEquals(changed, { value: 2 });
+      assertEquals(parseCalls, 2);
+    });
+  });
+
   describe("runWithCacheBatching", () => {
     it("should execute the wrapped function and return its result", async () => {
       const result = await runWithCacheBatching(() => Promise.resolve(42));

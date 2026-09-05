@@ -228,8 +228,8 @@ describe("veryfront/adapter-content-context", () => {
   it("fetches file lists by resolved content context", async () => {
     const calls: string[] = [];
     const fileListClient: FileListClient = {
-      listAllFiles: () => {
-        calls.push("branch");
+      listAllFiles: (_options, context) => {
+        calls.push(`branch:${context?.type === "branch" ? context.name : undefined}`);
         return Promise.resolve([makeProjectFile("pages/index.tsx")]);
       },
       listAllEnvironmentFiles: (environmentName?: string) => {
@@ -265,7 +265,7 @@ describe("veryfront/adapter-content-context", () => {
     });
 
     assertEquals(calls, [
-      "branch",
+      "branch:main",
       "environment:preview",
       "release:env-rel-1",
       "release:rel-1",

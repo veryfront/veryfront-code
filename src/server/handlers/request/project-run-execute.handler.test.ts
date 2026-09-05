@@ -1,9 +1,17 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
@@ -20,11 +28,51 @@ import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  projectWorkflowRedisConfig,
+  projectWorkflowRedisPrefix,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 const encoder = new TextEncoder();
+
+/**
+ * A model transport that streams one fixed answer.
+ *
+ * A restricted local eval rebuilds the source agent through the framework
+ * factory and streams it for real, so these tests supply a transport instead of
+ * replacing a runtime method: the ceiling is then observed exactly where it has
+ * to hold, in the tool list and prompt the provider receives.
+ */
+function createEvalTransportModel(input: {
+  text: string;
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  onCall?: (options: ModelRuntimeCallOptions) => void;
+}): ModelRuntime<ModelRuntimeCallOptions> {
+  return {
+    provider: "anthropic",
+    modelId: "claude-sonnet-4-6",
+    doGenerate: () => {
+      throw new Error("Expected the streaming path");
+    },
+    doStream: (options) => {
+      input.onCall?.(options);
+      return Promise.resolve({
+        stream: new ReadableStream<unknown>({
+          start(controller) {
+            controller.enqueue({ type: "text-delta", id: "text-1", delta: input.text });
+            controller.enqueue({
+              type: "finish",
+              finishReason: "stop",
+              ...(input.usage ? { usage: input.usage } : {}),
+            });
+            controller.close();
+          },
+        }),
+      });
+    },
+  };
+}
 
 describe("createKnowledgeEventLogger", () => {
   it("caps the number of accumulated knowledge ingest events", () => {
@@ -49,6 +97,149 @@ describe("createKnowledgeEventLogger", () => {
 
     assertEquals(encoder.encode(lines.join("\n")).byteLength <= 256 * 1_024, true);
     assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+});
+
+describe("projectWorkflowRedisPrefix", () => {
+  it("namespaces durable workflow state per project", () => {
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1"),
+      "vf:workflow:project:proj-1:target:main_branch:environment::branch::",
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1") === projectWorkflowRedisPrefix("proj-2"),
+      false,
+    );
+  });
+
+  it("escapes characters that could collide or match Redis SCAN globs", () => {
+    const prefix = projectWorkflowRedisPrefix("proj*:[a]?");
+    assertEquals(/^[A-Za-z0-9_.:-]+$/.test(prefix), true);
+    // Escaping is injective: ids that differ only in escaped characters
+    // never produce the same namespace.
+    assertEquals(
+      projectWorkflowRedisPrefix("a.b") === projectWorkflowRedisPrefix("a.2e.b"),
+      false,
+    );
+  });
+
+  it("does not use project-controlled string encoding methods", () => {
+    const originalReplace = String.prototype.replace;
+    const originalCharCodeAt = String.prototype.charCodeAt;
+    const originalNumberToString = Number.prototype.toString;
+    let first: string | undefined;
+    let second: string | undefined;
+    try {
+      String.prototype.replace = () => "shared";
+      String.prototype.charCodeAt = () => 0;
+      Number.prototype.toString = () => "0";
+      first = projectWorkflowRedisPrefix("project.*");
+      second = projectWorkflowRedisPrefix("project.?");
+    } finally {
+      String.prototype.replace = originalReplace;
+      String.prototype.charCodeAt = originalCharCodeAt;
+      Number.prototype.toString = originalNumberToString;
+    }
+
+    assertEquals(first === second, false);
+  });
+
+  it("preserves whitespace in the verified project id when configuring Redis", () => {
+    const canonical = projectWorkflowRedisConfig("proj-1");
+    const whitespacePrefixed = projectWorkflowRedisConfig(" proj-1");
+
+    assertEquals(canonical, {
+      prefix: "vf:workflow:project:proj-1:target:main_branch:environment::branch::",
+      streamKey: "vf:workflow:project:proj-1:target:main_branch:environment::branch::stream",
+      groupName: "vf:workflow:project:proj-1:target:main_branch:environment::branch::workers",
+    });
+    assertEquals(whitespacePrefixed, {
+      prefix: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::",
+      streamKey: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::stream",
+      groupName: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::workers",
+    });
+  });
+
+  it("canonicalizes an omitted runtime target kind to the default branch", () => {
+    // The control-plane wire format leaves runtimeTargetKind optional and
+    // resolveControlPlaneBranchBinding reads an omitted kind as main_branch.
+    // Both spellings must land in one namespace or an approval waiting under
+    // the explicit spelling is invisible to a recovery scan started under the
+    // implicit one.
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {}),
+      projectWorkflowRedisPrefix("proj-1", { runtimeTargetKind: "main_branch" }),
+    );
+  });
+
+  it("ignores identifiers that do not belong to the selected target kind", () => {
+    // A default-branch or environment run carries no preview branch id, so a
+    // stray identifier must not split one target across two namespaces.
+    const mainBranch = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "main_branch",
+    });
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "main_branch",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      mainBranch,
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+      }),
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "branch-1",
+      }),
+    );
+  });
+
+  it("namespaces durable workflow state per runtime target", () => {
+    const main = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "main_branch",
+    });
+    const environment = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+    });
+    const otherEnvironment = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-2",
+    });
+    const preview = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: "branch-1",
+    });
+
+    assertEquals(new Set([main, environment, otherEnvironment, preview]).size, 4);
+  });
+
+  it("refuses to configure durable persistence without a project scope", () => {
+    // An unscoped prefix would let one project's recovery scan enumerate
+    // every other project's durable workflow keys, so an empty scope must
+    // fail closed instead of falling back to a shared namespace.
+    const error = assertThrows(() => projectWorkflowRedisConfig("")) as {
+      slug?: string;
+      detail?: string;
+    };
+    assertEquals(error.slug, "input-validation-failed");
+    assertStringIncludes(error.detail ?? "", "requires a project scope");
   });
 });
 
@@ -893,6 +1084,68 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedBranchName, "main");
   });
 
+  it("parses the eval step ceiling with intrinsics captured before project discovery", async () => {
+    const definition = evalAgent({
+      id: "eval:deep-research",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+    const originalIsFinite = Number.isFinite;
+    const originalParseInt = Number.parseInt;
+    const originalTrim = String.prototype.trim;
+    const originalTrunc = Math.trunc;
+    let receivedMaxSteps: number | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async () => ({
+        id: "eval:deep-research",
+        name: "Deep research quality",
+        filePath: "evals/deep-research.eval.ts",
+        exportName: "default",
+        definition,
+      }),
+      ensureProjectDiscovery: async () => {
+        Number.isFinite = () => false;
+        Number.parseInt = () => 99;
+        String.prototype.trim = function (): string {
+          return String(this) === "2.9" ? "" : Reflect.apply(originalTrim, this, []);
+        };
+        Math.trunc = () => 99;
+        return createEmptyDiscoveryResult();
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedMaxSteps = config.maxSteps;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_intrinsic_step_limit",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      config: { max_steps: "2.9" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_intrinsic_step_limit/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+
+    let result;
+    try {
+      result = await handler.handle(request, createCtx(publicKeyPem));
+    } finally {
+      Number.isFinite = originalIsFinite;
+      Number.parseInt = originalParseInt;
+      String.prototype.trim = originalTrim;
+      Math.trunc = originalTrunc;
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(receivedMaxSteps, 2);
+  });
+
   it("runs a dataset eval without a runtime API token", async () => {
     let adapterCreated = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
@@ -1024,14 +1277,29 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs local eval AG-UI requests through discovered source agents", async () => {
     let capturedContext: Record<string, unknown> | undefined;
-    agentRegistry.register(
-      "researcher",
-      createStreamingAgent("researcher", "Paris", {
-        promptTokens: 12,
-        completionTokens: 8,
-        totalTokens: 20,
-      }, (context) => capturedContext = context),
-    );
+    // Control-plane eval runs carry a runtime ceiling, so the run streams
+    // through a framework-rebuilt restricted agent rather than through the
+    // source agent's own stream implementation.
+    const sourceAgent = createStreamingAgent("researcher", "Paris", {
+      promptTokens: 12,
+      completionTokens: 8,
+      totalTokens: 20,
+    });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        resolveModelTransport: (request: { context?: Record<string, unknown> }) => {
+          capturedContext = request.context;
+          return Promise.resolve({
+            model: createEvalTransportModel({
+              text: "Paris",
+              usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+            }),
+          });
+        },
+      } as Agent["config"],
+    });
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
         target === "eval:deep-research"
@@ -1067,7 +1335,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { "x-token": "runtime-token" },
       "http://localhost:4311",
     );
-
     try {
       const result = await withEnvValue(
         "PORT",
@@ -1094,6 +1361,219 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
       assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
+      agentRegistry.delete("researcher");
+    }
+  });
+
+  it("applies forwarded eval tool restrictions to local source agent runs", async () => {
+    let sourceAgentStreamCalls = 0;
+    let observedToolNames: string[] = [];
+    const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
+      sourceAgentStreamCalls += 1;
+    });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        tools: {
+          eval_allowed_lookup: tool({
+            id: "eval_allowed_lookup",
+            description: "Allowed by the forwarded eval ceiling.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+          eval_denied_delete: tool({
+            id: "eval_denied_delete",
+            description: "Denied by the forwarded eval ceiling.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+        },
+        providerTools: ["web_search", "web_fetch"],
+        mcpServers: [{ kind: "veryfront-api" }],
+        maxSteps: 20,
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: createEvalTransportModel({
+              text: "Paris",
+              onCall: (options) => {
+                observedToolNames = (options.tools ?? [])
+                  .map((definition) => definition.name)
+                  .toSorted();
+              },
+            }),
+          }),
+      } as Agent["config"],
+    });
+
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([
+                { id: "q1", input: "France capital?", reference: "Paris" },
+              ]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_restricted_tools",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { allowedTools: ["eval_allowed_lookup", "web_fetch"], max_steps: 2 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_restricted_tools/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    const nativeRequest = globalThis.Request;
+    let replacementSawLocalEvalRequest = false;
+    const replacementRequest = function (
+      this: Request,
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Request {
+      const url = typeof input === "string" || input instanceof URL ? String(input) : input.url;
+      if (
+        url === "http://localhost:4311/api/ag-ui" &&
+        typeof init?.body === "string"
+      ) {
+        replacementSawLocalEvalRequest = true;
+        const payload = JSON.parse(init.body) as {
+          forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
+        };
+        if (payload.forwardedProps?.veryfront) {
+          delete payload.forwardedProps.veryfront.runtimeOverrides;
+        }
+        return new nativeRequest(input, { ...init, body: JSON.stringify(payload) });
+      }
+      return new nativeRequest(input, init);
+    } as unknown as typeof Request;
+    replacementRequest.prototype = nativeRequest.prototype;
+    globalThis.Request = replacementRequest;
+    const originalArrayFilter = Array.prototype.filter;
+    const originalJsonStringify = JSON.stringify;
+    const originalObjectKeys = Object.keys;
+    const originalObjectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const originalInheritedAllowedTools = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "allowed_tools",
+    );
+    let replacementSawEvalSerialization = false;
+    let objectToJsonSawEvalBody = false;
+    Array.prototype.filter = function <T>(
+      this: T[],
+      predicate: (value: T, index: number, array: T[]) => unknown,
+      thisArg?: unknown,
+    ): T[] {
+      const filtered = Reflect.apply(originalArrayFilter, this, [predicate, thisArg]) as T[];
+      if (
+        this[0] === "eval_allowed_lookup" &&
+        this[1] === "web_fetch"
+      ) {
+        filtered[filtered.length] = "eval_denied_delete" as T;
+      }
+      return filtered;
+    };
+    JSON.stringify = ((value: unknown, ...args: unknown[]) => {
+      if (
+        typeof value === "object" && value !== null &&
+        "forwardedProps" in value
+      ) {
+        replacementSawEvalSerialization = true;
+        const payload = structuredClone(value) as {
+          forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
+        };
+        if (payload.forwardedProps?.veryfront) {
+          delete payload.forwardedProps.veryfront.runtimeOverrides;
+        }
+        return Reflect.apply(originalJsonStringify, JSON, [payload, ...args]);
+      }
+      return Reflect.apply(originalJsonStringify, JSON, [value, ...args]);
+    }) as typeof JSON.stringify;
+    Object.keys = ((value: object) => {
+      if (
+        Object.hasOwn(value, "eval_allowed_lookup") &&
+        !Object.hasOwn(value, "eval_denied_delete")
+      ) {
+        (value as Record<string, unknown>).eval_denied_delete = true;
+      }
+      return originalObjectKeys(value);
+    }) as typeof Object.keys;
+    Object.defineProperty(Object.prototype, "allowed_tools", {
+      configurable: true,
+      value: ["eval_denied_delete"],
+    });
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value(this: Record<string, unknown>) {
+        if (!("forwardedProps" in this)) return this;
+        objectToJsonSawEvalBody = true;
+        const payload = { ...this } as {
+          forwardedProps?: { veryfront?: { runtimeOverrides?: unknown } };
+        };
+        if (payload.forwardedProps?.veryfront) {
+          const veryfront = payload.forwardedProps.veryfront;
+          payload.forwardedProps = {
+            ...payload.forwardedProps,
+            veryfront: { ...veryfront },
+          };
+          delete payload.forwardedProps.veryfront?.runtimeOverrides;
+        }
+        return payload;
+      },
+    });
+
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true);
+      // The eval runs against the restricted configuration: only the
+      // allowlisted local and provider tools reach the model, and the source
+      // agent's own unrestricted surface never runs.
+      assertEquals(observedToolNames, ["eval_allowed_lookup", "web_fetch"]);
+      assertEquals(sourceAgentStreamCalls, 0);
+      assertEquals(replacementSawLocalEvalRequest, false);
+      assertEquals(replacementSawEvalSerialization, false);
+      assertEquals(objectToJsonSawEvalBody, true);
+    } finally {
+      if (originalObjectToJson) {
+        Object.defineProperty(Object.prototype, "toJSON", originalObjectToJson);
+      } else {
+        delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      }
+      if (originalInheritedAllowedTools) {
+        Object.defineProperty(Object.prototype, "allowed_tools", originalInheritedAllowedTools);
+      } else {
+        delete (Object.prototype as { allowed_tools?: unknown }).allowed_tools;
+      }
+      Object.keys = originalObjectKeys;
+      JSON.stringify = originalJsonStringify;
+      Array.prototype.filter = originalArrayFilter;
+      globalThis.Request = nativeRequest;
       agentRegistry.delete("researcher");
     }
   });
@@ -1576,6 +2056,57 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(order, ["discover", "create-client", "start"]);
   });
 
+  it("scopes the workflow client to the verified project and runtime target", async () => {
+    let clientScope: {
+      projectId: string;
+      runtimeTargetKind?: string;
+      runtimeTargetEnvironmentId?: string | null;
+      runtimeTargetBranchId?: string | null;
+    } | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: (_config, options) => {
+        clientScope = options;
+        return {
+          register: () => {},
+          start: async (
+            _workflowId: string,
+            _input: unknown,
+            startOptions?: { runId?: string },
+          ) => ({ runId: startOptions?.runId ?? "workflow-run" }),
+          getRun: async () => ({
+            status: "completed",
+            output: { deployed: true },
+          }),
+          destroy: async () => {},
+        };
+      },
+    }));
+    const body = {
+      runId: "run_workflow_scope_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_scope_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(clientScope, {
+      projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: "env-1",
+      runtimeTargetBranchId: undefined,
+    });
+  });
+
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
     agentRegistry.clearAll();
@@ -1893,5 +2424,84 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 401);
     assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
+  });
+
+  it("rejects runtime targets that carry no identifier for their kind", async () => {
+    // Both selections would canonicalize to the empty identifier, so every
+    // environment run missing its environment id — and every preview run
+    // missing its branch id — would share one durable workflow namespace and
+    // could resume another target's runs and approval decision claims.
+    const handler = new ProjectRunExecuteHandler(createDeps());
+
+    for (
+      const body of [
+        {
+          runId: "run_bad_environment",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "environment",
+        },
+        {
+          runId: "run_bad_preview",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+        },
+      ]
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${body.runId}/execute`,
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+    }
+  });
+
+  it("rejects runtime targets carrying an identifier from a different kind", async () => {
+    // A selection that names both an environment and a preview branch is
+    // malformed rather than a namespace: it is exactly what
+    // validateRuntimeAgentTargetSelection rejects on the agent invocation
+    // contract, and accepting it here would let one request choose which
+    // target's durable state it resumes.
+    const handler = new ProjectRunExecuteHandler(createDeps());
+
+    for (
+      const body of [
+        {
+          runId: "run_cross_environment",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: "env-1",
+          runtimeTargetBranchId: "branch-1",
+        },
+        {
+          runId: "run_cross_preview",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetEnvironmentId: "env-1",
+          runtimeTargetBranchId: "branch-1",
+        },
+      ]
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${body.runId}/execute`,
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+    }
   });
 });

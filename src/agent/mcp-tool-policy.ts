@@ -2,6 +2,13 @@ import { PERMISSION_DENIED } from "#veryfront/errors";
 import type { HostToolSet, RemoteToolSource, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentMcpToolPolicy } from "./types.ts";
 
+const ReflectApply = Reflect.apply;
+const ArrayIncludes = Array.prototype.includes;
+
+function includesName(names: readonly string[], toolName: string): boolean {
+  return ReflectApply(ArrayIncludes, names, [toolName]);
+}
+
 export type McpToolPolicyGate = {
   allows(toolName: string): boolean;
   filterDefinitions<T extends { name: string }>(definitions: readonly T[]): T[];
@@ -24,16 +31,24 @@ export function createMcpToolPolicyGate(
 
   const allows = (toolName: string): boolean => {
     const deny = policy?.deny;
-    if (deny?.includes(toolName)) return false;
+    if (deny !== undefined && includesName(deny, toolName)) return false;
 
     const allow = policy?.allow;
-    if (allow !== undefined) return allow.includes(toolName);
+    if (allow !== undefined) return includesName(allow, toolName);
 
     return true;
   };
 
-  const filterDefinitions = <T extends { name: string }>(definitions: readonly T[]): T[] =>
-    definitions.filter((definition) => allows(definition.name));
+  const filterDefinitions = <T extends { name: string }>(definitions: readonly T[]): T[] => {
+    const filtered: T[] = [];
+    for (let index = 0; index < definitions.length; index++) {
+      const definition = definitions[index];
+      if (definition !== undefined && allows(definition.name)) {
+        filtered[filtered.length] = definition;
+      }
+    }
+    return filtered;
+  };
 
   const assertAllowed = (toolName: string): void => {
     if (allows(toolName)) return;

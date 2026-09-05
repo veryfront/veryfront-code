@@ -28,6 +28,9 @@ import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
 
+const IntrinsicJSONParse = JSON.parse;
+const IntrinsicJSONStringify = JSON.stringify;
+
 /** Default local AG-UI endpoint used by agent-service evals. */
 export const DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT = "http://127.0.0.1:3001/api/ag-ui";
 
@@ -186,7 +189,7 @@ function stringifyPromptInput(input: unknown): string {
     if (prompt) return prompt;
   }
   try {
-    return JSON.stringify(input) ?? String(input);
+    return IntrinsicJSONStringify(input) ?? String(input);
   } catch (error) {
     throw createEvalValidationError(
       `Agent-service eval input must be JSON-serializable: ${stringifyEvalError(error)}`,
@@ -309,7 +312,7 @@ function stringifyError(value: unknown): string | undefined {
   }
 
   try {
-    return JSON.stringify(value);
+    return IntrinsicJSONStringify(value);
   } catch {
     return stringifyEvalError(value);
   }
@@ -321,7 +324,7 @@ function getToolResultError(event: Record<string, unknown>): string | undefined 
 
 function parseJsonString(value: string): unknown {
   try {
-    return JSON.parse(value);
+    return IntrinsicJSONParse(value);
   } catch {
     return value;
   }
@@ -631,7 +634,7 @@ function createRequestInit(
   return {
     method: "POST",
     headers: createHeaders(config),
-    body: JSON.stringify(body),
+    body: IntrinsicJSONStringify(body),
     ...(config.requestTimeoutMs !== undefined
       ? { signal: AbortSignal.timeout(config.requestTimeoutMs) }
       : {}),

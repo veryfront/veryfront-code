@@ -1,4 +1,6 @@
 import { createError, toError } from "#veryfront/errors";
+import { createGoogleProviderEmbedding } from "@veryfront/ext-llm-google";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
@@ -11,26 +13,40 @@ import {
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { createVeryfrontCloudOpenAIEmbeddingModel } from "#veryfront/provider/veryfront-cloud/openai.ts";
 
+const randomUUID = crypto.randomUUID.bind(crypto);
+
 export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
   const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL);
+  const usesHostPrivateCredential = getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
+  const providerCredential = usesHostPrivateCredential
+    ? `vf-placeholder-${randomUUID()}`
+    : apiToken;
 
   switch (provider) {
     case "openai":
       return createVeryfrontCloudOpenAIEmbeddingModel(upstreamModelId, {
-        apiToken,
+        apiToken: providerCredential,
         baseURL,
         fetch,
       });
 
     case "google": {
+      if (usesHostPrivateCredential) {
+        return createGoogleProviderEmbedding(upstreamModelId, {
+          credential: providerCredential,
+          baseURL,
+          name: "veryfront-cloud",
+          fetch,
+        });
+      }
       const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
       const google = registry?.get("google");
       if (google?.createEmbedding) {
         return google.createEmbedding(upstreamModelId, {
-          credential: apiToken,
+          credential: providerCredential,
           baseURL,
           name: "veryfront-cloud",
           fetch,

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
+import { deleteHostSecret, setHostSecret } from "#cli/process-env";
 import {
   buildDiscoveryConfig,
   buildProxyRuntimeProjectIdentity,
@@ -55,6 +56,27 @@ describe("buildDiscoveryConfig", () => {
     }, host);
 
     assertEquals(config.projectSlug, "env-project", "the environment wins over the link");
+  });
+
+  it("prefers the stored login token over a blank exported one", () => {
+    const host = createInMemoryHostRuntime({ env: { VERYFRONT_API_TOKEN: "   " } });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-token");
+
+    try {
+      const config = buildDiscoveryConfig({
+        port: 3000,
+        projectDir: "/tmp/my-agent",
+        signal: new AbortController().signal,
+        requestInterceptor: (request: Request) => request,
+        defaultProjectId: "local-my-agent",
+      }, host);
+
+      // `applyRuntimeAuthContext` normalizes a blank export to "unset" before it
+      // registers the stored token, so discovery must not treat it as a token.
+      assertEquals(config.apiToken, "stored-token");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
   });
 
   it("omits an absent token rather than forwarding an empty string", () => {

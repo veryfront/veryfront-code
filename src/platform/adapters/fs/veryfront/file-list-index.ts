@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import type { ResolvedContentContext } from "./types.ts";
 
 const logger = baseLogger.component("read-operations");
 
@@ -19,13 +20,22 @@ const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 export class FileListIndex {
   private index: Map<string, string> | null = null;
   private pathSet: Set<string> | null = null;
-  private indexKey: string | null = null;
+  private indexScopeKey: string | null = null;
+  private indexSnapshotVersion: number | undefined;
+  private indexSourceList: Array<FileListCacheEntry> | null = null;
   private indexBuiltAt = 0;
   private indexFresh = false;
   private readyPromise: Promise<void> | null = null;
 
   constructor(
-    private readonly getFileListCache?: () => Promise<Array<FileListCacheEntry> | undefined>,
+    private readonly getFileListCache?: (
+      cacheKey?: string,
+      contentContext?: ResolvedContentContext | null,
+    ) => Promise<Array<FileListCacheEntry> | undefined>,
+    private readonly getSnapshotVersion?: () => number,
+    private readonly isSourceInvalidated?: (
+      contentContext?: ResolvedContentContext | null,
+    ) => boolean,
   ) {}
 
   setReadyPromise(promise: Promise<void>): void {
@@ -38,7 +48,9 @@ export class FileListIndex {
     const indexedWithContent = this.index.size;
     this.index = null;
     this.pathSet = null;
-    this.indexKey = null;
+    this.indexScopeKey = null;
+    this.indexSnapshotVersion = undefined;
+    this.indexSourceList = null;
     this.indexBuiltAt = 0;
     this.indexFresh = false;
     logger.debug("Cleared file list index", { indexedWithContent });
@@ -55,15 +67,23 @@ export class FileListIndex {
     }
   }
 
-  async lookup(normalizedPath: string): Promise<string | undefined> {
-    const match = await this.match(normalizedPath);
+  async lookup(
+    normalizedPath: string,
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ): Promise<string | undefined> {
+    const match = await this.match(normalizedPath, cacheKey, contentContext);
     return match.status === "hit" ? match.content : undefined;
   }
 
-  async match(normalizedPath: string): Promise<FileListMatchResult> {
+  async match(
+    normalizedPath: string,
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ): Promise<FileListMatchResult> {
     await this.ensureReady();
 
-    const snapshot = await this.getOrBuild();
+    const snapshot = await this.getOrBuild(cacheKey, contentContext);
     if (!snapshot) {
       logger.debug("No file list cache available");
       return { status: "unavailable", fresh: false };
@@ -79,7 +99,7 @@ export class FileListIndex {
     }
 
     const content = snapshot.content.get(normalizedPath);
-    if (!content) {
+    if (content === undefined) {
       logger.debug("File list index contains path without inline content", {
         path: normalizedPath,
         fresh: snapshot.fresh,
@@ -106,25 +126,29 @@ export class FileListIndex {
 
   async findFirstWithContent(
     normalizedPaths: string[],
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
   ): Promise<{ path: string; content: string } | undefined> {
-    const match = await this.findFirstMatch(normalizedPaths);
-    if (match.status !== "hit" || !match.path || !match.content) return undefined;
+    const match = await this.findFirstMatch(normalizedPaths, cacheKey, contentContext);
+    if (match.status !== "hit" || !match.path || match.content === undefined) return undefined;
     return { path: match.path, content: match.content };
   }
 
   async findFirstMatch(
     normalizedPaths: string[],
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
   ): Promise<FileListMatchResult> {
     await this.ensureReady();
 
-    const snapshot = await this.getOrBuild();
+    const snapshot = await this.getOrBuild(cacheKey, contentContext);
     if (!snapshot) return { status: "unavailable", fresh: false };
 
     for (const path of normalizedPaths) {
       if (!snapshot.paths.has(path)) continue;
 
       const content = snapshot.content.get(path);
-      if (content) {
+      if (content !== undefined) {
         return {
           status: "hit",
           fresh: snapshot.fresh,
@@ -143,7 +167,10 @@ export class FileListIndex {
     return { status: "missing", fresh: snapshot.fresh };
   }
 
-  private async getOrBuild(): Promise<
+  private async getOrBuild(
+    cacheKey?: string,
+    contentContext?: ResolvedContentContext | null,
+  ): Promise<
     {
       content: Map<string, string>;
       paths: Set<string>;
@@ -155,13 +182,35 @@ export class FileListIndex {
       return null;
     }
 
-    const fileList = await this.getFileListCache();
+    let versionBeforeRead = this.getSnapshotVersion?.();
+    let fileList = await this.getFileListCache(cacheKey, contentContext);
+    let versionAfterRead = this.getSnapshotVersion?.();
+    if (
+      versionBeforeRead !== undefined && versionAfterRead !== undefined &&
+      versionBeforeRead !== versionAfterRead
+    ) {
+      logger.debug("getOrBuildFileListIndex: retrying read across snapshot change", {
+        versionBeforeRead,
+        versionAfterRead,
+      });
+      versionBeforeRead = versionAfterRead;
+      fileList = await this.getFileListCache(cacheKey, contentContext);
+      versionAfterRead = this.getSnapshotVersion?.();
+      if (versionBeforeRead !== versionAfterRead) return null;
+    }
+    if (this.isSourceInvalidated?.(contentContext)) {
+      logger.debug("getOrBuildFileListIndex: discarding read during source invalidation");
+      return null;
+    }
+    const stableSnapshotVersion = versionBeforeRead === versionAfterRead
+      ? versionAfterRead
+      : undefined;
     if (!fileList) {
       // Cache entry expired or unavailable. If we already have a built index from a
       // previous successful cache read, keep using it rather than forcing network fetches.
       // The index stays valid until explicitly cleared via clear() (triggered by WebSocket pokes)
       // or until INDEX_STALENESS_LIMIT_MS elapses (safety net for missed pokes).
-      if (this.index) {
+      if (this.index && this.indexScopeKey === (cacheKey ?? null)) {
         const age = Date.now() - this.indexBuiltAt;
         if (age < INDEX_STALENESS_LIMIT_MS) {
           logger.debug("getOrBuildFileListIndex: cache expired, using existing in-memory index", {
@@ -182,7 +231,7 @@ export class FileListIndex {
         });
         this.index = null;
         this.pathSet = null;
-        this.indexKey = null;
+        this.indexScopeKey = null;
         this.indexFresh = false;
       }
       logger.debug(
@@ -191,37 +240,46 @@ export class FileListIndex {
       return null;
     }
 
+    const currentIndex = this.index;
+    const currentPathSet = this.pathSet;
+    const matchesCurrentIndex = currentIndex !== null && currentPathSet !== null &&
+      (fileList === this.indexSourceList ||
+        (fileList.length === currentPathSet.size &&
+          fileList.every((file) =>
+            currentPathSet.has(file.path) && currentIndex.get(file.path) === file.content
+          )));
+    if (
+      matchesCurrentIndex &&
+      this.indexScopeKey === (cacheKey ?? null) &&
+      stableSnapshotVersion !== undefined &&
+      this.indexSnapshotVersion === stableSnapshotVersion
+    ) {
+      this.indexFresh = true;
+      this.indexBuiltAt = Date.now();
+      this.indexSourceList = fileList;
+      return { content: currentIndex, paths: currentPathSet, fresh: true };
+    }
+
     const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
-      filesWithContent: fileList.filter((f) => f.content).length,
+      filesWithContent: fileList.filter((f) => f.content !== undefined).length,
       sampleFilePath: cacheCheckSample?.path,
       sampleContentLength: cacheCheckSample?.content?.length,
     });
-
-    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.index && this.pathSet && this.indexKey === indexKey) {
-      this.indexBuiltAt = Date.now();
-      this.indexFresh = true;
-      return {
-        content: this.index,
-        paths: this.pathSet,
-        fresh: true,
-      };
-    }
 
     const index = new Map<string, string>();
     const pathSet = new Set<string>();
     for (const file of fileList) {
       pathSet.add(file.path);
-      if (file.content) index.set(file.path, file.content);
+      if (file.content !== undefined) index.set(file.path, file.content);
     }
 
     this.index = index;
     this.pathSet = pathSet;
-    this.indexKey = indexKey;
+    this.indexScopeKey = cacheKey ?? null;
+    this.indexSnapshotVersion = stableSnapshotVersion;
+    this.indexSourceList = fileList;
     this.indexBuiltAt = Date.now();
     this.indexFresh = true;
 
