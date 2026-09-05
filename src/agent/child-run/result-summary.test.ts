@@ -878,6 +878,28 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("retains inline variable declarations and assigned configuration objects", () => {
+      for (
+        const code of [
+          'const tools = ["create_agent"]',
+          'const config = {tools: ["create_agent"]}',
+          'config = {tools: ["create_agent"]}',
+          'makeConfig({tools: ["create_agent"]})',
+        ]
+      ) {
+        assertEquals(
+          buildChildRunResultSummary("Use `" + code + "`.", { mode: "structured" }).contractFacts,
+          { toolIds: ["create_agent"] },
+        );
+      }
+      assertEquals(
+        buildChildRunResultSummary('Use `const example = " tools: [\\"bogus_tool\\"]"`.', {
+          mode: "structured",
+        }).contractFacts,
+        undefined,
+      );
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

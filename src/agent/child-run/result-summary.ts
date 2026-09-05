@@ -1006,7 +1006,7 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
         if (inlineCode && text[cursor + inlineCode[0].length] !== "`") {
           inlineCodeEnd = cursor + inlineCode[0].length;
           const code = inlineCode[0].slice(1, -1).trimStart();
-          const configuration = code.startsWith("{") || code.startsWith("[") ||
+          const configuration = code.includes("{") || code.includes("=") || code.startsWith("[") ||
             /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/.test(code);
           if (!configuration) {
             cursor = inlineCodeEnd;
