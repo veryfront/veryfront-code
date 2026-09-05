@@ -1004,6 +1004,8 @@ describe("resolveSecurityMiddleware", () => {
       }
     }
     const selfSerialized = new SelfSerialized();
+    const nestedTarget = { value: "original nested proxy" };
+    const nestedProxy = new Proxy(nestedTarget, { getPrototypeOf: () => Date.prototype });
     const prompts: string[] = [];
     let payloadLabel = "original payload";
     const model: ModelRuntime = {
@@ -1025,6 +1027,7 @@ describe("resolveSecurityMiddleware", () => {
       const response = await next();
       payloadLabel = "mutated payload";
       selfSerialized.value = "mutated self value";
+      nestedTarget.value = "mutated nested proxy";
       return response;
     };
     const toolArgs = {
@@ -1032,6 +1035,7 @@ describe("resolveSecurityMiddleware", () => {
       money: new Money(150),
       first: selfSerialized,
       second: selfSerialized,
+      nestedProxy,
       get label() {
         return payloadLabel;
       },
@@ -1088,6 +1092,7 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(prompts[1]?.includes("original payload"), true);
     assertEquals(prompts[1]?.includes("mutated payload"), false);
     assertEquals(prompts[1]?.includes("mutated self value"), false);
+    assertEquals(prompts[1]?.includes("mutated nested proxy"), false);
   });
 
   it("reuses and streams cached string-input responses across synthetic ids", async () => {

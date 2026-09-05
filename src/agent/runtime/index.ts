@@ -378,9 +378,10 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
           IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
           return detached;
         } catch {
-          // Functions and other opaque values are valid in public message
-          // metadata and tool payloads even though the provider ignores them.
-          return candidate;
+          // A nested Proxy can report a native prototype while exposing an
+          // ordinary record. Detach its readable fields instead of keeping a
+          // caller-owned reference after native cloning rejects it.
+          prototype = ObjectPrototype;
         }
       }
       descriptors = ObjectGetOwnPropertyDescriptors(candidate);
