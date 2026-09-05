@@ -8,7 +8,7 @@ function failure(): Error {
 }
 
 function components(path: string, root: string): string[] {
-  if (!isAbsolute(root) || !isAbsolute(path)) throw failure();
+  if (!isAbsolute(root) || !isAbsolute(path) || root.includes("\0")) throw failure();
   const local = relative(root, path);
   const parts = local === "" ? [] : local.split(sep);
   if (
@@ -36,18 +36,20 @@ export async function* readPinnedDirectory(
   }
 }
 
-function* readPosixDirectory(
-  root: string,
-  parts: string[],
-): Generator<Deno.DirEntry> {
+function openPosixLibrary() {
   const darwin = Deno.build.os === "darwin";
   const inode64Suffix = darwin && Deno.build.arch === "x86_64" ? "$INODE64" : "";
-  const library = Deno.dlopen(
+  return Deno.dlopen(
     darwin ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
     {
       open: { parameters: ["buffer", "i32"], result: "i32" },
       openat: { parameters: ["i32", "buffer", "i32"], result: "i32" },
       close: { parameters: ["i32"], result: "i32" },
+      errno: { name: darwin ? "__error" : "__errno_location", parameters: [], result: "pointer" },
+      pread: { parameters: ["i32", "buffer", "usize", "i64"], result: "isize" },
+      pwrite: { parameters: ["i32", "buffer", "usize", "i64"], result: "isize" },
+      ftruncate: { parameters: ["i32", "i64"], result: "i32" },
+      fstat: { name: "fstat" + inode64Suffix, parameters: ["i32", "buffer"], result: "i32" },
       fdopendir: {
         name: "fdopendir" + inode64Suffix,
         parameters: ["i32"],
@@ -66,6 +68,20 @@ function* readPosixDirectory(
       },
     },
   );
+}
+
+function posixError(library: ReturnType<typeof openPosixLibrary>): Error {
+  const pointer = library.symbols.errno();
+  const code = pointer ? new Deno.UnsafePointerView(pointer).getInt32() : 0;
+  if (code === 2) return new Deno.errors.NotFound("File not found");
+  if (code === 17) return new Deno.errors.AlreadyExists("File already exists");
+  if (code === 13) return new Deno.errors.PermissionDenied("File access denied");
+  return failure();
+}
+
+function* readPosixDirectory(root: string, parts: string[]): Generator<Deno.DirEntry> {
+  const darwin = Deno.build.os === "darwin";
+  const library = openPosixLibrary();
   const cstring = (value: string) => new TextEncoder().encode(value + "\0");
   const flags = constants.O_RDONLY | constants.O_DIRECTORY |
     constants.O_NOFOLLOW;
@@ -133,6 +149,140 @@ function* readPosixDirectory(
     else if (fd >= 0) library.symbols.close(fd);
     library.close();
   }
+}
+
+/** Open a POSIX file beneath the root without following any path-component symlink. */
+export function openPinnedPosixFile(path: string, root: string, mode: "r" | "r+" | "wx+") {
+  const parts = components(path, root);
+  const name = parts.pop();
+  if (!name || Deno.build.os === "windows") throw failure();
+  const library = openPosixLibrary();
+  const cstring = (value: string) => new TextEncoder().encode(value + "\0");
+  const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+  let directory = -1;
+  let fd = -1;
+  try {
+    directory = library.symbols.open(cstring(root), directoryFlags);
+    if (directory < 0) throw posixError(library);
+    for (const part of parts) {
+      const child = library.symbols.openat(directory, cstring(part), directoryFlags);
+      if (child < 0) throw posixError(library);
+      library.symbols.close(directory);
+      directory = child;
+    }
+    const flags = (mode === "r" ? constants.O_RDONLY : constants.O_RDWR) |
+      constants.O_NONBLOCK | constants.O_NOFOLLOW;
+    // openat is variadic when creating a file; use a separate fixed binding
+    // below so the permission mode is passed with the correct native ABI.
+    if (mode === "wx+") {
+      const creation = Deno.dlopen(
+        Deno.build.os === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
+        {
+          openat: {
+            name: Deno.build.os === "darwin" ? "__openat" : "openat",
+            parameters: ["i32", "buffer", "i32", "u32"],
+            result: "i32",
+          },
+        },
+      );
+      try {
+        fd = creation.symbols.openat(
+          directory,
+          cstring(name),
+          flags | constants.O_CREAT | constants.O_EXCL,
+          0o666,
+        );
+      } finally {
+        creation.close();
+      }
+    } else fd = library.symbols.openat(directory, cstring(name), flags);
+    if (fd < 0) throw posixError(library);
+  } catch (error) {
+    if (directory >= 0) {
+      library.symbols.close(directory);
+      directory = -1;
+    }
+    if (fd >= 0) library.symbols.close(fd);
+    library.close();
+    throw error;
+  } finally {
+    if (directory >= 0) library.symbols.close(directory);
+  }
+  let closed = false;
+  const stat = () => {
+    if (closed) throw failure();
+    const bytes = new Uint8Array(256);
+    if (library.symbols.fstat(fd, bytes) !== 0) throw failure();
+    const view = new DataView(bytes.buffer);
+    const darwin = Deno.build.os === "darwin";
+    return {
+      dev: darwin ? BigInt(view.getUint32(0, true)) : view.getBigUint64(0, true),
+      ino: view.getBigUint64(8, true),
+      size: view.getBigInt64(darwin ? 96 : 48, true),
+    };
+  };
+  const read = (
+    bytes: Uint8Array<ArrayBuffer>,
+    offset: number,
+    length: number,
+    position: number,
+  ) => {
+    if (closed) throw failure();
+    const count = Number(
+      library.symbols.pread(
+        fd,
+        bytes.subarray(offset, offset + length),
+        BigInt(length),
+        BigInt(position),
+      ),
+    );
+    if (count < 0 || count > length) throw failure();
+    return count;
+  };
+  return {
+    stat: (_options?: { bigint: boolean }) => Promise.resolve(stat()),
+    read: (bytes: Uint8Array<ArrayBuffer>, offset: number, length: number, position: number) =>
+      Promise.resolve({ bytesRead: read(bytes, offset, length, position) }),
+    readFile: (_options: { encoding: "utf8" }) => {
+      const size = Number(stat().size);
+      if (!Number.isSafeInteger(size) || size < 0) throw failure();
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      while (offset < size) {
+        const count = read(bytes, offset, size - offset, offset);
+        if (count === 0) break;
+        offset += count;
+      }
+      return Promise.resolve(
+        new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(0, offset)),
+      );
+    },
+    truncate: (size: number) => {
+      if (closed || library.symbols.ftruncate(fd, BigInt(size)) !== 0) throw failure();
+      return Promise.resolve();
+    },
+    write: (bytes: Uint8Array<ArrayBuffer>, offset: number, length: number, position: number) => {
+      if (closed) throw failure();
+      const count = Number(
+        library.symbols.pwrite(
+          fd,
+          bytes.subarray(offset, offset + length),
+          BigInt(length),
+          BigInt(position),
+        ),
+      );
+      if (count < 0 || count > length) throw failure();
+      return Promise.resolve({ bytesWritten: count });
+    },
+    close: () => {
+      if (!closed) {
+        closed = true;
+        library.symbols.close(fd);
+        library.close();
+      }
+      return Promise.resolve();
+    },
+  };
 }
 
 function* readWindowsDirectory(

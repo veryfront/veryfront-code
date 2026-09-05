@@ -10,7 +10,7 @@ import {
   stat as statNativeFile,
 } from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
-import { readPinnedDirectory } from "./pinned-directory.ts";
+import { openPinnedPosixFile, readPinnedDirectory } from "./pinned-directory.ts";
 
 interface BabelGeneratorResult {
   code: string;
@@ -583,8 +583,22 @@ function sameFileIdentity(opened: StableFileIdentity, current: StableFileIdentit
   return opened.device === current.device && opened.inode === current.inode;
 }
 
-async function pathFileIdentity(path: string): Promise<StableFileIdentity> {
-  return stableFileIdentity(await statNativeFile(path, { bigint: true }));
+async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r+" | "wx+") {
+  if (Deno.build.os === "windows") return await openNativeFile(path, mode);
+  const parent = await Deno.realPath(nativeDirname(path));
+  return openPinnedPosixFile(`${parent}/${parsePath(path).base}`, projectRoot, mode);
+}
+
+async function pathFileIdentity(path: string, projectRoot: string): Promise<StableFileIdentity> {
+  if (Deno.build.os === "windows") {
+    return stableFileIdentity(await statNativeFile(path, { bigint: true }));
+  }
+  const file = await openProjectFile(path, projectRoot, "r");
+  try {
+    return stableFileIdentity(await file.stat({ bigint: true }));
+  } finally {
+    await file.close();
+  }
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -593,7 +607,7 @@ function isNotFoundError(error: unknown): boolean {
       (error as { code?: unknown }).code === "ENOENT");
 }
 
-async function writeTextFileInsideProjectOnWindows(
+async function writeTextFileInsideProjectWithNativeHandle(
   path: string,
   projectRoot: string,
   content: string,
@@ -605,31 +619,40 @@ async function writeTextFileInsideProjectOnWindows(
   // Open the destination before trusting its path, but do not mutate it until
   // the opened identity and current in-project path agree. A parent swapped to
   // a junction or symlink can redirect this open, but never a later write.
-  let file: Awaited<ReturnType<typeof openNativeFile>>;
+  let file: Awaited<ReturnType<typeof openProjectFile>>;
   try {
-    file = requireMissing ? await openNativeFile(path, "wx+") : await openNativeFile(path, "r+");
+    file = await openProjectFile(path, projectRoot, requireMissing ? "wx+" : "r+");
   } catch (error) {
-    if (requireMissing || !allowMissing || !isNotFoundError(error)) throw error;
+    if (
+      requireMissing || !allowMissing || (Deno.build.os === "windows" && !isNotFoundError(error))
+    ) throw error;
     // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
     // planted at the path, so creating an absent manifest stays contained.
-    file = await openNativeFile(path, "wx+");
+    file = await openProjectFile(path, projectRoot, "wx+");
   }
   try {
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
+    if (!sameFileIdentity(opened, await pathFileIdentity(path, projectRoot))) {
       throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
     }
     if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
       throw new SafeFileGuardError("Refusing to write a file because it changed after being read.");
     }
-    if (
-      expectedContent !== undefined &&
-      await file.readFile({ encoding: "utf8" }) !== expectedContent
-    ) {
-      throw new SafeFileGuardError(
-        "Refusing to write a file because its contents changed after being read.",
-      );
+    if (expectedContent !== undefined) {
+      const expected = new TextEncoder().encode(expectedContent);
+      const current = new Uint8Array(expected.length + 1);
+      let offset = 0;
+      while (offset < current.length) {
+        const { bytesRead } = await file.read(current, offset, current.length - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      if (offset !== expected.length || !expected.every((byte, index) => current[index] === byte)) {
+        throw new SafeFileGuardError(
+          "Refusing to write a file because its contents changed after being read.",
+        );
+      }
     }
     await file.truncate(0);
     const bytes = new TextEncoder().encode(content);
@@ -644,7 +667,11 @@ async function writeTextFileInsideProjectOnWindows(
       if (bytesWritten === 0) throw new SafeFileGuardError("Could not finish writing the file.");
       offset += bytesWritten;
     }
-    if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
+    let unchanged = false;
+    try {
+      unchanged = sameFileIdentity(opened, await pathFileIdentity(path, projectRoot));
+    } catch { /* A missing or linked destination is no longer the opened file. */ }
+    if (!unchanged) {
       throw new SafeFileGuardError(
         "Refusing to finish a write because the destination path changed.",
       );
@@ -677,99 +704,31 @@ export async function writeTextFileInsideProject(
   } = {},
 ): Promise<void> {
   await assertPathInsideProject(path, projectRoot, { allowMissing });
-  if (Deno.build.os === "windows") {
-    await writeTextFileInsideProjectOnWindows(
-      path,
-      projectRoot,
-      content,
-      expectedIdentity,
-      expectedContent,
-      allowMissing,
-      requireMissing,
-    );
-    return;
-  }
-
-  let file: Deno.FsFile;
-  try {
-    file = requireMissing
-      ? await Deno.open(path, { read: true, write: true, createNew: true })
-      : await Deno.open(path, { read: true, write: true });
-  } catch (error) {
-    if (requireMissing || !allowMissing || !(error instanceof Deno.errors.NotFound)) {
-      throw error;
-    }
-    // `createNew` opens with O_CREAT|O_EXCL, which fails instead of following
-    // a symlink planted at the path, so creating an absent manifest cannot
-    // write through a link. The containment checks below still run.
-    file = await Deno.open(path, { read: true, write: true, createNew: true });
-  }
-
-  try {
-    await assertPathInsideProject(path, projectRoot);
-    const opened = stableFileIdentity(await file.stat());
-    const current = stableFileIdentity(await Deno.stat(path));
-    if (!sameFileIdentity(opened, current)) {
-      throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
-    }
-    if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
-      throw new SafeFileGuardError("Refusing to write a file because it changed after being read.");
-    }
-    if (expectedContent !== undefined) {
-      const expectedBytes = new TextEncoder().encode(expectedContent);
-      const currentBytes = new Uint8Array(expectedBytes.length + 1);
-      await file.seek(0, Deno.SeekMode.Start);
-      let currentLength = 0;
-      while (currentLength < currentBytes.length) {
-        const read = await file.read(currentBytes.subarray(currentLength));
-        if (read === null) break;
-        currentLength += read;
-      }
-      const contentMatches = currentLength === expectedBytes.length &&
-        expectedBytes.every((byte, index) => currentBytes[index] === byte);
-      if (!contentMatches) {
-        throw new SafeFileGuardError(
-          "Refusing to write a file because its contents changed after being read.",
-        );
-      }
-    }
-
-    const bytes = new TextEncoder().encode(content);
-    await file.seek(0, Deno.SeekMode.Start);
-    await file.truncate(0);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const written = await file.write(bytes.subarray(offset));
-      if (written === 0) throw new SafeFileGuardError("Could not finish writing the file.");
-      offset += written;
-    }
-    if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
-      throw new SafeFileGuardError(
-        "Refusing to finish a write because the destination path changed.",
-      );
-    }
-  } finally {
-    file.close();
-  }
+  await writeTextFileInsideProjectWithNativeHandle(
+    path,
+    projectRoot,
+    content,
+    expectedIdentity,
+    expectedContent,
+    allowMissing,
+    requireMissing,
+  );
 }
 
 async function readTextFileInsideProject(
   path: string,
   projectRoot: string,
 ): Promise<{ text: string; identity: StableFileIdentity }> {
-  const file = await openNativeFile(
-    path,
-    Deno.build.os === "windows" ? "r" : nativeFsConstants.O_RDONLY | nativeFsConstants.O_NONBLOCK,
-  );
+  const file = await openProjectFile(path, projectRoot, "r");
   try {
     const identity = stableFileIdentity(await file.stat({ bigint: true }));
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
+    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot))) {
       throw new SafeFileGuardError("A file changed while it was being opened.");
     }
     const text = await file.readFile({ encoding: "utf8" });
     await assertPathInsideProject(path, projectRoot);
-    if (!sameFileIdentity(identity, await pathFileIdentity(path))) {
+    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot))) {
       throw new SafeFileGuardError("A file changed while it was being read.");
     }
     return { text, identity };

@@ -1229,20 +1229,37 @@ Deno.test("project writes stay bound to the file opened before a path swap", asy
   const target = `${project}/app.ts`;
   const originalEntry = `${project}/app.original.ts`;
   const outsideFile = `${outside}/outside.ts`;
-  const originalTruncate = Deno.FsFile.prototype.truncate;
+  const originalDlopen = Deno.dlopen;
   let swapped = false;
   try {
     await Deno.writeTextFile(target, "original");
     await Deno.writeTextFile(outsideFile, "outside");
 
-    Deno.FsFile.prototype.truncate = async function (len?: number): Promise<void> {
-      if (!swapped) {
-        swapped = true;
-        await Deno.rename(target, originalEntry);
-        await Deno.symlink(outsideFile, target);
-      }
-      await Reflect.apply(originalTruncate, this, [len]);
-    };
+    Deno.dlopen = ((...args: Parameters<typeof Deno.dlopen>) => {
+      const library = Reflect.apply(originalDlopen, Deno, args);
+      return new Proxy(library, {
+        get(nativeLibrary, key) {
+          if (key === "symbols") {
+            return new Proxy(nativeLibrary.symbols, {
+              get(symbols, symbol) {
+                const fn = Reflect.get(symbols, symbol);
+                if (symbol !== "ftruncate") return fn;
+                return (...values: unknown[]) => {
+                  if (!swapped) {
+                    swapped = true;
+                    Deno.renameSync(target, originalEntry);
+                    Deno.symlinkSync(outsideFile, target);
+                  }
+                  return Reflect.apply(fn, undefined, values);
+                };
+              },
+            });
+          }
+          const value = Reflect.get(nativeLibrary, key, nativeLibrary);
+          return typeof value === "function" ? value.bind(nativeLibrary) : value;
+        },
+      });
+    }) as typeof Deno.dlopen;
 
     const projectRoot = await Deno.realPath(project);
     await assertRejects(
@@ -1254,7 +1271,7 @@ Deno.test("project writes stay bound to the file opened before a path swap", asy
     assertEquals(await Deno.readTextFile(outsideFile), "outside");
     assertEquals(await Deno.readTextFile(originalEntry), "updated");
   } finally {
-    Deno.FsFile.prototype.truncate = originalTruncate;
+    Deno.dlopen = originalDlopen;
     await Deno.remove(project, { recursive: true });
     await Deno.remove(outside, { recursive: true });
   }
@@ -1429,6 +1446,33 @@ Deno.test("project writes reject an in-place edit after analysis", async () => {
     );
     assertEquals(await Deno.readTextFile(target), newer);
   } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("project writes use bigint identity stats when number-valued inode stats lose precision", async () => {
+  if (Deno.build.os === "windows") return;
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  const originalStat = Deno.stat;
+  try {
+    await Deno.writeTextFile(target, "original");
+    const root = await Deno.realPath(project);
+    const info = await statNativeFile(target, { bigint: true });
+    Object.defineProperty(Deno, "stat", {
+      configurable: true,
+      value: async (path: string | URL) => ({
+        ...await originalStat(path),
+        ino: Number.MAX_SAFE_INTEGER + 2,
+      }),
+    });
+    await writeTextFileInsideProject(target, root, "updated", {
+      expectedIdentity: { device: String(info.dev), inode: String(info.ino) },
+      expectedContent: "original",
+    });
+    assertEquals(await Deno.readTextFile(target), "updated");
+  } finally {
+    Object.defineProperty(Deno, "stat", { configurable: true, value: originalStat });
     await Deno.remove(project, { recursive: true });
   }
 });
@@ -2127,5 +2171,20 @@ Deno.test("pinned enumeration preserves leading BOM characters in filenames", as
     assertEquals(names.sort(), ["app.ts", "\uFEFFapp.ts"]);
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("codemod migrates BOM-prefixed source without a false content-change rejection", async () => {
+  const project = await makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${project}/app.ts`,
+      '\uFEFFimport "https://esm.sh/lodash@4.17.21";\n',
+    );
+    await Deno.writeTextFile(`${project}/package.json`, "{}\n");
+    await main([project]);
+    assertEquals((await Deno.readTextFile(`${project}/app.ts`)).includes("esm.sh"), false);
+  } finally {
+    await Deno.remove(project, { recursive: true });
   }
 });
