@@ -65,7 +65,10 @@ describe("custom memory rollback", () => {
       },
     };
     const rollback = captureMemoryRollback(memory, await memory.getMessages());
-    const rejected = userMessage("turn", "rejected input");
+    const rejected = {
+      ...userMessage("turn", "rejected input"),
+      metadata: { optional: undefined },
+    };
     const later = {
       ...userMessage("turn", "accepted concurrent output"),
       role: "assistant" as const,

@@ -20,6 +20,8 @@ interface RollbackObserver<M> {
 // Each factory retains its message type; the heterogeneous registry erases
 // that type until captureMemoryRollback retrieves it with the same memory.
 const memoryRollbackFactories = new WeakMap<object, () => unknown>();
+const stringifyRollbackValue = JSON.stringify;
+const parseRollbackValue = JSON.parse;
 
 function rollbackValuesEqual(
   left: unknown,
@@ -73,8 +75,17 @@ function rollbackValuesEqual(
 }
 
 function rollbackMessagesEqual<M extends MinimalMessage>(left: M, right: M): boolean {
-  return left.id === right.id && left.role === right.role &&
-    rollbackValuesEqual(left, right, new WeakMap());
+  if (left.id !== right.id || left.role !== right.role) return false;
+  if (rollbackValuesEqual(left, right, new WeakMap())) return true;
+  try {
+    return rollbackValuesEqual(
+      parseRollbackValue(stringifyRollbackValue(left)),
+      parseRollbackValue(stringifyRollbackValue(right)),
+      new WeakMap(),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function subtractRollbackMessages<M extends MinimalMessage>(
