@@ -92,7 +92,7 @@ function registerMemoryRollbackFactory<M extends MinimalMessage>(
   memory: Memory<M>,
   factory: () => MemoryRollback<M>,
 ): void {
-  memoryRollbackFactories.set(memory, factory as unknown as () => MemoryRollback);
+  memoryRollbackFactories.set(memory, factory);
 }
 
 /** @internal Capture an exact built-in memory state before a transactional write. */

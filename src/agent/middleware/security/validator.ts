@@ -882,6 +882,26 @@ async function assertInputTextsValid(
   );
 }
 
+function patternOccurrences(pattern: RegExp, text: string): Array<{ index: number; text: string }> {
+  const matcher = new RegExp(
+    pattern.source,
+    pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
+  );
+  if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
+  const occurrences: Array<{ index: number; text: string }> = [];
+  for (let match = matcher.exec(text); match; match = matcher.exec(text)) {
+    occurrences.push({ index: match.index, text: match[0] });
+    if (match[0].length === 0) {
+      matcher.lastIndex = advanceStringIndex(
+        text,
+        matcher.lastIndex,
+        matcher.unicode || matcher.unicodeSets,
+      );
+    }
+  }
+  return occurrences;
+}
+
 /** Reject only provider-assembly violations introduced by caller-owned layers. */
 async function assertProviderRunsValid(
   validator: InputValidator,
@@ -891,25 +911,22 @@ async function assertProviderRunsValid(
 ): Promise<void> {
   if (providerRuns.length === 0) return;
   const patternOnly = { checkCustomValidation: false } as const;
-  const [providerValidation, trustedValidation] = await Promise.all([
-    validateInputTexts(validator, { texts: [], assembled: providerRuns }, patternOnly),
-    validateInputTexts(validator, { texts: [], assembled: trustedRuns }, patternOnly),
-  ]);
-  const trustedPatterns = new Set(
-    trustedValidation.violations.flatMap((violation) =>
-      violation.pattern === undefined ? [] : [violation.pattern]
-    ),
+  const providerValidation = await validateInputTexts(
+    validator,
+    { texts: [], assembled: providerRuns },
+    patternOnly,
   );
-  const trustedReasons = new Set(
-    trustedValidation.violations.flatMap((violation) =>
-      violation.pattern === undefined ? [violation.reason] : []
-    ),
-  );
-  const introducedViolations = providerValidation.violations.filter((violation) =>
-    violation.pattern === undefined
-      ? !trustedReasons.has(violation.reason)
-      : !trustedPatterns.has(violation.pattern)
-  );
+  const trustedPrefix = (run: string): string =>
+    trustedRuns
+      .filter((trusted) => run.startsWith(trusted))
+      .reduce((longest, trusted) => trusted.length > longest.length ? trusted : longest, "");
+  const introducedViolations = providerValidation.violations.filter((violation) => {
+    if (violation.pattern === undefined) return true;
+    const trusted = patternOccurrences(violation.pattern, trustedPrefix(violation.content));
+    return patternOccurrences(violation.pattern, violation.content).some((match) =>
+      !trusted.some((prior) => prior.index === match.index && prior.text === match.text)
+    );
+  });
   if (introducedViolations.length > 0) {
     reportViolations(introducedViolations, onViolation);
     throw toError(
@@ -920,13 +937,13 @@ async function assertProviderRunsValid(
     );
   }
 
-  const trustedNeedsSanitization = trustedRuns.some((value) =>
-    (validator.sanitize(value) ?? value) !== value
-  );
-  if (!trustedNeedsSanitization) {
+  for (const run of providerRuns) {
+    const trusted = trustedPrefix(run);
+    const expected = (validator.sanitize(trusted) ?? trusted) + run.slice(trusted.length);
+    if ((validator.sanitize(run) ?? run) === expected) continue;
     assertTextsNeedNoSanitization(
       validator,
-      providerRuns,
+      [run],
       "Provider-visible system instructions contain content sanitization removes",
       onViolation,
     );

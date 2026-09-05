@@ -683,6 +683,37 @@ describe("securityMiddleware", () => {
     await validateProviderRequest("runtime marker", context.input as Message[]);
   });
 
+  it("rejects a new occurrence of a pattern already matched by trusted text", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/safe marker$|marker\n\ncaller fragment/] },
+    });
+    const context = createContext({
+      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "caller fragment" }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validate("safe marker", context.input as Message[]),
+      Error,
+      "Input validation failed",
+    );
+  });
+
+  it("rejects new sanitization matches when trusted text already needs sanitization", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [{ id: "caller", role: "system", parts: [{ type: "text", text: '="evil"' }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    await assertRejects(
+      () => validate("<script>example</script> onclick", context.input as Message[]),
+      Error,
+    );
+  });
+
   it("does not apply a custom caller validator to a mixed provider assembly", async () => {
     const middleware = securityMiddleware({
       input: {
