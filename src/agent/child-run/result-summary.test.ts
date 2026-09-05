@@ -790,12 +790,18 @@ describe("child-run-result-summary", () => {
     });
 
     it("tracks a fenced JSON head after a prose contraction", () => {
-      const text = "Here's the configuration:\n```json\n" +
-        JSON.stringify({ description: "x".repeat(140_000) }) +
-        '\n```\ntools: ["create_agent"]';
-      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
-        toolIds: ["create_agent"],
-      });
+      for (const newline of ["\n", "\r\n"]) {
+        const text = "Here's the configuration:\n```json\n" +
+          JSON.stringify({ description: "x".repeat(140_000) }) +
+          '\n```\ntools: ["create_agent"]';
+        assertEquals(
+          buildChildRunResultSummary(text.replaceAll("\n", newline), { mode: "structured" })
+            .contractFacts,
+          {
+            toolIds: ["create_agent"],
+          },
+        );
+      }
     });
 
     it("retains facts after a prose contraction in the recovered tail", () => {
