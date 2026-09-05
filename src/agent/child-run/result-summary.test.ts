@@ -963,6 +963,16 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("extracts object IDs from case-insensitive source tool fields", () => {
+      for (const field of ["TOOLS", "Tools", "tools"]) {
+        assertEquals(
+          buildChildRunResultSummary(`${field}: [{'id':'create_agent'}]`, { mode: "structured" })
+            .contractFacts,
+          { toolIds: ["create_agent"] },
+        );
+      }
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

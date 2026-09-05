@@ -1080,7 +1080,7 @@ function addToolArrayFieldValues(
   let coveredUntil = 0;
   for (const match of unquotedArrayFieldMatches(text, pattern)) {
     if (match.index < coveredUntil) continue;
-    const fieldName = match[1];
+    const fieldName = match[1]?.toLowerCase();
     const bodyStart = match.index + match[0].length;
     const windowBody = text.slice(bodyStart);
     const closingBracket = findOuterArrayClosingBracket(windowBody);
