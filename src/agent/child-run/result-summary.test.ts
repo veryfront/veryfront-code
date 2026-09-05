@@ -423,6 +423,16 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["valid_tool"] });
     });
 
+    it("withholds IDs when the bounded lookahead ends inside a line comment", () => {
+      const prefix = 'tools: ["bogus_tool", //';
+      const text = prefix + "x".repeat(32_005 - prefix.length) + "\n{garbage}]" +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("validates a nested array value that starts after a cutoff comma", () => {
       const prefix = 'tools: [{"id":"bogus_tool","schema":[0';
       const text = prefix + " ".repeat(32_000 - prefix.length - 1) + ",garbage" +
