@@ -41,6 +41,7 @@ const logger = baseLogger.component("read-operations");
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_IN_FLIGHT_REQUESTS = 100;
 const IN_FLIGHT_CLEANUP_INTERVAL_MS = 1_000;
+const MAX_EXTENSION_RESOLUTION_ENTRIES = 1_024;
 export class ReadOperations {
   private readonly inFlightRequests = new InFlightRequestDeduper<string>({
     timeoutMs: IN_FLIGHT_REQUEST_TIMEOUT_MS,
@@ -478,7 +479,7 @@ export class ReadOperations {
     contentContext: ResolvedContentContext | null,
   ): Promise<string | null> {
     // Check extension resolution cache first to skip the API call entirely.
-    // Once we know pages/home → pages/home.tsx, we never need to ask the API again.
+    // Reuse known mappings while they remain in the bounded cache.
     if (!skipPersistentCaches) {
       const cachedResolvedPath = this.extensionResolutionCache.get(`${cacheKeyPrefix}:${apiPath}`);
       if (cachedResolvedPath) {
@@ -584,7 +585,15 @@ export class ReadOperations {
     const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, resolvedPath);
 
     // Cache the path mapping to avoid future API resolution calls.
-    this.extensionResolutionCache.set(`${cacheKeyPrefix}:${requestedPath}`, resolvedPath);
+    const mappingKey = `${cacheKeyPrefix}:${requestedPath}`;
+    if (
+      !this.extensionResolutionCache.has(mappingKey) &&
+      this.extensionResolutionCache.size >= MAX_EXTENSION_RESOLUTION_ENTRIES
+    ) {
+      const oldestKey = this.extensionResolutionCache.keys().next().value;
+      if (oldestKey !== undefined) this.extensionResolutionCache.delete(oldestKey);
+    }
+    this.extensionResolutionCache.set(mappingKey, resolvedPath);
 
     logger.debug(logMessage, {
       basePath: requestedPath,

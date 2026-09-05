@@ -2094,6 +2094,29 @@ describe("ReadOperations", () => {
   });
 
   describe("file list index caching", () => {
+    it("bounds extension mappings across rotating request credentials", async () => {
+      const readOps = createReadOps(
+        createMockClient({
+          resolveFileWithExtension: () =>
+            Promise.resolve({ path: "pages/example.tsx", content: "resolved content" }),
+        }),
+        false,
+        createReleaseContext(),
+      );
+      readOps.setFileListReadyPromise(Promise.resolve());
+      for (let index = 0; index < 1_025; index++) {
+        const content = await runWithRequestContext(
+          { projectSlug: "test", token: `test-token-${index}`, productionMode: true },
+          () => readOps.readTextFile("pages/example"),
+        );
+        assertEquals(content, "resolved content");
+      }
+      const mappings = (readOps as unknown as {
+        extensionResolutionCache: Map<string, string>;
+      }).extensionResolutionCache;
+      assertEquals(mappings.size, 1_024);
+    });
+
     it("rebuilds inline content when file-list paths have not changed", async () => {
       let indexBuildCount = 0;
       const fileList = [
