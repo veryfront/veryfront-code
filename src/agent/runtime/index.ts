@@ -35,7 +35,7 @@ import {
   canIdentifyProxyWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
-import { createAgentMemory, type Memory } from "../memory/index.ts";
+import { createAgentMemory, type Memory, NoMemory } from "../memory/index.ts";
 import { captureMemoryRollback } from "#veryfront/agent/memory/memory.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -1690,7 +1690,7 @@ export class AgentRuntime {
     // same agent; that is the same backend outage those turns would hit on
     // their own write.
     if (
-      !context ||
+      this.memory instanceof NoMemory || !context ||
       !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context)
     ) {
       return this.#commitTurnMessages(inputMessages, context);

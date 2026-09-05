@@ -709,6 +709,60 @@ describe("resolveSecurityMiddleware", () => {
     );
   });
 
+  it("keeps stateless turns independent while another resolves runtime state", async () => {
+    for (const memory of [undefined, { type: "conversation", enabled: false } as const]) {
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const secondEntered = Promise.withResolvers<void>();
+      let calls = 0;
+      const model: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/stateless-concurrency",
+        doGenerate: () =>
+          Promise.resolve({
+            content: [{ type: "text", text: "ok" }],
+            finishReason: "stop" as const,
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          }),
+        async doStream() {
+          throw new Error("Expected generate path");
+        },
+      };
+      const assistant = agent(
+        {
+          id: "stateless-concurrency",
+          model: "hosted/stateless-concurrency",
+          system: "Be helpful.",
+          skills: false,
+          maxSteps: 1,
+          memory,
+          resolveModelTransport: async () => ({ model }),
+          resolveRuntimeState: async () => {
+            if (calls++ === 0) {
+              entered.resolve();
+              await release.promise;
+            } else secondEntered.resolve();
+            return {};
+          },
+        } as Parameters<typeof agent>[0],
+      );
+      const first = assistant.generate({ input: "one" });
+      await entered.promise;
+      const second = assistant.generate({ input: "two" });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const concurrent = await Promise.race([
+        secondEntered.promise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 1_000);
+        }),
+      ]);
+      if (timer !== undefined) clearTimeout(timer);
+      release.resolve();
+      await Promise.all([first, second]);
+      assertEquals(concurrent, true);
+    }
+  });
+
   it("serializes concurrent turns so a racing merge cannot skip validation", async () => {
     // Two concurrent turns that both read the same (empty) history before
     // either writes would each validate an individually harmless system
