@@ -106,6 +106,22 @@ function throwMapChildIdCollision(mapNodeId: string, collidingChildId: string): 
   });
 }
 
+function isOwnedLoopSnapshot(
+  key: string,
+  value: unknown,
+  nodeStates: Record<string, NodeState>,
+): boolean {
+  if (typeof value !== "object" || value === null || !("__veryfrontLoopState" in value)) {
+    return false;
+  }
+  const marker = value.__veryfrontLoopState;
+  if (typeof marker !== "object" || marker === null || !("ownerNodeId" in marker)) return false;
+  if (!("version" in marker) || marker.version !== 1) return false;
+  const owner = marker.ownerNodeId;
+  return typeof owner === "string" && key === `${owner}_loop_state` &&
+    Object.hasOwn(nodeStates, owner);
+}
+
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
@@ -137,6 +153,7 @@ export async function executeMapNodeStrategy(
   if (collidingChildId) {
     throwMapChildIdCollision(node.id, collidingChildId);
   }
+  const childNodeStates = runtime.selectChildNodeStates?.(childNodes, nodeStates) ?? nodeStates;
 
   const result = await runtime.executeChildGraph(
     childNodes,
@@ -147,7 +164,7 @@ export async function executeMapNodeStrategy(
       input: context.input,
       // Carry already-accumulated child states so completed children are
       // skipped on resume instead of re-executing (H8).
-      nodeStates,
+      nodeStates: childNodeStates,
       currentNodes: [],
       context: { ...context },
       checkpoints: [],
@@ -159,7 +176,16 @@ export async function executeMapNodeStrategy(
   );
   runtime.abortSignal?.throwIfAborted();
 
-  applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+  applyRecordPatch(nodeStates, createRecordPatch(childNodeStates, result.nodeStates));
+  const currentNodeState = nodeStates[node.id];
+  if (currentNodeState) {
+    currentNodeState._activeCompositeChildIds = [
+      ...new Set([
+        ...(currentNodeState._activeCompositeChildIds ?? []),
+        ...Object.keys(result.nodeStates),
+      ]),
+    ];
+  }
 
   const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
 
@@ -178,14 +204,33 @@ export async function executeMapNodeStrategy(
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: result.completed ? new Date() : undefined,
+    ...(waitingNodes === undefined ? {} : {
+      _activeCompositeChildIds: [
+        ...new Set([
+          ...(nodeStates[node.id]?._activeCompositeChildIds ?? []),
+          ...Object.keys(result.nodeStates),
+        ]),
+      ],
+    }),
   };
 
   runtime.onNodeComplete?.(node.id, state);
 
+  const contextPatch = createSetContextPatch(result.completed ? { [node.id]: outputs } : {});
+  // Keep resumable loop bookkeeping without exposing processor outputs as
+  // top-level map context. Only the child that owns a snapshot can update it.
+  for (const [key, value] of Object.entries(result.contextPatch.set)) {
+    if (isOwnedLoopSnapshot(key, value, result.nodeStates)) contextPatch.set[key] = value;
+  }
+  for (const key of result.contextPatch.delete) {
+    if (isOwnedLoopSnapshot(key, context[key], result.nodeStates)) contextPatch.delete.push(key);
+  }
+
   return {
     state,
-    contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
+    contextPatch,
     waiting,
+    errorCause: waiting ? undefined : result.errorCause,
     waitingNode: result.waitingNode ?? waitingNodes?.[0]?.nodeId,
     waitingConfig: result.waitingConfig ?? waitingNodes?.[0]?.waitConfig,
     waitingNodes,

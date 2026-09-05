@@ -4,6 +4,7 @@ import {
   NOT_SUPPORTED,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
+  type VeryfrontError,
 } from "#veryfront/errors";
 import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
@@ -58,6 +59,12 @@ export interface WorkflowRunControlExecuteResult {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
+  /**
+   * Registry-typed cause for a refusal the executor reports through `error`
+   * instead of throwing, so the run fails under the same slug a thrown refusal
+   * would carry.
+   */
+  errorCause?: VeryfrontError;
 }
 
 export interface WorkflowRunControlExecuteInput {
@@ -580,12 +587,14 @@ async function reconcileApprovalDecision(
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while applying approval "${operation.approvalId}"`,
     buildPatch: (run) => {
+      const currentNodeState = run.nodeStates[operation.nodeId];
       const runPatch: WorkflowRunUpdate = buildNodeOutcomePatch(
         backend,
         run,
         operation.nodeId,
         decisionContext,
         {
+          ...currentNodeState,
           nodeId: operation.nodeId,
           status: "completed",
           output: {
@@ -596,7 +605,8 @@ async function reconcileApprovalDecision(
               : { comment: operation.decision.comment }),
             ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
-          attempt: 1,
+          error: undefined,
+          attempt: currentNodeState?.attempt ?? 1,
           completedAt: decidedAt,
         },
       );
@@ -1171,7 +1181,10 @@ export async function executeWorkflowRunControl(
       return { status: "failed" };
     }
 
-    const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
+    // A refusal the executor reports rather than throws carries its registry
+    // error, so it classifies by the same slug a thrown refusal would use.
+    const error = result.errorCause ??
+      ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
     const failed = await failRun(input, executionController, error, result, ["running"]);
     if (!failed) return { status: "ownership-lost" };
     await input.onError?.(run, error, result.context);

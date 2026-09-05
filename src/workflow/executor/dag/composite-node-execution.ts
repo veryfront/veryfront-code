@@ -1,4 +1,4 @@
-import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { sleep } from "#veryfront/utils";
 import {
@@ -124,6 +124,7 @@ export async function executeCompositeNodeWithPolicy(
         },
         contextPatch: createSetContextPatch(),
         waiting: false,
+        errorCause: error instanceof VeryfrontError ? error : undefined,
       };
     }
   }

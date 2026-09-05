@@ -104,6 +104,12 @@ export const getNodeStateSchema = defineSchema((v) =>
     completedAt: v.date().optional(),
     /** Internal identity for one execution of a reusable wait node. */
     _waitInstanceId: v.string().optional(),
+    /** Internal owner path for a node produced inside a sub-workflow. */
+    _subWorkflowOwnerPath: v.string().optional(),
+    /** Child states this composite had actively parked when it last suspended. */
+    _activeCompositeChildIds: v.array(v.string()).optional(),
+    /** Child states a runtime-defined composite produced before it completed. */
+    _completedCompositeChildIds: v.array(v.string()).optional(),
   })
 );
 

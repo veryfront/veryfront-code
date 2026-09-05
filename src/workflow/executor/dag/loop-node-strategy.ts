@@ -35,6 +35,10 @@ interface ExecuteLoopNodeStrategyInput {
   abortSignal?: AbortSignal;
 }
 
+const ArrayIsArray = Array.isArray;
+const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectHasOwn = Object.hasOwn;
+
 /**
  * A `NodeState` in the shape that survives the context's JSON round trip.
  *
@@ -56,9 +60,30 @@ type PersistedNodeState =
   };
 
 interface PersistedLoopState {
+  __veryfrontLoopState?: { ownerNodeId: string; version: 1 };
   iteration: number;
   previousResults: unknown[];
   iterationNodeStates?: Record<string, PersistedNodeState>;
+  completedNodeIds?: string[];
+}
+
+function isOwnedLoopState(value: unknown, nodeId: string): value is PersistedLoopState {
+  if (typeof value !== "object" || value === null) return false;
+  const marker = (value as PersistedLoopState).__veryfrontLoopState;
+  return marker?.version === 1 && marker.ownerNodeId === nodeId;
+}
+
+function isPersistedLoopState(value: unknown): value is PersistedLoopState {
+  if (
+    !(typeof value === "object" && value !== null &&
+      NumberIsSafeInteger((value as { iteration?: unknown }).iteration) &&
+      ((value as { iteration: number }).iteration >= 0) &&
+      ArrayIsArray((value as { previousResults?: unknown }).previousResults))
+  ) return false;
+  const state = value as PersistedLoopState;
+  return state.__veryfrontLoopState?.version === 1 ||
+    state.iterationNodeStates !== undefined ||
+    ArrayIsArray(state.completedNodeIds);
 }
 
 /**
@@ -80,6 +105,15 @@ export function toPersistedNodeStates(
       status: state.status,
       attempt: state.attempt,
       ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
+      ...(state._subWorkflowOwnerPath !== undefined
+        ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
+        : {}),
+      ...(state._activeCompositeChildIds !== undefined
+        ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
+        : {}),
+      ...(state._completedCompositeChildIds !== undefined
+        ? { _completedCompositeChildIds: [...state._completedCompositeChildIds] }
+        : {}),
       ...(state.input !== undefined ? { input: state.input } : {}),
       ...(state.output !== undefined ? { output: state.output } : {}),
       ...(state.error !== undefined ? { error: state.error } : {}),
@@ -118,17 +152,28 @@ export async function executeLoopNodeStrategy(
 ): Promise<NodeExecutionResult> {
   const { node, config, context, nodeStates, parentNodeIds, runtime } = input;
   runtime.abortSignal?.throwIfAborted();
+  const loopStateKey = `${node.id}_loop_state`;
+  if (parentNodeIds.has(loopStateKey)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Loop node "${node.id}" reserves internal context key "${loopStateKey}", ` +
+        "which collides with a declared node in the parent graph",
+    });
+  }
   const startTime = Date.now();
   const previousResults: unknown[] = [];
   let iteration = 0;
   let exitReason: "condition" | "maxIterations" | "error" = "condition";
   let lastError: string | undefined;
+  let lastErrorCause: NodeExecutionResult["errorCause"];
   // Tracks whether the loop terminated because `while` returned false. A loop
   // that exhausts its iteration budget never trips this, so it is relabeled as
   // "maxIterations" below.
   let exitedViaCondition = false;
 
-  const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
+  const existingLoopStateValue = context[loopStateKey];
+  const existingLoopState = isPersistedLoopState(existingLoopStateValue)
+    ? existingLoopStateValue
+    : undefined;
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).
@@ -271,7 +316,8 @@ export async function executeLoopNodeStrategy(
         contextPatch: mergeContextPatches(
           result.contextPatch,
           createSetContextPatch({
-            [`${node.id}_loop_state`]: {
+            [loopStateKey]: {
+              __veryfrontLoopState: { ownerNodeId: node.id, version: 1 },
               iteration,
               previousResults,
               // Persist the in-flight iteration's child states so completed
@@ -289,6 +335,7 @@ export async function executeLoopNodeStrategy(
 
     if (result.error) {
       lastError = result.error;
+      lastErrorCause = result.errorCause;
       exitReason = "error";
       break;
     }
@@ -342,17 +389,29 @@ export async function executeLoopNodeStrategy(
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: new Date(),
+    ...(typeof config.steps === "function"
+      ? { _completedCompositeChildIds: Object.keys(exposedIterationNodeStates) }
+      : {}),
   };
 
   runtime.onNodeComplete?.(node.id, state);
 
+  const contextPatch = createSetContextPatch({
+    [node.id]: output,
+    ...completionUpdates,
+  });
+  if (
+    typeof config.steps === "function" && isOwnedLoopState(existingLoopStateValue, node.id) &&
+    !ObjectHasOwn(completionUpdates, loopStateKey)
+  ) {
+    contextPatch.delete.push(loopStateKey);
+  }
+
   return {
     state,
-    contextPatch: createSetContextPatch({
-      [node.id]: output,
-      ...completionUpdates,
-    }),
+    contextPatch,
     waiting: false,
+    errorCause: lastErrorCause,
   };
 }
 
