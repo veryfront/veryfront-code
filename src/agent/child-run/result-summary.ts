@@ -985,6 +985,7 @@ function gapProseApostrophes(text: string, lineStart: number): ReadonlySet<numbe
 function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
   const apostrophes = new Set<number>();
   let structured = false;
+  let jsonFence = false;
   let cursor = 0;
   while (cursor < text.length) {
     const start = skipWhitespace(text, cursor);
@@ -1007,6 +1008,18 @@ function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
     const newline = text.indexOf("\n", cursor);
     const end = newline === -1 ? text.length : newline;
     const line = text.slice(cursor, end);
+    if (!jsonFence && /^ {0,3}```json[ \t]*$/i.test(line)) {
+      jsonFence = true;
+      structured = true;
+      cursor = end + 1;
+      continue;
+    }
+    if (jsonFence && /^ {0,3}```[ \t]*$/.test(line)) {
+      jsonFence = false;
+      cursor = end + 1;
+      continue;
+    }
+    if (jsonFence) return new Set();
     if (
       !isPlainProseText(normalizeProseApostrophes(line)) &&
       recoverableContractFactLine(line) === undefined
