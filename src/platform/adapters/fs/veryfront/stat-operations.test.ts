@@ -259,6 +259,31 @@ describe("StatOperations", () => {
       await statOps.stat("pages/blog/index.mdx");
       assertEquals(statOps.getOriginalApiPath("pages/blog/index.mdx"), "pages/blog/");
     });
+
+    it("keeps a resolved original path scoped to its request snapshot", async () => {
+      let files = [makeFile("pages/blog/", { type: "page" })];
+      const statOps = createStatOps(
+        createMockClient({ listAllFiles: () => Promise.resolve(files) }),
+        new PathNormalizer(),
+        createBranchContextWithFiles(files),
+      );
+
+      await runWithRequestContext(
+        { projectSlug: "test", token: "request-token", branch: "main" },
+        async () => {
+          assertEquals(
+            await statOps.resolveFile("pages/blog/index.mdx"),
+            "pages/blog/index.mdx",
+          );
+
+          files = [makeFile("pages/other/", { type: "page" })];
+          statOps.clearIndex();
+          await statOps.stat("pages/other/index.mdx");
+
+          assertEquals(statOps.getOriginalApiPath("pages/blog/index.mdx"), "pages/blog/");
+        },
+      );
+    });
   });
 
   describe("exists", () => {

@@ -20,10 +20,12 @@ import { loadAllProjectFiles } from "./file-list-access.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { toClientContext } from "./adapter-content-context.ts";
 import { scopeToRequestAuthority } from "./request-authority.ts";
+import { getRequestScopedFile, setRequestScopedFile } from "./request-context.ts";
 
 const logger = baseLogger.component("stat-operations");
 
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
+const ORIGINAL_API_PATH_CACHE_PREFIX = "__vf_original_api_path__:";
 
 const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
 const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
@@ -394,7 +396,26 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   getOriginalApiPath(normalizedPath: string): string {
-    return this.pathMapping.get(normalizedPath) ?? normalizedPath;
+    const scopeKey = scopeToRequestAuthority(
+      buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
+    );
+    return getRequestScopedFile(`${ORIGINAL_API_PATH_CACHE_PREFIX}${scopeKey}:${normalizedPath}`) ??
+      this.pathMapping.get(normalizedPath) ?? normalizedPath;
+  }
+
+  private retainOriginalApiPath(
+    normalizedPath: string,
+    pathMapping: Map<string, string>,
+    scopeKey: string,
+  ): string {
+    const originalPath = pathMapping.get(normalizedPath);
+    if (originalPath !== undefined) {
+      setRequestScopedFile(
+        `${ORIGINAL_API_PATH_CACHE_PREFIX}${scopeKey}:${normalizedPath}`,
+        originalPath,
+      );
+    }
+    return normalizedPath;
   }
 
   private async getAllFilesRaw(
@@ -543,6 +564,8 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private resolveFromIndex(
     fileIdx: Map<string, ProjectFile>,
+    pathMapping: Map<string, string>,
+    scopeKey: string,
     normalizedPath: string,
     options: ResolveFileOptions | undefined,
     indexMs: number,
@@ -555,7 +578,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         indexMs,
         totalMs,
       });
-      return normalizedPath;
+      return this.retainOriginalApiPath(normalizedPath, pathMapping, scopeKey);
     }
 
     const pathWithoutExt = stripKnownExtension(normalizedPath, EXTENSION_PRIORITY);
@@ -568,7 +591,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         indexMs,
         totalMs,
       });
-      return resolvedDirect;
+      return this.retainOriginalApiPath(resolvedDirect, pathMapping, scopeKey);
     }
 
     if (options?.allowPagesPrefix !== false && !pathWithoutExt.startsWith("pages/")) {
@@ -584,7 +607,7 @@ export class StatOperations extends VeryfrontOperationsBase {
           indexMs,
           totalMs,
         });
-        return resolvedPages;
+        return this.retainOriginalApiPath(resolvedPages, pathMapping, scopeKey);
       }
     }
 
@@ -596,7 +619,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         indexMs,
         totalMs,
       });
-      return indexPath;
+      return this.retainOriginalApiPath(indexPath, pathMapping, scopeKey);
     }
 
     return null;
@@ -681,6 +704,8 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     const indexedResolution = this.resolveFromIndex(
       fileIdx,
+      snapshot.pathMapping,
+      scopeKey,
       normalizedPath,
       options,
       indexMs,
