@@ -1099,6 +1099,22 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts?.providerToolIds?.includes("web_fetch"), true);
     });
 
+    it("bounds cleanup of unclosed transcript tags", () => {
+      for (const tag of ["<tool_response>", "<tool_call>", "<invoke "]) {
+        const text = tag.repeat(32_000);
+        const started = performance.now();
+        buildChildRunResultSummary(text, { mode: "structured" });
+        assertEquals(performance.now() - started < 1_000, true);
+      }
+    });
+
+    it("bounds whitespace scanning in malformed transcript fences", () => {
+      const text = "```" + " ".repeat(50_000) + "no fence";
+      const started = performance.now();
+      buildChildRunResultSummary(text, { mode: "structured" });
+      assertEquals(performance.now() - started < 1_000, true);
+    });
+
     it("rejects complete malformed arrays rather than salvaging their leading values", () => {
       for (const field of ["tools", "tool_ids", "provider_tool_ids"]) {
         for (const body of ['"bogus_tool", {garbage}', "'bogus_tool', {garbage}"]) {
