@@ -2243,6 +2243,7 @@ describe("jsx artifact references", () => {
         () => refreshJsxArtifactMtime(artifactPath, 0, Date.now(), true),
         Error,
       );
+      assert(error instanceof Error);
       assertEquals(error.message, "Shared JSX artifact recency refresh failed (FILESYSTEM_ERROR)");
     } finally {
       localFs.utime = originalUtime;
