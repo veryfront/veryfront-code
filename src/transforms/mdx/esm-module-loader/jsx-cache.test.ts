@@ -2233,6 +2233,22 @@ describe("jsx artifact references", () => {
     }
   });
 
+  it("redacts native paths from required timestamp refresh errors", async () => {
+    const localFs = getLocalFs();
+    const originalUtime = localFs.utime?.bind(localFs);
+    const artifactPath = "private-cache/jsx-required-refresh.mjs";
+    try {
+      localFs.utime = () => Promise.reject(new Error(`EACCES: ${artifactPath}`));
+      const error = await assertRejects(
+        () => refreshJsxArtifactMtime(artifactPath, 0, Date.now(), true),
+        Error,
+      );
+      assertEquals(error.message, "Shared JSX artifact recency refresh failed (FILESYSTEM_ERROR)");
+    } finally {
+      localFs.utime = originalUtime;
+    }
+  });
+
   it("retires a lazy artifact after its parent retention window", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-lazy-retain-test-" });
     const artifactPath = join(

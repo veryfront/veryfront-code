@@ -408,7 +408,11 @@ export async function refreshJsxArtifactMtime(
     await localFs.utime(artifactPath, new Date(nowMs), new Date(nowMs));
     recordJsxArtifactMtimeRefresh(artifactPath, nowMs);
   } catch (error) {
-    if (required) throw error;
+    if (required) {
+      throw new Error(
+        `Shared JSX artifact recency refresh failed (${cacheFilesystemErrorCode(error)})`,
+      );
+    }
     /* expected: a concurrent prune may have removed the artifact already */
   }
 }
