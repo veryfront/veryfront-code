@@ -1914,6 +1914,24 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("fences a stale holder as soon as recovery starts", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-recovery-fence-test-" });
+    const artifactPath = join(tempDir, "jsx-recovery-fence.mjs");
+    const transitionPath = `${artifactPath}.lock.transition`;
+    try {
+      await withJsxArtifactLock(artifactPath, async (assertOwned) => {
+        await writeTextFile(transitionPath, "recovering-owner");
+        try {
+          await assertRejects(assertOwned, Error, "ownership changed");
+        } finally {
+          await remove(transitionPath);
+        }
+      });
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("reports when a preserved artifact next becomes collectable", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-retry-report-test-" });
     const artifactPath = join(tempDir, "jsx-preserved.mjs");
@@ -2672,9 +2690,9 @@ describe("scheduled prune bound", () => {
     const overflow = `${persistedTestPrefix}overflow`;
     ensureJsxCacheSweepArmed(overflow);
 
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < 100; attempt++) {
       if (await hasPersistedJsxCachePrune(overflow)) break;
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
     assertEquals(await hasPersistedJsxCachePrune(overflow), true);

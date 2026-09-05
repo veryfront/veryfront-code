@@ -36,6 +36,12 @@ const IntrinsicJSONParse = JSON.parse;
 const IntrinsicJSONStringify = JSON.stringify;
 const IntrinsicObjectCreate = Object.create;
 
+function cacheFilesystemErrorCode(error: unknown): string {
+  if (isNotFoundError(error)) return "NOT_FOUND";
+  if (isAlreadyExistsError(error)) return "ALREADY_EXISTS";
+  return "FILESYSTEM_ERROR";
+}
+
 /**
  * Cached JSX module paths already known to be free of relative _dnt imports.
  *
@@ -102,7 +108,7 @@ export async function ensureCachedJsxModulePatched(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read cached JSX module`, {
       sourceFilePath,
       transformedPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: cacheFilesystemErrorCode(error),
     });
     return false;
   }
@@ -684,7 +690,7 @@ async function recoverStaleFilesystemLease(
   let observedOwner: string;
   try {
     modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
-    observedOwner = await localFs.readTextFile(lockPath);
+    await localFs.readTextFile(lockPath);
     const confirmedModifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
     if (confirmedModifiedAtMs !== modifiedAtMs) return false;
   } catch (error) {
@@ -770,7 +776,7 @@ async function removeFilesystemLeaseTransitionIfOwned(
     await removeFilesystemLeaseIfOwned(leaseTransitionPath(lockPath), owner);
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease transition`, {
-      error: error instanceof Error ? error.message : String(error),
+      error: cacheFilesystemErrorCode(error),
     });
     scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
   }
@@ -844,9 +850,17 @@ async function withFilesystemLease<T>(
     : undefined;
   if (heartbeat !== undefined) unrefTimer(heartbeat);
 
+  let transitionOwner: string | undefined;
   const assertLeaseOwned = async (): Promise<void> => {
+    let transitionIsOwned = true;
     try {
-      if (await localFs.readTextFile(lockPath) === leaseOwner) return;
+      transitionIsOwned =
+        await localFs.readTextFile(leaseTransitionPath(lockPath)) === transitionOwner;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    try {
+      if (transitionIsOwned && await localFs.readTextFile(lockPath) === leaseOwner) return;
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
     }
@@ -858,7 +872,6 @@ async function withFilesystemLease<T>(
     return await operation(assertLeaseOwned);
   } finally {
     if (heartbeat !== undefined) clearInterval(heartbeat);
-    let transitionOwner: string | undefined;
     const releasePath = `${lockPath}.release-${cryptoRandomUUID()}`;
     try {
       await assertLeaseOwned();
@@ -878,7 +891,7 @@ async function withFilesystemLease<T>(
     } catch (error) {
       if (!isNotFoundError(error)) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease`, {
-          error: error instanceof Error ? error.message : String(error),
+          error: cacheFilesystemErrorCode(error),
         });
         scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
       }
@@ -1026,7 +1039,7 @@ async function persistJsxCachePruneRequest(
     });
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to persist JSX cache prune request`, {
-      error: error instanceof Error ? error.message : String(error),
+      error: cacheFilesystemErrorCode(error),
     });
     return undefined;
   }
@@ -1038,7 +1051,7 @@ async function removePersistedJsxCachePruneRequest(path: string): Promise<void> 
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to retire JSX cache prune request`, {
-        error: error instanceof Error ? error.message : String(error),
+        error: cacheFilesystemErrorCode(error),
       });
     }
   }
@@ -1110,7 +1123,7 @@ async function retirePersistedJsxCachePruneRequest(
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to retire completed JSX prune request`, {
-        error: error instanceof Error ? error.message : String(error),
+        error: cacheFilesystemErrorCode(error),
       });
     }
   }
@@ -1197,7 +1210,7 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
   } catch (error) {
     if (!isNotFoundError(error)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read persisted JSX prune requests`, {
-        error: error instanceof Error ? error.message : String(error),
+        error: cacheFilesystemErrorCode(error),
       });
       requestTombstoneRetryAtMs = Date.now() + JSX_CACHE_VARIANT_MIN_AGE_MS;
     }
@@ -1309,7 +1322,7 @@ async function revisitJsxCacheDirectory(esmCacheDir: string): Promise<void> {
     await collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now());
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
-      error: error instanceof Error ? error.message : String(error),
+      error: cacheFilesystemErrorCode(error),
     });
     // A pass that throws, rather than preserving an artifact and naming a
     // retry, never reaches the scheduling at its end. Re-arm the directory so
@@ -1582,7 +1595,7 @@ async function removeJsxArtifactUnlessServed(
     } catch (error) {
       if (!isNotFoundError(error)) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to remove JSX cache artifact`, {
-          error: error instanceof Error ? error.message : String(error),
+          error: cacheFilesystemErrorCode(error),
         });
         return {
           removed: false,
@@ -1694,7 +1707,7 @@ async function collectExcessJsxArtifacts(
     }
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
-      error: error instanceof Error ? error.message : String(error),
+      error: cacheFilesystemErrorCode(error),
     });
     if (!isNotFoundError(error)) {
       scheduleJsxCachePruneRetry(
