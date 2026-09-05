@@ -982,11 +982,50 @@ function gapProseApostrophes(text: string, lineStart: number): ReadonlySet<numbe
   return indices;
 }
 
+function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
+  const apostrophes = new Set<number>();
+  let structured = false;
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = skipWhitespace(text, cursor);
+    if (start >= text.length) break;
+    cursor = start;
+    if (text[start] === "{" || text[start] === "[") {
+      const end = scanNestedArrayOrObjectEnd(text, start);
+      if (end === null) return new Set();
+      if (end === undefined) {
+        const body = text.slice(start);
+        const valid = text[start] === "{"
+          ? scanIncompleteLeadingObjectToolIds(body) !== undefined
+          : isValidIncompleteArrayPrefix(body);
+        return valid ? apostrophes : new Set();
+      }
+      structured = true;
+      cursor = end;
+      continue;
+    }
+    const newline = text.indexOf("\n", cursor);
+    const end = newline === -1 ? text.length : newline;
+    const line = text.slice(cursor, end);
+    if (
+      !isPlainProseText(normalizeProseApostrophes(line)) &&
+      recoverableContractFactLine(line) === undefined
+    ) {
+      return new Set();
+    }
+    for (const index of gapProseApostrophes(text, cursor)) apostrophes.add(index);
+    cursor = end + 1;
+  }
+  return structured ? apostrophes : new Set();
+}
+
 function quoteAtEnd(text: string): { value: string; index: number } | undefined {
+  const proseApostrophes = structuredHeadProseApostrophes(text);
   let quote: { value: string; index: number } | undefined;
   for (let index = 0; index < text.length; index++) {
     const character = text[index]!;
     if (quote === undefined) {
+      if (character === "'" && proseApostrophes.has(index)) continue;
       if (character === '"' || character === "'") quote = { value: character, index };
       continue;
     }

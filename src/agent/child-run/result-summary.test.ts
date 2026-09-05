@@ -10,6 +10,7 @@ import {
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
   type ChildRunContractFacts,
+  extractChildRunContractFacts,
   summarizeChildRunResultText,
   summarizeChildRunResultTextWithMetadata,
   summarizeChildRunResultValue,
@@ -767,6 +768,22 @@ describe("child-run-result-summary", () => {
       assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
         toolIds: ["early_tool", "late_tool"],
       });
+    });
+
+    it("tracks a structured head after an introductory prose contraction", () => {
+      const text = "I don't expect a problem.\n" +
+        JSON.stringify({ description: "x".repeat(70_000) }) +
+        "p".repeat(60_000) + '\nmodel: "sonnet"';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        modelIds: ["sonnet"],
+      });
+    });
+
+    it("scans blank-line-heavy heads without repeatedly reading the whitespace run", () => {
+      const text = "\n".repeat(16_000) + "plain text\n" + "p".repeat(130_000);
+      const started = performance.now();
+      assertEquals(extractChildRunContractFacts(text), undefined);
+      assertEquals(performance.now() - started < 500, true);
     });
 
     it("retains complete fenced JSON declarations after prose apostrophes", () => {
