@@ -3,7 +3,6 @@
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
-import { constants as nativeFsConstants } from "node:fs";
 import {
   lstat as lstatNativeFile,
   open as openNativeFile,
