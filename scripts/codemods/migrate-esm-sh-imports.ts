@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-read --allow-write --allow-env=BABEL_TYPES_8_BREAKING
+#!/usr/bin/env -S deno run --allow-read --allow-write --allow-ffi --allow-env=BABEL_TYPES_8_BREAKING
 
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
@@ -10,6 +10,7 @@ import {
   stat as statNativeFile,
 } from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
+import { readPinnedDirectory } from "./pinned-directory.ts";
 
 interface BabelGeneratorResult {
   code: string;
@@ -968,6 +969,7 @@ export function parseCliOptions(args: string[]): CliOptions {
           "\n" +
           "Rewrites esm.sh import URLs in source files to bare specifiers and pins\n" +
           "the extracted versions in package.json.\n" +
+          "The task enables native directory handles with --allow-ffi for safe traversal.\n" +
           "\n" +
           "Options:\n" +
           "  --dry-run           Report changes without writing any files.\n" +
@@ -1023,13 +1025,15 @@ async function assertDirectoryInsideProject(
 export async function collectSourceFiles(
   dir: string,
   files: string[],
-  readDir: (path: string) => AsyncIterable<Deno.DirEntry> = Deno.readDir,
+  readDir?: (path: string) => AsyncIterable<Deno.DirEntry>,
   projectRoot?: string,
 ): Promise<void> {
   const root = projectRoot ?? await Deno.realPath(dir);
   const directoryIdentity = await assertDirectoryInsideProject(dir, root);
   const entries: Deno.DirEntry[] = [];
-  for await (const entry of readDir(dir)) entries.push(entry);
+  const directory = await Deno.realPath(dir);
+  const entriesForDirectory = readDir ? readDir(dir) : readPinnedDirectory(directory, root);
+  for await (const entry of entriesForDirectory) entries.push(entry);
   await assertDirectoryInsideProject(dir, root, directoryIdentity);
 
   for (const entry of entries) {

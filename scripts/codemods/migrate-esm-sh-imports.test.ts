@@ -14,6 +14,7 @@ import {
   readProjectPackageJson,
   writeTextFileInsideProject,
 } from "./migrate-esm-sh-imports.ts";
+import { readPinnedDirectory } from "./pinned-directory.ts";
 
 // ---------------------------------------------------------------------------
 // CLI option parsing
@@ -2028,3 +2029,103 @@ Deno.test(
     assertEquals(result.needsResolution, []);
   },
 );
+
+Deno.test("collection does not enumerate a replacement symlink between identity checks", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const nested = `${project}/nested`;
+  const saved = `${project}/saved`;
+  const originalReadDir = Deno.readDir;
+  try {
+    await Deno.mkdir(nested);
+    await Deno.writeTextFile(`${nested}/inside.ts`, "export {};");
+    await Deno.writeTextFile(`${outside}/outside.ts`, "export {};");
+    Object.defineProperty(Deno, "readDir", {
+      configurable: true,
+      value: (path: string | URL) =>
+        (async function* () {
+          if (path !== nested) {
+            yield* originalReadDir(path);
+            return;
+          }
+          await Deno.rename(nested, saved);
+          await Deno.symlink(outside, nested, { type: "dir" });
+          try {
+            yield* originalReadDir(nested);
+          } finally {
+            await Deno.remove(nested);
+            await Deno.rename(saved, nested);
+          }
+        })(),
+    });
+    const files: string[] = [];
+    await collectSourceFiles(project, files);
+    assertEquals(files, [`${nested}/inside.ts`]);
+  } finally {
+    Object.defineProperty(Deno, "readDir", {
+      configurable: true,
+      value: originalReadDir,
+    });
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("pinned enumeration keeps reading the opened directory after its path is replaced", async () => {
+  const parent = await makeTempDir();
+  const project = `${parent}/project`;
+  const saved = `${parent}/saved`;
+  const outside = `${parent}/outside`;
+  await Deno.mkdir(project);
+  await Deno.mkdir(outside);
+  await Deno.writeTextFile(`${project}/one.ts`, "export {};");
+  await Deno.writeTextFile(`${project}/two.ts`, "export {};");
+  await Deno.writeTextFile(`${outside}/outside.ts`, "export {};");
+  const iterator = readPinnedDirectory(project, project);
+  try {
+    const first = await iterator.next();
+    assertEquals(first.done, false);
+    await Deno.rename(project, saved);
+    await Deno.symlink(outside, project, { type: "dir" });
+    const names = [first.value!.name];
+    for await (const entry of iterator) names.push(entry.name);
+    assertEquals(names.sort(), ["one.ts", "two.ts"]);
+  } finally {
+    await iterator.return();
+    await Deno.remove(parent, { recursive: true });
+  }
+});
+
+Deno.test("pinned enumeration rejects symlinked parent components", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  try {
+    await Deno.mkdir(`${outside}/nested`);
+    await Deno.symlink(outside, `${project}/link`, { type: "dir" });
+    await assertRejects(
+      async () => {
+        for await (const _entry of readPinnedDirectory(`${project}/link/nested`, project)) {
+          throw new Error("Unexpected entry");
+        }
+      },
+      Error,
+      "stable no-follow handle",
+    );
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("pinned enumeration preserves leading BOM characters in filenames", async () => {
+  const root = await makeTempDir();
+  try {
+    await Deno.writeTextFile(`${root}/app.ts`, "export {};");
+    await Deno.writeTextFile(`${root}/\uFEFFapp.ts`, "export {};");
+    const names: string[] = [];
+    for await (const entry of readPinnedDirectory(root, root)) names.push(entry.name);
+    assertEquals(names.sort(), ["app.ts", "\uFEFFapp.ts"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

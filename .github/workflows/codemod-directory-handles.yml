@@ -1,0 +1,26 @@
+name: Codemod directory handles
+
+on:
+  pull_request:
+    paths:
+      - "scripts/codemods/**"
+      - ".github/workflows/codemod-directory-handles.yml"
+      - ".tool-versions"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  directory-handles:
+    name: Directory handles (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-deno
+      - run: deno task lint:esm-sh-codemod
