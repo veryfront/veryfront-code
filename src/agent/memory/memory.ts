@@ -139,7 +139,6 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   constructor() {
     registerMemoryRollbackFactory(this, () => {
       const messages = [...this.messages];
-      const snapshotMessages = new Set(messages);
       const clearVersion = this.clearVersion;
       const additions: M[] = [];
       const observe: RollbackObserver<M> = {
@@ -172,9 +171,7 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
           }
           const laterAdditions = rejectedMessages === undefined
             ? []
-            : additions.filter((message) =>
-              !snapshotMessages.has(message) && !rejectedMessages.has(message)
-            );
+            : additions.filter((message) => !rejectedMessages.has(message));
           this.messages = [...messages];
           if (this.clearVersion !== clearVersion) return;
           // Start every built-in add synchronously before yielding, preserving
@@ -322,7 +319,6 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
     registerMemoryRollbackFactory(this, () => {
       const messages = [...this.messages];
-      const snapshotMessages = new Set(messages);
       const summary = this.summary;
       const clearVersion = this.clearVersion;
       const additions: M[] = [];
@@ -357,9 +353,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
           }
           const laterAdditions = rejectedMessages === undefined
             ? []
-            : additions.filter((message) =>
-              !snapshotMessages.has(message) && !rejectedMessages.has(message)
-            );
+            : additions.filter((message) => !rejectedMessages.has(message));
           this.messages = [...messages];
           this.summary = summary;
           if (this.clearVersion !== clearVersion) return;

@@ -69,6 +69,25 @@ describe("custom memory rollback", () => {
   });
 });
 
+describe("duplicate memory writes during rollback", () => {
+  for (const type of ["conversation", "buffer", "summary"] as const) {
+    it(`preserves repeated snapshot references in ${type} memory`, async () => {
+      const memory = createMemory({ type, maxMessages: 20 });
+      const history = userMessage("history", "accepted history");
+      await memory.add(history);
+      const rollback = captureMemoryRollback(memory, await memory.getMessages());
+      const rejected = userMessage("rejected", "rejected input");
+      await memory.add(rejected);
+      await memory.add(history);
+      await memory.add(history);
+
+      await rollback.rollback(new Set([rejected]));
+
+      assertEquals(await memory.getMessages(), [history, history, history]);
+    });
+  }
+});
+
 describe("createAgentMemory", () => {
   it("returns NoMemory when no config is provided (stateless default)", () => {
     assertInstanceOf(createAgentMemory(), NoMemory);
