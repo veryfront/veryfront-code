@@ -991,6 +991,19 @@ describe("resolveSecurityMiddleware", () => {
   });
 
   it("preserves URL values nested in provider-visible tool payloads", async () => {
+    class Money {
+      constructor(readonly cents: number) {}
+      toJSON() {
+        return { amount: this.cents / 100, currency: "USD" };
+      }
+    }
+    class SelfSerialized {
+      value = "original self value";
+      toJSON() {
+        return this;
+      }
+    }
+    const selfSerialized = new SelfSerialized();
     const prompts: string[] = [];
     let payloadLabel = "original payload";
     const model: ModelRuntime = {
@@ -1011,10 +1024,14 @@ describe("resolveSecurityMiddleware", () => {
     const mutateAfterNext: AgentMiddleware = async (_context, next) => {
       const response = await next();
       payloadLabel = "mutated payload";
+      selfSerialized.value = "mutated self value";
       return response;
     };
     const toolArgs = {
       url: new URL("https://example.com/resource"),
+      money: new Money(150),
+      first: selfSerialized,
+      second: selfSerialized,
       get label() {
         return payloadLabel;
       },
@@ -1059,14 +1076,18 @@ describe("resolveSecurityMiddleware", () => {
     });
 
     const serializedUrls: string[] = [];
+    const serializedMoney: unknown[] = [];
     JSON.parse(prompts[0]!, (key, value: unknown) => {
       if (key === "url" && typeof value === "string") serializedUrls.push(value);
+      if (key === "money") serializedMoney.push(value);
       return value;
     });
     assertEquals(serializedUrls, ["https://example.com/resource", "https://example.com/result"]);
+    assertEquals(serializedMoney, [{ amount: 1.5, currency: "USD" }]);
     await assistant.generate({ input: "follow up" });
     assertEquals(prompts[1]?.includes("original payload"), true);
     assertEquals(prompts[1]?.includes("mutated payload"), false);
+    assertEquals(prompts[1]?.includes("mutated self value"), false);
   });
 
   it("reuses and streams cached string-input responses across synthetic ids", async () => {
@@ -2047,6 +2068,7 @@ describe("resolveSecurityMiddleware", () => {
       {
         id: "replayed-result",
         model: "anthropic/replayed-result",
+        system: "You are helpful.",
         skills: false,
         memory: { type: "conversation" },
         __vfProviderReplayCheckpoints: checkpoints,

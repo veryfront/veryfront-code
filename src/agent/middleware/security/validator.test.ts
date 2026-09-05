@@ -719,6 +719,26 @@ describe("securityMiddleware", () => {
     await validateProviderRequest("runtime marker", context.input as Message[]);
   });
 
+  it("allows a benign turn when sanitization concerns only historical system text", async () => {
+    for (const role of ["user", "system"] as const) {
+      const middleware = securityMiddleware({ input: { sanitize: true } });
+      const context = createContext({
+        input: [{ id: "current", role, parts: [{ type: "text", text: "hello" }] }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      await validate("runtime", [
+        {
+          id: "historical",
+          role: "system",
+          parts: [{ type: "text", text: "<script>alert(1)</script>" }],
+        },
+        ...context.input as Message[],
+      ]);
+    }
+  });
+
   it("rejects a new occurrence of a pattern already matched by trusted text", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/safe marker$|marker\n\ncaller fragment/] },

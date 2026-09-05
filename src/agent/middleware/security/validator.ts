@@ -1034,8 +1034,20 @@ export function securityMiddleware(
     // would brick the conversation on every later turn (`extractMergedRunTexts`).
     registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
       const systemMessages = providerSystemMessages(providerSystem);
-      const callerSystemMessages = messages.filter((message) => message.role === "system");
-      const trusted = new Set(systemMessages);
+      const currentSystemIds = new Set(
+        typeof context.input === "string" ? [] : context.input
+          .filter((message) => message.role === "system")
+          .map((message) => message.id),
+      );
+      const callerSystemMessages = messages.filter((message) =>
+        message.role === "system" && currentSystemIds.has(message.id)
+      );
+      const trusted = new Set([
+        ...systemMessages,
+        ...messages.filter((message) =>
+          message.role === "system" && !currentSystemIds.has(message.id)
+        ),
+      ]);
       const callers = new Set(callerSystemMessages);
       const providerRuns: { text: string; trustedPrefix: string }[] = [];
       for (const run of extractMergedSystemRuns([...systemMessages, ...messages])) {

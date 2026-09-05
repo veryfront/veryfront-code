@@ -364,7 +364,19 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
       prototype = ObjectGetPrototypeOf(candidate);
       if (prototype !== ObjectPrototype && prototype !== null) {
         try {
-          return IntrinsicStructuredClone(candidate);
+          const serialize = (candidate as { toJSON?: unknown }).toJSON;
+          if (typeof serialize === "function") {
+            IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+            const serialized = IntrinsicReflectApply(serialize, candidate, []);
+            if (serialized !== candidate) {
+              const detached = clone(serialized);
+              IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+              return detached;
+            }
+          }
+          const detached = IntrinsicStructuredClone(candidate);
+          IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+          return detached;
         } catch {
           // Functions and other opaque values are valid in public message
           // metadata and tool payloads even though the provider ignores them.
