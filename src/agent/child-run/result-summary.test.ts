@@ -1099,6 +1099,31 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts?.providerToolIds?.includes("web_fetch"), true);
     });
 
+    it("rejects complete malformed arrays rather than salvaging their leading values", () => {
+      for (const field of ["tools", "tool_ids", "provider_tool_ids"]) {
+        for (const body of ['"bogus_tool", {garbage}', "'bogus_tool', {garbage}"]) {
+          const result = buildChildRunResultSummary(`${field}: [${body}]`, {
+            mode: "structured",
+          });
+          assertEquals(result.contractFacts, undefined);
+        }
+      }
+    });
+
+    it("preserves outer trailing commas in complete pseudo-JSON arrays", () => {
+      for (const field of ["tools", "tool_ids", "provider_tool_ids"]) {
+        const result = buildChildRunResultSummary(`${field}: ['valid_tool',]`, {
+          mode: "structured",
+        });
+        assertEquals(
+          result.contractFacts,
+          field === "provider_tool_ids"
+            ? { providerToolIds: ["valid_tool"] }
+            : { toolIds: ["valid_tool"] },
+        );
+      }
+    });
+
     it("does not scan object text after a malformed tool element", () => {
       const text = 'tools: [ invalid, {"id":"bogus_tool"}';
 

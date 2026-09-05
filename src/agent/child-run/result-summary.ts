@@ -461,10 +461,6 @@ function skipWhitespace(text: string, start: number): number {
   return index;
 }
 
-function parseCompleteLeadingArrayValues(fieldBody: string): unknown[] {
-  return scanCompleteLeadingArrayValues(fieldBody).values;
-}
-
 function completeArrayElementEnd(fieldBody: string, start: number): number | undefined {
   const opening = fieldBody[start];
   if (opening === '"' || opening === "'") {
@@ -792,17 +788,12 @@ function addToolIdsFromFieldBody(
   fieldBody: string,
   includeObjectFields: boolean,
 ): void {
-  const parsedValues = parseJsonArrayFieldBody(fieldBody);
+  const parsedValues = parseJsonArrayFieldBody(fieldBody) ??
+    parseJsonArrayFieldBody(normalizePseudoJson(`[${fieldBody}]`).slice(1, -1));
   if (parsedValues) {
     addToolIdsFromParsedArray(target, parsedValues, includeObjectFields);
     return;
   }
-
-  addToolIdsFromParsedArray(
-    target,
-    parseCompleteLeadingArrayValues(fieldBody),
-    includeObjectFields,
-  );
 }
 
 function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<RegExpExecArray> {
