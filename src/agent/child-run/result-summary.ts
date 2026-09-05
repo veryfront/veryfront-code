@@ -175,8 +175,12 @@ function parseJsonArrayFieldBody(fieldBody: string): unknown[] | undefined {
   }
 }
 
-function scanQuotedValueEnd(text: string, start: number, quote: string): number | undefined {
-  let escaped = false;
+function scanQuotedValueEnd(
+  text: string,
+  start: number,
+  quote: string,
+  escaped = false,
+): number | undefined {
   for (let index = start + 1; index < text.length; index++) {
     const character = text[index];
     if (escaped) {
@@ -887,7 +891,7 @@ function quoteStateAtTail(
   start: number,
   end: number,
   initialQuote?: string,
-): { value: string; inherited: boolean } | undefined {
+): { value: string; inherited: boolean; escaped: boolean } | undefined {
   let quote: { value: string; inherited: boolean } | undefined = initialQuote === undefined
     ? undefined
     : { value: initialQuote, inherited: true };
@@ -923,7 +927,7 @@ function quoteStateAtTail(
       quote = undefined;
     }
   }
-  return quote;
+  return quote === undefined ? undefined : { ...quote, escaped };
 }
 
 function recoverableImportPath(source: string): string | undefined {
@@ -1051,7 +1055,7 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
     proseApostrophe ? undefined : openQuote?.value,
   );
   if (tailQuote !== undefined) {
-    const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value);
+    const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value, tailQuote.escaped);
     if (quoteEnd === undefined) {
       if (!tailQuote.inherited || !proseApostrophe) return [head, ""];
       return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];

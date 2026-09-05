@@ -524,6 +524,19 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("preserves escape parity across the tool tail boundary", () => {
+      for (const slashCount of [2, 4]) {
+        for (let beforeBoundary = 1; beforeBoundary < slashCount; beforeBoundary++) {
+          const prefix = '{"description":"';
+          const body = prefix + "x".repeat(40_000 - beforeBoundary - prefix.length) +
+            "\\".repeat(slashCount) + '"}\ntools: ["real_tool"]\n';
+          const text = body + "p".repeat(136_000 - body.length);
+          const result = buildChildRunResultSummary(text, { mode: "structured" });
+          assertEquals(result.contractFacts, { toolIds: ["real_tool"] });
+        }
+      }
+    });
+
     it("tracks a quote opened in the omitted span when the head is outside quotes", () => {
       const description = "x".repeat(50_000) + " tools: ['bogus_tool'] " +
         "x".repeat(90_000);
