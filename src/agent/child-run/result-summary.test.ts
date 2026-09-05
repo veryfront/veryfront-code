@@ -1126,6 +1126,21 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts?.providerToolIds?.includes("web_fetch"), true);
     });
 
+    it("preserves transcript cleanup delimiter compatibility", () => {
+      assertEquals(
+        buildChildRunResultSummary("```BASH```<tool_response>result</tool_response>").text,
+        "result",
+      );
+      assertEquals(
+        buildChildRunResultSummary("<tool_call>result</tool_call extra>").text,
+        "result",
+      );
+      assertEquals(
+        buildChildRunResultSummary("```bash```<parameter>result</parameter>").text,
+        "```bash```result",
+      );
+    });
+
     it("bounds cleanup of unclosed transcript tags", () => {
       for (const tag of ["<tool_response>", "<tool_call>", "<invoke "]) {
         const text = tag.repeat(32_000);
@@ -1140,6 +1155,15 @@ describe("child-run-result-summary", () => {
       const started = performance.now();
       assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).text, "");
       assertEquals(performance.now() - started < 2_000, true);
+    });
+
+    it("bounds shell-fence checks before unrelated tags", () => {
+      for (const tag of ["<x>", "<tool_call "]) {
+        const text = ("```bash```" + tag).repeat(16_000);
+        const started = performance.now();
+        buildChildRunResultSummary(text, { mode: "structured" });
+        assertEquals(performance.now() - started < 1_000, true);
+      }
     });
 
     it("bounds whitespace scanning in malformed transcript fences", () => {
@@ -1250,6 +1274,21 @@ describe("child-run-result-summary", () => {
         truncated: false,
         omittedChars: 0,
       });
+    });
+
+    it("scales linearly across many unclosed transcript tags", () => {
+      const measure = (count: number): number => {
+        const text = "<tool_response>".repeat(count) + "<tool_call>".repeat(count);
+        const start = performance.now();
+        assertEquals(buildChildRunResultSummary(text).text, "");
+        return performance.now() - start;
+      };
+
+      const shorterDuration = measure(8_000);
+      const longerDuration = measure(16_000);
+
+      assertEquals(longerDuration < 750, true);
+      assertEquals(longerDuration < shorterDuration * 3 + 100, true);
     });
   });
 
