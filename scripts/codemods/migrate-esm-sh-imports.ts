@@ -589,7 +589,10 @@ function sameFileIdentity(opened: StableFileIdentity, current: StableFileIdentit
 async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r+" | "wx+") {
   if (Deno.build.os === "windows") {
     if (mode !== "wx+") return await openNativeFile(path, mode);
-    const created = createPinnedWindowsFile(path, projectRoot);
+    // Resolve short-name aliases before comparing the parent to the canonical
+    // project root. The native walk still rejects subsequent reparse swaps.
+    const parent = await Deno.realPath(nativeDirname(path));
+    const created = createPinnedWindowsFile(`${parent}/${parsePath(path).base}`, projectRoot);
     try {
       // Reopening never creates a file. Keep the native creation handle alive
       // until the Node handle proves it owns the same file, preventing ID reuse.
