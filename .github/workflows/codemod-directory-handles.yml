@@ -6,6 +6,8 @@ on:
       - "scripts/codemods/**"
       - ".github/workflows/codemod-directory-handles.yml"
       - ".tool-versions"
+      - "deno.json"
+      - "tests/integration/codemods/**"
   workflow_dispatch:
 
 permissions:

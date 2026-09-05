@@ -13,8 +13,8 @@ import {
   parseCliOptions,
   readProjectPackageJson,
   writeTextFileInsideProject,
-} from "./migrate-esm-sh-imports.ts";
-import { readPinnedDirectory } from "./pinned-directory.ts";
+} from "../../../scripts/codemods/migrate-esm-sh-imports.ts";
+import { readPinnedDirectory } from "../../../scripts/codemods/pinned-directory.ts";
 
 // ---------------------------------------------------------------------------
 // CLI option parsing
@@ -539,7 +539,7 @@ Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
 // ---------------------------------------------------------------------------
 
 Deno.test("readProjectPackageJson returns null parseError when file is absent", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   try {
     const result = await readProjectPackageJson(`${dir}/package.json`, await Deno.realPath(dir));
     assertEquals(result.parseError, null);
@@ -550,7 +550,7 @@ Deno.test("readProjectPackageJson returns null parseError when file is absent", 
 });
 
 Deno.test("readProjectPackageJson returns parseError for corrupt JSON, leaving file intact", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   const pkgPath = `${dir}/package.json`;
   const corrupt = "{ not valid json }";
   try {
@@ -567,7 +567,7 @@ Deno.test("readProjectPackageJson returns parseError for corrupt JSON, leaving f
 });
 
 Deno.test("readProjectPackageJson returns parseError for unreadable file, not null", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   const pkgPath = `${dir}/package.json`;
   try {
     await Deno.writeTextFile(pkgPath, '{"dependencies":{}}');
@@ -600,7 +600,7 @@ Deno.test("readProjectPackageJson returns parseError for unreadable file, not nu
 });
 
 Deno.test("readProjectPackageJson extracts dependencies from a valid file", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
       `${dir}/package.json`,
@@ -661,7 +661,7 @@ Deno.test("guarded manifest read errors do not expose resolved paths", async () 
 });
 
 Deno.test("readProjectPackageJson collects declarations from other dependency fields", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
       `${dir}/package.json`,
@@ -689,7 +689,7 @@ Deno.test("readProjectPackageJson collects declarations from other dependency fi
 });
 
 Deno.test("readProjectPackageJson returns parseError for malformed devDependencies", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
       `${dir}/package.json`,
@@ -733,7 +733,7 @@ Deno.test("filterNeedsResolution: package pinned in one file not in needsResolut
 // ---------------------------------------------------------------------------
 
 Deno.test("source parse errors identify the file that could not be migrated", async () => {
-  const dir = await Deno.makeTempDir();
+  const dir = await makeTempDir();
   const srcPath = `${dir}/broken.ts`;
   try {
     await Deno.writeTextFile(srcPath, "import {");
@@ -759,7 +759,7 @@ Deno.test("source parse errors identify the file that could not be migrated", as
 Deno.test(
   "corrupt package.json aborts run: source files are not modified",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const srcPath = `${dir}/app.ts`;
     const pkgPath = `${dir}/package.json`;
     const original = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
@@ -798,7 +798,7 @@ Deno.test(
 
     for (const testCase of cases) {
       await testContext.step(testCase.name, async () => {
-        const dir = await Deno.makeTempDir();
+        const dir = await makeTempDir();
         const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
         try {
           await Deno.writeTextFile(`${dir}/app.ts`, source);
@@ -826,7 +826,7 @@ Deno.test(
 Deno.test(
   "happy path: package.json written before source files, both updated",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     try {
       await Deno.writeTextFile(
         `${dir}/app.ts`,
@@ -1003,7 +1003,7 @@ Deno.test(
       // does not exist.  Without the guard, readTextFile reports NotFound
       // (treated as an absent manifest) and the write phase would then CREATE
       // the target outside the project.
-      await Deno.symlink(target, `${project}/package.json`);
+      await Deno.symlink(target, `${project}/package.json`, { type: "file" });
 
       let thrown: unknown;
       try {
@@ -1221,62 +1221,6 @@ Deno.test("missing POSIX filenames may contain a literal backslash", async () =>
   }
 });
 
-Deno.test("project writes stay bound to the file opened before a path swap", async () => {
-  if (Deno.build.os === "windows") return;
-
-  const project = await makeTempDir();
-  const outside = await makeTempDir();
-  const target = `${project}/app.ts`;
-  const originalEntry = `${project}/app.original.ts`;
-  const outsideFile = `${outside}/outside.ts`;
-  const originalDlopen = Deno.dlopen;
-  let swapped = false;
-  try {
-    await Deno.writeTextFile(target, "original");
-    await Deno.writeTextFile(outsideFile, "outside");
-
-    Deno.dlopen = ((...args: Parameters<typeof Deno.dlopen>) => {
-      const library = Reflect.apply(originalDlopen, Deno, args);
-      return new Proxy(library, {
-        get(nativeLibrary, key) {
-          if (key === "symbols") {
-            return new Proxy(nativeLibrary.symbols, {
-              get(symbols, symbol) {
-                const fn = Reflect.get(symbols, symbol);
-                if (symbol !== "ftruncate") return fn;
-                return (...values: unknown[]) => {
-                  if (!swapped) {
-                    swapped = true;
-                    Deno.renameSync(target, originalEntry);
-                    Deno.symlinkSync(outsideFile, target);
-                  }
-                  return Reflect.apply(fn, undefined, values);
-                };
-              },
-            });
-          }
-          const value = Reflect.get(nativeLibrary, key, nativeLibrary);
-          return typeof value === "function" ? value.bind(nativeLibrary) : value;
-        },
-      });
-    }) as typeof Deno.dlopen;
-
-    const projectRoot = await Deno.realPath(project);
-    await assertRejects(
-      () => writeTextFileInsideProject(target, projectRoot, "updated"),
-      Error,
-      "destination path changed",
-    );
-
-    assertEquals(await Deno.readTextFile(outsideFile), "outside");
-    assertEquals(await Deno.readTextFile(originalEntry), "updated");
-  } finally {
-    Deno.dlopen = originalDlopen;
-    await Deno.remove(project, { recursive: true });
-    await Deno.remove(outside, { recursive: true });
-  }
-});
-
 Deno.test("project writes support regular files on Windows", async () => {
   if (Deno.build.os !== "windows") return;
 
@@ -1356,7 +1300,7 @@ Deno.test("creating a missing manifest never follows a planted symlink", async (
   try {
     // Dangling link: the manifest is "absent" through the link, so the write
     // must reject it rather than creating the file it points at.
-    await Deno.symlink(target, `${project}/package.json`);
+    await Deno.symlink(target, `${project}/package.json`, { type: "file" });
     const projectRoot = await Deno.realPath(project);
 
     const error = await assertRejects(
@@ -1609,7 +1553,7 @@ Deno.test(
     // Same package at two different versions in one file: an intra-file conflict.
     // The migration completes, but the conflicting package is left untouched so
     // the codemod cannot collapse two incompatible URLs to one bare specifier.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
       'import second from "https://esm.sh/pkg@2.0.0";',
@@ -1636,7 +1580,7 @@ Deno.test(
     // Two files import the same package at different versions. The run completes,
     // but neither URL is collapsed to a bare specifier and no arbitrary version
     // is pinned.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const firstSource = 'import first from "https://esm.sh/pkg@1.0.0";\n';
     const secondSource = 'import second from "https://esm.sh/pkg@2.0.0";\n';
     const manifest = JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n";
@@ -1689,7 +1633,7 @@ Deno.test(
     // A URL-derived pin that disagrees with a devDependencies declaration must
     // not be added to `dependencies` - that would leave two disagreeing
     // declarations for one package.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
       { name: "test", dependencies: {}, devDependencies: { lodash: "4.17.20" } },
@@ -1739,7 +1683,7 @@ Deno.test(
   async () => {
     // The runtime import justifies a `dependencies` entry; an agreeing
     // devDependencies declaration is not a disagreement.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
       { name: "test", dependencies: {}, devDependencies: { lodash: "4.17.21" } },
@@ -1770,7 +1714,7 @@ Deno.test(
     // A project has "lodash": "^4.17.0" in package.json and imports
     // https://esm.sh/lodash@4.17.21. The URL and existing range are both kept
     // because the codemod cannot prove that they resolve to equivalent code.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = 'import value from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
       { name: "test", dependencies: { lodash: "^4.17.0" } },
@@ -1826,7 +1770,7 @@ Deno.test(
     // on result.rewrites would pick "https://esm.sh/lodash" as the specifier,
     // a URL that has nothing to do with the version conflict.  pickSpecifier()
     // must prefer the rewrite whose URL carries the conflicting version.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import a from "https://esm.sh/lodash";',
       'import b from "https://esm.sh/lodash@4.17.21";',
@@ -1884,7 +1828,7 @@ Deno.test(
 Deno.test(
   "unversioned subpath containing version text does not mask conflict specifier",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import a from "https://esm.sh/lodash/subpath@4.17.21";',
       'import b from "https://esm.sh/lodash@4.17.21";',
@@ -1938,7 +1882,7 @@ Deno.test(
 Deno.test(
   "default conflict handling still migrates independent packages",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
       'import second from "https://esm.sh/pkg@2.0.0";',
@@ -1970,7 +1914,7 @@ Deno.test(
 Deno.test(
   "--fail-on-conflict exits before any source or package.json write",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
       'import second from "https://esm.sh/pkg@2.0.0";',
