@@ -353,8 +353,16 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
     if (ArrayIsArray(candidate)) {
       const array: unknown[] = [];
       IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
-      for (let index = 0; index < candidate.length; index++) {
-        array[index] = clone(candidate[index]);
+      try {
+        const length = candidate.length;
+        for (let index = 0; index < length; index++) {
+          array[index] = clone(candidate[index]);
+        }
+      } catch {
+        // Opaque Array Proxies can reject length or index reads. Preserve the
+        // original opaque value instead of aborting unrelated message input.
+        IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+        return candidate;
       }
       return array;
     }

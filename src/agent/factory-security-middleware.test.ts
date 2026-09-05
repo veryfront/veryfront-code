@@ -1061,16 +1061,22 @@ describe("resolveSecurityMiddleware", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    const result = await assistant.generate({
-      input: [{
-        id: "opaque-input",
-        role: "user",
-        parts: [part],
-        metadata: { opaque },
-      }],
-    });
-
-    assertEquals(result.text, "ok");
+    for (
+      const metadata of [
+        { opaque },
+        new Proxy([], {
+          get(target, key, receiver) {
+            if (key === "length") throw new Error("opaque array length");
+            return Reflect.get(target, key, receiver);
+          },
+        }) as unknown as Record<string, unknown>,
+      ]
+    ) {
+      const result = await assistant.generate({
+        input: [{ id: "opaque-input", role: "user", parts: [part], metadata }],
+      });
+      assertEquals(result.text, "ok");
+    }
   });
 
   it("accepts opaque values inside caller tool payloads", async () => {
