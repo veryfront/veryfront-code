@@ -1199,6 +1199,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
               this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(warmupContext)),
               this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(warmupContext)),
+              this.cache.deleteByPrefixAsync(buildFileListCacheKey(warmupContext)),
             ]]);
             if (isSnapshotSuperseded()) {
               return false;

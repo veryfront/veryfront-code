@@ -3407,6 +3407,7 @@ describe("VeryfrontFSAdapter", () => {
       const cacheKey = buildFileListCacheKey(context);
       const statResolveKey = `${buildStatCacheKeyPrefix(context)}:resolve:pages/about`;
       const dirKey = `${buildDirCacheKeyPrefix(context)}:pages`;
+      const siblingFileListKey = `${cacheKey}|authority:stale`;
       const internals = adapter as unknown as {
         cache: {
           set: (key: string, value: unknown) => void;
@@ -3423,6 +3424,7 @@ describe("VeryfrontFSAdapter", () => {
       // is rebuilt, so a warmup that observes an edit must drop them too.
       cache.set(statResolveKey, "__VF_NOT_FOUND__");
       cache.set(dirKey, [{ name: "index.tsx", isFile: true, isDirectory: false }]);
+      cache.set(siblingFileListKey, files);
 
       const versionBeforeWarmup = internals.sourceSnapshotVersion;
       const versionsAtEviction: number[] = [];
@@ -3474,7 +3476,12 @@ describe("VeryfrontFSAdapter", () => {
         undefined,
         "a changed warmup must evict persistent directory listings",
       );
-      assertEquals(versionsAtEviction.length, 2, "both derived tiers must be evicted");
+      assertEquals(
+        await cache.getAsync(siblingFileListKey),
+        undefined,
+        "a changed warmup must evict sibling file-list variants",
+      );
+      assertEquals(versionsAtEviction.length, 3, "all persistent derived tiers must be evicted");
       assertEquals(derivedInvalidations, ["ssr", "router", "discovery", "renderer", "module-path"]);
       assertEquals(
         versionsAtDerivedInvalidation.every((version) => version === versionBeforeWarmup),
