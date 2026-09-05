@@ -744,6 +744,38 @@ function addToolIdsFromFieldBody(
   );
 }
 
+function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<RegExpExecArray> {
+  let cursor = 0;
+  let lineStart = 0;
+  let apostropheLineStart = -1;
+  let proseApostrophes: ReadonlySet<number> = new Set();
+  for (const match of text.matchAll(pattern)) {
+    while (cursor < match.index!) {
+      const character = text[cursor];
+      if (character === "\n") lineStart = cursor + 1;
+      if (character === "'") {
+        if (apostropheLineStart !== lineStart) {
+          apostropheLineStart = lineStart;
+          proseApostrophes = gapProseApostrophes(text, lineStart);
+        }
+        if (proseApostrophes.has(cursor)) {
+          cursor++;
+          continue;
+        }
+      }
+      if (character === '"' || character === "'") {
+        const quoteStart = cursor;
+        cursor = scanQuotedValueEnd(text, cursor, character) ?? text.length;
+        const newline = text.slice(quoteStart, cursor).lastIndexOf("\n");
+        if (newline !== -1) lineStart = quoteStart + newline + 1;
+      } else {
+        cursor++;
+      }
+    }
+    if (cursor <= match.index!) yield match;
+  }
+}
+
 function addToolArrayFieldValues(
   target: string[],
   text: string,
@@ -753,7 +785,7 @@ function addToolArrayFieldValues(
 ): void {
   pattern.lastIndex = 0;
   let coveredUntil = 0;
-  for (const match of text.matchAll(pattern)) {
+  for (const match of unquotedArrayFieldMatches(text, pattern)) {
     if (match.index < coveredUntil) continue;
     const fieldName = match[1];
     const bodyStart = match.index + match[0].length;
@@ -798,7 +830,7 @@ function addProviderToolArrayFieldValues(
 ): void {
   pattern.lastIndex = 0;
   let coveredUntil = 0;
-  for (const match of text.matchAll(pattern)) {
+  for (const match of unquotedArrayFieldMatches(text, pattern)) {
     if (match.index < coveredUntil) continue;
     const bodyStart = match.index + match[0].length;
     const windowBody = text.slice(bodyStart);

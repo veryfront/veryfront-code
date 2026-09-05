@@ -534,6 +534,29 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("does not scan quoted metadata opened inside the tool tail", () => {
+      const text = JSON.stringify({
+        tools: [{
+          metadata: new Array(25_000).fill(0),
+          description: "Example tools:['bogus_tool']",
+          trailing: "x".repeat(90_000),
+        }],
+      });
+      assertEquals(
+        buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+        undefined,
+      );
+    });
+
+    it("scans many quoted metadata values within a bounded runtime", () => {
+      const text = JSON.stringify({ metadata: new Array(42_000).fill(""), tools: ["real_tool"] });
+      const start = performance.now();
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["real_tool"],
+      });
+      assertEquals(performance.now() - start < 500, true);
+    });
+
     it("preserves escape parity across the tool tail boundary", () => {
       for (const slashCount of [2, 4]) {
         for (let beforeBoundary = 1; beforeBoundary < slashCount; beforeBoundary++) {
