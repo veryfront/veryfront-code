@@ -862,7 +862,7 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
 }
 
 function isPlainProseText(text: string): boolean {
-  return /^[\p{L}\p{N}\s.,!?:_+>-]*$/u.test(text) && !text.includes("::") &&
+  return /^[\p{L}\p{N}\s.,!?:_+>()-]*$/u.test(text) && !text.includes("::") &&
     !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(text);
 }
 
@@ -885,8 +885,19 @@ function isPlainProseApostrophe(text: string, index: number): boolean {
     isPlainProseText(normalizeProseApostrophes(text));
 }
 
+function isPrefixedStringQuote(text: string, index: number): boolean {
+  let start = index;
+  while (start > 0 && /[\p{L}\p{N}_]/u.test(text[start - 1]!)) start--;
+  return /^(?:[rbfunex]|br|rb|fr|rf)$/i.test(text.slice(start, index));
+}
+
 function normalizeProseApostrophes(text: string): string {
   return text
+    .replace(
+      /(\p{L})'(?=\p{L})/gu,
+      (match, letter: string, offset: number, source: string) =>
+        isPrefixedStringQuote(source, offset + letter.length) ? match : letter,
+    )
     .replace(/([\p{L}\p{N}_])'(?=(?:s|t|re|ve|ll|d|m)\b)/giu, "$1")
     .replace(/(\b[\p{L}\p{N}_]+s)'(?=\W|$)/giu, "$1")
     .replace(/\b([OD])'(?=\p{Lu})/gu, "$1");
@@ -898,17 +909,21 @@ function gapProseApostrophes(text: string, lineStart: number): ReadonlySet<numbe
   const line = text.slice(lineStart, end);
   const normalizedLine = normalizeProseApostrophes(line);
   if (normalizedLine === line) return new Set();
+  const broadProse = startsWithProseWord(line) && isPlainProseText(normalizedLine);
 
   const indices = new Set<number>();
   for (
-    const pattern of [
+    const [patternIndex, pattern] of [
+      /(\p{L})'(?=\p{L})/gu,
       /([\p{L}\p{N}_])'(?=(?:s|t|re|ve|ll|d|m)\b)/giu,
       /(\b[\p{L}\p{N}_]+s)'(?=\W|$)/giu,
       /\b([OD])'(?=\p{Lu})/gu,
-    ]
+    ].entries()
   ) {
+    if (patternIndex === 0 && !broadProse) continue;
     for (const match of line.matchAll(pattern)) {
-      indices.add(lineStart + match.index + match[0].lastIndexOf("'"));
+      const index = lineStart + match.index + match[0].lastIndexOf("'");
+      indices.add(index);
     }
   }
   return indices;

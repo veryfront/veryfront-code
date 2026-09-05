@@ -760,6 +760,43 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("keeps declarations after apostrophes within ordinary words", () => {
+      for (
+        const prose of [
+          "The run finished at one o'clock.",
+          "L'agent finished.",
+          "Model X's configuration is ready.",
+          "Model X's configuration (updated).",
+        ]
+      ) {
+        for (const padding of ["", "p".repeat(130_000)]) {
+          const text =
+            `${prose}\n${padding}\ntools: ["create_agent"]\nprovider_tool_ids: ["web_fetch"]`;
+          assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+            toolIds: ["create_agent"],
+            providerToolIds: ["web_fetch"],
+          });
+        }
+      }
+    });
+
+    it("does not extract tool declarations from prefixed string literals", () => {
+      for (const prefix of ["r", "b", "f", "fr", "N"]) {
+        const text = `description = ${prefix}'example tools: ["bogus_tool"]'`;
+        assertEquals(
+          buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+          undefined,
+        );
+      }
+    });
+
+    it("preserves shell string boundaries before a real declaration", () => {
+      const text = `echo prefix'example tools: ["bogus_tool"]'\ntools: ["real_tool"]`;
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["real_tool"],
+      });
+    });
+
     it("retains tail facts after a validated long prose gap", () => {
       const text = "Here's the result:\n" + "padding ".repeat(17_500) +
         "\nopenai/gpt-4.1\n";
