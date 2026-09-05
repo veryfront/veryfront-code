@@ -1065,13 +1065,14 @@ Deno.test(
     // The skip must not rely on the runtime declining to classify a link as a
     // file: this reader sets both flags, the way a runtime that resolved the
     // entry would, so only the isSymlink check can keep the link out.
+    const project = await makeTempDir();
     const entries: Record<string, Deno.DirEntry[]> = {
-      "/project": [
+      [project]: [
         { name: "app.ts", isFile: true, isDirectory: false, isSymlink: false },
         { name: "linked.ts", isFile: true, isDirectory: false, isSymlink: true },
         { name: "linked-dir", isFile: false, isDirectory: true, isSymlink: true },
       ],
-      "/project/linked-dir": [
+      [`${project}/linked-dir`]: [
         { name: "nested.ts", isFile: true, isDirectory: false, isSymlink: false },
       ],
     };
@@ -1080,12 +1081,47 @@ Deno.test(
         for (const entry of entries[path] ?? []) yield entry;
       })();
 
-    const files: string[] = [];
-    await collectSourceFiles("/project", files, readDir);
+    try {
+      const files: string[] = [];
+      await collectSourceFiles(project, files, readDir);
 
-    assertEquals(files, ["/project/app.ts"]);
+      assertEquals(files, [`${project}/app.ts`]);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
   },
 );
+
+Deno.test("collection revalidates a directory before recursive traversal", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const nested = `${project}/nested`;
+  const originalNested = `${project}/nested-original`;
+  let nestedRead = false;
+  try {
+    await Deno.mkdir(nested);
+    const readDir = (path: string): AsyncIterable<Deno.DirEntry> =>
+      (async function* () {
+        if (path === project) {
+          yield { name: "nested", isFile: false, isDirectory: true, isSymlink: false };
+          await Deno.rename(nested, originalNested);
+          await Deno.symlink(outside, nested, { type: "dir" });
+          return;
+        }
+        nestedRead = true;
+      })();
+
+    await assertRejects(
+      () => collectSourceFiles(project, [], readDir),
+      Error,
+      "symlinked directory",
+    );
+    assertEquals(nestedRead, false);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
 
 Deno.test("assertPathInsideProject rejects an out-of-project real path", async () => {
   const project = await makeTempDir();
@@ -1251,7 +1287,7 @@ Deno.test("project writes create a missing manifest", async () => {
   }
 });
 
-Deno.test("a failed manifest creation removes the file it created", async () => {
+Deno.test("a failed manifest creation does not unlink through a revalidated path", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;
   try {
@@ -1266,7 +1302,7 @@ Deno.test("a failed manifest creation removes the file it created", async () => 
       Error,
       "changed after being read",
     );
-    await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+    assertEquals(await Deno.readTextFile(target), "");
   } finally {
     await Deno.remove(project, { recursive: true });
   }

@@ -586,30 +586,6 @@ async function pathFileIdentity(path: string): Promise<StableFileIdentity> {
   return stableFileIdentity(await statNativeFile(path, { bigint: true }));
 }
 
-async function pathEntryIdentity(path: string): Promise<StableFileIdentity> {
-  return stableFileIdentity(await lstatNativeFile(path, { bigint: true }));
-}
-
-/**
- * Remove a file this run created but could not verify afterwards.
- *
- * Only the exact file that was created is removed: if the path no longer
- * resolves to it, leave whatever is there alone.
- */
-async function removeUnverifiedFile(
-  path: string,
-  created: StableFileIdentity,
-): Promise<void> {
-  try {
-    if (sameFileIdentity(created, await pathEntryIdentity(path))) {
-      await Deno.remove(path);
-    }
-  } catch {
-    // Best effort: leaving an empty file behind is safer than removing an
-    // entry this run did not create.
-  }
-}
-
 function isNotFoundError(error: unknown): boolean {
   return error instanceof Deno.errors.NotFound ||
     (typeof error === "object" && error !== null && "code" in error &&
@@ -629,21 +605,16 @@ async function writeTextFileInsideProjectOnWindows(
   // the opened identity and current in-project path agree. A parent swapped to
   // a junction or symlink can redirect this open, but never a later write.
   let file: Awaited<ReturnType<typeof openNativeFile>>;
-  let created = false;
-  let openedIdentity: StableFileIdentity | undefined;
   try {
     file = requireMissing ? await openNativeFile(path, "wx+") : await openNativeFile(path, "r+");
-    created = requireMissing;
   } catch (error) {
     if (requireMissing || !allowMissing || !isNotFoundError(error)) throw error;
     // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
     // planted at the path, so creating an absent manifest stays contained.
     file = await openNativeFile(path, "wx+");
-    created = true;
   }
   try {
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
-    openedIdentity = opened;
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
       throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
@@ -677,9 +648,6 @@ async function writeTextFileInsideProjectOnWindows(
         "Refusing to finish a write because the destination path changed.",
       );
     }
-  } catch (error) {
-    if (created && openedIdentity) await removeUnverifiedFile(path, openedIdentity);
-    throw error;
   } finally {
     await file.close();
   }
@@ -692,8 +660,9 @@ async function writeTextFileInsideProjectOnWindows(
  * `allowMissing` creates the file when it does not exist yet, which the
  * manifest write needs: a project with esm.sh URLs and no package.json is the
  * codemod's main case.  Creation uses exclusive open semantics, so a symlink
- * planted at the path fails the create instead of being followed, and the
- * created file is removed again if a containment check then rejects it.
+ * planted at the path fails the create instead of being followed. If later
+ * validation fails, the created entry is left in place because a portable
+ * pathname unlink cannot be atomic with a preceding identity check.
  */
 export async function writeTextFileInsideProject(
   path: string,
@@ -721,29 +690,23 @@ export async function writeTextFileInsideProject(
   }
 
   let file: Deno.FsFile;
-  let created = false;
-  let openedIdentity: StableFileIdentity | undefined;
   try {
     file = requireMissing
       ? await Deno.open(path, { read: true, write: true, createNew: true })
       : await Deno.open(path, { read: true, write: true });
-    created = requireMissing;
   } catch (error) {
     if (requireMissing || !allowMissing || !(error instanceof Deno.errors.NotFound)) {
       throw error;
     }
     // `createNew` opens with O_CREAT|O_EXCL, which fails instead of following
     // a symlink planted at the path, so creating an absent manifest cannot
-    // write through a link.  The containment checks below still run, and the
-    // created file is removed again if any of them rejects it.
+    // write through a link. The containment checks below still run.
     file = await Deno.open(path, { read: true, write: true, createNew: true });
-    created = true;
   }
 
   try {
     await assertPathInsideProject(path, projectRoot);
     const opened = stableFileIdentity(await file.stat());
-    openedIdentity = opened;
     const current = stableFileIdentity(await Deno.stat(path));
     if (!sameFileIdentity(opened, current)) {
       throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
@@ -784,9 +747,6 @@ export async function writeTextFileInsideProject(
         "Refusing to finish a write because the destination path changed.",
       );
     }
-  } catch (error) {
-    if (created && openedIdentity) await removeUnverifiedFile(path, openedIdentity);
-    throw error;
   } finally {
     file.close();
   }
@@ -1036,19 +996,50 @@ export function parseCliOptions(args: string[]): CliOptions {
  * `readDir` is injectable so the symlink skip can be exercised directly: the
  * skip must not depend on the runtime declining to classify a link as a file.
  */
+async function assertDirectoryInsideProject(
+  path: string,
+  projectRoot: string,
+  expectedIdentity?: StableFileIdentity,
+): Promise<StableFileIdentity> {
+  const info = await lstatNativeFile(path, { bigint: true });
+  if (info.isSymbolicLink()) {
+    throw new SafeFileGuardError("Refusing to traverse a symlinked directory.");
+  }
+  if (!info.isDirectory()) {
+    throw new SafeFileGuardError("Refusing to traverse a path that is not a directory.");
+  }
+  const identity = stableFileIdentity(info);
+  if (expectedIdentity && !sameFileIdentity(expectedIdentity, identity)) {
+    throw new SafeFileGuardError("Refusing to traverse a directory that changed.");
+  }
+  const real = await Deno.realPath(path);
+  const prefix = containmentPrefix(projectRoot);
+  if (real !== projectRoot && !real.startsWith(prefix)) {
+    throw new SafeFileGuardError("Refusing to traverse a directory outside the project.");
+  }
+  return identity;
+}
+
 export async function collectSourceFiles(
   dir: string,
   files: string[],
   readDir: (path: string) => AsyncIterable<Deno.DirEntry> = Deno.readDir,
+  projectRoot?: string,
 ): Promise<void> {
-  for await (const entry of readDir(dir)) {
+  const root = projectRoot ?? await Deno.realPath(dir);
+  const directoryIdentity = await assertDirectoryInsideProject(dir, root);
+  const entries: Deno.DirEntry[] = [];
+  for await (const entry of readDir(dir)) entries.push(entry);
+  await assertDirectoryInsideProject(dir, root, directoryIdentity);
+
+  for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
     // Never traverse or collect symlinks: a link to a file or directory
     // outside the project must not be rewritten through the link.
     if (entry.isSymlink) continue;
     const path = `${dir}/${entry.name}`;
     if (entry.isDirectory) {
-      await collectSourceFiles(path, files, readDir);
+      await collectSourceFiles(path, files, readDir, root);
     } else if (entry.isFile && SOURCE_FILE_RE.test(entry.name)) {
       files.push(path);
     }
