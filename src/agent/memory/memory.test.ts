@@ -1,7 +1,8 @@
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BufferMemory,
+  captureMemoryRollback,
   ConversationMemory,
   createAgentMemory,
   createMemory,
@@ -37,6 +38,54 @@ describe("NoMemory", () => {
     await memory.clear();
     assertEquals(await memory.getMessages(), []);
   });
+});
+
+describe("custom memory rollback", () => {
+  it("rejects snapshot replay for custom memory without changing stored history", async () => {
+    let stored = [userMessage("history", "accepted history")];
+    const cloneStored = () => JSON.parse(JSON.stringify(stored)) as MinimalMessage[];
+    const memory = {
+      add(message: MinimalMessage) {
+        stored.push(JSON.parse(JSON.stringify(message)) as MinimalMessage);
+        return Promise.resolve();
+      },
+      getMessages() {
+        return Promise.resolve(cloneStored());
+      },
+      clear() {
+        stored = [];
+        return Promise.resolve();
+      },
+      getStats() {
+        return Promise.resolve({
+          totalMessages: stored.length,
+          estimatedTokens: 0,
+          type: "custom",
+        });
+      },
+    };
+    assertThrows(() => captureMemoryRollback(memory, []), Error, "beginTransaction()");
+    assertEquals(await memory.getMessages(), [userMessage("history", "accepted history")]);
+  });
+});
+
+describe("duplicate memory writes during rollback", () => {
+  for (const type of ["conversation", "buffer", "summary"] as const) {
+    it(`preserves repeated snapshot references in ${type} memory`, async () => {
+      const memory = createMemory({ type, maxMessages: 20 });
+      const history = userMessage("history", "accepted history");
+      await memory.add(history);
+      const rollback = captureMemoryRollback(memory, await memory.getMessages());
+      const rejected = userMessage("rejected", "rejected input");
+      await memory.add(rejected);
+      await memory.add(history);
+      await memory.add(history);
+
+      await rollback.rollback(new Set([rejected]));
+
+      assertEquals(await memory.getMessages(), [history, history, history]);
+    });
+  }
 });
 
 describe("createAgentMemory", () => {
@@ -102,6 +151,99 @@ describe("ConversationMemory", () => {
     await memory.add(userMessage("1", "a"));
     await memory.clear();
     assertEquals(await memory.getMessages(), []);
+  });
+
+  it("does not resurrect a snapshot after a concurrent clear", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+    await memory.clear();
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("removes a rejected write added after a concurrent clear", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    await memory.clear();
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("stops replay when another clear occurs between post-clear additions", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    const rollback = captureMemoryRollback(memory, []);
+    await memory.clear();
+    await memory.add(userMessage("assistant-1", "first concurrent output"));
+    await memory.add(userMessage("assistant-2", "second concurrent output"));
+    const originalAdd = memory.add.bind(memory);
+    let replayed = 0;
+    memory.add = async (message) => {
+      await originalAdd(message);
+      if (++replayed === 1) await memory.clear();
+    };
+
+    await rollback.rollback(new Set());
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("does not replay an in-flight addition already present in the snapshot", async () => {
+    const memory = new ConversationMemory({ type: "conversation", maxTokens: 100 });
+    const concurrent = userMessage("assistant", "concurrent output");
+    const addition = memory.add(concurrent);
+    const rollback = captureMemoryRollback(memory, []);
+    await addition;
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals((await memory.getMessages()).map((message) => message.id), ["assistant"]);
+  });
+
+  it("starts retained replay additions in their original order before yielding", async () => {
+    const memory = new ConversationMemory({ type: "conversation" });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("rejected", "rejected input");
+    const first = userMessage("assistant-1", "first concurrent output");
+    const second = userMessage("assistant-2", "second concurrent output");
+    await memory.add(rejected);
+    await memory.add(first);
+    await memory.add(second);
+
+    const originalAdd = memory.add.bind(memory);
+    const interloper = userMessage("assistant-new", "newer concurrent output");
+    let replaying = true;
+    memory.add = async (message) => {
+      await originalAdd(message);
+      if (replaying && message.id === first.id) {
+        await new Promise<void>((resolve) => {
+          queueMicrotask(async () => {
+            await originalAdd(interloper);
+            resolve();
+          });
+        });
+      }
+    };
+
+    await rollback.rollback(new Set([rejected]));
+    replaying = false;
+
+    assertEquals(
+      (await memory.getMessages()).map((message) => message.id),
+      ["history", "assistant-1", "assistant-2", "assistant-new"],
+    );
   });
 });
 
@@ -212,5 +354,132 @@ describe("SummaryMemory", () => {
 
     await memory.clear();
     assertEquals(await memory.getMessages(), []);
+  });
+
+  it("restores the private summary state without replaying its projection", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    await memory.add(userMessage("1", "first topic"));
+    await memory.add(userMessage("2", "second topic"));
+    await memory.add(userMessage("3", "third topic"));
+    const before = await memory.getMessages();
+    const rollback = captureMemoryRollback(memory, before);
+
+    await memory.add(userMessage("4", "fourth topic"));
+    await memory.add(userMessage("5", "fifth topic"));
+    await rollback.rollback();
+
+    const after = await memory.getMessages();
+    assertEquals(
+      after.map((message) => ({ id: message.id, role: message.role, parts: message.parts })),
+      before.map((message) => ({ id: message.id, role: message.role, parts: message.parts })),
+    );
+    await memory.add(userMessage("4", "fourth topic"));
+    assertEquals(
+      (await memory.getMessages()).filter((message) => message.id === "summary").length,
+      1,
+      "the restored projection must remain private summary state",
+    );
+  });
+
+  it("preserves a concurrent model write while rolling back rejected input", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
+    await memory.add(userMessage("history", "accepted history"));
+    const before = await memory.getMessages();
+    const transaction = captureMemoryRollback(memory, before);
+    const rejected = userMessage("rejected", "rejected input");
+    const concurrent = {
+      ...userMessage("assistant", "concurrent model output"),
+      role: "assistant" as const,
+    };
+
+    await memory.add(rejected);
+    await memory.add(concurrent);
+    await transaction.rollback(new Set([rejected]));
+
+    assertEquals(
+      (await memory.getMessages()).map((message) => message.id),
+      ["history", "assistant"],
+    );
+  });
+
+  it("does not resurrect summary state after a concurrent clear", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    for (let index = 1; index <= 3; index++) {
+      await memory.add(userMessage(String(index), `topic ${index}`));
+    }
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+    await memory.clear();
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("removes a rejected summary-memory write added after a concurrent clear", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
+    await memory.add(userMessage("history", "accepted history"));
+    const rollback = captureMemoryRollback(memory, await memory.getMessages());
+    await memory.clear();
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("stops summary replay when another clear occurs between post-clear additions", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4 });
+    const rollback = captureMemoryRollback(memory, []);
+    await memory.clear();
+    await memory.add(userMessage("assistant-1", "first concurrent output"));
+    await memory.add(userMessage("assistant-2", "second concurrent output"));
+    const originalAdd = memory.add.bind(memory);
+    let replayed = 0;
+    memory.add = async (message) => {
+      await originalAdd(message);
+      if (++replayed === 1) await memory.clear();
+    };
+
+    await rollback.rollback(new Set());
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("removes rejected post-clear writes after they enter the rolling summary", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    const rollback = captureMemoryRollback(memory, []);
+    await memory.clear();
+    const rejected = [
+      userMessage("rejected-1", "first rejected topic"),
+      userMessage("rejected-2", "second rejected topic"),
+      userMessage("rejected-3", "third rejected topic"),
+    ];
+    for (const message of rejected) await memory.add(message);
+
+    await rollback.rollback(new Set(rejected));
+
+    assertEquals(await memory.getMessages(), []);
+  });
+
+  it("does not replay an in-flight summarized addition from its snapshot", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    await memory.add(userMessage("history-1", "first"));
+    await memory.add(userMessage("history-2", "second"));
+    const concurrent = userMessage("assistant", "concurrent output");
+    const addition = memory.add(concurrent);
+    const rollback = captureMemoryRollback(memory, []);
+    await addition;
+    const rejected = userMessage("rejected", "rejected input");
+    await memory.add(rejected);
+
+    await rollback.rollback(new Set([rejected]));
+
+    assertEquals(
+      (await memory.getMessages()).filter((message) => message.id === "assistant").length,
+      1,
+    );
   });
 });

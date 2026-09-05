@@ -1,4 +1,9 @@
-import type { AgentMiddleware, AgentResponse } from "../../types.ts";
+import type { AgentMiddleware, AgentResponse, Message } from "#veryfront/agent/types.ts";
+import { isStatefulTurn } from "#veryfront/agent/middleware/turn-validation.ts";
+import {
+  hasUnchangedSyntheticMessageId,
+  hasUnchangedSyntheticMessageTimestamp,
+} from "#veryfront/agent/runtime/input-utils.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -285,6 +290,20 @@ function defaultKeyGenerator(input: string, context?: Record<string, unknown>): 
   return `cache_${inputHash}`;
 }
 
+function toCacheableInputString(input: string | Message[]): string {
+  if (typeof input === "string") return input;
+  return JSON.stringify(
+    input.map((message) => {
+      const { id, timestamp, ...rest } = message;
+      return {
+        ...rest,
+        ...(hasUnchangedSyntheticMessageId(message, id) ? {} : { id }),
+        ...(hasUnchangedSyntheticMessageTimestamp(message, timestamp) ? {} : { timestamp }),
+      };
+    }),
+  );
+}
+
 export function cacheMiddleware(
   config: CacheConfig,
 ): AgentMiddleware & { destroy(): void } {
@@ -294,9 +313,8 @@ export function cacheMiddleware(
     withSpan(
       "agent.middleware.cache",
       async () => {
-        const inputString = typeof context.input === "string"
-          ? context.input
-          : JSON.stringify(context.input);
+        if (isStatefulTurn(context)) return await next();
+        const inputString = toCacheableInputString(context.input);
 
         const cached = cache.get(inputString, context);
         if (cached) {
