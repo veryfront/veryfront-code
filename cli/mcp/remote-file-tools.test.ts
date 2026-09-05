@@ -561,6 +561,25 @@ describe("cli/mcp/remote-file-tools", () => {
       }
     });
 
+    it("allows an explicit token at an exact HTTP loopback API endpoint", async () => {
+      resetEnv();
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiBaseUrl: "http://localhost:4321/api",
+      });
+      let requestUrl = "";
+      try {
+        const result = await withMockFetch((input) => {
+          requestUrl = String(input);
+          return Promise.resolve(Response.json({ files: [] }));
+        }, () => vfRemoteListFiles.execute({ project: "my-project", limit: 50 }));
+        assertEquals(result.success, true);
+        assertEquals(new URL(requestUrl).origin, "http://localhost:4321");
+      } finally {
+        _resetEnvironmentConfig();
+      }
+    });
+
     it("returns error response when API responds with unauthorized JSON error", async () => {
       resetEnv();
       let requestUrl = "";

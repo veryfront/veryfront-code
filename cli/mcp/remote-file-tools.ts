@@ -13,7 +13,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
-import { guardedOutboundFetch } from "#cli/outbound-fetch";
+import { guardedExactHttpLoopbackOutboundFetch, guardedOutboundFetch } from "#cli/outbound-fetch";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -92,11 +92,13 @@ async function sendApiRequest<T>(
     // the global, and a direct call would hand its replacement the
     // `Authorization` header to read.
     //
-    // This also puts the call under the host egress ceiling, which denies
-    // private and loopback destinations. A developer pointing the API base at
-    // an internal host must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; only
-    // the host process can set it, so a project overlay cannot.
-    const response = await guardedOutboundFetch(url, {
+    // Endpoint validation allows HTTP only for exact loopback hosts with an
+    // explicit credential. Keep that supported local API route constrained by
+    // the loopback guard, including on redirects.
+    const fetchEndpoint = readUrl(endpoint, urlProtocolGetter) === "http:"
+      ? guardedExactHttpLoopbackOutboundFetch
+      : guardedOutboundFetch;
+    const response = await fetchEndpoint(url, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
