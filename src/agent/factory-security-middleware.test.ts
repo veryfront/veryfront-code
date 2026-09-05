@@ -1045,6 +1045,17 @@ describe("resolveSecurityMiddleware", () => {
     const opaque = () => "caller-owned";
     const part = { type: "text" as const, text: "hello" };
     for (const enumerable of [true, false]) {
+      Object.defineProperty(part, `opaque-array-${enumerable}`, {
+        enumerable,
+        value: new Proxy([], {
+          get() {
+            throw new Error("Opaque extension index");
+          },
+          ownKeys() {
+            throw new Error("Opaque extension descriptors");
+          },
+        }),
+      });
       Object.defineProperty(part, `extension-${enumerable}`, {
         enumerable,
         get() {
@@ -1121,6 +1132,68 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text, "ok");
   });
 
+  it("rejects unreadable arrays nested in tool arguments before provider dispatch", async () => {
+    let providerCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/unreadable-array",
+      async doGenerate() {
+        providerCalls++;
+        throw new Error("Unexpected provider dispatch");
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const unreadable = new Proxy(["required argument"], {
+      get() {
+        throw new Error("Unreadable index");
+      },
+      ownKeys() {
+        throw new Error("Unreadable descriptors");
+      },
+    });
+    const assistant = agent({
+      id: "unreadable-array",
+      model: "hosted/unreadable-array",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+    class SerializedArguments {
+      toJSON() {
+        return { required: unreadable };
+      }
+    }
+    for (
+      const args of [
+        { required: unreadable, repeated: unreadable },
+        { nested: [unreadable] },
+        { serialized: new SerializedArguments() },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          assistant.generate({
+            input: [{
+              id: "unreadable-input",
+              role: "user",
+              parts: [{
+                type: "tool-call",
+                toolCallId: "unreadable-call",
+                toolName: "example_tool",
+                args,
+              }],
+            }],
+          }),
+        Error,
+        "Array input cannot be safely copied",
+      );
+    }
+    assertEquals(providerCalls, 0);
+  });
+
   it("preserves URL values nested in provider-visible tool payloads", async () => {
     class Money {
       constructor(readonly cents: number) {}
@@ -1137,6 +1210,16 @@ describe("resolveSecurityMiddleware", () => {
     const selfSerialized = new SelfSerialized();
     const nestedTarget = { value: "original nested proxy" };
     const nestedProxy = new Proxy(nestedTarget, { getPrototypeOf: () => Date.prototype });
+    const arrayTarget = ["original array value"];
+    let arrayLengthReads = 0;
+    const arrayProxy = new Proxy(arrayTarget, {
+      get(target, key, receiver) {
+        if (key === "length" && arrayLengthReads++ === 0) {
+          throw new Error("transient length failure");
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
     const prompts: string[] = [];
     let payloadLabel = "original payload";
     const model: ModelRuntime = {
@@ -1159,6 +1242,7 @@ describe("resolveSecurityMiddleware", () => {
       payloadLabel = "mutated payload";
       selfSerialized.value = "mutated self value";
       nestedTarget.value = "mutated nested proxy";
+      arrayTarget[0] = "mutated array value";
       return response;
     };
     const toolArgs = {
@@ -1167,6 +1251,7 @@ describe("resolveSecurityMiddleware", () => {
       first: selfSerialized,
       second: selfSerialized,
       nestedProxy,
+      arrayProxy,
       get label() {
         return payloadLabel;
       },
@@ -1224,6 +1309,8 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(prompts[1]?.includes("mutated payload"), false);
     assertEquals(prompts[1]?.includes("mutated self value"), false);
     assertEquals(prompts[1]?.includes("mutated nested proxy"), false);
+    assertEquals(prompts[1]?.includes("original array value"), true);
+    assertEquals(prompts[1]?.includes("mutated array value"), false);
   });
 
   it("reuses and streams cached string-input responses across synthetic ids", async () => {

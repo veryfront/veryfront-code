@@ -330,7 +330,8 @@ const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
-function cloneStructuredValuePreservingOpaque<T>(value: T): T {
+function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = false): T {
+  class UnsafeArrayCopyError extends TypeError {}
   const seen = new IntrinsicWeakMap<object, unknown>();
   const clone = (candidate: unknown): unknown => {
     if (candidate === null || typeof candidate !== "object") {
@@ -358,11 +359,39 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
         for (let index = 0; index < length; index++) {
           array[index] = clone(candidate[index]);
         }
-      } catch {
-        // Opaque Array Proxies can reject length or index reads. Preserve the
-        // original opaque value instead of aborting unrelated message input.
-        IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
-        return candidate;
+      } catch (error) {
+        if (error instanceof UnsafeArrayCopyError) throw error;
+        try {
+          // Read array descriptors without invoking a Proxy's indexed get
+          // traps. Provider-visible values must not retain the caller's array.
+          const descriptors = ObjectGetOwnPropertyDescriptors(candidate) as unknown as Record<
+            string,
+            PropertyDescriptor
+          >;
+          const length = descriptors.length?.value;
+          if (typeof length !== "number") throw new TypeError("Invalid array length");
+          array.length = 0;
+          array.length = length;
+          for (let index = 0; index < length; index++) {
+            const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
+            array[index] = descriptor
+              ? clone(
+                "value" in descriptor
+                  ? descriptor.value
+                  : descriptor.get
+                  ? IntrinsicReflectApply(descriptor.get, candidate, [])
+                  : undefined,
+              )
+              : undefined;
+          }
+        } catch (error) {
+          if (error instanceof UnsafeArrayCopyError) throw error;
+          if (!allowOpaqueArrays) {
+            throw new UnsafeArrayCopyError("Array input cannot be safely copied");
+          }
+          IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+          return candidate;
+        }
       }
       return array;
     }
@@ -385,7 +414,8 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
           const detached = IntrinsicStructuredClone(candidate);
           IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
           return detached;
-        } catch {
+        } catch (error) {
+          if (error instanceof UnsafeArrayCopyError) throw error;
           // A nested Proxy can report a native prototype while exposing an
           // ordinary record. Detach its readable fields instead of keeping a
           // caller-owned reference after native cloning rejects it.
@@ -393,7 +423,8 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
         }
       }
       descriptors = ObjectGetOwnPropertyDescriptors(candidate);
-    } catch {
+    } catch (error) {
+      if (error instanceof UnsafeArrayCopyError) throw error;
       return candidate;
     }
     const object = ObjectCreate(prototype) as Record<PropertyKey, unknown>;
@@ -414,7 +445,8 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
           configurable: true,
           writable: true,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof UnsafeArrayCopyError) throw error;
         continue;
       }
     }
@@ -500,7 +532,10 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
       continue;
     }
     ObjectDefineProperty(detached, key, {
-      value: cloneStructuredValuePreservingOpaque(value),
+      value: cloneStructuredValuePreservingOpaque(
+        value,
+        !(PROVIDER_VISIBLE_MESSAGE_PART_FIELDS as readonly string[]).includes(key),
+      ),
       enumerable: descriptor.enumerable,
       configurable: true,
       writable: true,
@@ -539,7 +574,7 @@ function cloneMessageForCommit(message: Message): Message {
     ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
     ...(message.metadata === undefined
       ? {}
-      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata) }),
+      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata, true) }),
   };
 }
 
