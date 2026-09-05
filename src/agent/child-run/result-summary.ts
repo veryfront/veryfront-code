@@ -70,14 +70,37 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function removeHorizontalWhitespaceBeforeNewlines(text: string): string {
+  const chunks: string[] = [];
+  let segmentStart = 0;
+  let whitespaceStart = -1;
+
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character === " " || character === "\t") {
+      if (whitespaceStart === -1) whitespaceStart = index;
+      continue;
+    }
+    if (character === "\n" && whitespaceStart !== -1) {
+      chunks.push(text.slice(segmentStart, whitespaceStart), "\n");
+      segmentStart = index + 1;
+    }
+    whitespaceStart = -1;
+  }
+
+  if (chunks.length === 0) return text;
+  chunks.push(text.slice(segmentStart));
+  return chunks.join("");
+}
+
 function sanitizeMalformedToolTranscriptText(text: string): string {
-  return text
+  const sanitized = text
     .replace(MALFORMED_TOOL_TRANSCRIPT_FENCE_PATTERN, "")
     .replace(MALFORMED_TOOL_RESPONSE_PATTERN, "\n$1\n")
     .replace(MALFORMED_TOOL_COMMAND_PREFIX_PATTERN, "\n")
     .replace(MALFORMED_TOOL_CALL_PATTERN, "\n")
-    .replace(MALFORMED_TOOL_TAG_PATTERN, "")
-    .replace(/[ \t]+\n/g, "\n")
+    .replace(MALFORMED_TOOL_TAG_PATTERN, "");
+  return removeHorizontalWhitespaceBeforeNewlines(sanitized)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -302,7 +325,7 @@ function parseCompleteArrayValue(
     return value === undefined ? { ok: false } : { ok: true, value };
   }
   if (text[start] === "{" || text[start] === "[") {
-    const normalized = normalizeSingleQuotedJson(candidate);
+    const normalized = normalizePseudoJson(candidate);
     try {
       return { ok: true, value: JSON.parse(normalized) };
     } catch {
@@ -366,7 +389,45 @@ function parseQuotedScalar(
   }
 }
 
-function normalizeSingleQuotedJson(text: string): string {
+function removeTrailingJsonCommas(text: string): string {
+  const chunks: string[] = [];
+  let segmentStart = 0;
+  let index = 0;
+
+  while (index < text.length) {
+    const character = text[index]!;
+    if (character === '"' || character === "'") {
+      const end = scanQuotedValueEnd(text, index, character);
+      if (end === undefined) return text;
+      index = end;
+      continue;
+    }
+    if (character !== ",") {
+      index += 1;
+      continue;
+    }
+    const closing = skipWhitespace(text, index + 1);
+    if (text[closing] !== "}" && text[closing] !== "]") {
+      index += 1;
+      continue;
+    }
+    let previous = index - 1;
+    while (previous >= 0 && /\s/.test(text[previous]!)) previous--;
+    if (previous < 0 || "{[,:".includes(text[previous]!)) {
+      index++;
+      continue;
+    }
+    chunks.push(text.slice(segmentStart, index), text.slice(index + 1, closing));
+    segmentStart = closing;
+    index = closing;
+  }
+
+  if (chunks.length === 0) return text;
+  chunks.push(text.slice(segmentStart));
+  return chunks.join("");
+}
+
+function normalizePseudoJson(text: string): string {
   let normalized = "";
   let index = 0;
   while (index < text.length) {
@@ -379,18 +440,6 @@ function normalizeSingleQuotedJson(text: string): string {
       continue;
     }
     if (character !== "'") {
-      if (character === ",") {
-        const next = skipWhitespace(text, index + 1);
-        let previous = index - 1;
-        while (previous >= 0 && /\s/.test(text[previous]!)) previous--;
-        if (
-          (text[next] === "}" || text[next] === "]") &&
-          previous >= 0 && !"{[,:".includes(text[previous]!)
-        ) {
-          index++;
-          continue;
-        }
-      }
       normalized += character;
       index += 1;
       continue;
@@ -403,7 +452,7 @@ function normalizeSingleQuotedJson(text: string): string {
     normalized += JSON.stringify(decoded);
     index = end;
   }
-  return normalized;
+  return removeTrailingJsonCommas(normalized);
 }
 
 function skipWhitespace(text: string, start: number): number {
@@ -878,11 +927,15 @@ function startsWithProseWord(text: string): boolean {
 
 function isPlainProseApostrophe(text: string, index: number): boolean {
   const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+  const proseOnly = text.split("\n").map((line) =>
+    recoverableContractFactLine(line) === undefined ? line : ""
+  ).join("\n");
   return text.slice(0, lineStart).split("\n").every((line) =>
-    line.trim().length === 0 || startsWithProseWord(line)
+    line.trim().length === 0 || startsWithProseWord(line) ||
+    recoverableContractFactLine(line) !== undefined
   ) && startsWithProseWord(text.slice(lineStart)) &&
     gapProseApostrophes(text, lineStart).has(index) &&
-    isPlainProseText(normalizeProseApostrophes(text));
+    isPlainProseText(normalizeProseApostrophes(proseOnly));
 }
 
 function isPrefixedStringQuote(text: string, index: number): boolean {
