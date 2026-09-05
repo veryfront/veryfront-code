@@ -330,7 +330,7 @@ const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
-function cloneStructuredValuePreservingOpaque<T>(value: T): T {
+function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = false): T {
   const seen = new IntrinsicWeakMap<object, unknown>();
   const clone = (candidate: unknown): unknown => {
     if (candidate === null || typeof candidate !== "object") {
@@ -359,10 +359,34 @@ function cloneStructuredValuePreservingOpaque<T>(value: T): T {
           array[index] = clone(candidate[index]);
         }
       } catch {
-        // Opaque Array Proxies can reject length or index reads. Preserve the
-        // original opaque value instead of aborting unrelated message input.
-        IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
-        return candidate;
+        try {
+          // Read array descriptors without invoking a Proxy's indexed get
+          // traps. Provider-visible values must not retain the caller's array.
+          const descriptors = ObjectGetOwnPropertyDescriptors(candidate) as unknown as Record<
+            string,
+            PropertyDescriptor
+          >;
+          const length = descriptors.length?.value;
+          if (typeof length !== "number") throw new TypeError("Invalid array length");
+          array.length = 0;
+          array.length = length;
+          for (let index = 0; index < length; index++) {
+            const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
+            array[index] = descriptor
+              ? clone(
+                "value" in descriptor
+                  ? descriptor.value
+                  : descriptor.get
+                  ? IntrinsicReflectApply(descriptor.get, candidate, [])
+                  : undefined,
+              )
+              : undefined;
+          }
+        } catch {
+          if (!allowOpaqueArrays) throw new TypeError("Array input cannot be safely copied");
+          IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+          return candidate;
+        }
       }
       return array;
     }
@@ -539,7 +563,7 @@ function cloneMessageForCommit(message: Message): Message {
     ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
     ...(message.metadata === undefined
       ? {}
-      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata) }),
+      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata, true) }),
   };
 }
 

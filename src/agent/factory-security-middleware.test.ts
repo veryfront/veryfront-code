@@ -1137,6 +1137,16 @@ describe("resolveSecurityMiddleware", () => {
     const selfSerialized = new SelfSerialized();
     const nestedTarget = { value: "original nested proxy" };
     const nestedProxy = new Proxy(nestedTarget, { getPrototypeOf: () => Date.prototype });
+    const arrayTarget = ["original array value"];
+    let arrayLengthReads = 0;
+    const arrayProxy = new Proxy(arrayTarget, {
+      get(target, key, receiver) {
+        if (key === "length" && arrayLengthReads++ === 0) {
+          throw new Error("transient length failure");
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
     const prompts: string[] = [];
     let payloadLabel = "original payload";
     const model: ModelRuntime = {
@@ -1159,6 +1169,7 @@ describe("resolveSecurityMiddleware", () => {
       payloadLabel = "mutated payload";
       selfSerialized.value = "mutated self value";
       nestedTarget.value = "mutated nested proxy";
+      arrayTarget[0] = "mutated array value";
       return response;
     };
     const toolArgs = {
@@ -1167,6 +1178,7 @@ describe("resolveSecurityMiddleware", () => {
       first: selfSerialized,
       second: selfSerialized,
       nestedProxy,
+      arrayProxy,
       get label() {
         return payloadLabel;
       },
@@ -1224,6 +1236,8 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(prompts[1]?.includes("mutated payload"), false);
     assertEquals(prompts[1]?.includes("mutated self value"), false);
     assertEquals(prompts[1]?.includes("mutated nested proxy"), false);
+    assertEquals(prompts[1]?.includes("original array value"), true);
+    assertEquals(prompts[1]?.includes("mutated array value"), false);
   });
 
   it("reuses and streams cached string-input responses across synthetic ids", async () => {
