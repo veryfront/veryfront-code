@@ -3355,7 +3355,15 @@ describe("VeryfrontFSAdapter", () => {
     });
 
     it("evicts persistent derived caches when a warmup observes a changed listing", async () => {
+      const derivedInvalidations: string[] = [];
       const adapter = createAdapter({
+        invalidationCallbacks: {
+          clearSSRModuleCacheForProject: () => void derivedInvalidations.push("ssr"),
+          clearRouterDetectionCacheForProject: () => void derivedInvalidations.push("router"),
+          clearProjectDiscoveryCacheForProject: () => void derivedInvalidations.push("discovery"),
+          clearRendererCacheForProject: () => void derivedInvalidations.push("renderer"),
+          clearModulePathCache: () => void derivedInvalidations.push("module-path"),
+        },
         veryfront: {
           apiBaseUrl: "https://api.example.com",
           apiToken: "test-token",
@@ -3418,6 +3426,22 @@ describe("VeryfrontFSAdapter", () => {
 
       const versionBeforeWarmup = internals.sourceSnapshotVersion;
       const versionsAtEviction: number[] = [];
+      const versionsAtDerivedInvalidation: number[] = [];
+      for (
+        const callback of Object.keys(
+          (adapter as unknown as { invalidationCallbacks: Record<string, () => void> })
+            .invalidationCallbacks,
+        )
+      ) {
+        const callbacks = (adapter as unknown as {
+          invalidationCallbacks: Record<string, () => void>;
+        }).invalidationCallbacks;
+        const original = callbacks[callback];
+        callbacks[callback] = () => {
+          versionsAtDerivedInvalidation.push(internals.sourceSnapshotVersion);
+          original!();
+        };
+      }
       const deleteByPrefixAsync = cache.deleteByPrefixAsync.bind(cache);
       cache.deleteByPrefixAsync = (prefix: string) => {
         versionsAtEviction.push(internals.sourceSnapshotVersion);
@@ -3451,6 +3475,12 @@ describe("VeryfrontFSAdapter", () => {
         "a changed warmup must evict persistent directory listings",
       );
       assertEquals(versionsAtEviction.length, 2, "both derived tiers must be evicted");
+      assertEquals(derivedInvalidations, ["ssr", "router", "discovery", "renderer", "module-path"]);
+      assertEquals(
+        versionsAtDerivedInvalidation.every((version) => version === versionBeforeWarmup),
+        true,
+        "derived caches must be invalidated before the new snapshot generation is published",
+      );
       assertEquals(
         versionsAtEviction.every((version) => version === versionBeforeWarmup),
         true,

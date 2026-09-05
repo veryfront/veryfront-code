@@ -1203,6 +1203,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
             if (isSnapshotSuperseded()) {
               return false;
             }
+            await this.#invalidateDerivedSourceCaches();
+            if (isSnapshotSuperseded()) {
+              return false;
+            }
           }
 
           await this.cache.setAsync(effectiveCacheKey, files);

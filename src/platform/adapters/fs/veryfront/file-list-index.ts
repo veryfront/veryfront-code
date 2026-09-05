@@ -238,16 +238,6 @@ export class FileListIndex {
       return null;
     }
 
-    if (
-      this.index && this.pathSet &&
-      this.indexScopeKey === (cacheKey ?? null) &&
-      stableSnapshotVersion !== undefined &&
-      this.indexSnapshotVersion === stableSnapshotVersion
-    ) {
-      this.indexFresh = true;
-      return { content: this.index, paths: this.pathSet, fresh: true };
-    }
-
     const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,

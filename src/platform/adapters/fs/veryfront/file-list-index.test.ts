@@ -167,7 +167,7 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
   });
 
   describe("index reuse", () => {
-    it("reuses an index until the source snapshot version changes", async () => {
+    it("tracks the fetched listing across local snapshot versions", async () => {
       const files = [{ path: "a.ts", content: "v1" }];
       let snapshotVersion = 1;
       const index = new FileListIndex(
@@ -179,14 +179,15 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       files[0]!.content = "v2";
       assertEquals(
         await index.lookup("a.ts"),
-        "v1",
-        "an unchanged source snapshot must reuse its existing map",
+        "v2",
+        "a shared listing change must rebuild even without a local version change",
       );
 
       snapshotVersion += 1;
+      files[0]!.content = "v3";
       assertEquals(
         await index.lookup("a.ts"),
-        "v2",
+        "v3",
         "a new source snapshot must rebuild the map",
       );
     });
@@ -289,6 +290,20 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
         await index.lookup("b.ts"),
         "v3",
         "a changed file-list key must rebuild the index",
+      );
+    });
+
+    it("rebuilds when a shared listing changes without a local snapshot bump", async () => {
+      let files = [{ path: "a.ts", content: "a" }];
+      const index = new FileListIndex(() => Promise.resolve(files), () => 1);
+
+      assertEquals(await index.lookup("a.ts", "branch-key"), "a");
+      files = [...files, { path: "b.ts", content: "b" }];
+
+      assertEquals(
+        await index.lookup("b.ts", "branch-key"),
+        "b",
+        "a listing updated by another process must replace the local index",
       );
     });
   });
