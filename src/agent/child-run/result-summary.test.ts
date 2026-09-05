@@ -434,6 +434,24 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("withholds IDs when scalar continuation outlives the bounded lookahead", () => {
+      const prefix = 'tools: [{"id":"bogus_tool","cost":';
+      for (const continuation of ["23456x", "234567}]"]) {
+        const text = prefix + " ".repeat(32_000 - prefix.length - 1) + "1" +
+          continuation + "x".repeat(130_000);
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
+    it("retains IDs when a scalar terminates within the bounded lookahead", () => {
+      const prefix = 'tools: [{"id":"valid_tool","cost":';
+      const text = prefix + " ".repeat(32_000 - prefix.length - 1) + "1" +
+        "234}]" + "x".repeat(130_000);
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+      assertEquals(result.contractFacts, { toolIds: ["valid_tool"] });
+    });
+
     it("rejects an arbitrary bare scalar prefix cut by the head window", () => {
       const text = 'tools: [{"id":"bogus_tool","cost": garbage' +
         "x".repeat(40_000) + "\n" + "z".repeat(100_000);

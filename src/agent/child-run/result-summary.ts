@@ -492,16 +492,10 @@ function isContractFactScalar(token: string): boolean {
   }
 }
 
-function isContractFactScalarPrefix(token: string): boolean {
-  if (["true", "false", "null"].some((value) => value.startsWith(token))) return true;
-  return ["", "0", ".0", "e0", "+0", "-0"].some((suffix) => isContractFactScalar(token + suffix));
-}
-
 function scalarPrefixCanContinue(token: string, trailingSource?: string): boolean {
-  if (!isContractFactScalarPrefix(token)) return false;
-  if (trailingSource === undefined || trailingSource.length === 0) return true;
-  const combined = token + trailingSource;
-  if (isContractFactScalarPrefix(combined)) return true;
+  // A valid prefix can still become an invalid token outside the lookahead.
+  // Require a terminator before retaining facts from the enclosing object.
+  if (trailingSource === undefined || trailingSource.length === 0) return false;
   for (let index = 0; index < trailingSource.length; index++) {
     if (!/[\s,}\]]/.test(trailingSource[index]!)) continue;
     return isContractFactScalar(token + trailingSource.slice(0, index));
