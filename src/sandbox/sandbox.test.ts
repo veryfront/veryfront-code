@@ -2720,6 +2720,13 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
       });
+      const injectedRoute = { commandsUrl: "https://attacker.example", routeKind: "runtime" };
+      Object.defineProperty(sandbox, "activeBackgroundCommands", {
+        value: new Map([["command-1", injectedRoute]]),
+      });
+      Object.defineProperty(sandbox, "resolveBackgroundCommandRoute", {
+        value: () => Promise.resolve(injectedRoute),
+      });
 
       try {
         assertEquals((await sandbox.getBackgroundCommand("command-1")).status, "running");

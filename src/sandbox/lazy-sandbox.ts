@@ -81,6 +81,13 @@ const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
 ]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 const applyIntrinsic = Reflect.apply;
+const NativeMap = Map;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapDelete = Map.prototype.delete;
+const mapClear = Map.prototype.clear;
+const mapForEach = Map.prototype.forEach;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const stringTrim = String.prototype.trim;
 const stringReplace = String.prototype.replace;
 const NativeURL = URL;
@@ -167,7 +174,7 @@ export class LazySandbox {
   private heartbeatPromise: PendingOperation | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
-  private readonly activeBackgroundCommands = new Map<string, TrackedBackgroundCommand>();
+  #activeBackgroundCommands = new NativeMap<string, TrackedBackgroundCommand>();
 
   constructor(options: LazySandboxOptions = {}) {
     const explicitAuthToken = options.authToken === undefined
@@ -320,7 +327,7 @@ export class LazySandbox {
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json());
-    this.updateTrackedBackgroundCommand(backgroundCommand, {
+    this.#updateTrackedBackgroundCommand(backgroundCommand, {
       commandsUrl,
       routeKind: route.kind,
     });
@@ -328,7 +335,7 @@ export class LazySandbox {
   }
 
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const route = await this.resolveBackgroundCommandRoute(commandId);
+    const route = await this.#resolveBackgroundCommandRoute(commandId);
 
     const res = await this.#fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}`,
@@ -345,12 +352,12 @@ export class LazySandbox {
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json());
-    this.updateTrackedBackgroundCommand(backgroundCommand, route);
+    this.#updateTrackedBackgroundCommand(backgroundCommand, route);
     return backgroundCommand;
   }
 
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
-    const route = await this.resolveBackgroundCommandRoute(commandId);
+    const route = await this.#resolveBackgroundCommandRoute(commandId);
 
     const res = await this.#fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}/output`,
@@ -374,7 +381,7 @@ export class LazySandbox {
       stdoutTruncated: json.stdout_truncated,
       stderrTruncated: json.stderr_truncated,
     };
-    this.updateTrackedBackgroundCommand(output, route);
+    this.#updateTrackedBackgroundCommand(output, route);
     return output;
   }
 
@@ -400,7 +407,7 @@ export class LazySandbox {
   }
 
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const route = await this.resolveBackgroundCommandRoute(commandId);
+    const route = await this.#resolveBackgroundCommandRoute(commandId);
 
     const res = await this.#fetchControl(
       `${route.commandsUrl}/${encodeURIComponent(commandId)}/cancel`,
@@ -418,7 +425,7 @@ export class LazySandbox {
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json());
-    this.updateTrackedBackgroundCommand(backgroundCommand, route);
+    this.#updateTrackedBackgroundCommand(backgroundCommand, route);
     return backgroundCommand;
   }
 
@@ -452,7 +459,7 @@ export class LazySandbox {
 
         if (!res.ok) {
           if (this.sessionId === currentSessionId) {
-            if (this.activeBackgroundCommands.size === 0) {
+            if ((applyIntrinsic(mapSize, this.#activeBackgroundCommands, []) as number) === 0) {
               await this.deleteSession(currentSessionId);
               this.resetSessionState(currentSessionId);
             }
@@ -721,7 +728,7 @@ export class LazySandbox {
   private static readonly HEARTBEAT_WARN_AFTER_FAILURES = 3;
 
   private startHeartbeatLoop(): void {
-    if (!this.sessionId || this.heartbeatTimer || this.hasActiveInternalBackgroundCommand()) {
+    if (!this.sessionId || this.heartbeatTimer || this.#hasActiveInternalBackgroundCommand()) {
       return;
     }
 
@@ -773,7 +780,7 @@ export class LazySandbox {
   private resetSessionState(sessionId?: string): void {
     if (!sessionId || this.sessionId === sessionId) {
       this.stopHeartbeatLoop();
-      this.activeBackgroundCommands.clear();
+      applyIntrinsic(mapClear, this.#activeBackgroundCommands, []);
       this.endpoint = null;
       this.sessionId = null;
       this.sessionProjectId = null;
@@ -787,10 +794,12 @@ export class LazySandbox {
     return projectReference ? { ...options, projectReference } : options;
   }
 
-  private async resolveBackgroundCommandRoute(
+  async #resolveBackgroundCommandRoute(
     commandId: string,
   ): Promise<TrackedBackgroundCommand> {
-    const trackedCommand = this.activeBackgroundCommands.get(commandId);
+    const trackedCommand = applyIntrinsic(mapGet, this.#activeBackgroundCommands, [commandId]) as
+      | TrackedBackgroundCommand
+      | undefined;
     if (trackedCommand) {
       return trackedCommand;
     }
@@ -803,34 +812,37 @@ export class LazySandbox {
     };
   }
 
-  private updateTrackedBackgroundCommand(
+  #updateTrackedBackgroundCommand(
     backgroundCommand: Pick<BackgroundCommand, "id" | "status">,
     command: TrackedBackgroundCommand,
   ): void {
     if (backgroundCommand.status === "running") {
-      this.activeBackgroundCommands.set(backgroundCommand.id, command);
+      applyIntrinsic(mapSet, this.#activeBackgroundCommands, [backgroundCommand.id, command]);
       if (command.routeKind !== "proxy") {
         this.stopHeartbeatLoop();
       }
       return;
     }
 
-    if (!this.activeBackgroundCommands.delete(backgroundCommand.id)) {
+    if (!applyIntrinsic(mapDelete, this.#activeBackgroundCommands, [backgroundCommand.id])) {
       return;
     }
 
-    if (!this.hasActiveInternalBackgroundCommand() && this.endpoint) {
+    if (!this.#hasActiveInternalBackgroundCommand() && this.endpoint) {
       this.startHeartbeatLoop();
     }
   }
 
-  private hasActiveInternalBackgroundCommand(): boolean {
-    for (const command of this.activeBackgroundCommands.values()) {
-      if (command.routeKind !== "proxy") {
-        return true;
-      }
-    }
-    return false;
+  #hasActiveInternalBackgroundCommand(): boolean {
+    let active = false;
+    applyIntrinsic(mapForEach, this.#activeBackgroundCommands, [
+      (command: TrackedBackgroundCommand) => {
+        if (command.routeKind !== "proxy") {
+          active = true;
+        }
+      },
+    ]);
+    return active;
   }
 
   private async startExec(command: string, options?: ExecOptions): Promise<Response> {
