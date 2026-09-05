@@ -1251,6 +1251,27 @@ Deno.test("project writes create a missing manifest", async () => {
   }
 });
 
+Deno.test("a failed manifest creation removes the file it created", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/package.json`;
+  try {
+    const projectRoot = await Deno.realPath(project);
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "{}\n", {
+          allowMissing: true,
+          requireMissing: true,
+          expectedIdentity: { device: "unexpected", inode: "unexpected" },
+        }),
+      Error,
+      "changed after being read",
+    );
+    await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 Deno.test("a manifest that appears after analysis is not overwritten", async () => {
   const project = await makeTempDir();
   const target = `${project}/package.json`;

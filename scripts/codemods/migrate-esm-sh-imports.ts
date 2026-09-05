@@ -4,7 +4,11 @@ import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
 import { constants as nativeFsConstants } from "node:fs";
-import { open as openNativeFile, stat as statNativeFile } from "node:fs/promises";
+import {
+  lstat as lstatNativeFile,
+  open as openNativeFile,
+  stat as statNativeFile,
+} from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
 
 interface BabelGeneratorResult {
@@ -582,6 +586,10 @@ async function pathFileIdentity(path: string): Promise<StableFileIdentity> {
   return stableFileIdentity(await statNativeFile(path, { bigint: true }));
 }
 
+async function pathEntryIdentity(path: string): Promise<StableFileIdentity> {
+  return stableFileIdentity(await lstatNativeFile(path, { bigint: true }));
+}
+
 /**
  * Remove a file this run created but could not verify afterwards.
  *
@@ -590,11 +598,10 @@ async function pathFileIdentity(path: string): Promise<StableFileIdentity> {
  */
 async function removeUnverifiedFile(
   path: string,
-  file: { stat(): Promise<{ dev: number | bigint | null; ino: number | bigint | null }> },
+  created: StableFileIdentity,
 ): Promise<void> {
   try {
-    const created = stableFileIdentity(await file.stat());
-    if (sameFileIdentity(created, stableFileIdentity(await Deno.lstat(path)))) {
+    if (sameFileIdentity(created, await pathEntryIdentity(path))) {
       await Deno.remove(path);
     }
   } catch {
@@ -623,6 +630,7 @@ async function writeTextFileInsideProjectOnWindows(
   // a junction or symlink can redirect this open, but never a later write.
   let file: Awaited<ReturnType<typeof openNativeFile>>;
   let created = false;
+  let openedIdentity: StableFileIdentity | undefined;
   try {
     file = requireMissing ? await openNativeFile(path, "wx+") : await openNativeFile(path, "r+");
     created = requireMissing;
@@ -635,6 +643,7 @@ async function writeTextFileInsideProjectOnWindows(
   }
   try {
     const opened = stableFileIdentity(await file.stat({ bigint: true }));
+    openedIdentity = opened;
     await assertPathInsideProject(path, projectRoot);
     if (!sameFileIdentity(opened, await pathFileIdentity(path))) {
       throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
@@ -669,7 +678,7 @@ async function writeTextFileInsideProjectOnWindows(
       );
     }
   } catch (error) {
-    if (created) await removeUnverifiedFile(path, file);
+    if (created && openedIdentity) await removeUnverifiedFile(path, openedIdentity);
     throw error;
   } finally {
     await file.close();
@@ -713,6 +722,7 @@ export async function writeTextFileInsideProject(
 
   let file: Deno.FsFile;
   let created = false;
+  let openedIdentity: StableFileIdentity | undefined;
   try {
     file = requireMissing
       ? await Deno.open(path, { read: true, write: true, createNew: true })
@@ -733,6 +743,7 @@ export async function writeTextFileInsideProject(
   try {
     await assertPathInsideProject(path, projectRoot);
     const opened = stableFileIdentity(await file.stat());
+    openedIdentity = opened;
     const current = stableFileIdentity(await Deno.stat(path));
     if (!sameFileIdentity(opened, current)) {
       throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
@@ -774,7 +785,7 @@ export async function writeTextFileInsideProject(
       );
     }
   } catch (error) {
-    if (created) await removeUnverifiedFile(path, file);
+    if (created && openedIdentity) await removeUnverifiedFile(path, openedIdentity);
     throw error;
   } finally {
     file.close();
