@@ -256,6 +256,7 @@ export class FileListIndex {
     ) {
       this.indexFresh = true;
       this.indexBuiltAt = Date.now();
+      this.indexSourceList = fileList;
       return { content: currentIndex, paths: currentPathSet, fresh: true };
     }
 

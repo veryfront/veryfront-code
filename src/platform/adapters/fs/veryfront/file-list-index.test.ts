@@ -167,6 +167,23 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
   });
 
   describe("index reuse", () => {
+    it("scans an identical replacement listing only once", async () => {
+      let files = [{ path: "a.ts", content: "a" }];
+      const index = new FileListIndex(() => Promise.resolve(files), () => 1);
+      assertEquals(await index.lookup("a.ts"), "a");
+
+      files = [{ path: "a.ts", content: "a" }];
+      let scans = 0;
+      const every = files.every.bind(files);
+      files.every = ((...args: Parameters<typeof every>) => {
+        scans++;
+        return every(...args);
+      }) as typeof files.every;
+      assertEquals(await index.lookup("a.ts"), "a");
+      assertEquals(await index.lookup("a.ts"), "a");
+      assertEquals(scans, 1);
+    });
+
     it("tracks the fetched listing across local snapshot versions", async () => {
       let files = [{ path: "a.ts", content: "v1" }];
       let snapshotVersion = 1;
