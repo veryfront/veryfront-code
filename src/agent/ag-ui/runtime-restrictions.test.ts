@@ -339,6 +339,31 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(getRuntimeAllowedRemoteTools(restricted), ["web_fetch"]);
   });
 
+  it("keeps a policy-free MCP fallback when the request provider lacks the native tool", () => {
+    toolRegistry.delete("web_fetch");
+    const mcpServer = {
+      id: "docs",
+      transport: { type: "http" as const, url: "https://docs.example.test/mcp" },
+    };
+    const restricted = applyAgUiRuntimeRestrictionsForModel(
+      createConfig({
+        model: "anthropic/claude-sonnet-4-6",
+        tools: true,
+        providerTools: ["web_fetch"],
+        mcpServers: [mcpServer],
+      }),
+      { allowedTools: ["web_fetch"] },
+      "hosted/model-without-native-tools",
+    );
+
+    assertEquals(restricted.tools, {});
+    assertEquals(restricted.mcpServers, [{
+      ...mcpServer,
+      toolPolicy: { allow: ["web_fetch"] },
+    }]);
+    assertEquals(getRuntimeAllowedRemoteTools(restricted), ["web_fetch"]);
+  });
+
   it("produces an empty intersection when an optional MCP candidate is unavailable", async () => {
     const restricted = applyAgUiRuntimeRestrictions(
       createConfig({
