@@ -109,6 +109,28 @@ export const PROVIDER_ENV_KEYS: readonly string[] = Object.freeze([
   "CONTEXT7_API_KEY",
 ]);
 
+// Git's repository-local environment (git rev-parse --local-env-vars) must not
+// follow a pre-push hook into the independent repositories created by tests.
+const GIT_REPOSITORY_ENV_KEYS = [
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_CONFIG",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_PARAMETERS",
+  "GIT_DIR",
+  "GIT_GRAFT_FILE",
+  "GIT_IMPLICIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_INTERNAL_SUPER_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_NO_REPLACE_OBJECTS",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_PREFIX",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_SHALLOW_FILE",
+  "GIT_WORK_TREE",
+];
+
 export function buildTestProcessEnv(
   parentEnv: Readonly<Record<string, string>>,
   overrides: Readonly<Record<string, string>> = {},
@@ -116,9 +138,20 @@ export function buildTestProcessEnv(
   const env = { ...parentEnv, ...overrides };
   // Windows environment names are case-insensitive, so a credential inherited
   // as OpenAI_Api_Key would survive an exact-case delete. Match by folded name.
-  const scrubbed = new Set<string>(PROVIDER_ENV_KEYS);
+  const scrubbed = new Set<string>([
+    ...PROVIDER_ENV_KEYS,
+    ...GIT_REPOSITORY_ENV_KEYS,
+  ]);
   for (const key of Object.keys(env)) {
-    if (scrubbed.has(key.toUpperCase())) delete env[key];
+    const normalizedKey = key.toUpperCase();
+    // Hooks export Git repository selectors. Fixture Git commands must discover
+    // their own repository from cwd, never reconfigure the checkout being pushed.
+    if (
+      scrubbed.has(normalizedKey) ||
+      /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(normalizedKey)
+    ) {
+      delete env[key];
+    }
   }
   return env;
 }

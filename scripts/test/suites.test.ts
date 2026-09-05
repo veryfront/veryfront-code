@@ -56,6 +56,23 @@ describe("leaf test suite registry", () => {
     assertEquals(env.PATH, "/test/bin");
   });
 
+  it("scrubs case variants of hook Git configuration without removing GitHub CI context", () => {
+    const env = buildTestProcessEnv({
+      Git_Dir: "/checkout/.git",
+      git_config_count: "1",
+      Git_Config_Key_0: "core.bare",
+      Git_Config_Value_0: "true",
+      GITHUB_WORKSPACE: "/checkout",
+      GIT_AUTHOR_NAME: "Fixture Author",
+      GIT_CONFIG_GLOBAL: "/fixture/global.config",
+    });
+    assertEquals(env, {
+      GITHUB_WORKSPACE: "/checkout",
+      GIT_AUTHOR_NAME: "Fixture Author",
+      GIT_CONFIG_GLOBAL: "/fixture/global.config",
+    });
+  });
+
   it("records runtime as one suite with variants, ownership, and support exclusions", () => {
     // Production break caught: node and bun runtime tests can drift into
     // competing leaf owners instead of one runtime suite with runner variants.

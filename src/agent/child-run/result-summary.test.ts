@@ -423,6 +423,16 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["valid_tool"] });
     });
 
+    it("withholds IDs when the bounded lookahead ends inside a line comment", () => {
+      const prefix = 'tools: ["bogus_tool", //';
+      const text = prefix + "x".repeat(32_005 - prefix.length) + "\n{garbage}]" +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("validates a nested array value that starts after a cutoff comma", () => {
       const prefix = 'tools: [{"id":"bogus_tool","schema":[0';
       const text = prefix + " ".repeat(32_000 - prefix.length - 1) + ",garbage" +
@@ -862,6 +872,30 @@ describe("child-run-result-summary", () => {
           'Use `{"description":" example tools: [\\"bogus_tool\\"]"}` when delegating.',
           { mode: "structured" },
         ).contractFacts,
+        undefined,
+      );
+    });
+
+    it("retains case-insensitive fields in inline configuration", () => {
+      for (
+        const field of [
+          "tools",
+          '"TOOLS"',
+          "'ToOl_IdS'",
+          "PrOvIdEr_ToOl_IdS",
+        ]
+      ) {
+        const text = "Use ` " + field + ' : ["create_agent"]`.';
+        assertEquals(
+          buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+          field.toLowerCase().includes("provider_tool_ids")
+            ? { providerToolIds: ["create_agent"] }
+            : { toolIds: ["create_agent"] },
+        );
+      }
+      assertEquals(
+        buildChildRunResultSummary("Use `TOOLS are listed in the docs`.", { mode: "structured" })
+          .contractFacts,
         undefined,
       );
     });

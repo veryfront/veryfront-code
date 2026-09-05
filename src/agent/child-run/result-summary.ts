@@ -19,6 +19,8 @@ const TOOL_TRANSCRIPT_COMMAND_TAG_NAMES = new Set(["tool_call", "function_calls"
 const TOOL_TRANSCRIPT_RESPONSE_TAG_NAMES = new Set(["tool_response", "function_result"]);
 const TOOL_RESPONSE_TAG_NAMES = new Set(["tool_response"]);
 const TOOL_TRANSCRIPT_SHELL_FENCE_NAMES = new Set(["bash", "sh", "shell", "zsh"]);
+const TOOL_TRANSCRIPT_COMMAND_TAG_START_PATTERN = /<(?:tool_call|function_calls|invoke)\b/i;
+const TOOL_TRANSCRIPT_RESPONSE_TAG_START_PATTERN = /<(?:tool_response|function_result)\b/i;
 const TOOL_TRANSCRIPT_FENCE_TAG_START_PATTERN =
   /^<(?:tool_call|tool_response|function_calls|invoke|function_result)\b/i;
 const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
@@ -270,17 +272,23 @@ function removeToolTranscriptTags(text: string): string {
 
 function sanitizeMalformedToolTranscriptText(text: string): string {
   let sanitized = removeToolTranscriptFences(text);
-  sanitized = replaceCompleteToolTranscriptSections(
-    sanitized,
-    TOOL_RESPONSE_TAG_NAMES,
-    true,
-  );
-  sanitized = removeToolCommandPrefixes(sanitized);
-  sanitized = replaceCompleteToolTranscriptSections(
-    sanitized,
-    TOOL_TRANSCRIPT_COMMAND_TAG_NAMES,
-    false,
-  );
+  const hasResponseTag = TOOL_TRANSCRIPT_RESPONSE_TAG_START_PATTERN.test(sanitized);
+  const hasCommandTag = TOOL_TRANSCRIPT_COMMAND_TAG_START_PATTERN.test(sanitized);
+  if (hasResponseTag) {
+    sanitized = replaceCompleteToolTranscriptSections(
+      sanitized,
+      TOOL_RESPONSE_TAG_NAMES,
+      true,
+    );
+    sanitized = removeToolCommandPrefixes(sanitized);
+  }
+  if (hasCommandTag) {
+    sanitized = replaceCompleteToolTranscriptSections(
+      sanitized,
+      TOOL_TRANSCRIPT_COMMAND_TAG_NAMES,
+      false,
+    );
+  }
   sanitized = removeToolTranscriptTags(sanitized);
   return removeHorizontalWhitespaceBeforeNewlines(sanitized)
     .replace(/\n{3,}/g, "\n\n")
@@ -489,6 +497,33 @@ function sourceCommentEnd(text: string, index: number): number | null | undefine
     return end === -1 ? null : end + 2;
   }
   return undefined;
+}
+
+function endsInsideSourceLineComment(text: string): boolean {
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    if (character === '"' || character === "'") {
+      const end = scanQuotedValueEnd(text, index, character);
+      if (end === undefined) return false;
+      index = end;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "/") {
+      const newline = text.indexOf("\n", index + 2);
+      if (newline === -1) return true;
+      index = newline + 1;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "*") {
+      const end = text.indexOf("*/", index + 2);
+      if (end === -1) return false;
+      index = end + 2;
+      continue;
+    }
+    index += 1;
+  }
+  return false;
 }
 
 function findOuterArrayClosingBracket(text: string): number {
@@ -900,6 +935,7 @@ function isValidIncompleteArrayPrefix(
   depth = 0,
 ): boolean {
   const validationBody = fieldBody + (trailingSource ?? "");
+  if (trailingSource !== undefined && endsInsideSourceLineComment(validationBody)) return false;
   let index = skipWhitespace(validationBody, 0);
   if (validationBody[index] !== "[") return false;
   index += 1;
@@ -970,6 +1006,7 @@ function scanIncompleteLeadingObjectToolIds(
 ): string[] | undefined {
   const ids: string[] = [];
   const validationBody = fieldBody + (trailingSource ?? "");
+  if (trailingSource !== undefined && endsInsideSourceLineComment(validationBody)) return undefined;
   let index = skipWhitespace(validationBody, 0);
   if (validationBody[index] !== "{") return undefined;
   index += 1;
@@ -1079,7 +1116,7 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
           inlineCodeEnd = cursor + inlineCode[0].length;
           const code = inlineCode[0].slice(1, -1).trimStart();
           const configuration = code.includes("{") || code.includes("=") || code.startsWith("[") ||
-            /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/.test(code);
+            /^["']?(?:tools|tool_ids|provider_tool_ids)["']?\s*[:=]/i.test(code);
           if (!configuration) {
             cursor = inlineCodeEnd;
             continue;
