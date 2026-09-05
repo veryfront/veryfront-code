@@ -1020,6 +1020,35 @@ function recoverPlainProseTail(
     const lineEnd = text.indexOf("\n", lineStart);
     const end = lineEnd === -1 ? text.length : lineEnd;
     const line = text.slice(lineStart, end);
+    if (/^ {0,3}```json[ \t]*$/.test(line) && lineEnd !== -1) {
+      const closing = /^ {0,3}```[ \t]*$/gm;
+      closing.lastIndex = lineEnd + 1;
+      const match = closing.exec(text);
+      if (match !== null) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text.slice(lineEnd + 1, match.index));
+        } catch { /* malformed fences do not contribute facts */ }
+        if (isPlainRecord(parsed)) {
+          const facts = ["model", "tools", "tool_ids", "provider_tool_ids"]
+            .flatMap((key) => {
+              if (!Object.hasOwn(parsed, key)) return [];
+              const value = recoverableContractFactLine(`${key}:${JSON.stringify(parsed[key])}`);
+              return value === undefined ? [] : [value];
+            }).join("\n");
+          const blockEnd = match.index + match[0].length;
+          const blockLength = blockEnd - lineStart;
+          if (facts.length <= blockLength) {
+            foundFact ||= facts.length > 0;
+            output += facts + " ".repeat(blockLength - facts.length);
+            if (blockEnd === text.length) return foundFact ? output : undefined;
+            output += "\n";
+            lineStart = blockEnd + 1;
+            continue;
+          }
+        }
+      }
+    }
     const factLine = recoverableContractFactLine(line);
     if (factLine !== undefined && factLine.length <= line.length) {
       foundFact = true;

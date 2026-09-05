@@ -700,6 +700,14 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
     });
 
+    it("retains complete fenced JSON declarations after prose apostrophes", () => {
+      const text = "Here is the agent's documentation.\n" + "x ".repeat(65_000) +
+        '\n```json\n{"tool_ids":["create_agent"]}\n```';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent"],
+      });
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
