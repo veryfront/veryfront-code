@@ -882,16 +882,21 @@ async function assertInputTextsValid(
   );
 }
 
-/** Reject only provider-assembly violations introduced by caller-owned layers. */
+interface ProviderValidationRun {
+  text: string;
+  trustedSegments: Array<{ start: number; text: string }>;
+}
+
+/** Reject assembly matches outside unchanged runtime or historical segments. */
 async function assertProviderRunsValid(
   validator: InputValidator,
-  providerRuns: { text: string; trustedPrefix: string }[],
+  providerRuns: ProviderValidationRun[],
   onViolation?: (violation: SecurityViolation) => void,
 ): Promise<void> {
   if (providerRuns.length === 0) return;
   const patternOnly = { checkCustomValidation: false } as const;
   const introducedViolations: SecurityViolation[] = [];
-  for (const { text, trustedPrefix } of providerRuns) {
+  for (const { text, trustedSegments } of providerRuns) {
     const validation = await validator.validate(text, { ...patternOnly, checkMaxLength: false });
     for (const violation of validation.violations) {
       const pattern = violation.pattern;
@@ -899,9 +904,13 @@ async function assertProviderRunsValid(
         introducedViolations.push(violation);
         continue;
       }
-      const trustedMatches = patternOccurrences(trustedPrefix, pattern);
+      const trustedMatches = trustedSegments.flatMap((segment) =>
+        patternOccurrences(segment.text, pattern).map((match) => ({
+          index: segment.start + match.index,
+          text: match.text,
+        }))
+      );
       const introduced = patternOccurrences(text, pattern).some((match) =>
-        match.index + match.text.length > trustedPrefix.length ||
         !trustedMatches.some((trusted) =>
           trusted.index === match.index && trusted.text === match.text
         )
@@ -919,9 +928,15 @@ async function assertProviderRunsValid(
     );
   }
 
-  for (const { text, trustedPrefix } of providerRuns) {
-    const expected = (validator.sanitize(trustedPrefix) ?? trustedPrefix) +
-      text.slice(trustedPrefix.length);
+  for (const { text, trustedSegments } of providerRuns) {
+    let expected = "";
+    let cursor = 0;
+    for (const segment of trustedSegments) {
+      expected += text.slice(cursor, segment.start) +
+        (validator.sanitize(segment.text) ?? segment.text);
+      cursor = segment.start + segment.text.length;
+    }
+    expected += text.slice(cursor);
     if ((validator.sanitize(text) ?? text) === expected) continue;
     const violation: SecurityViolation = {
       type: "input",
@@ -1039,35 +1054,39 @@ export function securityMiddleware(
           .filter((message) => message.role === "system")
           .map((message) => message.id),
       );
-      const callerSystemMessages = messages.filter((message) =>
-        message.role === "system" && currentSystemIds.has(message.id)
-      );
-      const trusted = new Set([
-        ...systemMessages,
-        ...messages.filter((message) =>
-          message.role === "system" && !currentSystemIds.has(message.id)
-        ),
-      ]);
+      const callerSystemMessages = messages.filter((message) => message.role === "system");
+      const trusted = new Set(systemMessages);
       const callers = new Set(callerSystemMessages);
-      const providerRuns: { text: string; trustedPrefix: string }[] = [];
+      const providerRuns: ProviderValidationRun[] = [];
       for (const run of extractMergedSystemRuns([...systemMessages, ...messages])) {
         if (
           !run.some((message) => trusted.has(message)) ||
           !run.some((message) => callers.has(message))
         ) continue;
-        // Runtime layers precede caller messages in every provider assembly.
-        // Preserve the exact prefix for each separator variant, not merely the
-        // identity of a pattern that happened to match some trusted text.
+        // Runtime and historical text have separate exemptions. A new match
+        // across their boundary must still be checked when the runtime changes.
         for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
           for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-            const assemble = (layers: Message[]) =>
-              layers.map((message) => messageTextParts(message).join(partSeparator)).join(
-                runSeparator,
-              );
-            providerRuns.push({
-              text: assemble(run),
-              trustedPrefix: assemble(run.filter((message) => trusted.has(message))),
-            });
+            const assembled: ProviderValidationRun = { text: "", trustedSegments: [] };
+            let previousKind: "runtime" | "history" | "current" | undefined;
+            for (const [index, message] of run.entries()) {
+              if (index > 0) assembled.text += runSeparator;
+              const start = assembled.text.length;
+              const text = messageTextParts(message).join(partSeparator);
+              assembled.text += text;
+              const kind = trusted.has(message)
+                ? "runtime"
+                : currentSystemIds.has(message.id)
+                ? "current"
+                : "history";
+              if (kind !== "current") {
+                const previous = assembled.trustedSegments.at(-1);
+                if (previous && kind === previousKind) previous.text += runSeparator + text;
+                else assembled.trustedSegments.push({ start, text });
+              }
+              previousKind = kind;
+            }
+            providerRuns.push(assembled);
           }
         }
       }

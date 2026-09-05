@@ -739,6 +739,21 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("checks a changed runtime prompt against historical caller system text", async () => {
+    const middleware = securityMiddleware({ input: { blockedPatterns: [/^foo\n\nbar$/] } });
+    const context = createContext({ input: "hello" });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    const history: Message[] = [{
+      id: "history",
+      role: "system",
+      parts: [{ type: "text", text: "bar" }],
+    }];
+    await validate("safe", history);
+    await assertRejects(() => validate("foo", history), Error, "Input validation failed");
+  });
+
   it("rejects a new occurrence of a pattern already matched by trusted text", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/safe marker$|marker\n\ncaller fragment/] },

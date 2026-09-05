@@ -862,6 +862,60 @@ describe("resolveSecurityMiddleware", () => {
     }
   });
 
+  it("rolls back every attempted input when a memory write partially fails", async () => {
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/partial-input-write",
+      async doGenerate() {
+        throw new Error("Provider must not receive a failed input write");
+      },
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+    const assistant = agent({
+      id: "partial-input-write",
+      model: "hosted/partial-input-write",
+      system: "Be helpful.",
+      skills: false,
+      memory: { type: "conversation" },
+      resolveModelTransport: async () => ({ model }),
+    });
+    const memory = assistant.getMemory();
+    const history: Message = {
+      id: "history",
+      role: "user",
+      parts: [{ type: "text", text: "accepted" }],
+    };
+    const later: Message = {
+      id: "later",
+      role: "assistant",
+      parts: [{ type: "text", text: "concurrent output" }],
+    };
+    await memory.add(history);
+    const add = memory.add.bind(memory);
+    let additions = 0;
+    memory.add = async (message) => {
+      await add(message);
+      if (++additions === 2) {
+        await add(later);
+        throw new Error("input write failed");
+      }
+    };
+    await assertRejects(
+      () =>
+        assistant.generate({
+          input: [
+            { id: "first", role: "user", parts: [{ type: "text", text: "first input" }] },
+            { id: "second", role: "user", parts: [{ type: "text", text: "second input" }] },
+          ],
+        }),
+      Error,
+      "input write failed",
+    );
+    assertEquals(await memory.getMessages(), [history, later]);
+  });
+
   it("rejects stream() when the memory backend is unavailable", async () => {
     // Persistence is deferred until middleware accepts the turn, but the
     // memory backend is probed before the ReadableStream is created: an

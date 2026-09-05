@@ -1820,7 +1820,7 @@ export class AgentRuntime {
       for (const msg of committedInputMessages) await this.memory.add(msg);
       persisted = await this.memory.getMessages();
     } catch (error) {
-      rollbackMemory?.commit();
+      await rollbackMemory?.rollback(new Set(committedInputMessages));
       throw error;
     }
     if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
