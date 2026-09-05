@@ -175,6 +175,8 @@ tool, provider tool, and import ids from bounded head-and-tail windows totaling
 128,000 characters. Model, provider tool, and import facts use 64,000
 characters at each end. Tool arrays use 32,000 characters at the start and
 96,000 at the end so a long declaration can retain a trailing critical id.
+Tail extraction stops when the omitted span exceeds 128,000 characters because
+the bounded scan cannot determine whether the tail begins inside a quoted value.
 Keep the complete declaration inside its applicable window. Use `full` when
 the parent needs exact delegated output.
 

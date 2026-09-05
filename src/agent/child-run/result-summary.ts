@@ -1038,15 +1038,6 @@ function recoverPlainProseTail(
   return foundFact ? output : undefined;
 }
 
-function findTailQuoteBoundary(text: string, start: number, quote: string): number | undefined {
-  const quoteEnd = scanQuotedValueEnd(text, start - 1, quote);
-  if (quoteEnd === undefined) return undefined;
-  // When the first matching quote cannot legally close the head value, that
-  // value must have closed in the omitted span. In that case the tail begins
-  // outside it and remains eligible for fact extraction.
-  return quoteEnd === text.length || /[\s,}\];]/.test(text[quoteEnd]!) ? quoteEnd : start;
-}
-
 function boundedContractFactWindows(text: string, headLength: number): string[] {
   if (text.length <= CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT) return [text];
 
@@ -1054,39 +1045,26 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
   const head = text.slice(0, headLength);
   const openQuote = quoteAtEnd(head);
   const omittedLength = tailStart - headLength;
-  const stateKnown = omittedLength <= CHILD_RUN_QUOTE_STATE_GAP_LIMIT;
-  if (openQuote !== undefined || stateKnown) {
-    const proseApostrophe = openQuote?.value === "'" &&
-      isPlainProseApostrophe(head, openQuote.index);
-    if (proseApostrophe && omittedLength > CHILD_RUN_QUOTE_STATE_GAP_LIMIT) {
-      return [head, ""];
-    }
-    const tailQuote = stateKnown
-      ? quoteStateAtTail(
-        text,
-        headLength,
-        tailStart,
-        proseApostrophe ? undefined : openQuote?.value,
-      )
-      : openQuote === undefined
-      ? undefined
-      : { value: openQuote.value, inherited: true };
-    if (tailQuote !== undefined) {
-      const quoteEnd = stateKnown
-        ? scanQuotedValueEnd(text, tailStart - 1, tailQuote.value)
-        : findTailQuoteBoundary(text, tailStart, tailQuote.value);
-      if (quoteEnd === undefined) {
-        if (
-          !tailQuote.inherited || !proseApostrophe
-        ) {
-          return [head, ""];
-        }
-        return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
-      }
-      tailStart = quoteEnd;
-    } else if (proseApostrophe) {
+  // A quote can open or close anywhere in an unscanned gap. Do not interpret
+  // its tail as declarations when the bounded scan cannot establish its state.
+  if (omittedLength > CHILD_RUN_QUOTE_STATE_GAP_LIMIT) return [head, ""];
+  const proseApostrophe = openQuote?.value === "'" &&
+    isPlainProseApostrophe(head, openQuote.index);
+  const tailQuote = quoteStateAtTail(
+    text,
+    headLength,
+    tailStart,
+    proseApostrophe ? undefined : openQuote?.value,
+  );
+  if (tailQuote !== undefined) {
+    const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value);
+    if (quoteEnd === undefined) {
+      if (!tailQuote.inherited || !proseApostrophe) return [head, ""];
       return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
     }
+    tailStart = quoteEnd;
+  } else if (proseApostrophe) {
+    return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
   }
   while (
     tailStart < text.length && isContractFactTokenCharacter(text[tailStart - 1]) &&

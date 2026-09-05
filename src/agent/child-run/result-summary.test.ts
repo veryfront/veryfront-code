@@ -518,6 +518,19 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("does not extract tail facts when the omitted quote state exceeds its scan limit", () => {
+      for (const quotedHead of [false, true]) {
+        const prelude = quotedHead
+          ? JSON.stringify({ prelude: "x".repeat(70_000) }).slice(0, -1) + ","
+          : '{"prelude":0,' + " ".repeat(70_000);
+        const description = "x".repeat(200_000) + " tools:['bogus_tool'] " +
+          "x".repeat(10_000);
+        const text = prelude + '"description":' + JSON.stringify(description) + "}";
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
     it("recovers a tail field after a head quote closes in the omitted span", () => {
       const text = `{"description":"${"x".repeat(70_000)}"}` +
         "p".repeat(70_000) + '\nmodel: "sonnet"' + "p".repeat(60_000);
