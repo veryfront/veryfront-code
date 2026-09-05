@@ -1353,8 +1353,8 @@ function recoverPlainProseTail(
     const lineEnd = text.indexOf("\n", lineStart);
     const end = lineEnd === -1 ? text.length : lineEnd;
     const line = text.slice(lineStart, end);
-    if (/^ {0,3}```json[ \t]*$/.test(line) && lineEnd !== -1) {
-      const closing = /^ {0,3}```[ \t]*$/gm;
+    if (/^ {0,3}```json[ \t]*\r?$/.test(line) && lineEnd !== -1) {
+      const closing = /^ {0,3}```[ \t]*\r?$/gm;
       closing.lastIndex = lineEnd + 1;
       const match = closing.exec(text);
       if (match !== null) {
@@ -1391,7 +1391,10 @@ function recoverPlainProseTail(
     if (factLine !== undefined && factLine.length <= line.length) {
       foundFact = true;
       output += factLine + " ".repeat(line.length - factLine.length);
-    } else if (isPlainProseText(line)) {
+    } else if (
+      isPlainProseText(line) ||
+      (startsWithProseWord(line) && isPlainProseText(normalizeProseApostrophes(line)))
+    ) {
       output += " ".repeat(line.length);
     } else {
       output += " ".repeat(text.length - lineStart);
