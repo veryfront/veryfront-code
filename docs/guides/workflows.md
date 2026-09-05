@@ -72,9 +72,12 @@ Veryfront can only compare child IDs it can read from the definition. Child IDs
 exist only once the node runs when a `subWorkflow` builds its `steps` from a
 callback, when a `branch` that can reach a sub-workflow selects its arm, when a
 sub-workflow sits inside a `map`, or when a `loop` or `map` builds its steps from
-a callback. Workflow ID references are not supported in this execution context,
+a callback.
+
+Workflow ID references are not supported in this execution context,
 so pass the `WorkflowDefinition` object instead. Veryfront runs the first
 callback-defined producer alone and defers other composite producers to a later batch.
+
 A `loop` or `map` with callback steps is deferred
 even when it contains no sub-workflow, because its contents are unknown before it
 runs. Nodes whose child IDs are visible in the definition still run in parallel

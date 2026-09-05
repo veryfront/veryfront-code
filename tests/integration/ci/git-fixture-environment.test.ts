@@ -9,9 +9,24 @@ describe("Git fixture environment isolation", () => {
     const checkout = `${root}/checkout`;
     const fixture = `${root}/fixture`;
     const cleanEnv: Record<string, string> = {};
-    for (const key of ["PATH", "HOME", "USERPROFILE"]) {
-      const value = Deno.env.get(key);
-      if (value !== undefined) cleanEnv[key] = value;
+    const infrastructureKeys = new Set([
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "SYSTEMROOT",
+      "WINDIR",
+      "PATHEXT",
+      "COMSPEC",
+      "SYSTEMDRIVE",
+      "TEMP",
+      "TMP",
+      "TMPDIR",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
+    ]);
+    for (const [key, value] of Object.entries(Deno.env.toObject())) {
+      if (infrastructureKeys.has(key.toUpperCase())) cleanEnv[key] = value;
     }
     const runGit = (cwd: string, args: string[], env = cleanEnv) =>
       new Deno.Command("git", {
