@@ -1,10 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { buildTestProcessEnv } from "../../../scripts/test/suites.ts";
 
 describe("Git fixture environment isolation", () => {
   it("keeps fixture Git commands in their own repositories under a hook environment", async () => {
-    const root = await Deno.makeTempDir();
+    const root = await makeTempDir();
     const checkout = `${root}/checkout`;
     const fixture = `${root}/fixture`;
     const cleanEnv: Record<string, string> = {};
