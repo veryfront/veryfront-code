@@ -88,59 +88,70 @@ function removeHorizontalWhitespaceBeforeNewlines(text: string): string {
   return chunks.join("");
 }
 
-function rewriteToolTranscriptTags(
-  text: string,
-  mode: "responses" | "prefixes" | "calls" | "tags",
-): string {
-  const tags: { start: number; end: number; name: string; closing: boolean; exact: boolean }[] = [];
+type TranscriptTag = { start: number; end: number; name: string; closing: boolean; exact: boolean };
+
+function* transcriptTags(text: string): Generator<TranscriptTag> {
   let coveredUntil = 0;
   for (const match of text.matchAll(TOOL_TAG_START_PATTERN)) {
     if (match.index < coveredUntil) continue;
     const end = text.indexOf(">", match.index + match[0].length);
     if (end === -1) break;
-    tags.push({
+    yield {
       start: match.index,
       end: end + 1,
       name: match[2]!.toLowerCase(),
       closing: match[1] === "/",
       exact: end === match.index + match[0].length,
-    });
+    };
     coveredUntil = end + 1;
   }
+}
 
-  // Precompute the next terminator once. A missing closing tag must not make
-  // every earlier opener rescan the same remaining suffix.
-  const nextTargets = new Array<number | undefined>(tags.length);
+function rewriteToolTranscriptTags(
+  text: string,
+  mode: "responses" | "prefixes" | "calls" | "tags",
+): string {
+  // Only retain the last terminator for each of the fixed tag names. This
+  // allows unmatched openers to be skipped without retaining a per-tag index
+  // or rescanning the remaining suffix for every opener.
   const closingTags = new Map<string, number>();
-  let nextResponse: number | undefined;
-  for (let index = tags.length - 1; index >= 0; index--) {
-    const tag = tags[index]!;
-    nextTargets[index] = mode === "prefixes" ? nextResponse : closingTags.get(tag.name);
-    if (tag.closing && tag.exact) closingTags.set(tag.name, index);
-    if (!tag.closing && (tag.name === "tool_response" || tag.name === "function_result")) {
-      nextResponse = index;
+  let lastResponse = -1;
+  if (mode !== "tags") {
+    for (const tag of transcriptTags(text)) {
+      if (tag.closing && tag.exact) closingTags.set(tag.name, tag.start);
+      if (!tag.closing && (tag.name === "tool_response" || tag.name === "function_result")) {
+        lastResponse = tag.start;
+      }
     }
+    if (mode === "prefixes" ? lastResponse < 0 : closingTags.size === 0) return text;
   }
 
   const chunks: string[] = [];
   let cursor = 0;
-  for (let index = 0; index < tags.length; index++) {
-    const tag = tags[index]!;
-    if (tag.start < cursor) continue;
+  let pending: TranscriptTag | undefined;
+  for (const tag of transcriptTags(text)) {
     const command = tag.name === "tool_call" || tag.name === "function_calls" ||
       tag.name === "invoke";
     if (mode === "tags") {
-      chunks.push(text.slice(cursor, tag.start));
+      if (tag.start > cursor) chunks.push(text.slice(cursor, tag.start));
       cursor = tag.end;
       continue;
     }
+    if (pending) {
+      const terminates = mode === "prefixes"
+        ? !tag.closing && (tag.name === "tool_response" || tag.name === "function_result")
+        : tag.closing && tag.exact && tag.name === pending.name;
+      if (!terminates) continue;
+      if (pending.start > cursor) chunks.push(text.slice(cursor, pending.start));
+      chunks.push("\n");
+      if (mode === "responses") chunks.push(text.slice(pending.end, tag.start), "\n");
+      cursor = mode === "prefixes" ? tag.start : tag.end;
+      pending = undefined;
+      continue;
+    }
     if (tag.closing || (mode === "responses" ? tag.name !== "tool_response" : !command)) continue;
-    const targetIndex = nextTargets[index];
-    if (targetIndex === undefined) continue;
-    const target = tags[targetIndex]!;
-    chunks.push(text.slice(cursor, tag.start), "\n");
-    if (mode === "responses") chunks.push(text.slice(tag.end, target.start), "\n");
-    cursor = mode === "prefixes" ? target.start : target.end;
+    const lastTarget = mode === "prefixes" ? lastResponse : closingTags.get(tag.name) ?? -1;
+    if (lastTarget > tag.start) pending = tag;
   }
   chunks.push(text.slice(cursor));
   return chunks.join("");

@@ -1116,6 +1116,13 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("cleans large tag-only results without a per-tag index", () => {
+      const text = "<parameter>".repeat(1_000_000);
+      const started = performance.now();
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).text, "");
+      assertEquals(performance.now() - started < 2_000, true);
+    });
+
     it("bounds whitespace scanning in malformed transcript fences", () => {
       const text = "```" + " ".repeat(50_000) + "no fence";
       const started = performance.now();
