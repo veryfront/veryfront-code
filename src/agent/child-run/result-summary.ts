@@ -772,7 +772,10 @@ function addToolArrayFieldValues(
       // disjoint ranges, while one unclosed outer array covers the rest of the
       // bounded window. This reaches facts in every long declaration without
       // letting nested opener-like text turn the work quadratic.
-      if (allowIncompleteLeadingObject) {
+      if (
+        allowIncompleteLeadingObject &&
+        isValidIncompleteArrayPrefix(`[${windowBody}`, trailingSource)
+      ) {
         const scanned = scanCompleteLeadingArrayValues(windowBody);
         addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
         if (fieldName === "tools") {
@@ -820,16 +823,21 @@ function isPlainProseText(text: string): boolean {
     !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(text);
 }
 
-function isPlainProseApostrophe(text: string, index: number): boolean {
-  const lineStart = text.lastIndexOf("\n", index - 1) + 1;
-  const line = text.slice(lineStart).replace(
+function startsWithProseWord(text: string): boolean {
+  const line = text.replace(
     /^ {0,3}(?:(?:[-+*]|\d+[.)]|>+)\s+)*/,
     "",
   );
   const firstWord = line.match(/^\p{L}+/u)?.[0] ?? "";
-  return text.slice(0, lineStart).trim().length === 0 &&
-    (/^(?:i|we|you|they|he|she|it|this|that|there|a|an|the)$/i.test(firstWord) ||
-      /^\p{Lu}+$/u.test(firstWord) || /^\p{Lu}.*\p{Ll}/u.test(firstWord)) &&
+  return /^(?:i|we|you|they|he|she|it|this|that|there|a|an|the)$/i.test(firstWord) ||
+    /^\p{Lu}+$/u.test(firstWord) || /^\p{Lu}.*\p{Ll}/u.test(firstWord);
+}
+
+function isPlainProseApostrophe(text: string, index: number): boolean {
+  const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+  return text.slice(0, lineStart).split("\n").every((line) =>
+    line.trim().length === 0 || startsWithProseWord(line)
+  ) && startsWithProseWord(text.slice(lineStart)) &&
     gapProseApostrophes(text, lineStart).has(index) &&
     isPlainProseText(text.slice(0, index) + text.slice(index + 1));
 }

@@ -366,6 +366,24 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("validates continuation after a complete array scalar at the head cutoff", () => {
+      for (const field of ["tools", "tool_ids"]) {
+        const prefix = `${field}: ["bogus_tool"`;
+        const text = prefix + " ".repeat(32_000 - prefix.length) + "garbage" +
+          "x".repeat(130_000);
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
+    it("retains a complete array scalar with valid continuation at the head cutoff", () => {
+      const prefix = 'tools: ["valid_tool"';
+      const text = prefix + " ".repeat(32_000 - prefix.length) + "]\n" +
+        "x".repeat(130_000);
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+      assertEquals(result.contractFacts, { toolIds: ["valid_tool"] });
+    });
+
     it("validates a nested array value that starts after a cutoff comma", () => {
       const prefix = 'tools: [{"id":"bogus_tool","schema":[0';
       const text = prefix + " ".repeat(32_000 - prefix.length - 1) + ",garbage" +
@@ -612,6 +630,13 @@ describe("child-run-result-summary", () => {
         providerToolIds: ["web_fetch"],
         importPaths: ["veryfront/agent"],
       });
+    });
+
+    it("retains tail facts after a heading and a prose contraction", () => {
+      const text = "Result:\nI don't expect a problem. " + "p".repeat(70_000) +
+        '\nmodel: "sonnet"\n' + "p".repeat(60_000);
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+      assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
     });
 
     it("retains tail facts after common prose apostrophes", () => {
