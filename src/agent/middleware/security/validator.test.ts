@@ -266,6 +266,33 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("validates native attachment metadata when annotation text is prefilled", async () => {
+    for (const field of ["filename", "mediaType"]) {
+      const middleware = securityMiddleware({ input: { blockedPatterns: [/blocked_metadata/] } });
+      const context = createContext({
+        input: [{
+          id: "file",
+          role: "user",
+          parts: [
+            { type: "text", text: "<uploaded_files>Existing annotation</uploaded_files>" },
+            {
+              type: "file",
+              filename: "document.txt",
+              mediaType: "text/plain",
+              url: "https://example.test/document.txt",
+              [field]: "blocked_metadata",
+            },
+          ],
+        }],
+      });
+      await assertRejects(
+        () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+        Error,
+        "Input validation failed",
+      );
+    }
+  });
+
   it("rejects unsafe attachment annotations without dropping adjacent user text", async () => {
     const middleware = securityMiddleware({ input: { sanitize: true } });
     const context = createContext({

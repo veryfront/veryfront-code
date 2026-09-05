@@ -238,6 +238,15 @@ export function getUserTextWithAttachmentContext(parts: Message["parts"]): strin
     : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
 }
 
+/** @internal Text metadata sent in native attachment parts, independent of annotations. */
+export function getProviderAttachmentMetadata(parts: Message["parts"]): string[] {
+  return getUserFileParts(parts, false).flatMap((part) => [
+    part.mediaType,
+    ...(part.filename ? [part.filename] : []),
+    ...(part.url.startsWith("data:") ? [] : [part.url]),
+  ]);
+}
+
 function getUserFileParts(
   parts: Message["parts"],
   requireInternetReachableAttachments: boolean,

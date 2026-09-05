@@ -5,6 +5,7 @@ import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-u
 import {
   buildAttachmentContextFromParts,
   getAnthropicCompactedAssistantMessages,
+  getProviderAttachmentMetadata,
   getProviderSendableAssistantMessages,
   getProviderSendableToolMessages,
   getUserTextWithAttachmentContext,
@@ -462,13 +463,22 @@ function extractMessageAssembledTextsRegardlessOfRole(message: Message): string[
   // A single text part already equals every assembled form, so only add the
   // joined variants when the parts could actually hide a split phrase.
   const textParts = messageTextParts(message);
+  const attachmentMetadata = message.role === "user"
+    ? getProviderAttachmentMetadata(message.parts)
+    : [];
   if (textParts.length < 2) {
-    return message.role === "user" && buildAttachmentContextFromParts(message.parts)
-      ? textParts
-      : [];
+    return [
+      ...(message.role === "user" && buildAttachmentContextFromParts(message.parts)
+        ? textParts
+        : []),
+      ...attachmentMetadata,
+    ];
   }
 
-  const assembled = ASSEMBLED_TEXT_SEPARATORS.map((separator) => textParts.join(separator));
+  const assembled = [
+    ...ASSEMBLED_TEXT_SEPARATORS.map((separator) => textParts.join(separator)),
+    ...attachmentMetadata,
+  ];
   if (message.role === "user" && buildAttachmentContextFromParts(message.parts)) {
     assembled.push(getUserTextWithAttachmentContext(message.parts));
   }
@@ -1168,7 +1178,12 @@ export function securityMiddleware(
       assertTextsNeedNoSanitization(
         inputValidator,
         context.input.filter((message) => message.role === "user")
-          .map((message) => buildAttachmentContextFromParts(message.parts)),
+          .flatMap((
+            message,
+          ) => [
+            buildAttachmentContextFromParts(message.parts),
+            ...getProviderAttachmentMetadata(message.parts),
+          ]),
         "Attachment annotations contain content sanitization removes",
         config.onViolation,
       );
