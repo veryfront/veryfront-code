@@ -68,6 +68,7 @@ import {
   getTurnMessageProjectionValidator,
   getTurnMessageValidator,
   getTurnProviderRequestValidator,
+  markStatefulTurn,
   type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -1725,15 +1726,10 @@ export class AgentRuntime {
     // the security middleware keep the pre-existing concurrency, and one slow
     // memory backend cannot hold up unrelated concurrent turns.
     //
-    // The queue covers only the turn-input commit, which is the write a
-    // caller controls. The assistant and tool `memory.add` calls inside the
-    // agent loop run outside it, so a long-running turn's model output can
-    // still land between another turn's validation and its write - those
-    // messages are model-authored and exempt from input validation, so they
-    // cannot forge a caller-controlled merge. Queueing is per runtime
-    // instance, so a hung memory backend delays other validated turns on the
-    // same agent; that is the same backend outage those turns would hit on
-    // their own write.
+    // Keep the queue until the entire turn finalizes: every provider step can
+    // reject the caller input, and overlapping rollback snapshots can restore
+    // another turn's rejected messages. This serializes validated stateful
+    // turns on one runtime instance, including time spent awaiting tools.
     if (
       this.memory instanceof NoMemory || !context ||
       !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
@@ -1763,6 +1759,7 @@ export class AgentRuntime {
     validationState: () => "pending" | "accepted" | "rejected";
     validateProviderRequest: TurnProviderRequestValidator;
   } {
+    if (!(this.memory instanceof NoMemory)) markStatefulTurn(context);
     // Memoized on the first call: persistence now runs inside the middleware
     // continuation, so a middleware that invokes `next()` more than once (a
     // retry or fallback wrapper) would otherwise write this turn's input to
@@ -1804,7 +1801,8 @@ export class AgentRuntime {
           throw error;
         }
         validationState = "accepted";
-        await commit();
+        // Keep validated stateful turns serialized until finalization. An
+        // overlapping rollback could otherwise restore another rejected turn.
       },
     };
     return persistence;

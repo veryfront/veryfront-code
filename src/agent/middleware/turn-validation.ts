@@ -48,6 +48,17 @@ const turnInputValidators = new WeakMap<AgentContext, TurnInputValidator>();
 const turnMessageValidators = new WeakMap<AgentContext, TurnMessageValidator>();
 const turnMessageProjectionValidators = new WeakMap<AgentContext, TurnMessageProjectionValidator>();
 const turnProviderRequestValidators = new WeakMap<AgentContext, TurnProviderRequestValidator>();
+const statefulTurns = new WeakSet<AgentContext>();
+
+/** @internal Mark a runtime turn whose response must be persisted with its input. */
+export function markStatefulTurn(context: AgentContext): void {
+  statefulTurns.add(context);
+}
+
+/** @internal Stateful turns cannot reuse a response without replaying its memory writes. */
+export function isStatefulTurn(context: AgentContext): boolean {
+  return statefulTurns.has(context);
+}
 
 /**
  * Register a post-middleware input validator for a turn, composing with any

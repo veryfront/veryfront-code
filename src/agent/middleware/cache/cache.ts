@@ -1,4 +1,5 @@
 import type { AgentMiddleware, AgentResponse, Message } from "#veryfront/agent/types.ts";
+import { isStatefulTurn } from "#veryfront/agent/middleware/turn-validation.ts";
 import {
   hasUnchangedSyntheticMessageId,
   hasUnchangedSyntheticMessageTimestamp,
@@ -312,6 +313,7 @@ export function cacheMiddleware(
     withSpan(
       "agent.middleware.cache",
       async () => {
+        if (isStatefulTurn(context)) return await next();
         const inputString = toCacheableInputString(context.input);
 
         const cached = cache.get(inputString, context);
