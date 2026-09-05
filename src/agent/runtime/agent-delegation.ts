@@ -152,8 +152,9 @@ function createLazyDelegateTool(
  *
  * Delegation chains are intentionally not cycle-detected here. Each delegated
  * call is a separate agent run with its own maxSteps budget; hosted nested
- * invocation metadata enforces a runtime depth cap, but authors should still
- * keep delegate graphs acyclic so cycles do not burn the available depth.
+ * invocation metadata enforces a runtime depth cap. Stateful input validation
+ * rejects re-entry into an ancestor runtime with an active memory transaction
+ * before waiting on its queue. Keep your delegate graph acyclic.
  */
 export function buildAgentDelegateTools(
   input: BuildAgentDelegateToolsInput,

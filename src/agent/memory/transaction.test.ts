@@ -160,6 +160,81 @@ describe("custom memory transactions", () => {
   });
 
   for (const mode of ["generate", "stream"] as const) {
+    it(`rejects cyclic stateful ${mode} calls without poisoning later turns`, async () => {
+      let delegate = true;
+      const runtimes: AgentRuntime[] = [];
+      for (let index = 0; index < 2; index++) {
+        const invoke = async () => {
+          if (delegate) await runtimes[1 - index]!.generate("delegated input");
+        };
+        runtimes.push(
+          new AgentRuntime(`cycle-${index}`, {
+            model: "hosted/transaction-cycle",
+            system: "You are helpful.",
+            memory: { type: "conversation" },
+            skills: false,
+            maxSteps: 1,
+            middleware: [(context, next) => {
+              registerTurnMessageValidator(context, () => Promise.resolve());
+              return next();
+            }],
+            resolveModelTransport: () =>
+              Promise.resolve({
+                model: {
+                  provider: "hosted",
+                  modelId: "hosted/transaction-cycle",
+                  async doGenerate() {
+                    await invoke();
+                    return {
+                      content: [{ type: "text" as const, text: "ok" }],
+                      finishReason: "stop" as const,
+                      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                    };
+                  },
+                  async doStream() {
+                    await invoke();
+                    return {
+                      stream: new ReadableStream({
+                        start(controller) {
+                          controller.enqueue({ type: "text-delta", text: "ok" });
+                          controller.enqueue({ type: "finish" });
+                          controller.close();
+                        },
+                      }),
+                    };
+                  },
+                },
+              }),
+          }),
+        );
+      }
+      const runtime = runtimes[0]!;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Stateful delegation deadlocked")), 1000);
+      });
+      try {
+        if (mode === "generate") {
+          await assertRejects(
+            () => Promise.race([runtime.generate("initial input"), timedOut]),
+            Error,
+            "cyclic",
+          );
+        } else {
+          const output = await Promise.race([
+            runtime.stream([message("initial")]).then((stream) => new Response(stream).text()),
+            timedOut,
+          ]);
+          assertStringIncludes(output, "cyclic");
+        }
+        delegate = false;
+        const response = await Promise.race([runtime.generate("next input"), timedOut]);
+        assertEquals(response.text, "ok");
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+
     it(`commits input and assistant output together for ${mode}`, async () => {
       const store = new TransactionMemory();
       const runtime = new AgentRuntime("transaction-output", {

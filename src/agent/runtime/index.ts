@@ -28,7 +28,8 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+import { AGENT_ERROR, DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import {
@@ -54,6 +55,7 @@ import {
   getRuntimeRemoteToolSources,
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+
 import {
   announceStreamedToolCallInput,
   createStreamState,
@@ -306,6 +308,19 @@ import {
   type ToolSearchResult,
 } from "./tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+
+interface RuntimeTurnScope {
+  runtime: object;
+  ownsQueue: boolean;
+}
+const runtimeTurnScopes = new AsyncLocalStorage<readonly RuntimeTurnScope[]>();
+
+function runWithRuntimeTurn<T>(runtime: object, run: () => T): T {
+  return runtimeTurnScopes.run([
+    ...runtimeTurnScopes.getStore() ?? [],
+    { runtime, ownsQueue: false },
+  ], run);
+}
 
 const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
@@ -1749,7 +1764,30 @@ export class AgentRuntime {
       return this.#commitTurnMessages(inputMessages, context);
     }
 
-    const task = this.#turnCommitQueue.then(() => this.#commitTurnMessages(inputMessages, context));
+    const scopes = runtimeTurnScopes.getStore();
+    const current = scopes?.at(-1);
+    if (scopes?.slice(0, -1).some((scope) => scope.runtime === this && scope.ownsQueue)) {
+      return Promise.reject(AGENT_ERROR.create({
+        detail:
+          "Your stateful agent cannot await cyclic delegation. Remove the cycle from your agent calls.",
+      }));
+    }
+    const task = this.#turnCommitQueue.then(async () => {
+      // Async ancestry identifies the actual runtime instance, not a public
+      // agent ID. Unrelated concurrent turns still wait normally. Clear the
+      // marker on finalization so detached work does not retain a stale lock.
+      if (current?.runtime === this) current.ownsQueue = true;
+      try {
+        const transaction = await this.#commitTurnMessages(inputMessages, context);
+        void transaction.finalized.then(() => {
+          if (current?.runtime === this) current.ownsQueue = false;
+        });
+        return transaction;
+      } catch (error) {
+        if (current?.runtime === this) current.ownsQueue = false;
+        throw error;
+      }
+    });
     this.#turnCommitQueue = task.then(
       ({ finalized }) => finalized,
       () => undefined,
@@ -2087,7 +2125,11 @@ export class AgentRuntime {
     );
   }
 
-  async #generate(
+  #generate(...args: AgentRuntimeGenerateArgs): Promise<AgentResponse> {
+    return runWithRuntimeTurn(this, () => this.#generateTurn(...args));
+  }
+
+  async #generateTurn(
     input: string | Message[],
     context?: Record<string, unknown>,
     modelOverride?: string,
@@ -2236,7 +2278,11 @@ export class AgentRuntime {
     );
   }
 
-  async #stream(
+  #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
+    return runWithRuntimeTurn(this, () => this.#streamTurn(...args));
+  }
+
+  async #streamTurn(
     messages: Message[],
     context?: Record<string, unknown>,
     callbacks?: AgentRuntimeStreamCallbacks,
