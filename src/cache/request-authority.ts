@@ -74,7 +74,7 @@ export function resolveCacheRequestAuthority(
     : verifiedRequestToken
     ? "verified-control-plane"
     : reqCtx?.token
-    ? "request"
+    ? reqCtx.token === hostPrivateToken ? "host-private" : "request"
     : hasRequestSelectedTenant
     ? "none"
     : hostToken && hostToken !== hostPrivateToken &&

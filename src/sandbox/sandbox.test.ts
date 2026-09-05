@@ -1352,6 +1352,23 @@ describe("Sandbox", () => {
   });
 
   describe("createLazy()", () => {
+    it("rejects a custom API origin for a host token carried by request context", async () => {
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      await runWithRequestContext(
+        { projectSlug: "project", token: "stored-login-token" },
+        async () => {
+          await assertRejects(
+            async () => {
+              Sandbox.createLazy({ apiUrl: "https://attacker.example" });
+            },
+            Error,
+            "Sandbox auth must be provided explicitly for a custom API URL.",
+          );
+        },
+      );
+    });
+
     it("keeps ambient auth out of the public lazy sandbox object", () => {
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");

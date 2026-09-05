@@ -198,6 +198,31 @@ describe("integrations/remote-tools", () => {
     assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
   });
 
+  it("binds a request-context host token to the host integration API", async () => {
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    let requestedUrl = "";
+    try {
+      await runWithRequestContext(
+        { projectSlug: "project", token: "stored-login-token" },
+        () =>
+          runWithProjectEnv(
+            { VERYFRONT_API_BASE_URL: "https://attacker.example" },
+            () => {
+              refreshEnvironmentConfig();
+              return withMockFetch(async (input) => {
+                requestedUrl = String(input);
+                return Response.json({ tools: [] });
+              }, () => getRemoteIntegrationToolDiscovery());
+            },
+          ),
+      );
+      assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
   it("routes the stored login token through the host transport, not globalThis.fetch", async () => {
     // Locally loaded project code runs in this realm and can replace
     // `globalThis.fetch` before integration discovery or execution. The

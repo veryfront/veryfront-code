@@ -65,7 +65,8 @@ export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
 
   // Caller-selected origins form a separate credential domain. Ambient
   // host login credentials can be reused only for the host API. A credential
-  // already bound to the current request remains caller-owned.
+  // already bound to the current request remains caller-owned unless it is
+  // the host-private login credential.
   const selectedApiUrl = resolveSandboxApiUrl(options);
   const scopedContext = getCurrentVeryfrontCloudContext();
   const scopedToken = trimString(scopedContext?.apiToken);
@@ -84,7 +85,17 @@ export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
   }
 
   const requestToken = trimString(getCurrentRequestContext()?.token);
-  if (requestToken) return requestToken;
+  if (requestToken) {
+    if (requestToken === getHostSecret("VERYFRONT_API_TOKEN")) {
+      if (!isHostApiOrigin(selectedApiUrl)) {
+        throw CONFIG_INVALID.create({
+          detail: "Sandbox auth must be provided explicitly for a custom API URL.",
+        });
+      }
+      requireHostPrivateApiHttps(selectedApiUrl);
+    }
+    return requestToken;
+  }
 
   if (options.apiUrl === undefined) {
     const environmentToken = trimString(getHostEnv("VERYFRONT_API_TOKEN"));

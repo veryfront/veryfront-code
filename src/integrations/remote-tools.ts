@@ -25,7 +25,7 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -257,9 +257,12 @@ function resolveRequestAuth(
 
   const requestContext = getCurrentRequestContext();
   if (requestContext) {
+    const token = isValidApiToken(requestContext.token) ? requestContext.token : undefined;
     return {
-      baseUrl,
-      token: isValidApiToken(requestContext.token) ? requestContext.token : undefined,
+      baseUrl: token !== undefined && token === getHostSecret("VERYFRONT_API_TOKEN")
+        ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
+        : baseUrl,
+      token,
     };
   }
   if (getEnvironmentConfig().proxyMode) return { baseUrl, token: undefined };

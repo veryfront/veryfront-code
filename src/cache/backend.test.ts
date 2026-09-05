@@ -2136,6 +2136,22 @@ it({ name: "ApiCacheBackend honors API_URL for ambient credentials" }, async () 
   }
 });
 
+it("cache authority preserves host-token provenance inside request context", async () => {
+  setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+  try {
+    await runWithRequestContext(
+      { projectSlug: "project", token: "stored-login-token" },
+      async () => {
+        const authority = resolveCacheRequestAuthority();
+        assertEquals(authority.token, "stored-login-token");
+        assertEquals(authority.tokenSource, "host-private");
+      },
+    );
+  } finally {
+    deleteHostSecret("VERYFRONT_API_TOKEN");
+  }
+});
+
 it(
   { name: "cache authority classifies a stored token independently of blank env-file provenance" },
   () => {
