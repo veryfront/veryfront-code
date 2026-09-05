@@ -5,6 +5,8 @@ const CHILD_RUN_CONTRACT_FACT_LIMIT = 50;
 const CHILD_RUN_CONTRACT_FACT_VALUE_MAX_LENGTH = 200;
 const CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT = 128_000;
 const CHILD_RUN_CONTRACT_FACT_NESTING_LIMIT = 256;
+const CHILD_RUN_PROSE_RECOVERY_GAP_LIMIT = 128_000;
+const CHILD_RUN_QUOTE_STATE_GAP_LIMIT = 128_000;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
 const MALFORMED_TOOL_COMMAND_PREFIX_PATTERN =
   /<(?:tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?(?=<(?:tool_response|function_result)(?:\s[^>]*)?>)/gi;
@@ -142,11 +144,20 @@ function addPatternMatches(
   trailingSourceCharacter?: string,
 ): void {
   pattern.lastIndex = 0;
+  let truncatedTokenStart = text.length;
+  if (
+    trailingSourceCharacter !== undefined &&
+    /[A-Za-z0-9_@./:+-]/.test(trailingSourceCharacter)
+  ) {
+    while (
+      truncatedTokenStart > 0 &&
+      /[A-Za-z0-9_@./:+-]/.test(text[truncatedTokenStart - 1]!)
+    ) truncatedTokenStart--;
+  }
   for (const match of text.matchAll(pattern)) {
     if (
-      match.index + match[0].length === text.length &&
-      trailingSourceCharacter !== undefined &&
-      /[A-Za-z0-9_@./:+-]/.test(trailingSourceCharacter)
+      truncatedTokenStart < text.length &&
+      match.index + match[0].length > truncatedTokenStart
     ) continue;
     const value = match[group];
     if (typeof value === "string") {
@@ -764,11 +775,13 @@ function addToolArrayFieldValues(
       if (allowIncompleteLeadingObject) {
         const scanned = scanCompleteLeadingArrayValues(windowBody);
         addToolIdsFromParsedArray(target, scanned.values, fieldName === "tools");
-        addToolIdsFromIncompleteLeadingObject(
-          target,
-          windowBody.slice(scanned.nextIndex),
-          trailingSource,
-        );
+        if (fieldName === "tools") {
+          addToolIdsFromIncompleteLeadingObject(
+            target,
+            windowBody.slice(scanned.nextIndex),
+            trailingSource,
+          );
+        }
       }
       coveredUntil = text.length;
     }
@@ -802,21 +815,215 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
   return value !== undefined && !FIELD_SEPARATOR_PATTERN.test(value) && !/["'`]/.test(value);
 }
 
-function quoteAtEnd(text: string): string | undefined {
-  let quote: string | undefined;
+function isPlainProseText(text: string): boolean {
+  return /^[\p{L}\p{N}\s.,!?:_+>-]*$/u.test(text) && !text.includes("::") &&
+    !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(text);
+}
+
+function isPlainProseApostrophe(text: string, index: number): boolean {
+  const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+  const line = text.slice(lineStart).replace(
+    /^ {0,3}(?:(?:[-+*]|\d+[.)]|>+)\s+)*/,
+    "",
+  );
+  const firstWord = line.match(/^\p{L}+/u)?.[0] ?? "";
+  return text.slice(0, lineStart).trim().length === 0 &&
+    (/^(?:i|we|you|they|he|she|it|this|that|there|a|an|the)$/i.test(firstWord) ||
+      /^\p{Lu}+$/u.test(firstWord) || /^\p{Lu}.*\p{Ll}/u.test(firstWord)) &&
+    gapProseApostrophes(text, lineStart).has(index) &&
+    isPlainProseText(text.slice(0, index) + text.slice(index + 1));
+}
+
+function gapProseApostrophes(text: string, lineStart: number): ReadonlySet<number> {
+  const lineEnd = text.indexOf("\n", lineStart);
+  const end = lineEnd === -1 ? text.length : lineEnd;
+  const line = text.slice(lineStart, end);
+  const normalizedLine = line
+    .replace(/([\p{L}\p{N}_])'(?=(?:s|t|re|ve|ll|d|m)\b)/giu, "$1")
+    .replace(/(\b[\p{L}\p{N}_]+s)'(?=\W|$)/giu, "$1")
+    .replace(/\b([OD])'(?=\p{Lu})/gu, "$1");
+  if (normalizedLine === line) return new Set();
+
+  const indices = new Set<number>();
+  for (
+    const pattern of [
+      /([\p{L}\p{N}_])'(?=(?:s|t|re|ve|ll|d|m)\b)/giu,
+      /(\b[\p{L}\p{N}_]+s)'(?=\W|$)/giu,
+      /\b([OD])'(?=\p{Lu})/gu,
+    ]
+  ) {
+    for (const match of line.matchAll(pattern)) {
+      indices.add(lineStart + match.index + match[0].lastIndexOf("'"));
+    }
+  }
+  return indices;
+}
+
+function quoteAtEnd(text: string): { value: string; index: number } | undefined {
+  let quote: { value: string; index: number } | undefined;
   for (let index = 0; index < text.length; index++) {
     const character = text[index]!;
     if (quote === undefined) {
-      if (character === '"' || character === "'") quote = character;
+      if (character === '"' || character === "'") quote = { value: character, index };
       continue;
     }
     if (character === "\\") {
       index += 1;
-    } else if (character === quote) {
+    } else if (character === quote.value) {
       quote = undefined;
     }
   }
   return quote;
+}
+
+function quoteStateAtTail(
+  text: string,
+  start: number,
+  end: number,
+  initialQuote?: string,
+): { value: string; inherited: boolean } | undefined {
+  let quote: { value: string; inherited: boolean } | undefined = initialQuote === undefined
+    ? undefined
+    : { value: initialQuote, inherited: true };
+  let trailingBackslashes = 0;
+  for (let index = start - 1; index >= 0 && text[index] === "\\"; index--) {
+    trailingBackslashes++;
+  }
+  let escaped = initialQuote !== undefined && trailingBackslashes % 2 === 1;
+  let lineStart = text.lastIndexOf("\n", start - 1) + 1;
+  let cachedLineStart = -1;
+  let proseApostrophes: ReadonlySet<number> = new Set();
+  for (let index = start; index < end; index++) {
+    if (index > start && text[index - 1] === "\n") lineStart = index;
+    const character = text[index]!;
+    if (quote === undefined) {
+      if (character === "'") {
+        if (cachedLineStart !== lineStart) {
+          cachedLineStart = lineStart;
+          proseApostrophes = gapProseApostrophes(text, lineStart);
+        }
+        if (proseApostrophes.has(index)) continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = { value: character, inherited: false };
+      }
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === quote.value) {
+      quote = undefined;
+    }
+  }
+  return quote;
+}
+
+function recoverableImportPath(source: string): string | undefined {
+  let value = source.trim();
+  if (value.endsWith(";")) value = value.slice(0, -1).trimEnd();
+  const quote = value[0];
+  if ((quote !== '"' && quote !== "'") || value.at(-1) !== quote) return undefined;
+  const path = value.slice(1, -1);
+  return path.length > 0 && !/["'\\\r\n]/.test(path) ? path : undefined;
+}
+
+function recoverableContractFactLine(line: string): string | undefined {
+  const content = line.endsWith("\r") ? line.slice(0, -1) : line;
+  if (content.length > 512 || /^(?: {4}|\t)/.test(content)) return undefined;
+  const model =
+    /^ {0,3}(?:[,{(][ \t]*)?["']?model["']?[ \t]*[:=][ \t]*(["'])([^"'\\\s]+)\1[ \t]*[,;}]?[ \t]*$/i
+      .exec(content);
+  if (model !== null) return `model:${model[1]}${model[2]}${model[1]}`;
+
+  const array =
+    /^ {0,3}(?:[,{(][ \t]*)?["']?(tool_ids|tools|provider_tool_ids)["']?[ \t]*[:=][ \t]*\[([\s\S]*)\][ \t]*[,;}]?[ \t]*$/i
+      .exec(content);
+  if (array !== null) {
+    const values = parseJsonArrayFieldBody(array[2]!);
+    if (
+      values?.every((value) =>
+        typeof value === "string" && !/\s/.test(value) &&
+        (array[1] === "provider_tool_ids" || TOOL_ID_VALUE_PATTERN.test(value))
+      )
+    ) return `${array[1]}:${JSON.stringify(values)}`;
+  }
+
+  const importStart = /^ {0,3}(import|export)[ \t]+/.exec(content);
+  if (importStart !== null) {
+    const remainder = content.slice(importStart[0].length);
+    const quoteIndex = remainder.search(/["']/);
+    const beforeSpecifier = quoteIndex === -1 ? remainder : remainder.slice(0, quoteIndex);
+    const from = beforeSpecifier.trimEnd().endsWith("from")
+      ? beforeSpecifier.trimEnd().length - 4
+      : -1;
+    if (
+      from > 0 && /[ \t]/.test(remainder[from - 1]!) &&
+      /^[A-Za-z0-9_$*,{} \t]+$/.test(remainder.slice(0, from).trimEnd())
+    ) {
+      const path = recoverableImportPath(remainder.slice(from + 4));
+      if (path !== undefined) return `import ${JSON.stringify(path)}`;
+    } else if (importStart[1] === "import") {
+      const path = recoverableImportPath(remainder);
+      if (path !== undefined) return `import ${JSON.stringify(path)}`;
+    }
+  }
+  const dynamicStart = /^ {0,3}import[ \t]*\(/.exec(content);
+  if (dynamicStart !== null) {
+    let remainder = content.slice(dynamicStart[0].length).trim();
+    if (remainder.endsWith(";")) remainder = remainder.slice(0, -1).trimEnd();
+    if (remainder.endsWith(")")) {
+      const path = recoverableImportPath(remainder.slice(0, -1));
+      if (path !== undefined) return `import(${JSON.stringify(path)})`;
+    }
+  }
+
+  const modelId =
+    /^ {0,3}(?:\|[ \t]*)?((?:veryfront-cloud\/)?(?:anthropic|openai|google|google-ai-studio|mistral|xai|deepseek|moonshot|moonshotai|cohere|perplexity|groq|azure)\/[A-Za-z0-9._:-]+)(?:[ \t]*\|[^\r\n]*)?[ \t]*$/
+      .exec(content);
+  if (modelId !== null) return modelId[1];
+  const integrationId = /^ {0,3}([a-z][a-z0-9-]*__[a-z][a-z0-9_-]*)[ \t]*$/.exec(content);
+  return integrationId?.[1];
+}
+
+function recoverPlainProseTail(
+  text: string,
+  headLength: number,
+  tailStart: number,
+): string | undefined {
+  if (tailStart - headLength > CHILD_RUN_PROSE_RECOVERY_GAP_LIMIT) return undefined;
+  let lineStart = tailStart;
+  if (lineStart > 0 && text[lineStart - 1] !== "\n") {
+    const newline = text.indexOf("\n", lineStart);
+    if (newline === -1) return undefined;
+    lineStart = newline + 1;
+  }
+  if (!isPlainProseText(text.slice(headLength, lineStart))) {
+    return undefined;
+  }
+
+  let foundFact = false;
+  let output = " ".repeat(lineStart - tailStart);
+  while (lineStart < text.length) {
+    const lineEnd = text.indexOf("\n", lineStart);
+    const end = lineEnd === -1 ? text.length : lineEnd;
+    const line = text.slice(lineStart, end);
+    const factLine = recoverableContractFactLine(line);
+    if (factLine !== undefined && factLine.length <= line.length) {
+      foundFact = true;
+      output += factLine + " ".repeat(line.length - factLine.length);
+    } else if (isPlainProseText(line)) {
+      output += " ".repeat(line.length);
+    } else {
+      output += " ".repeat(text.length - lineStart);
+      return foundFact ? output : undefined;
+    }
+    if (lineEnd === -1) return foundFact ? output : undefined;
+    output += "\n";
+    lineStart = lineEnd + 1;
+  }
+  return foundFact ? output : undefined;
 }
 
 function findTailQuoteBoundary(text: string, start: number, quote: string): number | undefined {
@@ -834,10 +1041,40 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
   let tailStart = text.length - (CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT - headLength);
   const head = text.slice(0, headLength);
   const openQuote = quoteAtEnd(head);
-  if (openQuote !== undefined) {
-    const quoteEnd = findTailQuoteBoundary(text, tailStart, openQuote);
-    if (quoteEnd === undefined) return [head, ""];
-    tailStart = quoteEnd;
+  const omittedLength = tailStart - headLength;
+  const stateKnown = omittedLength <= CHILD_RUN_QUOTE_STATE_GAP_LIMIT;
+  if (openQuote !== undefined || stateKnown) {
+    const proseApostrophe = openQuote?.value === "'" &&
+      isPlainProseApostrophe(head, openQuote.index);
+    if (proseApostrophe && omittedLength > CHILD_RUN_QUOTE_STATE_GAP_LIMIT) {
+      return [head, ""];
+    }
+    const tailQuote = stateKnown
+      ? quoteStateAtTail(
+        text,
+        headLength,
+        tailStart,
+        proseApostrophe ? undefined : openQuote?.value,
+      )
+      : openQuote === undefined
+      ? undefined
+      : { value: openQuote.value, inherited: true };
+    if (tailQuote !== undefined) {
+      const quoteEnd = stateKnown
+        ? scanQuotedValueEnd(text, tailStart - 1, tailQuote.value)
+        : findTailQuoteBoundary(text, tailStart, tailQuote.value);
+      if (quoteEnd === undefined) {
+        if (
+          !tailQuote.inherited || !proseApostrophe
+        ) {
+          return [head, ""];
+        }
+        return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
+      }
+      tailStart = quoteEnd;
+    } else if (proseApostrophe) {
+      return [head, recoverPlainProseTail(text, headLength, tailStart) ?? ""];
+    }
   }
   while (
     tailStart < text.length && isContractFactTokenCharacter(text[tailStart - 1]) &&

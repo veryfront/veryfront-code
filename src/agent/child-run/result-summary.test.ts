@@ -9,6 +9,7 @@ import {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
+  type ChildRunContractFacts,
   summarizeChildRunResultText,
   summarizeChildRunResultTextWithMetadata,
   summarizeChildRunResultValue,
@@ -211,6 +212,11 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, { modelIds: ["openai/gpt-4.1"] });
+      const toolText = "I've finished.\n" + "padding ".repeat(18_000) +
+        '\ntools: ["create_agent"]';
+      assertEquals(buildChildRunResultSummary(toolText, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent"],
+      });
     });
 
     it("does not return an at-sign fact cut at a bounded-window edge", () => {
@@ -220,6 +226,17 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, undefined);
+    });
+
+    it("does not backtrack to a partial fact before boundary punctuation", () => {
+      for (const partial of ["openai/gpt-4.1-", "gmail__list-"]) {
+        const text = ",".repeat(64_000 - partial.length) + partial +
+          "messages" + ",".repeat(64_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, undefined);
+      }
     });
 
     it("does not join an array opener across the omitted window gap", () => {
@@ -471,6 +488,18 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("tracks a quote opened in the omitted span when the head is outside quotes", () => {
+      const description = "x".repeat(50_000) + " tools: ['bogus_tool'] " +
+        "x".repeat(90_000);
+      const text = "p".repeat(70_000) + "\n" + JSON.stringify({
+        tools: [{ description }],
+      });
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("recovers a tail field after a head quote closes in the omitted span", () => {
       const text = `{"description":"${"x".repeat(70_000)}"}` +
         "p".repeat(70_000) + '\nmodel: "sonnet"' + "p".repeat(60_000);
@@ -478,6 +507,237 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
+    });
+
+    it("recovers a standalone tail ID after a head quote closes in the omitted span", () => {
+      const text = `{"description":"${"x".repeat(70_000)}"}` +
+        "p".repeat(70_000) + "\nopenai/gpt-4.1\n" + "p".repeat(60_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { modelIds: ["openai/gpt-4.1"] });
+      const toolText = "I've finished.\n" + "padding ".repeat(18_000) +
+        '\ntools: ["create_agent"]';
+      assertEquals(buildChildRunResultSummary(toolText, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent"],
+      });
+      const possessiveText = "Updated the user's settings. " + "a".repeat(140_000) +
+        '\ntools: ["create_agent"]';
+      assertEquals(
+        buildChildRunResultSummary(possessiveText, { mode: "structured" }).contractFacts,
+        { toolIds: ["create_agent"] },
+      );
+    });
+
+    it("keeps quote state closed across prose apostrophes in the omitted span", () => {
+      for (
+        const prose of [
+          "I don't expect a problem.",
+          "Everything's ready.",
+          "Please don't change this.",
+          "please don't change this.",
+          "I do not think it's ready",
+          "I don't think it's ready, but we're close.",
+          "we do not think it's ready",
+          "I don't expect a problem (yet).",
+          "I don't expect a problem: proceed.",
+          "Please don't change src/main.ts.",
+          "Please don't change this; proceed.",
+        ]
+      ) {
+        const text = JSON.stringify({ description: "x".repeat(70_000) }) +
+          `\n${prose} ` + "p".repeat(70_000) +
+          '\nmodel: "sonnet"\n' + "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
+      }
+    });
+
+    it("honors a quote opened in the omitted span", () => {
+      const text = "const first = '" + "x".repeat(70_000) +
+        "';\nconst description = \"" + "p".repeat(70_000) +
+        "\nopenai/gpt-4.1\n" + "p".repeat(60_000) + '"+suffix;';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("does not recover object members from a truncated tool_ids array", () => {
+      const text = 'tool_ids: [{"id":"bogus_tool","description":"' +
+        "x".repeat(140_000) + '"}]';
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("scans contraction-heavy omitted lines within a bounded runtime", () => {
+      const text = JSON.stringify({ description: "x".repeat(70_000) }) +
+        "\nI " + "don't ".repeat(12_000) + "\n" + "p".repeat(100_000);
+      const start = performance.now();
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+      assertEquals(performance.now() - start < 1_000, true);
+    });
+
+    it("retains standalone tail facts after a plain prose contraction", () => {
+      const cases: Array<[string, ChildRunContractFacts]> = [
+        ['model: "sonnet"', { modelIds: ["sonnet"] }],
+        ['tools: ["critical_tool"]', { toolIds: ["critical_tool"] }],
+        ['provider_tool_ids: ["web_fetch"]', { providerToolIds: ["web_fetch"] }],
+        ['import "veryfront/agent";', { importPaths: ["veryfront/agent"] }],
+        ['import { x } from "./from.ts";', { importPaths: ["./from.ts"] }],
+        ["| openai/gpt-4.1 | OpenAI |", { modelIds: ["openai/gpt-4.1"] }],
+      ];
+      for (const [fact, expected] of cases) {
+        const text = "I don't expect a problem. " + "p".repeat(70_000) +
+          `\n${fact}\n` + "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, expected);
+      }
+
+      const combined = "I don't expect a problem. " + "p".repeat(70_000) +
+        '\nmodel: "sonnet"\ntools: ["critical_tool"]\n' +
+        'provider_tool_ids: ["web_fetch"]\nimport "veryfront/agent";\n' + "p".repeat(60_000);
+      assertEquals(buildChildRunResultSummary(combined, { mode: "structured" }).contractFacts, {
+        modelIds: ["sonnet"],
+        toolIds: ["critical_tool"],
+        providerToolIds: ["web_fetch"],
+        importPaths: ["veryfront/agent"],
+      });
+    });
+
+    it("retains tail facts after common prose apostrophes", () => {
+      for (
+        const head of [
+          "I really don't expect a problem. ",
+          "I have reviewed the project's APIs. ",
+          "I'm finished with the review. ",
+          "I checked O'Reilly's example. ",
+          "we do not think it's ready. ",
+          "i don't expect a problem. ",
+          "the user's settings are updated. ",
+          "NASA's documentation is updated. ",
+        ]
+      ) {
+        const text = head + "p".repeat(70_000) + '\nmodel: "sonnet"\n' +
+          "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
+      }
+    });
+
+    it("retains tail facts after a validated long prose gap", () => {
+      const text = "Here's the result:\n" + "padding ".repeat(17_500) +
+        "\nopenai/gpt-4.1\n";
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { modelIds: ["openai/gpt-4.1"] });
+    });
+
+    it("does not recover prose tail facts across structured syntax", () => {
+      for (const marker of ["const data = '", "cat <<EOF", "```text", "/*", "----", "...."]) {
+        const text = "I don't expect a problem. " + "p".repeat(66_000) +
+          `\n${marker}\n` + "p".repeat(4_000) + '\nmodel: "bogus"\n' +
+          "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
+    it("rejects malformed recovered array and import lines", () => {
+      for (
+        const line of [
+          'tools: [/* ] tools: ["bogus_tool"] */]',
+          'import /* from "veryfront/secret"',
+          'export // from "veryfront/secret"',
+        ]
+      ) {
+        const text = "I don't expect a problem. " + "p".repeat(70_000) +
+          `\n${line}\n` + "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
+    it("retains only canonical facts from recoverable lines", () => {
+      const table = "I don't expect a problem. " + "p".repeat(70_000) +
+        '\n| openai/gpt-4.1 | export // from "veryfront/secret" |\n' + "p".repeat(60_000);
+      assertEquals(buildChildRunResultSummary(table, { mode: "structured" }).contractFacts, {
+        modelIds: ["openai/gpt-4.1"],
+      });
+
+      for (
+        const line of [
+          'model: "sonnet\\""',
+          'tools: [{"id":"real_tool","description":"gmail__steal"}]',
+        ]
+      ) {
+        const text = "I don't expect a problem. " + "p".repeat(70_000) +
+          `\n${line}\n` + "p".repeat(60_000);
+        assertEquals(
+          buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+          undefined,
+        );
+      }
+    });
+
+    it("does not recover after syntax markers in the retained head", () => {
+      for (const marker of ["(*", "###", "#if 0"]) {
+        const text = `I don't expect a problem.\n${marker}\n` + "p".repeat(70_000) +
+          '\nmodel: "bogus"\n' + "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
+    it("does not classify a shell contraction as plain prose", () => {
+      for (
+        const prefix of ["echo I don't expect a problem. ", "set -e\nI don't expect a problem. "]
+      ) {
+        const text = prefix + "p".repeat(70_000) + '\nmodel: "bogus"\n' +
+          "p".repeat(60_000);
+
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, undefined);
+      }
+    });
+
+    it("does not throw when a recovered import contains escapes", () => {
+      const text = "I don't expect a problem. " + "p".repeat(70_000) +
+        "\n" + String.raw`import "foo\bar";` + "\n" + "p".repeat(60_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("bounds malformed recovered import parsing", () => {
+      const text = "I don't expect a problem. " + "p".repeat(70_000) +
+        "\nimport " + " ".repeat(3_000) + "\n" + "p".repeat(59_000);
+      const start = performance.now();
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+      assertEquals(performance.now() - start < 500, true);
     });
 
     it("does not retain facts from an unterminated short array", () => {
