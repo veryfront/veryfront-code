@@ -438,6 +438,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private sourceSnapshotVersion = nextSourceSnapshotGeneration();
   private sourceSnapshotIdentity: string | undefined;
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
+  private hasAppliedSourceSnapshot = false;
   private sourceSnapshotFingerprint:
     | { version: number; value: Promise<string | undefined> }
     | undefined;
@@ -1187,7 +1188,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
             return false;
           }
 
-          const sourceChanged = !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
+          const sourceChanged = this.sourceSnapshotFiles === undefined
+            ? this.hasAppliedSourceSnapshot
+            : !sourceSnapshotsEqual(this.sourceSnapshotFiles, files);
           if (sourceChanged) {
             // Route discovery reads the persistent `stat:` and `dir:` tiers
             // before either in-memory structure is rebuilt, so clearing memory
@@ -1310,6 +1313,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     identity = this.#getCurrentSourceSnapshotIdentity(),
   ): void {
     this.sourceSnapshotFiles = files;
+    this.hasAppliedSourceSnapshot = true;
     this.sourceSnapshotIdentity = identity;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
     this.sourceSnapshotCheckedAt = currentTime();

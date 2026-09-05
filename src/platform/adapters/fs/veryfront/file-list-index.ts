@@ -238,6 +238,24 @@ export class FileListIndex {
       return null;
     }
 
+    const currentIndex = this.index;
+    const currentPathSet = this.pathSet;
+    const matchesCurrentIndex = currentIndex && currentPathSet &&
+      fileList.length === currentPathSet.size &&
+      fileList.every((file) =>
+        currentPathSet.has(file.path) && currentIndex.get(file.path) === file.content
+      );
+    if (
+      matchesCurrentIndex &&
+      this.indexScopeKey === (cacheKey ?? null) &&
+      stableSnapshotVersion !== undefined &&
+      this.indexSnapshotVersion === stableSnapshotVersion
+    ) {
+      this.indexFresh = true;
+      this.indexBuiltAt = Date.now();
+      return { content: currentIndex, paths: currentPathSet, fresh: true };
+    }
+
     const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,

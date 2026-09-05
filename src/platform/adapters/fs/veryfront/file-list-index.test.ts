@@ -309,6 +309,25 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
   });
 
   describe("expired cache entry", () => {
+    it("refreshes the fallback age after validating an unchanged listing", async () => {
+      let listing: Array<{ path: string; content?: string }> | undefined = [
+        { path: "a.ts", content: "content-a" },
+      ];
+      const index = new FileListIndex(() => Promise.resolve(listing));
+
+      assertEquals(await index.lookup("a.ts"), "content-a");
+      (index as unknown as { indexBuiltAt: number }).indexBuiltAt = Date.now() -
+        (5 * 60 * 1000 + 1);
+      assertEquals(await index.lookup("a.ts"), "content-a");
+
+      listing = undefined;
+      assertEquals(
+        await index.lookup("a.ts"),
+        "content-a",
+        "a freshly validated index must remain available when the cache later expires",
+      );
+    });
+
     it("keeps serving a warm index after the cache entry expires", async () => {
       let calls = 0;
       const index = new FileListIndex(async () => {
