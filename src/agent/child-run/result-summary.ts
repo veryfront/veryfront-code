@@ -970,11 +970,30 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
   return value !== undefined && !FIELD_SEPARATOR_PATTERN.test(value) && !/["'`]/.test(value);
 }
 
+function maskQuotedProseText(text: string): string {
+  const chunks: string[] = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index++) {
+    const quote = text[index];
+    if (quote !== '"' && quote !== "'") continue;
+    if (
+      quote === "'" && /\p{L}/u.test(text[index - 1] ?? "") && /\p{L}/u.test(text[index + 1] ?? "")
+    ) continue;
+    const end = scanQuotedValueEnd(text, index, quote);
+    if (end === undefined || /[\r\n]/.test(text.slice(index, end))) return text;
+    chunks.push(text.slice(start, index), "quote");
+    start = end;
+    index = end - 1;
+  }
+  chunks.push(text.slice(start));
+  return chunks.join("");
+}
+
 function isPlainProseText(text: string): boolean {
   // A balanced single-line code span does not turn an apostrophe in its
   // surrounding prose into a string delimiter. Field scanning still skips
   // the original backtick span, so quoted pseudo-fields cannot become facts.
-  const prose = text.replace(/`[^`\r\n]+`/g, "code");
+  const prose = maskQuotedProseText(text.replace(/`[^`\r\n]+`/g, "code"));
   return /^[\p{L}\p{N}\s.,!?:_+>()-]*$/u.test(prose) && !prose.includes("::") &&
     !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(prose);
 }
