@@ -363,6 +363,10 @@ function openWindowsLibrary() {
     },
     GetLastError: { parameters: [], result: "u32" },
     GetFileInformationByHandle: { parameters: ["pointer", "buffer"], result: "i32" },
+    SetFilePointerEx: { parameters: ["pointer", "i64", "pointer", "u32"], result: "i32" },
+    SetEndOfFile: { parameters: ["pointer"], result: "i32" },
+    ReadFile: { parameters: ["pointer", "buffer", "u32", "buffer", "pointer"], result: "i32" },
+    WriteFile: { parameters: ["pointer", "buffer", "u32", "buffer", "pointer"], result: "i32" },
   });
   const open = (
     name: string,
@@ -403,7 +407,7 @@ function openWindowsLibrary() {
     const status = new Uint8Array(16);
     const error = nt.symbols.NtCreateFile(
       result,
-      0x100081,
+      fileMode === "r+" || fileMode === "wx+" ? 0x100083 : 0x100081,
       attributes,
       status,
       null,
@@ -448,7 +452,7 @@ function nativeWindowsRoot(root: string): string {
     : "\\??\\" + normalized;
 }
 
-/** Open relative to a pinned parent, and retain its identity until handoff. */
+/** Read and write through a native file handle opened beneath the pinned root. */
 export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r+" | "wx+") {
   const parts = components(path, root);
   const name = parts.pop();
@@ -456,7 +460,10 @@ export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r
   const { nt, kernel, open } = openWindowsLibrary();
   let parent: Deno.PointerValue = null;
   let file: Deno.PointerValue = null;
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     if (file) {
       nt.symbols.NtClose(file);
       file = null;
@@ -476,13 +483,75 @@ export function openPinnedWindowsFile(path: string, root: string, mode: "r" | "r
       parent = child;
     }
     file = open(name, parent, mode);
-    const info = new Uint8Array(52);
-    if (!kernel.symbols.GetFileInformationByHandle(file, info)) throw failure();
-    const view = new DataView(info.buffer);
+    const stat = () => {
+      if (closed) throw failure();
+      const info = new Uint8Array(52);
+      if (!kernel.symbols.GetFileInformationByHandle(file, info)) throw failure();
+      const view = new DataView(info.buffer);
+      return {
+        dev: BigInt(view.getUint32(28, true)),
+        ino: (BigInt(view.getUint32(44, true)) << 32n) | BigInt(view.getUint32(48, true)),
+        size: (BigInt(view.getUint32(32, true)) << 32n) | BigInt(view.getUint32(36, true)),
+      };
+    };
+    const seek = (position: number) => {
+      if (
+        closed || !Number.isSafeInteger(position) || position < 0 ||
+        !kernel.symbols.SetFilePointerEx(file, BigInt(position), null, 0)
+      ) throw failure();
+    };
+    const transfer = (
+      write: boolean,
+      bytes: Uint8Array<ArrayBuffer>,
+      offset: number,
+      length: number,
+      position: number,
+    ) => {
+      if (
+        !Number.isSafeInteger(offset) || !Number.isSafeInteger(length) ||
+        offset < 0 || length < 0 || offset + length > bytes.length
+      ) throw failure();
+      seek(position);
+      const size = Math.min(length, 0x7fff_ffff);
+      const count = new Uint32Array(1);
+      const operation = write ? kernel.symbols.WriteFile : kernel.symbols.ReadFile;
+      if (!operation(file, bytes.subarray(offset, offset + size), size, count, null)) {
+        if (!write && kernel.symbols.GetLastError() === 38) return 0;
+        throw failure();
+      }
+      const transferred = count[0]!;
+      if (transferred > size) throw failure();
+      return transferred;
+    };
     return {
-      dev: BigInt(view.getUint32(28, true)),
-      ino: (BigInt(view.getUint32(44, true)) << 32n) | BigInt(view.getUint32(48, true)),
-      close,
+      stat: (_options?: { bigint: boolean }) => Promise.resolve(stat()),
+      read: (bytes: Uint8Array<ArrayBuffer>, offset: number, length: number, position: number) =>
+        Promise.resolve({ bytesRead: transfer(false, bytes, offset, length, position) }),
+      readFile: (_options: { encoding: "utf8" }) => {
+        const size = Number(stat().size);
+        if (!Number.isSafeInteger(size) || size < 0) throw failure();
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        while (offset < size) {
+          const count = transfer(false, bytes, offset, size - offset, offset);
+          if (count === 0) break;
+          offset += count;
+        }
+        return Promise.resolve(
+          new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(0, offset)),
+        );
+      },
+      truncate: (size: number) => {
+        seek(size);
+        if (!kernel.symbols.SetEndOfFile(file)) throw failure();
+        return Promise.resolve();
+      },
+      write: (bytes: Uint8Array<ArrayBuffer>, offset: number, length: number, position: number) =>
+        Promise.resolve({ bytesWritten: transfer(true, bytes, offset, length, position) }),
+      close: () => {
+        close();
+        return Promise.resolve();
+      },
     };
   } catch (error) {
     close();

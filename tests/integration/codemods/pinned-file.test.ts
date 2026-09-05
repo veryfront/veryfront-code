@@ -20,6 +20,7 @@ describe("pinned file operations", () => {
       const outside = `${base}/outside`;
       await Deno.mkdir(root);
       await Deno.mkdir(outside);
+      const projectRoot = await Deno.realPath(root);
       await Deno.writeTextFile(`${root}/package.json`, '{"name":"inside"}');
       await Deno.writeTextFile(`${outside}/package.json`, '{"name":"outside"}');
       const originalDlopen = Deno.dlopen;
@@ -51,11 +52,13 @@ describe("pinned file operations", () => {
           });
         }) as typeof Deno.dlopen;
         if (operation === "read") {
-          const result = await readProjectPackageJson(`${root}/package.json`, root);
+          const result = await readProjectPackageJson(`${root}/package.json`, projectRoot);
           assertEquals(typeof result.parseError, "string");
           assertEquals(result.data, {});
         } else {
-          await assertRejects(() => writeTextFileInsideProject(`${root}/package.json`, root, "{}"));
+          await assertRejects(() =>
+            writeTextFileInsideProject(`${root}/package.json`, projectRoot, "{}")
+          );
         }
         assertEquals(swapped, true);
         assertEquals(await Deno.readTextFile(`${outside}/package.json`), '{"name":"outside"}');
@@ -76,8 +79,9 @@ describe("pinned file operations", () => {
       Deno.dlopen = ((path: string | URL, symbols: Deno.ForeignLibraryInterface) => {
         const bindings = { ...symbols };
         for (const name of ["fstat", "fstatat"]) {
-          if (name in bindings) {
-            bindings[name] = { ...bindings[name], name: "veryfront_missing_stat_symbol" };
+          const binding = bindings[name];
+          if (binding) {
+            bindings[name] = { ...binding, name: "veryfront_missing_stat_symbol" };
           }
         }
         const library = originalDlopen(path, bindings);

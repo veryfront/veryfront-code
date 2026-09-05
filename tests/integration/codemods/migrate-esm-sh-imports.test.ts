@@ -7,7 +7,6 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { parse } from "npm:@babel/parser@7.29.2";
-import { stat as statNativeFile } from "node:fs/promises";
 import {
   assertPathInsideProject,
   collectSourceFiles,
@@ -20,7 +19,23 @@ import {
   readProjectPackageJson,
   writeTextFileInsideProject,
 } from "../../../scripts/codemods/migrate-esm-sh-imports.ts";
-import { readPinnedDirectory } from "../../../scripts/codemods/pinned-directory.ts";
+import {
+  openPinnedPosixFile,
+  openPinnedWindowsFile,
+  readPinnedDirectory,
+} from "../../../scripts/codemods/pinned-directory.ts";
+
+async function readFileIdentity(path: string, root: string) {
+  const canonical = await Deno.realPath(path);
+  const file = Deno.build.os === "windows"
+    ? openPinnedWindowsFile(canonical, root, "r")
+    : openPinnedPosixFile(canonical, root, "r");
+  try {
+    return await file.stat({ bigint: true });
+  } finally {
+    await file.close();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // CLI option parsing
@@ -639,6 +654,7 @@ it("manifest writes remain bound to the file identity that was read", async () =
         }),
       Error,
     );
+    assert(error instanceof Error);
     assertStringIncludes(error.message, "changed after being read");
     assertEquals(await Deno.readTextFile(pkgPath), '{"name":"replacement"}\n');
   } finally {
@@ -905,6 +921,7 @@ it(
       if (!unreadable) return;
 
       const error = await assertRejects(() => main(["--", project]), Error);
+      assert(error instanceof Error);
       assertStringIncludes(error.message, "Failed to read");
       assert(error.cause instanceof Error, "the underlying failure must survive as the cause");
       const failureKind = (error.cause as Error & { code?: string }).code ??
@@ -1270,6 +1287,7 @@ it("a failed manifest creation does not unlink through a revalidated path", asyn
       Error,
       "changed after being read",
     );
+    assert(error instanceof Error);
     assertStringIncludes(error.message, '"package.json"');
     assertStringIncludes(error.message, "Inspect it before retrying");
     assert(!error.message.includes(project), "creation errors must not expose absolute paths");
@@ -1319,6 +1337,7 @@ it("creating a missing manifest never follows a planted symlink", async () => {
         }),
       Error,
     );
+    assert(error instanceof Error);
     assertStringIncludes(error.message, "symlink");
     await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
   } finally {
@@ -1340,6 +1359,7 @@ it("assertPathInsideProject rejects a path that is not a regular file", async ()
       () => assertPathInsideProject(`${project}/package.json`, projectRoot),
       Error,
     );
+    assert(error instanceof Error);
     assertStringIncludes(error.message, "regular file");
   } finally {
     await Deno.remove(project, { recursive: true });
@@ -1353,7 +1373,7 @@ it("project writes reject a file replaced after its source was read", async () =
   try {
     const projectRoot = await Deno.realPath(project);
     await Deno.writeTextFile(target, "original");
-    const identity = await statNativeFile(target, { bigint: true });
+    const identity = await readFileIdentity(target, projectRoot);
     await Deno.writeTextFile(replacement, "replacement");
     await Deno.rename(replacement, target);
 
@@ -1382,7 +1402,7 @@ it("project writes reject an in-place edit after analysis", async () => {
     const newer = 'import "https://esm.sh/pkg@2.0.0";\n';
     await Deno.writeTextFile(target, original);
     const projectRoot = await Deno.realPath(project);
-    const identity = await statNativeFile(target, { bigint: true });
+    const identity = await readFileIdentity(target, projectRoot);
     await Deno.writeTextFile(target, newer);
 
     await assertRejects(
@@ -1404,14 +1424,13 @@ it("project writes reject an in-place edit after analysis", async () => {
 });
 
 it("project writes use bigint identity stats when number-valued inode stats lose precision", async () => {
-  if (Deno.build.os === "windows") return;
   const project = await makeTempDir();
   const target = `${project}/app.ts`;
   const originalStat = Deno.stat;
   try {
     await Deno.writeTextFile(target, "original");
     const root = await Deno.realPath(project);
-    const info = await statNativeFile(target, { bigint: true });
+    const info = await readFileIdentity(target, root);
     Object.defineProperty(Deno, "stat", {
       configurable: true,
       value: async (path: string | URL) => ({
@@ -2088,7 +2107,7 @@ it("pinned enumeration keeps reading the opened directory after its path is repl
     for await (const entry of iterator) names.push(entry.name);
     assertEquals(names.sort(), ["one.ts", "two.ts"]);
   } finally {
-    await iterator.return();
+    await iterator.return(undefined);
     await Deno.remove(parent, { recursive: true });
   }
 });
