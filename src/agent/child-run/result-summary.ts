@@ -1191,17 +1191,28 @@ function maskQuotedProseText(text: string): string {
   return chunks.join("");
 }
 
+function normalizeMarkdownProse(text: string): string {
+  return text
+    .replace(/^ {0,3}(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)]|>+)[ \t]+)/gm, "")
+    .replace(/\[([^\[\]\r\n]+)\]\([^()\s]+\)/g, "$1")
+    .replace(/\*{1,2}([^*\r\n]+)\*{1,2}/g, "$1")
+    .replace(
+      /[A-Za-z][A-Za-z0-9+.-]*(?::\/\/[^\s]*)?/g,
+      (token) => token.includes("://") ? "url" : token,
+    );
+}
+
 function isPlainProseText(text: string): boolean {
   // A balanced single-line code span does not turn an apostrophe in its
   // surrounding prose into a string delimiter. Field scanning still skips
   // the original backtick span, so quoted pseudo-fields cannot become facts.
-  const prose = maskQuotedProseText(text.replace(/`[^`\r\n]+`/g, "code"));
+  const prose = maskQuotedProseText(normalizeMarkdownProse(text).replace(/`[^`\r\n]+`/g, "code"));
   return /^[\p{L}\p{N}\s.,!?:_+>()-]*$/u.test(prose) && !prose.includes("::") &&
     !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(prose);
 }
 
 function startsWithProseWord(text: string): boolean {
-  const line = text.replace(
+  const line = normalizeMarkdownProse(text).replace(
     /^ {0,3}(?:(?:[-+*]|\d+[.)]|>+)\s+)*/,
     "",
   );

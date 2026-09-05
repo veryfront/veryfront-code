@@ -1018,6 +1018,40 @@ describe("child-run-result-summary", () => {
       );
     });
 
+    it("bounds malformed Markdown link scanning", () => {
+      const text = "The project's " + "[".repeat(40_000) + '\ntools: ["create_agent"]';
+      const started = performance.now();
+      buildChildRunResultSummary(text, { mode: "structured" });
+      assertEquals(performance.now() - started < 1_000, true);
+    });
+
+    it("recognizes apostrophes in ordinary Markdown prose", () => {
+      for (
+        const prose of [
+          "* The run finished at one o'clock.",
+          "- The run finished at one o'clock.",
+          "1. The run finished at one o'clock.",
+          "> The run finished at one o'clock.",
+          "# Result\nThe run finished at one o'clock.",
+          "**The run finished at one o'clock.**",
+          "*The run finished at one o'clock.*",
+          "[The project's docs](https://example.com)",
+          "The project's docs are at https://example.com.",
+        ]
+      ) {
+        assertEquals(
+          buildChildRunResultSummary(prose + '\ntools: ["create_agent"]', { mode: "structured" })
+            .contractFacts,
+          { toolIds: ["create_agent"] },
+        );
+      }
+      const text = "# Result\nI don't expect a problem. " + "p".repeat(70_000) +
+        '\nmodel: "sonnet"\n' + "p".repeat(60_000);
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        modelIds: ["sonnet"],
+      });
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
