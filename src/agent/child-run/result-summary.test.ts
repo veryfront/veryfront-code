@@ -866,6 +866,18 @@ describe("child-run-result-summary", () => {
       );
     });
 
+    it("retains assignment syntax in inline configuration declarations", () => {
+      for (const field of ["tools", '"tools"', "'tool_ids'", "provider_tool_ids"]) {
+        const text = "Use ` " + field + ' = ["create_agent"]`.';
+        assertEquals(
+          buildChildRunResultSummary(text, { mode: "structured" }).contractFacts,
+          field === "provider_tool_ids"
+            ? { providerToolIds: ["create_agent"] }
+            : { toolIds: ["create_agent"] },
+        );
+      }
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
