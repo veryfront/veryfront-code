@@ -596,6 +596,16 @@ function collectCompletedCompositeChildIds(
     const status = nodeStates[node.id]?.status;
     if (status !== "completed") continue;
 
+    if (node.config.type === "subWorkflow") {
+      for (const childId of nodeStates[node.id]?._completedCompositeChildIds ?? []) {
+        target.add(childId);
+      }
+      if (typeof node.config.workflow !== "string" && Array.isArray(node.config.workflow.steps)) {
+        collectExecutedCompositeNodeIds(node.config.workflow.steps, nodeStates, target, context);
+      }
+      continue;
+    }
+
     if (node.config.type === "parallel") {
       collectExecutedCompositeNodeIds(node.config.nodes, nodeStates, target, context);
       continue;
@@ -826,6 +836,13 @@ function createCompositeNodeStateView(
   }
   const visible = Object.create(null) as Record<string, NodeState>;
   for (const [nodeId, state] of Object.entries(nodeStates)) {
+    // Sequential composites can reuse the same sub-workflow path. A state
+    // committed by an earlier composite belongs to this attempt only when
+    // this composite explicitly recorded it before suspending or retrying.
+    if (
+      scope.completedCompositeChildIds.has(nodeId) &&
+      !activeCompositeChildIds.has(nodeId)
+    ) continue;
     const ownerPath = state._subWorkflowOwnerPath;
     if (ownerPath !== undefined) {
       const allowed = ownerPath === parentPath && declaredIds.has(nodeId) ||
@@ -2490,6 +2507,7 @@ export class DAGExecutor {
       nodeId: node.id,
       status: deriveNodeStatus(result.completed, waiting),
       output: finalOutput,
+      ...(result.completed ? { _completedCompositeChildIds: [...producedNodeIds] } : {}),
       error: waiting ? undefined : result.error,
       attempt: 1,
       startedAt: new Date(startTime),

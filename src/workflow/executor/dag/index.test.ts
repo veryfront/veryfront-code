@@ -3859,6 +3859,51 @@ describe("DAGExecutor", () => {
       assertEquals(resumed.nodeStates["choose/then"]?.status, "completed");
     });
 
+    it("requires a new approval when sequential composites reuse a sub-workflow owner", async () => {
+      const child = () =>
+        subWorkflow("shared", {
+          workflow: {
+            id: "approval-workflow",
+            steps: [waitForApproval("review", { message: "Approve this composite" })],
+          },
+        });
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: { type: "parallel", nodes: [child()] } },
+        { id: "second", dependsOn: ["first"], config: { type: "parallel", nodes: [child()] } },
+      ];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertExists(first.waitingNode);
+      const second = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            [first.waitingNode]: { ...first.nodeStates[first.waitingNode]!, status: "completed" },
+          },
+        }),
+      );
+      assertEquals(second.nodeStates.first?.status, "completed");
+      assertEquals(second.waiting, true);
+      assertEquals(second.nodeStates.second?.status, "running");
+      assertExists(second.waitingNode);
+      const third = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...second.nodeStates,
+            [second.waitingNode]: {
+              ...second.nodeStates[second.waitingNode]!,
+              status: "completed",
+            },
+          },
+        }),
+      );
+      assertEquals(third.completed, true);
+    });
+
     it("does not import an unstarted historical sibling into a resumed parallel", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
