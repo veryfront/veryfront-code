@@ -1691,7 +1691,8 @@ export class AgentRuntime {
     // their own write.
     if (
       this.memory instanceof NoMemory || !context ||
-      !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context)
+      !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
+        !getTurnMessageProjectionValidator(context)
     ) {
       return this.#commitTurnMessages(inputMessages, context);
     }

@@ -709,8 +709,18 @@ describe("resolveSecurityMiddleware", () => {
     );
   });
 
-  it("keeps stateless turns independent while another resolves runtime state", async () => {
-    for (const memory of [undefined, { type: "conversation", enabled: false } as const]) {
+  it("keeps stateless turns independent and queues projection-only persisted turns", async () => {
+    for (
+      const { memory, projectionOnly, expectedConcurrent } of [
+        { memory: undefined, projectionOnly: false, expectedConcurrent: true },
+        {
+          memory: { type: "conversation", enabled: false },
+          projectionOnly: false,
+          expectedConcurrent: true,
+        },
+        { memory: { type: "conversation" }, projectionOnly: true, expectedConcurrent: false },
+      ] as const
+    ) {
       const entered = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       const secondEntered = Promise.withResolvers<void>();
@@ -736,6 +746,13 @@ describe("resolveSecurityMiddleware", () => {
           skills: false,
           maxSteps: 1,
           memory,
+          security: projectionOnly ? false : undefined,
+          middleware: projectionOnly
+            ? [(context, next) => {
+              registerTurnMessageProjectionValidator(context, () => Promise.resolve());
+              return next();
+            }]
+            : [],
           resolveModelTransport: async () => ({ model }),
           resolveRuntimeState: async () => {
             if (calls++ === 0) {
@@ -759,7 +776,7 @@ describe("resolveSecurityMiddleware", () => {
       if (timer !== undefined) clearTimeout(timer);
       release.resolve();
       await Promise.all([first, second]);
-      assertEquals(concurrent, true);
+      assertEquals(concurrent, expectedConcurrent);
     }
   });
 

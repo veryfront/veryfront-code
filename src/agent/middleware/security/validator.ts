@@ -853,7 +853,7 @@ async function validateInputTexts(
   const results = await Promise.all([
     ...values.texts.map((value) => validator.validate(value, options)),
     ...values.assembled.map((value) =>
-      validator.validate(value, { ...options, checkMaxLength: false })
+      validator.validate(value, { ...options, checkMaxLength: false, checkCustomValidation: false })
     ),
   ]);
   return {

@@ -810,6 +810,21 @@ describe("securityMiddleware", () => {
     }]);
   });
 
+  it("applies custom format validation only to individual caller messages", async () => {
+    const middleware = securityMiddleware({
+      input: {
+        validate: (text) => (JSON.parse(text) as { allowed: boolean }).allowed,
+      },
+    });
+    const context = createContext({
+      input: [
+        { id: "first", role: "user", parts: [{ type: "text", text: '{"allowed":true}' }] },
+        { id: "second", role: "user", parts: [{ type: "text", text: '{"allowed":true}' }] },
+      ],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+  });
+
   it("does not apply caller input length limits to summary-memory projections", async () => {
     const middleware = securityMiddleware({ input: { maxLength: 8 } });
     const context = createContext({ input: "next" });
