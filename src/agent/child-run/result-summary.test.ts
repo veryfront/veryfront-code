@@ -166,6 +166,37 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, { toolIds: ["create_agent"] });
     });
 
+    it("extracts IDs from pseudo-JSON tool objects with trailing commas", () => {
+      for (
+        const [text, expectedToolId] of [
+          [`tools: [{'id':'single_quoted_tool',}]`, "single_quoted_tool"],
+          [`tools: [{"id":"double_quoted_tool",}]`, "double_quoted_tool"],
+        ] as const
+      ) {
+        const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+        assertEquals(result.contractFacts, { toolIds: [expectedToolId] });
+      }
+    });
+
+    it("normalizes unterminated horizontal whitespace in bounded linear time", () => {
+      buildChildRunResultSummary(" ".repeat(1_000), { mode: "structured" });
+      const measure = (length: number): number => {
+        const start = performance.now();
+        buildChildRunResultSummary(" ".repeat(length), { mode: "structured" });
+        return performance.now() - start;
+      };
+
+      const shortElapsedMs = measure(16_000);
+      const longElapsedMs = measure(64_000);
+
+      assertEquals(
+        longElapsedMs < 1_000 && longElapsedMs < shortElapsedMs * 12 + 100,
+        true,
+        `horizontal whitespace normalization scaled from ${shortElapsedMs}ms to ${longElapsedMs}ms`,
+      );
+    });
+
     it("extracts structured facts from hostile unclosed tool array text without quadratic scans", () => {
       const hostileText = " tools:[".repeat(64_000);
       const start = performance.now();
