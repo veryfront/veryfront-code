@@ -330,8 +330,8 @@ const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
-function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = false): T {
-  class UnsafeArrayCopyError extends TypeError {}
+function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = false): T {
+  class UnsafeInputCopyError extends TypeError {}
   const seen = new IntrinsicWeakMap<object, unknown>();
   const clone = (candidate: unknown): unknown => {
     if (candidate === null || typeof candidate !== "object") {
@@ -351,16 +351,24 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = f
     }
     const existing = IntrinsicReflectApply(WeakMapGet, seen, [candidate]);
     if (existing !== undefined) return existing;
-    if (ArrayIsArray(candidate)) {
+    let isArray: boolean;
+    try {
+      isArray = ArrayIsArray(candidate);
+    } catch {
+      if (allowOpaqueObjects) return candidate;
+      throw new UnsafeInputCopyError("Object input cannot be safely copied");
+    }
+    if (isArray) {
+      const candidateArray = candidate as unknown[];
       const array: unknown[] = [];
       IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
       try {
-        const length = candidate.length;
+        const length = candidateArray.length;
         for (let index = 0; index < length; index++) {
-          array[index] = clone(candidate[index]);
+          array[index] = clone(candidateArray[index]);
         }
       } catch (error) {
-        if (error instanceof UnsafeArrayCopyError) throw error;
+        if (error instanceof UnsafeInputCopyError) throw error;
         try {
           // Read array descriptors without invoking a Proxy's indexed get
           // traps. Provider-visible values must not retain the caller's array.
@@ -385,9 +393,9 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = f
               : undefined;
           }
         } catch (error) {
-          if (error instanceof UnsafeArrayCopyError) throw error;
-          if (!allowOpaqueArrays) {
-            throw new UnsafeArrayCopyError("Array input cannot be safely copied");
+          if (error instanceof UnsafeInputCopyError) throw error;
+          if (!allowOpaqueObjects) {
+            throw new UnsafeInputCopyError("Array input cannot be safely copied");
           }
           IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
           return candidate;
@@ -398,7 +406,11 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = f
     let prototype: object | null;
     let descriptors: PropertyDescriptorMap;
     try {
-      prototype = ObjectGetPrototypeOf(candidate);
+      try {
+        prototype = ObjectGetPrototypeOf(candidate);
+      } catch {
+        prototype = ObjectPrototype;
+      }
       if (prototype !== ObjectPrototype && prototype !== null) {
         try {
           const serialize = (candidate as { toJSON?: unknown }).toJSON;
@@ -415,7 +427,7 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = f
           IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
           return detached;
         } catch (error) {
-          if (error instanceof UnsafeArrayCopyError) throw error;
+          if (error instanceof UnsafeInputCopyError) throw error;
           // A nested Proxy can report a native prototype while exposing an
           // ordinary record. Detach its readable fields instead of keeping a
           // caller-owned reference after native cloning rejects it.
@@ -424,7 +436,10 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = f
       }
       descriptors = ObjectGetOwnPropertyDescriptors(candidate);
     } catch (error) {
-      if (error instanceof UnsafeArrayCopyError) throw error;
+      if (error instanceof UnsafeInputCopyError) throw error;
+      if (!allowOpaqueObjects) {
+        throw new UnsafeInputCopyError("Object input cannot be safely copied");
+      }
       return candidate;
     }
     const object = ObjectCreate(prototype) as Record<PropertyKey, unknown>;
@@ -446,7 +461,7 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueArrays = f
           writable: true,
         });
       } catch (error) {
-        if (error instanceof UnsafeArrayCopyError) throw error;
+        if (error instanceof UnsafeInputCopyError) throw error;
         continue;
       }
     }
