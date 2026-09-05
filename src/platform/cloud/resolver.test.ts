@@ -14,6 +14,7 @@ import {
 } from "#veryfront/config/runtime-config.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
@@ -248,6 +249,19 @@ describe("platform/cloud/resolver", () => {
     assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://api.veryfront.com");
     assertEquals(getVeryfrontCloudHostBootstrap().apiToken, "stored-login-token");
     assertEquals(getVeryfrontCloudHostBootstrap().apiBaseUrl, "https://api.veryfront.com");
+  });
+
+  it("preserves stored credential provenance after propagation into request context", async () => {
+    setEnv("VERYFRONT_API_URL", "https://project-api.example");
+    markEnvFileValue("VERYFRONT_API_URL");
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    await runWithRequestContext(
+      { projectSlug: "request-project", token: "stored-login-token" },
+      () => {
+        assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://api.veryfront.com");
+        return Promise.resolve();
+      },
+    );
   });
 
   it("does not treat a blank project env-file token as the stored token's source", () => {

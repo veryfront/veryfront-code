@@ -169,7 +169,6 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 }
 
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
-  const requestContext = getCurrentRequestContext();
   const scopedContext = getCurrentVeryfrontCloudContext();
   const scopedApiBaseUrl = scopedContext?.apiBaseUrl?.trim();
   const resolvedContext = getResolvedVeryfrontCloudContext();
@@ -185,9 +184,7 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
     };
   }
 
-  const usesHostCredential = requestContext?.token === undefined &&
-    scopedContext?.apiToken === undefined &&
-    resolvedContext.apiToken !== undefined &&
+  const usesHostCredential = resolvedContext.apiToken !== undefined &&
     resolvedContext.apiToken === getHostSecret("VERYFRONT_API_TOKEN");
   return {
     apiBaseUrl: usesHostCredential
