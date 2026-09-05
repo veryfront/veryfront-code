@@ -2060,7 +2060,7 @@ Deno.test("collection does not enumerate a replacement symlink between identity 
 });
 
 Deno.test("pinned enumeration keeps reading the opened directory after its path is replaced", async () => {
-  const parent = await makeTempDir();
+  const parent = await Deno.realPath(await makeTempDir());
   const project = `${parent}/project`;
   const saved = `${parent}/saved`;
   const outside = `${parent}/outside`;
@@ -2085,7 +2085,7 @@ Deno.test("pinned enumeration keeps reading the opened directory after its path 
 });
 
 Deno.test("pinned enumeration rejects symlinked parent components", async () => {
-  const project = await makeTempDir();
+  const project = await Deno.realPath(await makeTempDir());
   const outside = await makeTempDir();
   try {
     await Deno.mkdir(`${outside}/nested`);
@@ -2106,7 +2106,7 @@ Deno.test("pinned enumeration rejects symlinked parent components", async () => 
 });
 
 Deno.test("pinned enumeration preserves leading BOM characters in filenames", async () => {
-  const root = await makeTempDir();
+  const root = await Deno.realPath(await makeTempDir());
   try {
     await Deno.writeTextFile(`${root}/app.ts`, "export {};");
     await Deno.writeTextFile(`${root}/\uFEFFapp.ts`, "export {};");

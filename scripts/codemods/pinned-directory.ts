@@ -79,6 +79,13 @@ function posixError(library: ReturnType<typeof openPosixLibrary>): Error {
   return failure();
 }
 
+function posixSearchFlags(): number {
+  // Darwin O_SEARCH (O_EXEC | O_DIRECTORY), Linux O_PATH | O_DIRECTORY.
+  // Ancestors need search permission, not permission to list their contents.
+  return (Deno.build.os === "darwin" ? 0x40000000 : 0x200000) |
+    constants.O_DIRECTORY | constants.O_NOFOLLOW;
+}
+
 function* readPosixDirectory(root: string, parts: string[]): Generator<Deno.DirEntry> {
   const darwin = Deno.build.os === "darwin";
   const library = openPosixLibrary();
@@ -88,14 +95,20 @@ function* readPosixDirectory(root: string, parts: string[]): Generator<Deno.DirE
   let fd = -1;
   let directory: Deno.PointerValue = null;
   try {
-    fd = library.symbols.open(cstring(root), flags);
+    // O_NOFOLLOW only protects the final component. Pin every ancestor of
+    // the project root as well as the paths below it.
+    fd = library.symbols.open(cstring("/"), posixSearchFlags());
     if (fd < 0) throw failure();
-    for (const part of parts) {
-      const child = library.symbols.openat(fd, cstring(part), flags);
+    for (const part of [...root.split("/").filter(Boolean), ...parts]) {
+      const child = library.symbols.openat(fd, cstring(part), posixSearchFlags());
       if (child < 0) throw failure();
       library.symbols.close(fd);
       fd = child;
     }
+    const readable = library.symbols.openat(fd, cstring("."), flags);
+    if (readable < 0) throw failure();
+    library.symbols.close(fd);
+    fd = readable;
     directory = library.symbols.fdopendir(fd);
     if (!directory) throw failure();
     // The supported ABIs have directory records smaller than this buffer.
@@ -158,13 +171,13 @@ export function openPinnedPosixFile(path: string, root: string, mode: "r" | "r+"
   if (!name || Deno.build.os === "windows") throw failure();
   const library = openPosixLibrary();
   const cstring = (value: string) => new TextEncoder().encode(value + "\0");
-  const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+  const directoryFlags = posixSearchFlags();
   let directory = -1;
   let fd = -1;
   try {
-    directory = library.symbols.open(cstring(root), directoryFlags);
+    directory = library.symbols.open(cstring("/"), directoryFlags);
     if (directory < 0) throw posixError(library);
-    for (const part of parts) {
+    for (const part of [...root.split("/").filter(Boolean), ...parts]) {
       const child = library.symbols.openat(directory, cstring(part), directoryFlags);
       if (child < 0) throw posixError(library);
       library.symbols.close(directory);
@@ -285,10 +298,7 @@ export function openPinnedPosixFile(path: string, root: string, mode: "r" | "r+"
   };
 }
 
-function* readWindowsDirectory(
-  root: string,
-  parts: string[],
-): Generator<Deno.DirEntry> {
+function openWindowsLibrary() {
   const nt = Deno.dlopen("ntdll.dll", {
     NtCreateFile: {
       parameters: [
@@ -314,8 +324,9 @@ function* readWindowsDirectory(
       result: "i32",
     },
     GetLastError: { parameters: [], result: "u32" },
+    GetFileInformationByHandle: { parameters: ["pointer", "buffer"], result: "i32" },
   });
-  const open = (name: string, parent: Deno.PointerValue): Deno.PointerValue => {
+  const open = (name: string, parent: Deno.PointerValue, createFile = false): Deno.PointerValue => {
     const encoded = new Uint16Array(name.length + 1);
     for (let index = 0; index < name.length; index++) {
       encoded[index] = name.charCodeAt(index);
@@ -356,8 +367,8 @@ function* readWindowsDirectory(
       null,
       0,
       7,
-      1,
-      0x200021,
+      createFile ? 2 : 1,
+      createFile ? 0x200060 : 0x200021,
       null,
       0,
     );
@@ -382,13 +393,63 @@ function* readWindowsDirectory(
     }
     return handle;
   };
+  return { nt, kernel, open };
+}
+
+function nativeWindowsRoot(root: string): string {
+  const normalized = root.replaceAll("/", "\\").replace(/^\\\\\?\\/, "");
+  return normalized.startsWith("\\\\")
+    ? "\\??\\UNC\\" + normalized.slice(2)
+    : "\\??\\" + normalized;
+}
+
+/** Create exclusively relative to a pinned parent, and retain its identity until handoff. */
+export function createPinnedWindowsFile(path: string, root: string) {
+  const parts = components(path, root);
+  const name = parts.pop();
+  if (!name || Deno.build.os !== "windows") throw failure();
+  const { nt, kernel, open } = openWindowsLibrary();
+  let parent: Deno.PointerValue = null;
+  let file: Deno.PointerValue = null;
+  const close = () => {
+    if (file) {
+      nt.symbols.NtClose(file);
+      file = null;
+    }
+    if (parent) {
+      nt.symbols.NtClose(parent);
+      parent = null;
+    }
+    kernel.close();
+    nt.close();
+  };
+  try {
+    parent = open(nativeWindowsRoot(root), null);
+    for (const part of parts) {
+      const child = open(part, parent);
+      nt.symbols.NtClose(parent);
+      parent = child;
+    }
+    file = open(name, parent, true);
+    const info = new Uint8Array(52);
+    if (!kernel.symbols.GetFileInformationByHandle(file, info)) throw failure();
+    const view = new DataView(info.buffer);
+    return {
+      dev: BigInt(view.getUint32(28, true)),
+      ino: (BigInt(view.getUint32(44, true)) << 32n) | BigInt(view.getUint32(48, true)),
+      close,
+    };
+  } catch (error) {
+    close();
+    throw error;
+  }
+}
+
+function* readWindowsDirectory(root: string, parts: string[]): Generator<Deno.DirEntry> {
+  const { nt, kernel, open } = openWindowsLibrary();
   let handle: Deno.PointerValue = null;
   try {
-    const normalized = root.replaceAll("/", "\\").replace(/^\\\\\?\\/, "");
-    const nativeRoot = normalized.startsWith("\\\\")
-      ? "\\??\\UNC\\" + normalized.slice(2)
-      : "\\??\\" + normalized;
-    handle = open(nativeRoot, null);
+    handle = open(nativeWindowsRoot(root), null);
     for (const part of parts) {
       const child = open(part, handle);
       nt.symbols.NtClose(handle);

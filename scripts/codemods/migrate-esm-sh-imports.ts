@@ -9,7 +9,11 @@ import {
   stat as statNativeFile,
 } from "node:fs/promises";
 import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
-import { openPinnedPosixFile, readPinnedDirectory } from "./pinned-directory.ts";
+import {
+  createPinnedWindowsFile,
+  openPinnedPosixFile,
+  readPinnedDirectory,
+} from "./pinned-directory.ts";
 
 interface BabelGeneratorResult {
   code: string;
@@ -583,7 +587,31 @@ function sameFileIdentity(opened: StableFileIdentity, current: StableFileIdentit
 }
 
 async function openProjectFile(path: string, projectRoot: string, mode: "r" | "r+" | "wx+") {
-  if (Deno.build.os === "windows") return await openNativeFile(path, mode);
+  if (Deno.build.os === "windows") {
+    if (mode !== "wx+") return await openNativeFile(path, mode);
+    const created = createPinnedWindowsFile(path, projectRoot);
+    try {
+      // Reopening never creates a file. Keep the native creation handle alive
+      // until the Node handle proves it owns the same file, preventing ID reuse.
+      const file = await openNativeFile(path, "r+");
+      try {
+        if (
+          !sameFileIdentity(
+            stableFileIdentity(created),
+            stableFileIdentity(await file.stat({ bigint: true })),
+          )
+        ) {
+          throw new SafeFileGuardError("Refusing to write a file that changed after creation.");
+        }
+        return file;
+      } catch (error) {
+        await file.close();
+        throw error;
+      }
+    } finally {
+      created.close();
+    }
+  }
   const parent = await Deno.realPath(nativeDirname(path));
   return openPinnedPosixFile(`${parent}/${parsePath(path).base}`, projectRoot, mode);
 }
