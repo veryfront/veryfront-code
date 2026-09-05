@@ -80,6 +80,46 @@ function parseProperties(content: string): Map<string, string> {
   return properties;
 }
 
+function jobNeeds(job: YamlRecord, context: string): string[] {
+  if (job.needs === undefined) return [];
+  if (typeof job.needs === "string") return [job.needs];
+  assert(Array.isArray(job.needs), `${context} needs must be a string or array`);
+  assert(
+    job.needs.every((dependency) => typeof dependency === "string"),
+    `${context} needs entries must be job names`,
+  );
+  return job.needs as string[];
+}
+
+function longestJobPathMinutes(
+  jobs: YamlRecord,
+  jobName: string,
+  memo = new Map<string, number>(),
+  active = new Set<string>(),
+): number {
+  const cached = memo.get(jobName);
+  if (cached !== undefined) return cached;
+  assert(!active.has(jobName), `workflow jobs must not contain a needs cycle at ${jobName}`);
+
+  const job = asRecord(jobs[jobName], `${jobName} job`);
+  const timeout = Number(job["timeout-minutes"]);
+  assert(
+    Number.isFinite(timeout) && timeout > 0,
+    `${jobName} must have a positive timeout-minutes value`,
+  );
+
+  active.add(jobName);
+  const dependencies = jobNeeds(job, `${jobName} job`);
+  const dependencyMinutes = dependencies.length === 0 ? 0 : Math.max(
+    ...dependencies.map((dependency) => longestJobPathMinutes(jobs, dependency, memo, active)),
+  );
+  active.delete(jobName);
+
+  const total = timeout + dependencyMinutes;
+  memo.set(jobName, total);
+  return total;
+}
+
 async function readMergeGate(): Promise<YamlRecord> {
   const workflow = await readWorkflow();
   const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
@@ -303,32 +343,24 @@ describe("merge quality gate workflow", () => {
   it("keeps the longest merge-gate path within the merge queue response budget", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
-    const mergeGate = asRecord(
-      jobs["quality-gate-merge"],
-      "merge quality gate job",
+    const mergeGatePathMinutes = longestJobPathMinutes(jobs, "quality-gate-merge");
+    const mergeGateTimeoutMinutes = Number(
+      asRecord(jobs["quality-gate-merge"], "merge quality gate job")["timeout-minutes"],
     );
-    const dependencyTimeouts = REQUIRED_DEPENDENCIES.map((jobName) => {
-      const job = asRecord(jobs[jobName], `${jobName} job`);
-      const timeout = Number(job["timeout-minutes"]);
-      assert(
-        Number.isFinite(timeout) && timeout > 0,
-        `${jobName} must have a positive timeout-minutes value`,
-      );
-      return timeout;
-    });
-    const maximumDependencyMinutes = Math.max(...dependencyTimeouts);
-    const mergeGateMinutes = Number(mergeGate["timeout-minutes"]);
+    const sonarPathMinutes = longestJobPathMinutes(jobs, "sonar-quality-gate") +
+      mergeGateTimeoutMinutes;
+    const qualityGates = await readRepoFile(".github/QUALITY_GATES.md");
 
     assert(
-      maximumDependencyMinutes + mergeGateMinutes +
-          MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES <=
+      mergeGatePathMinutes + MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES <=
         MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES,
-      "merge queue response timeout must cover the longest merge-gate dependency and aggregate timeouts with scheduling headroom",
+      "merge queue response timeout must cover the longest transitive merge-gate path with scheduling headroom",
     );
     assertStringIncludes(
-      await readRepoFile(".github/QUALITY_GATES.md"),
+      qualityGates,
       `at least ${MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES} minutes`,
     );
+    assertStringIncludes(qualityGates, `${sonarPathMinutes}-minute maximum`);
   });
 
   it("documents Sonar enforcement for manually dispatched runs", async () => {
