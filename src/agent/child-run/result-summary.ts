@@ -963,12 +963,19 @@ function scanObjectMember(
   const keyStart = skipWhitespace(fieldBody, start);
   if (keyStart >= fieldBody.length) return { status: "incomplete" };
   const keyQuote = fieldBody[keyStart];
-  if (keyQuote !== '"' && keyQuote !== "'") return { status: "invalid" };
-  const key = scanQuotedPrefixValue(fieldBody, keyStart, keyQuote, trailingSource);
+  const identifier = keyQuote === '"' || keyQuote === "'"
+    ? undefined
+    : /^[\p{ID_Start}_$][\p{ID_Continue}$]*/u.exec(fieldBody.slice(keyStart));
+  const key: PrefixValueScan = keyQuote === '"' || keyQuote === "'"
+    ? scanQuotedPrefixValue(fieldBody, keyStart, keyQuote, trailingSource)
+    : identifier
+    ? { status: "complete", next: keyStart + identifier[0].length, value: identifier[0] }
+    : { status: "invalid" };
   if (key.status !== "complete") return key;
   if (typeof key.value !== "string") return { status: "invalid" };
 
   const colon = skipWhitespace(fieldBody, key.next);
+  if (identifier && colon >= fieldBody.length) return { status: "invalid" };
   if (colon >= fieldBody.length) return { status: "incomplete" };
   if (fieldBody[colon] !== ":") return { status: "invalid" };
   const valueStart = skipWhitespace(fieldBody, colon + 1);

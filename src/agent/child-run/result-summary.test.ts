@@ -1092,6 +1092,18 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("retains IDs before unquoted keys in truncated source objects", () => {
+      const text = 'tools: [{"id":"critical_tool", description:"' + "p".repeat(200_000) + '"}]';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["critical_tool"],
+      });
+      const invalid = 'tools: [{"id":"critical_tool", description "' + "p".repeat(200_000) + '"}]';
+      assertEquals(
+        buildChildRunResultSummary(invalid, { mode: "structured" }).contractFacts,
+        undefined,
+      );
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
