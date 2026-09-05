@@ -278,7 +278,10 @@ export async function upCommand(
       branch: "main",
       environment: "preview",
       mode: dryRun ? "dry-run" : "apply",
-      source: { kind: "ensure-pushed" },
+      // up publishes what is on disk, so a receipt that no longer describes
+      // this directory is refreshed rather than refused: refusing would leave
+      // the preview serving source the operator already replaced.
+      source: { kind: "ensure-pushed", refreshStaleSource: true },
     }, {
       onEvent(event) {
         if (event.kind !== "step") return;

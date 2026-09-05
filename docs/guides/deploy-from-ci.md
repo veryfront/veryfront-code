@@ -89,9 +89,11 @@ set.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
-`.vfignore` files are rejected. Git cleanliness is recorded as provenance
-metadata; Deploy promotes the source digest recorded by Push rather than
-recomputing production bytes from the working tree.
+`.vfignore` files are rejected. Push records a digest of the managed source set
+it uploaded, and Git cleanliness alongside it as provenance metadata, measured
+over the project directory only. Deploy promotes the source digest recorded by
+Push rather than recomputing production bytes from the working tree, and refuses
+a receipt this directory no longer matches.
 
 ## Preview the Push
 
@@ -122,15 +124,50 @@ veryfront push --branch main --prune --force --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
-Push records the checked-out commit and source digest in
-`.veryfront/push-receipt.json`. Deploy uses that last verified Push receipt,
-requires it to match the same project, branch, and Git commit, then verifies the
-release source digest before assigning it to the environment. Uncommitted edits
-made after Push are not promoted and do not invalidate that receipt; run Push
-again to update the preview before deploying those bytes. If no receipt exists,
-Deploy bootstraps one with a quiet Push, but CI should keep the explicit Push
-step so review and production promotion remain separate. Do not split the two
+Push records the checked-out commit, the digest of the source it uploaded, and
+whether the checkout was clean in `.veryfront/push-receipt.json`. Deploy uses
+that last verified Push receipt and requires it to match the same control plane,
+project, branch, and Git commit, then verifies the release source digest before
+assigning it to the environment. A receipt from a different commit is refused
+rather than replaced, so committed work is never uploaded behind the operator's
+back: check out the pushed commit, or run Push again from the commit you want
+deployed.
+
+Uncommitted edits are the one change no commit check can see, because they leave
+`HEAD` where the receipt left it. Deploy recomputes the source digest from the
+directory and refuses the promotion when it no longer matches the receipt, so an
+accidentally dirty checkout fails instead of promoting bytes no Push reviewed.
+The digest covers exactly the files Push uploads, so an edit `.gitignore` hides
+is still caught and an edit to a file Push never sends is not a mismatch. Run
+Push again to deploy the current source. Deploying a project named with
+`--project` promotes what that project already has and never uploads the working
+directory, so local edits are neither pushed nor treated as a mismatch on that
+path.
+
+`veryfront up` makes the current directory live rather than promoting a reviewed
+Push, so it refreshes a stale receipt with a quiet Push instead of refusing. That
+refresh is an ordinary push: it keeps the remote-conflict checks that `--force`
+would waive. In a Git checkout, it prunes files deleted from Git and receipt-owned
+paths missing from the current source, including previously uploaded untracked
+files. Other remote-only files stay in place. In a non-Git directory whose source
+digest changed, the refresh performs a full prune and removes remote-only files
+because the local directory is authoritative. The first refresh of a legacy
+receipt without a local source digest preserves remote-only files because the
+CLI cannot prove that the directory changed. Do not use `veryfront up` as a CI
+promotion step.
+
+If no receipt exists, Deploy bootstraps one with a quiet Push. That first Push
+has no receipt to check the checkout against, so it uploads the working tree as
+it stands, including uncommitted edits. CI must keep the explicit Push step so
+review and production promotion remain separate, and so the first deploy of a
+project is not the one that decides what its source is. Do not split the two
 commands across CI jobs or clean the checkout between them.
+
+A receipt written by a CLI older than the source digest carries no digest to
+recompute, so Deploy falls back to the recorded Git cleanliness for it. That
+fallback cannot see an edit `.gitignore` hides while `.vfignore` does not. Run
+Push once after upgrading: the receipt it writes carries the digest, and the
+full check applies from then on.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.

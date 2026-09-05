@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import {
   assertEquals,
+  assertExists,
   assertMatch,
   assertRejects,
   assertStrictEquals,
@@ -17,9 +18,16 @@ import {
   VeryfrontError,
 } from "veryfront/errors";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
-import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
+import {
+  computeSourceDigest,
+  resolveGitSource,
+  writePushReceipt,
+} from "../deployment-provenance.ts";
+import { capturePushSourceSnapshot } from "../../commands/push/command.ts";
+import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -32,6 +40,8 @@ import {
   type DeployEvent,
   type DeployProjectRequest,
   type DeployStepName,
+  observeLocalSource,
+  resolveBootstrapPush,
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
@@ -51,6 +61,7 @@ import {
   readyManifest,
   withDeployEnv,
   withFetchStub,
+  withoutAmbientCommitSha,
 } from "../../test-utils/deploy-test-support.ts";
 
 async function expectDeployError(
@@ -89,7 +100,10 @@ function helperControlPlane(overrides: Partial<DeployControlPlane>): DeployContr
     ...overrides,
   };
 }
-function createDeployment(controlPlane: InMemoryDeployControlPlane) {
+function createDeployment(
+  controlPlane: InMemoryDeployControlPlane,
+  observeSource?: typeof observeLocalSource,
+) {
   return createDeployProject({
     polling: {
       assetManifestPollIntervalMs: 100,
@@ -98,6 +112,7 @@ function createDeployment(controlPlane: InMemoryDeployControlPlane) {
       environmentTimeoutMs: 1_000,
     },
     controlPlaneFactory: () => controlPlane,
+    ...(observeSource ? { observeSource } : {}),
   });
 }
 
@@ -230,13 +245,13 @@ describe("DeployProject", () => {
 
   it("deploys a config that only uses the hosted configuration helpers", async () => {
     await withDeployEnv(async () => {
-      const { projectDir } = await createPushedProject();
-      await Deno.writeTextFile(
-        `${projectDir}/veryfront.config.ts`,
-        `import { defineConfig } from "veryfront";\n\n` +
+      const { projectDir, files } = await createPushedProject([{
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";\n\n` +
           `export default defineConfig({ title: "Demo" });\n`,
-      );
+      }]);
       const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.releaseFiles = files;
       try {
         const outcome = await executeApply(projectDir, controlPlane);
 
@@ -290,6 +305,66 @@ describe("DeployProject", () => {
         assertEquals(outcome.kind, "dry-run");
         assertEquals(controlPlane.createdReleases, []);
         assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("validates locally owned already-pushed source during dry runs", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/app/page.tsx`,
+          "export default function Page() { return <main>Changed</main>; }\n",
+        );
+        const deployment = createDeployment(controlPlane);
+
+        await assertRejects(
+          () =>
+            deployment.execute({
+              projectDir,
+              environment: "production",
+              mode: "dry-run",
+              source: { kind: "already-pushed", verifyLocalSource: true },
+            }),
+          Error,
+          "uncommitted changes",
+        );
+        assertEquals(controlPlane.createdReleases, []);
+        assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("observes source once for a normal apply without refresh", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir, files } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.releaseFiles = files;
+      let observations = 0;
+      const deployment = createDeployment(controlPlane, async (dir, dependencies) => {
+        observations++;
+        return await observeLocalSource(dir, dependencies);
+      });
+      try {
+        const outcome = await withFetchStub(
+          () => new Response("ready"),
+          () =>
+            deployment.execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "ensure-pushed" },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(observations, 1);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -872,6 +947,40 @@ describe("DeployProject", () => {
     });
   });
 
+  it("rechecks ensured source immediately before accepting the push receipt", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() =>
+          executeApply(projectDir, controlPlane, {
+            async onEvent(event) {
+              if (
+                event.kind === "step" && event.step === "verify-source" &&
+                event.phase === "started"
+              ) {
+                await Deno.writeTextFile(
+                  `${projectDir}/app/page.tsx`,
+                  "export default function Page() { return <main>Changed</main>; }\n",
+                );
+              }
+            },
+          }, {
+            source: { kind: "ensure-pushed", refreshStaleSource: true },
+          })
+        );
+
+        assertStringIncludes(
+          (error as Error).message,
+          "this project has uncommitted changes",
+        );
+        assertEquals(controlPlane.createdReleases, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("surfaces readiness failures for the discovered page route", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -904,13 +1013,22 @@ describe("DeployProject", () => {
   });
 });
 
-describe("pushed source provenance", () => {
-  it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
-    const projectDir = await Deno.makeTempDir();
-    try {
+/** A committed single-file project whose CLI metadata directory is Git-ignored. */
+function withGitProject(
+  fn: (projectDir: string, commitSha: string) => Promise<void>,
+): Promise<void> {
+  return withTempDir((projectDir) =>
+    withoutAmbientCommitSha(async () => {
       await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
       await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
-      const commitSha = await commitProject(projectDir);
+      await fn(projectDir, await commitProject(projectDir));
+    })
+  );
+}
+
+describe("pushed source provenance", () => {
+  it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
       const sourceDigest = await computeSourceDigest([
         { path: "app.ts", content: "export const value = 1;\n" },
       ]);
@@ -935,9 +1053,650 @@ describe("pushed source provenance", () => {
       });
 
       assertEquals(result, { commitSha, sourceDigest });
-    } finally {
-      await Deno.remove(projectDir, { recursive: true });
-    }
+    });
+  });
+
+  it("rejects a clean push receipt once the working tree has uncommitted edits", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest: await computeSourceDigest([
+          { path: "app.ts", content: "export const value = 1;\n" },
+        ]),
+        clean: true,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+      // The edit never reaches a commit, so HEAD still matches the receipt.
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+
+      await assertRejects(
+        () =>
+          resolvePushedSource({
+            projectDir,
+            controlPlane: "https://control.example.test/api",
+            projectId: "550e8400-e29b-41d4-a716-446655440000",
+            projectSlug: "my-project",
+            branch: "main",
+          }),
+        Error,
+        "The latest push came from a clean checkout, but this project has uncommitted changes.",
+      );
+
+      assertEquals(
+        await resolvePushedSource({
+          projectDir,
+          controlPlane: "https://control.example.test/api",
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectSlug: "my-project",
+          branch: "main",
+          enforceWorkingTreeClean: false,
+        }),
+        {
+          commitSha,
+          sourceDigest: await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+          ]),
+        },
+        "promote-only deploys validate the pushed target without treating local edits as source",
+      );
+    });
+  });
+
+  it("rejects a source change Git cannot see once the receipt digests the pushed files", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        // `.gitignore` hides this file while `.vfignore` does not, so push
+        // uploads it and `git status` never reports it. Cleanliness alone
+        // therefore cannot tell a stale upload from a current one.
+        await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\ngenerated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
+        const commitSha = await commitProject(projectDir);
+        const pushed = await observeLocalSource(projectDir);
+        assertExists(pushed.sourceDigest);
+        const receipt = await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha,
+          sourceDigest: `sha256:${"0".repeat(64)}`,
+          localSourceDigest: pushed.sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+
+        await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 2;\n");
+        const edited = await observeLocalSource(projectDir);
+        assertEquals(edited.gitSource.clean, true, "the edit stays invisible to Git");
+
+        await assertRejects(
+          () =>
+            resolvePushedSource({
+              projectDir,
+              controlPlane: "https://control.example.test/api",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+              branch: "main",
+            }),
+          Error,
+          "This directory no longer holds the source the latest push uploaded.",
+        );
+        assertEquals(
+          resolveBootstrapPush(
+            receipt,
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            edited,
+            {
+              controlPlane: "https://control.example.test/api",
+              branch: "main",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+            },
+          ),
+          "refresh",
+        );
+      })
+    );
+  });
+
+  it("rejects an ignored source edit during the closing Git probe", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        await Deno.writeTextFile(`${projectDir}/.gitignore`, "generated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
+        await commitProject(projectDir);
+        let gitProbe = 0;
+
+        const observed = await observeLocalSource(projectDir, {
+          resolveGitSource: async (dir) => {
+            const result = await resolveGitSource(dir);
+            gitProbe += 1;
+            if (gitProbe === 4) {
+              await Deno.writeTextFile(
+                `${projectDir}/generated.ts`,
+                "export const generated = 2;\n",
+              );
+            }
+            return result;
+          },
+        });
+
+        assertEquals(gitProbe, 4);
+        assertEquals(observed.gitSource.commitSha, null);
+        assertEquals(observed.gitSource.clean, false);
+        assertEquals(observed.gitSource.indeterminate, true);
+      })
+    );
+  });
+
+  it("recomputes exactly the digest push records on the receipt", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        // The receipt's localSourceDigest is only usable while deploy rebuilds
+        // the same file set push digested. Assert that parity directly: a
+        // filter that lands on one side alone would make every receipt
+        // unmatchable and turn each deploy into a refusal.
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "notes.md\n");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        await Deno.writeTextFile(`${projectDir}/notes.md`, "# notes\n");
+        await Deno.mkdir(`${projectDir}/pages`);
+        await Deno.writeTextFile(`${projectDir}/pages/index.tsx`, "export default () => null;\n");
+        await commitProject(projectDir);
+
+        const pushed = await capturePushSourceSnapshot(
+          projectDir,
+          createIgnoreChecker(await loadIgnorePatterns(projectDir)),
+        );
+        const observed = await observeLocalSource(projectDir);
+
+        assertEquals(
+          observed.sourceDigest,
+          pushed.sourceDigest,
+          "deploy must rebuild the file set push digests, byte for byte",
+        );
+      })
+    );
+  });
+
+  it("keeps deploying a project that does not Git-ignore the CLI state directory", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+        const commitSha = await commitProject(projectDir);
+        const sourceDigest = await computeSourceDigest([
+          { path: "app.ts", content: "export const value = 1;\n" },
+        ]);
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectSlug: "my-project",
+          branch: "main",
+          commitSha,
+          sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+        // Deploy links the project before it verifies the source, so the link
+        // lands in an un-ignored .veryfront/ right after a clean push. It is
+        // CLI state that never reaches the upload, so the pushed source is
+        // still exactly what the receipt promised.
+        await Deno.writeTextFile(
+          `${projectDir}/.veryfront/project.json`,
+          JSON.stringify({ version: 1 }) + "\n",
+        );
+
+        assertEquals(
+          await resolvePushedSource({
+            projectDir,
+            controlPlane: "https://control.example.test/api",
+            projectId: "550e8400-e29b-41d4-a716-446655440000",
+            projectSlug: "my-project",
+            branch: "main",
+          }),
+          { commitSha, sourceDigest },
+        );
+        assertEquals(
+          resolveBootstrapPush(
+            {
+              version: 2,
+              controlPlane: "https://control.example.test/api",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+              branch: "main",
+              commitSha,
+              sourceDigest,
+              clean: true,
+              pushedAt: "2026-07-10T09:20:00.000Z",
+            },
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            await observeLocalSource(projectDir),
+            {
+              controlPlane: "https://control.example.test/api",
+              branch: "main",
+              projectId: "550e8400-e29b-41d4-a716-446655440000",
+              projectSlug: "my-project",
+            },
+          ),
+          "none",
+        );
+      })
+    );
+  });
+});
+
+describe("resolveBootstrapPush", () => {
+  const receipt = {
+    version: 2 as const,
+    controlPlane: "https://control.example.test/api",
+    projectId: "550e8400-e29b-41d4-a716-446655440000",
+    projectSlug: "my-project",
+    branch: "main",
+    sourceDigest: "sha256:" + "0".repeat(64),
+    pushedAt: "2026-07-10T09:20:00.000Z",
+  };
+
+  const target = {
+    controlPlane: "https://control.example.test/api",
+    branch: "main",
+    projectId: "550e8400-e29b-41d4-a716-446655440000",
+    projectSlug: "my-project",
+  };
+
+  /** Make the checkout dirty in a way the CLI-state allowance cannot excuse. */
+  function dirty(projectDir: string): Promise<void> {
+    return Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+  }
+
+  it("keeps a matching digest-only receipt outside Git", () => {
+    const localSourceDigest = `sha256:${"1".repeat(64)}`;
+
+    assertEquals(
+      resolveBootstrapPush(
+        {
+          ...receipt,
+          commitSha: null,
+          clean: false,
+          localSourceDigest,
+        },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, repositoryAvailable: false },
+          sourceDigest: localSourceDigest,
+        },
+        target,
+      ),
+      "none",
+    );
+  });
+
+  it("upgrades a legacy non-Git receipt without full-prune authority", () => {
+    assertEquals(
+      resolveBootstrapPush(
+        { ...receipt, commitSha: null, clean: false },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, repositoryAvailable: false },
+          sourceDigest: `sha256:${"3".repeat(64)}`,
+        },
+        target,
+      ),
+      "refresh-preserving-remote",
+    );
+  });
+
+  it("preserves a Git-backed dirty receipt whose digest can still prove its source", () => {
+    // The checkout lost its Git metadata, so it names no commit. Refreshing
+    // here would rewrite the receipt's commitSha to null before
+    // validatePushReceipt ran, and the missing-current-commit refusal would
+    // never fire for provenance that was genuinely lost. The receipt carries a
+    // digest, so it must survive to the gate instead.
+    const localSourceDigest = `sha256:${"2".repeat(64)}`;
+
+    assertEquals(
+      resolveBootstrapPush(
+        {
+          ...receipt,
+          commitSha: "a".repeat(40),
+          clean: false,
+          localSourceDigest,
+        },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, repositoryAvailable: false },
+          sourceDigest: localSourceDigest,
+        },
+        target,
+      ),
+      "none",
+    );
+  });
+
+  it("does not refresh when Git provenance is indeterminate", () => {
+    assertEquals(
+      resolveBootstrapPush(
+        { ...receipt, commitSha: "1".repeat(40), clean: false },
+        { kind: "ensure-pushed", refreshStaleSource: true },
+        {
+          gitSource: { commitSha: null, clean: false, indeterminate: true },
+          sourceDigest: `sha256:${"2".repeat(64)}`,
+        },
+        target,
+      ),
+      "none",
+    );
+  });
+
+  it("skips the push only for a clean checkout parked on the pushed commit", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("leaves a moved HEAD to the receipt check instead of uploading behind it", async () => {
+    await withGitProject(async (projectDir) => {
+      // Committed work the push never saw is refused by validatePushReceipt
+      // with "came from a different commit"; deploy must not quietly replace
+      // that refusal with an upload.
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("keeps the moved-HEAD refusal when the tree is also dirty", async () => {
+    await withGitProject(async (projectDir) => {
+      // A dirty tree must not upgrade a refusal into an upload: pushing here
+      // would send the new commit *and* the uncommitted work, and would
+      // overwrite the very receipt validatePushReceipt reads to refuse.
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("keeps the branch refusal when the tree is dirty", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, branch: "feature", commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("keeps the project and control-plane refusals when the tree is dirty", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, projectSlug: "other-project", commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, projectId: "550e8400-e29b-41d4-a716-446655440001", commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, controlPlane: "https://other.example.test/api", commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("refreshes rather than bootstraps when the working tree drifted", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      // "refresh" is what keeps the push's remote-conflict checks and prune;
+      // "bootstrap" would force over a collaborator's edit.
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "refresh",
+      );
+    });
+  });
+
+  it("leaves a drifted tree to the deploy gate when the caller does not refresh", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      // veryfront deploy promotes a reviewed push; CI runs it after an
+      // explicit veryfront push. An accidentally dirty checkout must reach
+      // validatePushReceipt as a refusal, not become an upload of unreviewed
+      // bytes to an environment.
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("bootstraps a project without a receipt even when the caller does not refresh", async () => {
+    await withGitProject(async (projectDir) => {
+      // Nothing is being promoted or refused yet, so the first push is not the
+      // policy question the refresh flag settles.
+      assertEquals(
+        resolveBootstrapPush(
+          null,
+          { kind: "ensure-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "bootstrap",
+      );
+    });
+  });
+
+  it("trusts a matching source digest over a tree Git reports as dirty", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      // `.rst` is not an extension push uploads, so the digest still matches
+      // and the source provably did not change. Git cleanliness alone would
+      // have pushed the whole tree again for it.
+      await Deno.writeTextFile(`${projectDir}/notes.rst`, "notes\n");
+      const local = await observeLocalSource(projectDir);
+      assertExists(local.sourceDigest);
+      assertEquals(local.gitSource.clean, false);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true, localSourceDigest: local.sourceDigest },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          local,
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("refreshes when the current pushed source digest cannot be recomputed", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      const local = await observeLocalSource(projectDir);
+      assertExists(local.sourceDigest);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true, localSourceDigest: local.sourceDigest },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          { gitSource: local.gitSource, sourceDigest: null },
+          target,
+        ),
+        "refresh",
+      );
+    });
+  });
+
+  it("keeps the moved-HEAD refusal when the receipt was dirty", async () => {
+    await withGitProject(async (projectDir) => {
+      // A dirty receipt that still names a commit gets the same comparison as
+      // a clean one: refreshing here would upload the new commit and rewrite
+      // the receipt validatePushReceipt reads to refuse the moved HEAD.
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: false },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("fails closed on a clean receipt when the project is no longer a checkout", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        // No current commit resolves, so the mismatch cannot be proven either
+        // way; a clean receipt must still reach validatePushReceipt's refusal
+        // rather than be silently overwritten by a push.
+        assertEquals(
+          resolveBootstrapPush(
+            { ...receipt, commitSha: "1".repeat(40), clean: true },
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            await observeLocalSource(projectDir),
+            target,
+          ),
+          "none",
+        );
+        // A dirty receipt proves nothing about the upload and keeps its
+        // refresh, exactly as it did for a project outside Git before.
+        assertEquals(
+          resolveBootstrapPush(
+            { ...receipt, commitSha: "1".repeat(40), clean: false },
+            { kind: "ensure-pushed", refreshStaleSource: true },
+            await observeLocalSource(projectDir),
+            target,
+          ),
+          "refresh",
+        );
+      })
+    );
+  });
+
+  it("refreshes for receipts that never proved a clean source", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: false },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "refresh",
+      );
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: null, clean: false },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "refresh",
+      );
+    });
+  });
+
+  it("bootstraps only when no receipt exists at all", async () => {
+    await withGitProject(async (projectDir) => {
+      assertEquals(
+        resolveBootstrapPush(
+          null,
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "bootstrap",
+      );
+    });
+  });
+
+  it("ignores an unknown project while the project is only planned", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          { controlPlane: target.controlPlane, branch: "main", projectId: null, projectSlug: null },
+        ),
+        "refresh",
+      );
+    });
+  });
+
+  it("never pushes for an already-pushed source", async () => {
+    await withGitProject(async (projectDir) => {
+      assertEquals(
+        resolveBootstrapPush(
+          null,
+          { kind: "already-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
+      );
+    });
   });
 });
 
