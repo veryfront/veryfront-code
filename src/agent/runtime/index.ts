@@ -1820,8 +1820,15 @@ export class AgentRuntime {
       commit,
       addMessage: async (message: Message) => {
         if (rejection) throw rejection.error;
-        await persistence.persist();
-        await (await transaction!).addMessage(message);
+        try {
+          await persistence.persist();
+          await (await transaction!).addMessage(message);
+        } catch (error) {
+          rejection = { error };
+          validationState = "rejected";
+          await rollback();
+          throw error;
+        }
       },
       finalize: () => validationState === "accepted" ? commit() : rollback(),
       validationState: () => validationState,

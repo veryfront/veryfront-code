@@ -9,6 +9,61 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { AgentRuntime } from "./index.ts";
 
 describe("custom memory transaction boundary", () => {
+  it("rolls back output staged before an adapter add failure", async () => {
+    const store = new ConversationMemory<Message>({ type: "conversation" });
+    let commits = 0;
+    let rollbacks = 0;
+    const model: ModelRuntime = {
+      provider: "openai",
+      modelId: "veryfront-cloud/openai/custom-memory-transaction",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate");
+      },
+    };
+    const runtime = new AgentRuntime("custom-memory", {
+      model: model.modelId,
+      system: "Helpful",
+      maxSteps: 1,
+      middleware: [securityMiddleware({ input: { maxLength: 1000 } })],
+    }, { resolveModelRuntime: () => model });
+    const memory: Memory<Message> = {
+      add: store.add.bind(store),
+      getMessages: store.getMessages.bind(store),
+      clear: store.clear.bind(store),
+      getStats: store.getStats.bind(store),
+      async beginTransaction() {
+        let staged: Message[] = [];
+        return {
+          async add(message) {
+            staged.push(message);
+            if (message.role === "assistant") throw new Error("output staging failed");
+          },
+          getMessages: () => Promise.resolve(structuredClone(staged)),
+          async commit() {
+            commits++;
+            for (const message of staged) await store.add(message);
+          },
+          async rollback() {
+            rollbacks++;
+            staged = [];
+          },
+        };
+      },
+    };
+    Reflect.set(runtime, "memory", memory);
+    await assertRejects(() => runtime.generate("caller input"), Error, "output staging failed");
+    assertEquals(commits, 0);
+    assertEquals(rollbacks, 1);
+    assertEquals(await store.getMessages(), []);
+  });
+
   for (const concurrent of ["unchanged", "add", "clear"] as const) {
     it(`waits for setup and preserves ${concurrent} history after failed commit`, async () => {
       const store = new ConversationMemory<Message>({ type: "conversation" });
