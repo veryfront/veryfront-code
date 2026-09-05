@@ -56,6 +56,96 @@ describe("leaf test suite registry", () => {
     assertEquals(env.PATH, "/test/bin");
   });
 
+  it("keeps fixture Git commands in their own repositories under a hook environment", async () => {
+    const root = await Deno.makeTempDir();
+    const checkout = `${root}/checkout`;
+    const fixture = `${root}/fixture`;
+    const cleanEnv: Record<string, string> = {};
+    for (const key of ["PATH", "HOME", "USERPROFILE"]) {
+      const value = Deno.env.get(key);
+      if (value !== undefined) cleanEnv[key] = value;
+    }
+    const runGit = (cwd: string, args: string[], env = cleanEnv) =>
+      new Deno.Command("git", {
+        cwd,
+        args,
+        env,
+        clearEnv: true,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+    try {
+      for (const directory of [checkout, fixture]) {
+        await Deno.mkdir(directory);
+        const initialized = await runGit(directory, ["init", "--quiet"]);
+        assertEquals(
+          initialized.success,
+          true,
+          new TextDecoder().decode(initialized.stderr),
+        );
+      }
+
+      const env = buildTestProcessEnv({
+        ...cleanEnv,
+        GIT_DIR: `${checkout}/.git`,
+        GIT_WORK_TREE: checkout,
+        GIT_COMMON_DIR: `${checkout}/.git`,
+        GIT_INDEX_FILE: `${checkout}/.git/index`,
+        GITHUB_SHA: "fixture-ci-revision",
+      });
+      const configured = await runGit(fixture, [
+        "config",
+        "--local",
+        "test.fixtureIdentity",
+        "fixture",
+      ], env);
+      assertEquals(
+        configured.success,
+        true,
+        new TextDecoder().decode(configured.stderr),
+      );
+
+      const fixtureValue = await runGit(fixture, [
+        "config",
+        "--local",
+        "--get",
+        "test.fixtureIdentity",
+      ]);
+      assertEquals(
+        new TextDecoder().decode(fixtureValue.stdout).trim(),
+        "fixture",
+      );
+      const checkoutValue = await runGit(checkout, [
+        "config",
+        "--local",
+        "--get",
+        "test.fixtureIdentity",
+      ]);
+      assertEquals(checkoutValue.code, 1);
+      assertEquals(env.GITHUB_SHA, "fixture-ci-revision");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("scrubs case variants of hook Git configuration without removing GitHub CI context", () => {
+    const env = buildTestProcessEnv({
+      Git_Dir: "/checkout/.git",
+      git_config_count: "1",
+      Git_Config_Key_0: "core.bare",
+      Git_Config_Value_0: "true",
+      GITHUB_WORKSPACE: "/checkout",
+      GIT_AUTHOR_NAME: "Fixture Author",
+      GIT_CONFIG_GLOBAL: "/fixture/global.config",
+    });
+    assertEquals(env, {
+      GITHUB_WORKSPACE: "/checkout",
+      GIT_AUTHOR_NAME: "Fixture Author",
+      GIT_CONFIG_GLOBAL: "/fixture/global.config",
+    });
+  });
+
   it("records runtime as one suite with variants, ownership, and support exclusions", () => {
     // Production break caught: node and bun runtime tests can drift into
     // competing leaf owners instead of one runtime suite with runner variants.
