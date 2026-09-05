@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { requestAuthorityFingerprint } from "./request-authority.ts";
+import { requestAuthorityFingerprint } from "#veryfront/platform/adapters/fs/veryfront/request-authority.ts";
 
 describe("request authority fingerprint", () => {
   it("does not expose credentials through mutable string hooks", () => {
@@ -12,11 +12,11 @@ describe("request authority fingerprint", () => {
     let actual: string;
     String.prototype[Symbol.iterator] = function () {
       calls++;
-      return Reflect.apply(iterator, this, []);
+      throw new Error("Mutable string iterator invoked");
     };
-    String.prototype.codePointAt = function (position) {
+    String.prototype.codePointAt = function () {
       calls++;
-      return Reflect.apply(codePointAt, this, [position]);
+      throw new Error("Mutable string code-point reader invoked");
     };
     try {
       actual = requestAuthorityFingerprint(token);
