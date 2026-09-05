@@ -1635,6 +1635,13 @@ export class AgentRuntime {
    * provider unvalidated. Validating before the write keeps a rejected turn
    * out of memory.
    */
+  private async restoreInputReplayMetadata(inputMessages: Message[]): Promise<void> {
+    const checkpoints = getRuntimeProviderReplayCheckpoints(this.config);
+    if (!checkpoints?.length) return;
+    const history = (await this.memory.getMessages()).map(cloneMessageForCommit);
+    applyProviderReplayCheckpointsToMessages([...history, ...inputMessages], checkpoints);
+  }
+
   private prepareTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
@@ -1767,6 +1774,7 @@ export class AgentRuntime {
     // middleware already approved), including on a first turn where the
     // cross-turn validator has no history to check.
     const validateTurnInput = context && getTurnInputValidator(context);
+    await this.restoreInputReplayMetadata(committedInputMessages);
     if (validateTurnInput) await validateTurnInput(committedInputMessages);
 
     const validateTurnMessages = context && getTurnMessageValidator(context);
@@ -2020,6 +2028,7 @@ export class AgentRuntime {
         });
 
         const inputMessages = normalizeInput(input);
+        await this.restoreInputReplayMetadata(inputMessages);
 
         const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
@@ -2196,6 +2205,7 @@ export class AgentRuntime {
       // The context carries the normalized clones, not the caller's raw array:
       // a middleware that mutates a message in place must be mutating the same
       // objects that are later persisted and dispatched to the provider.
+      await this.restoreInputReplayMetadata(inputMessages);
       const agentContext: AgentContext = {
         agentId: this.id,
         model: resolvedModelString,
