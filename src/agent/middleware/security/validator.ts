@@ -567,9 +567,9 @@ function extractAdjacentRuns(
   return runs;
 }
 
-function messageTextParts(message: Message): string[] {
+function messageTextParts(message: Message, includeAttachments = true): string[] {
   const texts = message.parts.filter(isTextPart).map((part) => part.text);
-  const attachmentContext = message.role === "user"
+  const attachmentContext = includeAttachments && message.role === "user"
     ? buildAttachmentContextFromParts(message.parts).trimStart()
     : "";
   if (attachmentContext) texts.push(attachmentContext);
@@ -831,7 +831,7 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
     const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((partSeparator) =>
       ASSEMBLED_TEXT_SEPARATORS.some((runSeparator) => {
         const assembled = run
-          .map((message) => messageTextParts(message).join(partSeparator))
+          .map((message) => messageTextParts(message, false).join(partSeparator))
           .join(runSeparator);
         return (validator.sanitize(assembled) ?? assembled) !== assembled;
       })
@@ -840,7 +840,7 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
 
     const collapsedText = sanitizeTextToFixpoint(
       validator,
-      run.map((message) => messageTextParts(message).join("")).join("\n\n"),
+      run.map((message) => messageTextParts(message, false).join("")).join("\n\n"),
     );
     run.forEach((message, index) => {
       rewrites.set(
@@ -1160,6 +1160,19 @@ export function securityMiddleware(
 
     const inputValues = extractInputValidationTexts(context.input);
     await assertInputTextsValid(inputValidator, inputValues, config.onViolation);
+
+    // Generated annotations cannot be rewritten as caller text without losing
+    // attachment identity or moving content between messages. Reject unsafe
+    // annotations before any text rewrite instead.
+    if (typeof context.input !== "string") {
+      assertTextsNeedNoSanitization(
+        inputValidator,
+        context.input.filter((message) => message.role === "user")
+          .map((message) => buildAttachmentContextFromParts(message.parts)),
+        "Attachment annotations contain content sanitization removes",
+        config.onViolation,
+      );
+    }
 
     let approvedInputTexts = inputValues;
     const sanitizedInput = sanitizeAgentInput(inputValidator, context.input);

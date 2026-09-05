@@ -266,6 +266,27 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("rejects unsafe attachment annotations without dropping adjacent user text", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [
+        {
+          id: "attachment",
+          role: "user",
+          parts: [{ type: "file", filename: "javascript:note", mediaType: "text/plain", url: "" }],
+        },
+        { id: "question", role: "user", parts: [{ type: "text", text: "Summarize this file." }] },
+      ],
+    });
+    const originalInput = structuredClone(context.input);
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(context.input, originalInput);
+  });
+
   it("validates the exact text-plus-attachment boundary", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/hello\n\n<uploaded_files>/] },
