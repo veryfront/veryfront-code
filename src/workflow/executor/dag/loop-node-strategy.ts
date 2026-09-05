@@ -60,18 +60,30 @@ type PersistedNodeState =
   };
 
 interface PersistedLoopState {
-  _loopStateOwner?: string;
+  __veryfrontLoopState?: { ownerNodeId: string; version: 1 };
   iteration: number;
   previousResults: unknown[];
   iterationNodeStates?: Record<string, PersistedNodeState>;
   completedNodeIds?: string[];
 }
 
+function isOwnedLoopState(value: unknown, nodeId: string): value is PersistedLoopState {
+  if (typeof value !== "object" || value === null) return false;
+  const marker = (value as PersistedLoopState).__veryfrontLoopState;
+  return marker?.version === 1 && marker.ownerNodeId === nodeId;
+}
+
 function isPersistedLoopState(value: unknown): value is PersistedLoopState {
-  return typeof value === "object" && value !== null &&
-    NumberIsSafeInteger((value as { iteration?: unknown }).iteration) &&
-    ((value as { iteration: number }).iteration >= 0) &&
-    ArrayIsArray((value as { previousResults?: unknown }).previousResults);
+  if (
+    !(typeof value === "object" && value !== null &&
+      NumberIsSafeInteger((value as { iteration?: unknown }).iteration) &&
+      ((value as { iteration: number }).iteration >= 0) &&
+      ArrayIsArray((value as { previousResults?: unknown }).previousResults))
+  ) return false;
+  const state = value as PersistedLoopState;
+  return state.__veryfrontLoopState?.version === 1 ||
+    state.iterationNodeStates !== undefined ||
+    ArrayIsArray(state.completedNodeIds);
 }
 
 /**
@@ -305,7 +317,7 @@ export async function executeLoopNodeStrategy(
           result.contextPatch,
           createSetContextPatch({
             [loopStateKey]: {
-              _loopStateOwner: node.id,
+              __veryfrontLoopState: { ownerNodeId: node.id, version: 1 },
               iteration,
               previousResults,
               // Persist the in-flight iteration's child states so completed
@@ -389,7 +401,7 @@ export async function executeLoopNodeStrategy(
     ...completionUpdates,
   });
   if (
-    typeof config.steps === "function" && existingLoopState?._loopStateOwner === node.id &&
+    typeof config.steps === "function" && isOwnedLoopState(existingLoopStateValue, node.id) &&
     !ObjectHasOwn(completionUpdates, loopStateKey)
   ) {
     contextPatch.delete.push(loopStateKey);

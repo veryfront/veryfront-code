@@ -1413,6 +1413,27 @@ describe("DAGExecutor", () => {
       }
     });
 
+    it("does not delete user data that resembles loop state", async () => {
+      const userValue = { iteration: 0, previousResults: [] };
+      const nodes: WorkflowNode[] = [
+        loop("repeat", {
+          maxIterations: 1,
+          while: () => false,
+          steps: () => [],
+        }),
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          context: { input: { topic: "test" }, repeat_loop_state: userValue },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.context.repeat_loop_state, userValue);
+    });
+
     it("does not re-execute a step declared before the loop", async () => {
       const executed: string[] = [];
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
@@ -3487,8 +3508,8 @@ describe("DAGExecutor", () => {
       const first = await executor.execute(nodes, createTestRun());
       assertEquals(first.waiting, true);
       assertEquals(
-        (first.context.repeat_loop_state as { _loopStateOwner: string })._loopStateOwner,
-        "repeat",
+        (first.context.repeat_loop_state as { __veryfrontLoopState: unknown }).__veryfrontLoopState,
+        { ownerNodeId: "repeat", version: 1 },
       );
       assertEquals(first.waitingNode, "repeat/review");
       const second = await executor.execute(

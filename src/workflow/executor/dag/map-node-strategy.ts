@@ -111,8 +111,13 @@ function isOwnedLoopSnapshot(
   value: unknown,
   nodeStates: Record<string, NodeState>,
 ): boolean {
-  if (typeof value !== "object" || value === null || !("_loopStateOwner" in value)) return false;
-  const owner = value._loopStateOwner;
+  if (typeof value !== "object" || value === null || !("__veryfrontLoopState" in value)) {
+    return false;
+  }
+  const marker = value.__veryfrontLoopState;
+  if (typeof marker !== "object" || marker === null || !("ownerNodeId" in marker)) return false;
+  if (!("version" in marker) || marker.version !== 1) return false;
+  const owner = marker.ownerNodeId;
   return typeof owner === "string" && key === `${owner}_loop_state` &&
     Object.hasOwn(nodeStates, owner);
 }
