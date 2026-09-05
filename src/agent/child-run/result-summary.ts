@@ -467,11 +467,30 @@ function isValidUnicodeEscapePrefix(
   return isHexPrefix(availableHex + trailingSource.slice(0, 4 - availableHex.length));
 }
 
+function sourceCommentEnd(text: string, index: number): number | null | undefined {
+  if (text[index] !== "/") return undefined;
+  if (text[index + 1] === "/") {
+    const newline = text.indexOf("\n", index + 2);
+    return newline === -1 ? text.length : newline;
+  }
+  if (text[index + 1] === "*") {
+    const end = text.indexOf("*/", index + 2);
+    return end === -1 ? null : end + 2;
+  }
+  return undefined;
+}
+
 function findOuterArrayClosingBracket(text: string): number {
   let depth = 1;
   let index = 0;
   while (index < text.length) {
     const character = text[index];
+    const commentEnd = sourceCommentEnd(text, index);
+    if (commentEnd === null) return -1;
+    if (commentEnd !== undefined) {
+      index = commentEnd;
+      continue;
+    }
     if (character === '"' || character === "'") {
       const end = scanQuotedValueEnd(text, index, character);
       if (end === undefined) return -1;
@@ -614,11 +633,29 @@ function normalizePseudoJson(text: string): string {
   let index = 0;
   while (index < text.length) {
     const character = text[index]!;
+    const commentEnd = sourceCommentEnd(text, index);
+    if (commentEnd === null) return text;
+    if (commentEnd !== undefined) {
+      normalized += " ";
+      index = commentEnd;
+      continue;
+    }
     if (character === '"') {
       const end = scanQuotedValueEnd(text, index, '"');
       if (end === undefined) return text;
       normalized += text.slice(index, end);
       index = end;
+      continue;
+    }
+    const identifier = /^[\p{ID_Start}_$][\p{ID_Continue}$]*/u.exec(text.slice(index));
+    if (identifier) {
+      let previous = normalized.length - 1;
+      while (/\s/.test(normalized[previous] ?? "")) previous--;
+      const next = skipWhitespace(text, index + identifier[0].length);
+      const property = (normalized[previous] === "{" || normalized[previous] === ",") &&
+        text[next] === ":";
+      normalized += property ? JSON.stringify(identifier[0]) : identifier[0];
+      index += identifier[0].length;
       continue;
     }
     if (character !== "'") {

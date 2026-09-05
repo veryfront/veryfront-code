@@ -900,6 +900,32 @@ describe("child-run-result-summary", () => {
       );
     });
 
+    it("retains IDs in complete comment-bearing tool declarations", () => {
+      for (
+        const body of [
+          '"create_agent", /* required ] */ "update_agent"',
+          '"create_agent", // required ]\n"update_agent"',
+        ]
+      ) {
+        assertEquals(
+          buildChildRunResultSummary(`tools: [${body}]`, { mode: "structured" }).contractFacts,
+          { toolIds: ["create_agent", "update_agent"] },
+        );
+      }
+      assertEquals(
+        buildChildRunResultSummary('tools: ["create_agent", /* unclosed]', { mode: "structured" })
+          .contractFacts,
+        undefined,
+      );
+    });
+
+    it("retains quoted tool IDs beside source-style object properties", () => {
+      const text = 'tools: [{"id":"create_agent", description: "hello", metadata: {mode: "fast"}}]';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent"],
+      });
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
