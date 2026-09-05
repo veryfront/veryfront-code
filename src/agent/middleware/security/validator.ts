@@ -3,9 +3,11 @@ import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "#veryfront/agent/output-schema.ts";
 import { propagateSyntheticMessageMarks } from "#veryfront/agent/runtime/input-utils.ts";
 import {
+  buildAttachmentContextFromParts,
   getAnthropicCompactedAssistantMessages,
   getProviderSendableAssistantMessages,
   getProviderSendableToolMessages,
+  getUserTextWithAttachmentContext,
 } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import {
   registerTurnInputValidator,
@@ -460,9 +462,17 @@ function extractMessageAssembledTextsRegardlessOfRole(message: Message): string[
   // A single text part already equals every assembled form, so only add the
   // joined variants when the parts could actually hide a split phrase.
   const textParts = messageTextParts(message);
-  if (textParts.length < 2) return [];
+  if (textParts.length < 2) {
+    return message.role === "user" && buildAttachmentContextFromParts(message.parts)
+      ? textParts
+      : [];
+  }
 
-  return ASSEMBLED_TEXT_SEPARATORS.map((separator) => textParts.join(separator));
+  const assembled = ASSEMBLED_TEXT_SEPARATORS.map((separator) => textParts.join(separator));
+  if (message.role === "user" && buildAttachmentContextFromParts(message.parts)) {
+    assembled.push(getUserTextWithAttachmentContext(message.parts));
+  }
+  return assembled;
 }
 
 /**
@@ -558,7 +568,12 @@ function extractAdjacentRuns(
 }
 
 function messageTextParts(message: Message): string[] {
-  return message.parts.filter(isTextPart).map((part) => part.text);
+  const texts = message.parts.filter(isTextPart).map((part) => part.text);
+  const attachmentContext = message.role === "user"
+    ? buildAttachmentContextFromParts(message.parts).trimStart()
+    : "";
+  if (attachmentContext) texts.push(attachmentContext);
+  return texts;
 }
 
 function isEmptyText(message: Message): boolean {

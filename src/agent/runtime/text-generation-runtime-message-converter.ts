@@ -188,7 +188,9 @@ function getTextGenerationToolResultPart(
   };
 }
 
-function buildAttachmentContextFromParts(parts: Message["parts"]): string {
+/** @internal Provider-visible text annotation shared with input validation. */
+export function buildAttachmentContextFromParts(parts: Message["parts"]): string {
+  if (getTextFromParts(parts).includes("<uploaded_files>")) return "";
   const refs = parts.flatMap((part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
@@ -228,7 +230,8 @@ function appendReadableAttachmentContext(text: string, attachmentContext: string
   return `${text}${separator}${normalizedContext}`;
 }
 
-function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
+/** @internal Exact text projection shared with input validation. */
+export function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
   const text = getTextFromParts(parts);
   return text.includes("<uploaded_files>")
     ? text

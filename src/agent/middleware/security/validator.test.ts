@@ -240,6 +240,53 @@ describe("securityMiddleware", () => {
     assertEquals(violations, ["apiKey secret"]);
   });
 
+  it("validates provider-visible attachment annotations", async () => {
+    for (const field of ["filename", "uploadPath", "uploadId", "url", "mediaType"]) {
+      const middleware = securityMiddleware({
+        input: { blockedPatterns: [/attachment_injection/] },
+      });
+      const context = createContext({
+        input: [{
+          id: "user-attachment",
+          role: "user",
+          parts: [{
+            type: "file",
+            filename: "document.txt",
+            mediaType: "text/plain",
+            url: "https://example.test/document.txt",
+            [field]: "attachment_injection",
+          }],
+        }],
+      });
+      await assertRejects(
+        () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+        Error,
+        "Input validation failed: Input matches blocked pattern",
+      );
+    }
+  });
+
+  it("validates the exact text-plus-attachment boundary", async () => {
+    const middleware = securityMiddleware({
+      input: { blockedPatterns: [/hello\n\n<uploaded_files>/] },
+    });
+    const context = createContext({
+      input: [{
+        id: "user-attachment",
+        role: "user",
+        parts: [
+          { type: "text", text: "hello\n" },
+          { type: "file", filename: "document.txt", mediaType: "text/plain", url: "" },
+        ],
+      }],
+    });
+    await assertRejects(
+      () => middleware(context, () => Promise.resolve(createResponse("ok"))),
+      Error,
+      "Input validation failed: Input matches blocked pattern",
+    );
+  });
+
   it("validates structured user text without scanning assistant replay or tool outputs", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection },
