@@ -184,16 +184,19 @@ export class WebSocketManager {
       projectSlug: this.deps.projectSlug,
       branch,
     };
-    const prefixes = [
+    const pendingPrefixes = [
       buildFileCacheKeyPrefix(context),
       buildStatCacheKeyPrefix(context),
       buildDirCacheKeyPrefix(context),
-      buildFileListCacheKey(context),
     ];
-    const pendingPrefix = buildFileCacheKeyPrefix(context);
-    addPendingInvalidation(pendingPrefix);
-    void Promise.all(prefixes.map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix))).then(
-      () => removePendingInvalidation(pendingPrefix),
+    const deletionPrefixes = [...pendingPrefixes, buildFileListCacheKey(context)];
+    for (const prefix of pendingPrefixes) addPendingInvalidation(prefix);
+    void Promise.all(
+      deletionPrefixes.map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix)),
+    ).then(
+      () => {
+        for (const prefix of pendingPrefixes) removePendingInvalidation(prefix);
+      },
       (error) =>
         logger.error("Branch poke cache invalidation failed", {
           projectSlug: this.deps.projectSlug,

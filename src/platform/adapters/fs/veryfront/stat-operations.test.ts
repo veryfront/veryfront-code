@@ -603,6 +603,75 @@ describe("StatOperations", () => {
       assertEquals(await cache.getAsync(cacheKey), undefined);
     });
 
+    it("bypasses stale resolutions while their branch cache is being cleared", async () => {
+      let invalidated = false;
+      let resolvedPath = "pages/about.tsx";
+      let searchCalls = 0;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test",
+        branch: "main",
+      };
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const statOps = new StatOperations(
+        createMockClient({
+          searchFiles: () => {
+            searchCalls++;
+            return Promise.resolve([{ path: resolvedPath }]);
+          },
+        }),
+        cache,
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          hasCachedFileList: () => Promise.resolve(false),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+      );
+      const cacheKey = `${buildStatCacheKeyPrefix(contentContext)}:resolve:pages/about`;
+
+      assertEquals(await statOps.resolveFile("pages/about"), "pages/about.tsx");
+      resolvedPath = "pages/about.mdx";
+      invalidated = true;
+      assertEquals(await statOps.resolveFile("pages/about"), "pages/about.mdx");
+      assertEquals(searchCalls, 2);
+      assertEquals(
+        await cache.getAsync(cacheKey),
+        "pages/about.tsx",
+        "a read during invalidation must not overwrite the persistent stat cache",
+      );
+    });
+
+    it("rebuilds a stale stat index while its branch cache is being cleared", async () => {
+      let invalidated = false;
+      let files = [makeFile("stale.ts")];
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test",
+        branch: "main",
+      };
+      const statOps = new StatOperations(
+        createMockClient({ listAllFiles: () => Promise.resolve(files) }),
+        new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          getFileList: () => Promise.resolve(files),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+      );
+
+      assertEquals((await statOps.stat("stale.ts")).isFile, true);
+      files = [makeFile("fresh.ts")];
+      invalidated = true;
+      assertEquals((await statOps.stat("fresh.ts")).isFile, true);
+      await assertRejects(() => statOps.stat("stale.ts"));
+    });
+
     it("should retry pages-prefixed API patterns after an incomplete index miss", async () => {
       const patterns: string[] = [];
 

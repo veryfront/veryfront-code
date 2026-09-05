@@ -147,12 +147,15 @@ export class ReadOperations {
         const normalizedPath = this.normalizer.normalize(path);
         assertProjectSourcePath(normalizedPath);
         const context = this.contextProvider?.getContentContext() ?? null;
-        const { apiPath, hasKnownExtension, isPublished } = buildReadFetchState({
-          normalizedPath,
-          contentContext: context,
-          contextProvider: this.contextProvider,
-          getOriginalApiPath: this.getOriginalApiPath,
-        });
+        const requestBranch = this.syncRequestBranchScope();
+        const { apiPath, hasKnownExtension, isPublished, effectiveContentContext } =
+          buildReadFetchState({
+            normalizedPath,
+            contentContext: context,
+            contextProvider: this.contextProvider,
+            getOriginalApiPath: this.getOriginalApiPath,
+            requestBranch,
+          });
 
         try {
           const lastSlash = normalizedPath.lastIndexOf("/");
@@ -166,7 +169,7 @@ export class ReadOperations {
                   candidateApiPath,
                   admittedLimit,
                   isPublished,
-                  context,
+                  effectiveContentContext,
                   true,
                 );
               } catch (error) {
@@ -176,7 +179,12 @@ export class ReadOperations {
           }
 
           try {
-            return await this.readExactApiPath(apiPath, admittedLimit, isPublished, context);
+            return await this.readExactApiPath(
+              apiPath,
+              admittedLimit,
+              isPublished,
+              effectiveContentContext,
+            );
           } catch (error) {
             if (!isPublished || !isNotFoundLikeError(error)) throw error;
             if (requiresExactPublishedPath(apiPath)) throw error;
@@ -189,7 +197,7 @@ export class ReadOperations {
                   split.basePath + extension,
                   admittedLimit,
                   true,
-                  context,
+                  effectiveContentContext,
                   true,
                 );
               } catch (candidateError) {

@@ -77,7 +77,11 @@ export class StatOperations extends VeryfrontOperationsBase {
     const currentScopeKey = buildStatCacheKeyPrefix(
       this.contextProvider?.getContentContext(),
     );
-    if (generation === this.indexGeneration && currentScopeKey === scopeKey) {
+    const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
+      false;
+    if (
+      generation === this.indexGeneration && currentScopeKey === scopeKey && !scopeInvalidated
+    ) {
       this.cache.set(cacheKey, value);
     }
   }
@@ -205,7 +209,12 @@ export class StatOperations extends VeryfrontOperationsBase {
     rebuildsLeft = 1,
   ): Promise<StatIndexSnapshot> {
     const scopeKey = buildStatCacheKeyPrefix(contentContext);
-    if (this.fileIndex && this.directoryIndex && this.indexScopeKey === scopeKey) {
+    const isScopeInvalidated = () =>
+      this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
+    if (
+      this.fileIndex && this.directoryIndex && this.indexScopeKey === scopeKey &&
+      !isScopeInvalidated()
+    ) {
       logger.debug("ensureIndexBuilt - index already built");
       return {
         fileIndex: this.fileIndex,
@@ -251,7 +260,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     // `isIndexAuthoritative()` false, and every later miss then pays an API
     // probe the listing could have answered. Rebuild once from the settled
     // snapshot; the listing is cached by then, so the retry costs no request.
-    if (rebuildsLeft > 0 && this.indexScopeKey !== scopeKey) {
+    if (rebuildsLeft > 0 && this.indexScopeKey !== scopeKey && !isScopeInvalidated()) {
       logger.debug("ensureIndexBuilt - build superseded, rebuilding", { scopeKey });
       return await this.ensureIndexBuilt(contentContext, rebuildsLeft - 1);
     }
@@ -299,7 +308,11 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     const builtAt = Date.now();
     const currentScopeKey = buildStatCacheKeyPrefix(this.contextProvider?.getContentContext());
-    if (generation === this.indexGeneration && currentScopeKey === scopeKey) {
+    const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
+      false;
+    if (
+      generation === this.indexGeneration && currentScopeKey === scopeKey && !scopeInvalidated
+    ) {
       this.fileIndex = fileIdx;
       this.directoryIndex = dirIdx;
       this.pathMapping = pathMap;
@@ -618,7 +631,12 @@ export class StatOperations extends VeryfrontOperationsBase {
       cacheKey,
     });
 
-    const cached = await this.cache.getAsync<string>(cacheKey);
+    const isScopeInvalidated = () =>
+      this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
+    const cachedCandidate = isScopeInvalidated()
+      ? undefined
+      : await this.cache.getAsync<string>(cacheKey);
+    const cached = isScopeInvalidated() ? undefined : cachedCandidate;
     if (cached === NOT_FOUND_SENTINEL) {
       logger.debug("resolveFile cached negative result", { normalizedPath });
       return null;

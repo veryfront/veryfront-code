@@ -179,6 +179,29 @@ describe("ReadOperations", () => {
       assertEquals(unboundedCalls, 0);
     });
 
+    it("uses the request branch for exact bounded reads", async () => {
+      let exactContext: { type: "branch"; name: string } | undefined;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getRequestBranch: () => "feature",
+          getFileContentBytesWithinLimit: (
+            _path: string,
+            _maximumBytes: number,
+            _options?: { expectedMissing?: boolean },
+            context?: { type: "branch"; name: string },
+          ) => {
+            exactContext = context;
+            return Promise.resolve(new Uint8Array([1]));
+          },
+        }),
+        true,
+        createBranchContext(),
+      );
+
+      assertEquals([...await readOps.readFileBytesWithinLimit("manifest.json", 1)], [1]);
+      assertEquals(exactContext, { type: "branch", name: "feature" });
+    });
+
     it("forwards release identity to the exact published reader", async () => {
       let exactCall: [string, number, string | undefined, string | undefined] | undefined;
       const readOps = createReadyReadOps(

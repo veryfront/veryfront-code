@@ -11,6 +11,7 @@ import {
   parsePokeWebSocketMessage,
 } from "./websocket-manager-helpers.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import { clearAllPendingInvalidations, isPrefixBeingInvalidated } from "./invalidation-state.ts";
 
 interface TimerEntry {
   delay: number;
@@ -273,6 +274,7 @@ describe("WebSocketManager", () => {
   };
 
   beforeEach(() => {
+    clearAllPendingInvalidations();
     MockWebSocket.instances = [];
     nextTimerId = 1;
     scheduledTimers = new Map<ReturnType<typeof setTimeout>, TimerEntry>();
@@ -312,6 +314,7 @@ describe("WebSocketManager", () => {
   });
 
   afterEach(() => {
+    clearAllPendingInvalidations();
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
       originalWebSocket;
     globalThis.setTimeout = originalSetTimeout;
@@ -976,6 +979,78 @@ describe("WebSocketManager", () => {
       "files:branch:test-project:main",
     ]);
 
+    manager.dispose();
+  });
+
+  it("blocks all derived reads until an inactive branch cache clear completes", async () => {
+    const deletions = new Map<string, PromiseWithResolvers<number>>();
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          const deletion = Promise.withResolvers<number>();
+          deletions.set(prefix, deletion);
+          return deletion.promise;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+
+    for (
+      const prefix of [
+        "file:branch:test-project:main",
+        "stat:branch:test-project:main",
+        "dir:branch:test-project:main",
+      ]
+    ) {
+      assertEquals(isPrefixBeingInvalidated(prefix), true);
+    }
+
+    for (const deletion of deletions.values()) deletion.resolve(0);
+    await flushMicrotasks();
+
+    for (
+      const prefix of [
+        "file:branch:test-project:main",
+        "stat:branch:test-project:main",
+        "dir:branch:test-project:main",
+      ]
+    ) {
+      assertEquals(isPrefixBeingInvalidated(prefix), false);
+    }
+    manager.dispose();
+  });
+
+  it("retains derived read blocks when an inactive branch cache clear fails", async () => {
+    const manager = createWebSocketManager({
+      branch: "feature-x",
+      cache: {
+        deleteByPrefixAsync: (prefix: string) =>
+          prefix.startsWith("stat:")
+            ? Promise.reject(new Error("cache unavailable"))
+            : Promise.resolve(0),
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    deliverPoke(socket, { changedPaths: ["app/page.tsx"], branchName: "main" });
+    await flushMicrotasks();
+
+    for (
+      const prefix of [
+        "file:branch:test-project:main",
+        "stat:branch:test-project:main",
+        "dir:branch:test-project:main",
+      ]
+    ) {
+      assertEquals(isPrefixBeingInvalidated(prefix), true);
+    }
     manager.dispose();
   });
 

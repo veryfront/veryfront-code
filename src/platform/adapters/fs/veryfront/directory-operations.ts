@@ -30,8 +30,12 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         const scopeKey = buildDirCacheKeyPrefix(ctx);
         const cacheKey = `${scopeKey}:${normalizedPath}`;
         const generation = this.treeGeneration;
+        const isScopeInvalidated = () =>
+          this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
 
-        const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
+        const cached = isScopeInvalidated()
+          ? undefined
+          : this.cache.get<DirectoryEntry[]>(cacheKey);
         if (cached) {
           logger.debug("Cache hit (readdir)", { path: normalizedPath });
           return cached;
@@ -67,7 +71,10 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         const currentScopeKey = buildDirCacheKeyPrefix(
           this.contextProvider?.getContentContext(),
         );
-        if (generation === this.treeGeneration && currentScopeKey === scopeKey) {
+        if (
+          generation === this.treeGeneration && currentScopeKey === scopeKey &&
+          !isScopeInvalidated()
+        ) {
           this.cache.set(cacheKey, entries);
         }
 
@@ -86,7 +93,11 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
     contentContext: ResolvedContentContext | null | undefined,
   ): Promise<Map<string, DirNode>> {
     const scopeKey = buildDirCacheKeyPrefix(contentContext);
-    if (this.dirTree && this.treeScopeKey === scopeKey) return this.dirTree;
+    const isScopeInvalidated = () =>
+      this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
+    if (this.dirTree && this.treeScopeKey === scopeKey && !isScopeInvalidated()) {
+      return this.dirTree;
+    }
 
     if (this.buildingTree) {
       const building = this.buildingTree;
@@ -170,7 +181,11 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         }
 
         const currentScopeKey = buildDirCacheKeyPrefix(this.contextProvider?.getContentContext());
-        if (generation === this.treeGeneration && currentScopeKey === scopeKey) {
+        const scopeInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ??
+          false;
+        if (
+          generation === this.treeGeneration && currentScopeKey === scopeKey && !scopeInvalidated
+        ) {
           this.dirTree = tree;
           this.treeScopeKey = scopeKey;
         }

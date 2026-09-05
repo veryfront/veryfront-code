@@ -165,6 +165,49 @@ describe("DirectoryOperations", () => {
       );
     });
 
+    it("bypasses stale directory state while its branch cache is being cleared", async () => {
+      let files = [{ path: "stale.ts" }];
+      let invalidated = false;
+      const contentContext = {
+        sourceType: "branch" as const,
+        projectSlug: "test-project",
+        branch: "main",
+      };
+      const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+      const dirOps = new DirectoryOperations(
+        {
+          getRequestBranch: () => "main",
+          listAllFiles: () => Promise.resolve(files),
+          listPublishedFiles: () => Promise.resolve(files),
+        } as any,
+        cache,
+        new PathNormalizer(),
+        {
+          isProductionMode: () => false,
+          getReleaseId: () => null,
+          getContentContext: () => contentContext,
+          getFileList: () => Promise.resolve(files),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+      );
+
+      assertEquals((await dirOps.readdir("")).map((entry) => entry.name), ["stale.ts"]);
+      files = [{ path: "fresh.ts" }];
+      invalidated = true;
+
+      assertEquals(
+        (await dirOps.readdir("")).map((entry) => entry.name),
+        ["fresh.ts"],
+      );
+      assertEquals(
+        cache.get<Array<{ name: string }>>(`${buildDirCacheKeyPrefix(contentContext)}:`)?.map(
+          (entry) => entry.name,
+        ),
+        ["stale.ts"],
+        "a read during invalidation must not repopulate the persistent directory cache",
+      );
+    });
+
     it("does not publish a directory cache entry after its generation is cleared", async () => {
       const listing = Promise.withResolvers<Array<{ path: string }>>();
       const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
