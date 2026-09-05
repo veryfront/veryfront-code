@@ -2243,6 +2243,7 @@ describe("jsx artifact references", () => {
         () => refreshJsxArtifactMtime(artifactPath, 0, Date.now(), true),
         Error,
       );
+      assert(error instanceof Error);
       assertEquals(error.message, "Shared JSX artifact recency refresh failed (FILESYSTEM_ERROR)");
     } finally {
       localFs.utime = originalUtime;
@@ -2899,6 +2900,19 @@ describe("scheduled prune bound", () => {
       "a newer writer's cleanup request must survive older work completing",
     );
 
+    await retirePersistedJsxCachePruneRequest(directory, replacementGeneration);
+    assertEquals(await hasPersistedJsxCachePrune(directory), false);
+  });
+
+  it("renews a persisted generation even when new work has a later deadline", async () => {
+    const directory = `${persistedTestPrefix}later-generation`;
+    const firstGeneration = await persistJsxCachePruneRequest(directory, Date.now());
+    const replacementGeneration = await persistJsxCachePruneRequest(directory, Date.now() + 20_000);
+    assertExists(firstGeneration);
+    assertExists(replacementGeneration);
+    assertNotEquals(firstGeneration, replacementGeneration);
+    await retirePersistedJsxCachePruneRequest(directory, firstGeneration);
+    assertEquals(await hasPersistedJsxCachePrune(directory), true);
     await retirePersistedJsxCachePruneRequest(directory, replacementGeneration);
     assertEquals(await hasPersistedJsxCachePrune(directory), false);
   });

@@ -1024,10 +1024,8 @@ async function persistJsxCachePruneRequest(
             (existing as { fireAtMs: number }).fireAtMs,
             fireAtMs,
           );
-          if (
-            (existing as { fireAtMs: number }).fireAtMs <= fireAtMs &&
-            typeof (existing as { generation?: unknown }).generation === "string"
-          ) return (existing as { generation: string }).generation;
+          // A sweep may already be processing the existing generation. Every
+          // new request needs a fresh identity so that sweep cannot retire it.
         }
       } catch { /* a missing or malformed request is replaced below */ }
       const request = IntrinsicObjectCreate(null) as PersistedJsxCachePruneRequest;
