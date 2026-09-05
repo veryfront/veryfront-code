@@ -591,19 +591,20 @@ function isValidIncompleteArrayPrefix(
   trailingSource?: string,
   depth = 0,
 ): boolean {
-  let index = skipWhitespace(fieldBody, 0);
-  if (fieldBody[index] !== "[") return false;
+  const validationBody = fieldBody + (trailingSource ?? "");
+  let index = skipWhitespace(validationBody, 0);
+  if (validationBody[index] !== "[") return false;
   index += 1;
-  while (index < fieldBody.length) {
-    index = skipWhitespace(fieldBody, index);
-    if (index >= fieldBody.length) return true;
-    const value = scanPrefixValue(fieldBody, index, ",]", trailingSource, depth);
+  while (index < validationBody.length) {
+    index = skipWhitespace(validationBody, index);
+    if (index >= validationBody.length) return true;
+    const value = scanPrefixValue(validationBody, index, ",]", undefined, depth);
     if (value.status === "invalid") return false;
     if (value.status === "incomplete") return true;
-    index = skipWhitespace(fieldBody, value.next);
-    if (index >= fieldBody.length) return true;
-    if (fieldBody[index] === "]") return false;
-    if (fieldBody[index] !== ",") return false;
+    index = skipWhitespace(validationBody, value.next);
+    if (index >= validationBody.length) return true;
+    if (validationBody[index] === "]") return index >= fieldBody.length;
+    if (validationBody[index] !== ",") return false;
     index += 1;
   }
   return true;
@@ -632,17 +633,18 @@ function scanObjectMember(
   return value.status === "complete" ? { ...value, key: key.value } : value;
 }
 
-function addObjectMemberToolId(ids: string[], member: ObjectMemberScan): void {
+function addObjectMemberToolId(
+  ids: string[],
+  member: ObjectMemberScan,
+  withinWindow: boolean,
+): void {
   if (
+    withinWindow &&
     member.status === "complete" &&
     (member.key === "id" || member.key === "name") &&
     typeof member.value === "string" &&
     ids.length < CHILD_RUN_CONTRACT_FACT_LIMIT
   ) ids.push(member.value);
-}
-
-function windowCanContinueObject(trailingSource: string | undefined): boolean {
-  return !trailingSource || /[\s,}]/.test(trailingSource[0]!);
 }
 
 /**
@@ -659,21 +661,19 @@ function scanIncompleteLeadingObjectToolIds(
   depth = 0,
 ): string[] | undefined {
   const ids: string[] = [];
-  let index = skipWhitespace(fieldBody, 0);
-  if (fieldBody[index] !== "{") return undefined;
+  const validationBody = fieldBody + (trailingSource ?? "");
+  let index = skipWhitespace(validationBody, 0);
+  if (validationBody[index] !== "{") return undefined;
   index += 1;
 
-  while (index < fieldBody.length) {
-    const member = scanObjectMember(fieldBody, index, trailingSource, depth);
+  while (index < validationBody.length) {
+    const member = scanObjectMember(validationBody, index, undefined, depth);
     if (member.status === "invalid") return undefined;
     if (member.status === "incomplete") break;
-    addObjectMemberToolId(ids, member);
-    index = skipWhitespace(fieldBody, member.next);
-    if (index >= fieldBody.length) {
-      if (!windowCanContinueObject(trailingSource)) return undefined;
-      break;
-    }
-    if (fieldBody[index] !== ",") return undefined;
+    addObjectMemberToolId(ids, member, member.next <= fieldBody.length);
+    index = skipWhitespace(validationBody, member.next);
+    if (index >= validationBody.length || validationBody[index] === "}") break;
+    if (validationBody[index] !== ",") return undefined;
     index += 1;
   }
 
@@ -820,14 +820,12 @@ function quoteAtEnd(text: string): string | undefined {
 }
 
 function findTailQuoteBoundary(text: string, start: number, quote: string): number | undefined {
-  let quoteStart = start - 1;
-  while (quoteStart < text.length) {
-    const quoteEnd = scanQuotedValueEnd(text, quoteStart, quote);
-    if (quoteEnd === undefined) return undefined;
-    if (quoteEnd === text.length || /[\s,}\];]/.test(text[quoteEnd]!)) return quoteEnd;
-    quoteStart = quoteEnd - 1;
-  }
-  return undefined;
+  const quoteEnd = scanQuotedValueEnd(text, start - 1, quote);
+  if (quoteEnd === undefined) return undefined;
+  // When the first matching quote cannot legally close the head value, that
+  // value must have closed in the omitted span. In that case the tail begins
+  // outside it and remains eligible for fact extraction.
+  return quoteEnd === text.length || /[\s,}\];]/.test(text[quoteEnd]!) ? quoteEnd : start;
 }
 
 function boundedContractFactWindows(text: string, headLength: number): string[] {

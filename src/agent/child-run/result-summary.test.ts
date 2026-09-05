@@ -339,6 +339,26 @@ describe("child-run-result-summary", () => {
       assertEquals(result.contractFacts, undefined);
     });
 
+    it("validates an object member that starts after a cutoff comma", () => {
+      const prefix = 'tools: [{"id":"bogus_tool"';
+      const text = prefix + " ".repeat(32_000 - prefix.length - 1) + ",garbage" +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("validates a nested array value that starts after a cutoff comma", () => {
+      const prefix = 'tools: [{"id":"bogus_tool","schema":[0';
+      const text = prefix + " ".repeat(32_000 - prefix.length - 1) + ",garbage" +
+        "x".repeat(130_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, undefined);
+    });
+
     it("rejects an ID when malformed object syntax begins at the head cutoff", () => {
       const prefix = 'tools: [{"id":"bogus_tool","description":"ok"';
       const text = prefix + " ".repeat(32_000 - prefix.length) + "garbage" +
@@ -449,6 +469,15 @@ describe("child-run-result-summary", () => {
       const result = buildChildRunResultSummary(text, { mode: "structured" });
 
       assertEquals(result.contractFacts, undefined);
+    });
+
+    it("recovers a tail field after a head quote closes in the omitted span", () => {
+      const text = `{"description":"${"x".repeat(70_000)}"}` +
+        "p".repeat(70_000) + '\nmodel: "sonnet"' + "p".repeat(60_000);
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, { modelIds: ["sonnet"] });
     });
 
     it("does not retain facts from an unterminated short array", () => {
