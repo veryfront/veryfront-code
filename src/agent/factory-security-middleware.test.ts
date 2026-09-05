@@ -1049,8 +1049,12 @@ describe("resolveSecurityMiddleware", () => {
       }],
     });
 
-    const urls = [...prompts[0].matchAll(/"url":"([^"]+)"/g)].map((match) => match[1]);
-    assertEquals(urls, ["https://example.com/resource", "https://example.com/result"]);
+    const serializedUrls: string[] = [];
+    JSON.parse(prompts[0]!, (key, value: unknown) => {
+      if (key === "url" && typeof value === "string") serializedUrls.push(value);
+      return value;
+    });
+    assertEquals(serializedUrls, ["https://example.com/resource", "https://example.com/result"]);
     await assistant.generate({ input: "follow up" });
     assertEquals(prompts[1]?.includes("original payload"), true);
     assertEquals(prompts[1]?.includes("mutated payload"), false);
