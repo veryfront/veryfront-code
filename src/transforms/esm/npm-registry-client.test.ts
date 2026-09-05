@@ -209,19 +209,26 @@ describe("npm-registry-client dependency contracts", () => {
           "";
         return Promise.resolve(new Response("{}", { status: 200 }));
       }, async () => {
-        schedulePlatformDependencyResolution(
-          "origin-bound-project",
-          "zod",
-          "^3",
-          MAIN_SCHEDULE,
-        );
-        await _pendingResolutions();
+        for (const authToken of [undefined, "stored-login-token"]) {
+          const projectId = authToken ? "origin-bound-scoped" : "origin-bound-project";
+          schedulePlatformDependencyResolution(
+            projectId,
+            "zod",
+            "^3",
+            { ...MAIN_SCHEDULE, authToken },
+          );
+          await _pendingResolutions();
+          assertEquals(
+            requestUrl,
+            `https://api.veryfront.com/projects/${projectId}/dependencies/resolve`,
+          );
+        }
       });
 
       assertEquals(authorization, "Bearer stored-login-token");
       assertEquals(
         requestUrl,
-        "https://api.veryfront.com/projects/origin-bound-project/dependencies/resolve",
+        "https://api.veryfront.com/projects/origin-bound-scoped/dependencies/resolve",
       );
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");

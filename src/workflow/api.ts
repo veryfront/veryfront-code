@@ -27,6 +27,11 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { INITIALIZATION_ERROR, INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 
 /**
  * Validate that a project slug is safe and well-formed.
@@ -89,7 +94,9 @@ function getClient(options: { includeCredential?: boolean } = {}): VeryfrontApiC
   const tenant = getTenant();
 
   const client = new VeryfrontApiClient({
-    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    apiBaseUrl: tenant.token === getHostSecret("VERYFRONT_API_TOKEN")
+      ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
+      : getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
     proxyMode: true,
     projectId: tenant.projectId,
     projectSlug: tenant.projectSlug,

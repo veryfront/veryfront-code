@@ -9,6 +9,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
@@ -431,9 +432,10 @@ export async function postDependencyResolution(
   // origin. Token and endpoint must come from the same authority: when the
   // host token wins, the destination resolves from the host environment (or
   // the default API base), never from the snapshot.
-  const apiBaseUrl = hostToken
-    ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
-    : config.apiBaseUrl;
+  const apiBaseUrl =
+    hostToken || apiToken !== undefined && apiToken === getHostSecret("VERYFRONT_API_TOKEN")
+      ? requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl())
+      : config.apiBaseUrl;
 
   if (!apiBaseUrl || !apiToken) {
     logger.debug("Skipping dependency resolution write-back: no API config", { projectId });
