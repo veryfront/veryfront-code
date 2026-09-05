@@ -6,6 +6,7 @@ import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import type { VeryfrontAPIConfig } from "./types.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 
 const baseConfig = {
   apiBaseUrl: "http://test.api",
@@ -22,6 +23,31 @@ type ResolvedRetryConfig = {
 };
 
 describe("VeryfrontApiClient", () => {
+  it("does not expose the stored login token through contextual client accessors", async () => {
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+    try {
+      const client = createClient();
+      client.enableContextualToken();
+      await runWithRequestContext(
+        { projectSlug: "project", token: "stored-login-token" },
+        async () => {
+          assertThrows(() => client.getToken(), Error, "Host-private credentials cannot be read");
+          const operations =
+            (client as unknown as { operations: { getToken(): string; tokenProvider?: unknown } })
+              .operations;
+          assertThrows(
+            () => operations.getToken(),
+            Error,
+            "Host-private credentials cannot be read",
+          );
+          assertEquals(operations.tokenProvider, undefined);
+        },
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
   it("seals every shared API client prototype reachable from a public instance", () => {
     const client = createClient();
     const operations = (client as unknown as { operations: object }).operations;

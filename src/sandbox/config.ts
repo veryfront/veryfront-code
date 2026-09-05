@@ -11,6 +11,7 @@ import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-c
 import {
   createHostInternalOriginBoundOutboundFetch,
   createOriginBoundOutboundFetch,
+  guardedExactHttpLoopbackOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import type { SandboxOptions } from "./types.ts";
 
@@ -38,6 +39,12 @@ function sameApiOrigin(left: string, right: string): boolean {
 
 /** @internal Send sandbox traffic through the host transport and reject cross-origin redirects. */
 export function fetchSandboxUrl(url: string, init?: RequestInit): Promise<Response> {
+  const origin = urlOriginGetter
+    ? applyIntrinsic(urlOriginGetter, new NativeURL(url), []) as string
+    : "";
+  if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin)) {
+    return guardedExactHttpLoopbackOutboundFetch(url, { ...init, redirect: "error" });
+  }
   return createOriginBoundOutboundFetch(url)(url, init);
 }
 

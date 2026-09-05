@@ -71,6 +71,14 @@ async function countTextDecoderFlushes(action: () => Promise<void>): Promise<num
 }
 
 describe("Sandbox", () => {
+  it("connects to an explicitly authenticated HTTP loopback sandbox", async () => {
+    mockFetch([
+      jsonResponse({ id: "session-1", endpoint: "http://localhost:43210", status: "running" }),
+    ]);
+    await Sandbox.create({ apiUrl: "http://localhost:43210", authToken: "explicit-token" });
+    assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer explicit-token");
+  });
+
   beforeEach(() => {
     __resetEnvLoaderForTests();
     clearSandboxEnvironment();
