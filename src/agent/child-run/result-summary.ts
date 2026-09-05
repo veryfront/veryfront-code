@@ -877,6 +877,13 @@ function* unquotedArrayFieldMatches(text: string, pattern: RegExp): Generator<Re
           continue;
         }
       }
+      if (character === "`" && text[cursor - 1] !== "`" && text[cursor + 1] !== "`") {
+        const inlineCode = /^`[^`\r\n]+`/.exec(text.slice(cursor));
+        if (inlineCode && text[cursor + inlineCode[0].length] !== "`") {
+          cursor += inlineCode[0].length;
+          continue;
+        }
+      }
       if (character === '"' || character === "'") {
         const quoteStart = cursor;
         cursor = scanQuotedValueEnd(text, cursor, character) ?? text.length;
@@ -964,8 +971,12 @@ function isContractFactTokenCharacter(value: string | undefined): boolean {
 }
 
 function isPlainProseText(text: string): boolean {
-  return /^[\p{L}\p{N}\s.,!?:_+>()-]*$/u.test(text) && !text.includes("::") &&
-    !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(text);
+  // A balanced single-line code span does not turn an apostrophe in its
+  // surrounding prose into a string delimiter. Field scanning still skips
+  // the original backtick span, so quoted pseudo-fields cannot become facts.
+  const prose = text.replace(/`[^`\r\n]+`/g, "code");
+  return /^[\p{L}\p{N}\s.,!?:_+>()-]*$/u.test(prose) && !prose.includes("::") &&
+    !/(?:^|\r?\n)[ \t]*([.=*_+~-])\1{2,}[ \t]*(?:\r?\n|$)/.test(prose);
 }
 
 function startsWithProseWord(text: string): boolean {

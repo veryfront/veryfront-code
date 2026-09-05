@@ -811,6 +811,18 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("retains declarations after prose apostrophes with inline code", () => {
+      const text = 'The run finished at one o\'clock using `agent`.\ntools: ["create_agent"]';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["create_agent"],
+      });
+      const quoted = 'The run finished at one o\'clock using `example tools: ["bogus_tool"]`.';
+      assertEquals(
+        buildChildRunResultSummary(quoted, { mode: "structured" }).contractFacts,
+        undefined,
+      );
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [
