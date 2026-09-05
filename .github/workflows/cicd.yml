@@ -495,17 +495,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     needs: [sonar]
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
     steps:
       - name: Require server-side quality gate
         env:
-          SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SONAR_RESULT: ${{ needs.sonar.result }}
         run: |
-          if [ "$SONAR_REQUIRED" != "true" ]; then
-            echo "SonarQube Cloud analysis is intentionally skipped for untrusted pull requests."
-            exit 0
-          fi
           if [ "$SONAR_RESULT" != "success" ]; then
             echo "::error::Server-side SonarQube Cloud quality gate finished with $SONAR_RESULT"
             exit 1

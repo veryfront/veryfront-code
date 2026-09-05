@@ -35,6 +35,7 @@ const SONAR_REQUIRED_CONDITION =
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ needs.coverage-shards.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 35;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
@@ -136,13 +137,11 @@ async function runGate(
 
 async function runSonarGate(
   sonarResult: string,
-  sonarRequired = true,
 ): Promise<Deno.CommandOutput> {
   const step = sonarGateStep(await readSonarGate());
   return await new Deno.Command("bash", {
     args: ["-c", String(step.run)],
     env: {
-      SONAR_REQUIRED: String(sonarRequired),
       SONAR_RESULT: sonarResult,
     },
     stdout: "piped",
@@ -204,16 +203,13 @@ describe("merge quality gate workflow", () => {
       jobs["sonar-quality-gate"],
       "SonarQube Cloud quality gate job",
     );
-    const sonarGateEnv = asRecord(
-      sonarGateStep(sonarGate).env,
-      "SonarQube Cloud quality gate env",
-    );
+    const sonarGateEnv = asRecord(sonarGateStep(sonarGate).env, "SonarQube Cloud quality gate env");
     const gate = asRecord(jobs["quality-gate-merge"], "merge quality gate job");
     const step = gateStep(gate);
     const gateEnv = asRecord(step.env, "merge quality gate result env");
 
     assertEquals(sonar.if, SONAR_JOB_EXPRESSION);
-    assertEquals(sonarGateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
+    assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     assertEquals(sonarGateEnv.SONAR_RESULT, "${{ needs.sonar.result }}");
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
   });
@@ -229,7 +225,7 @@ describe("merge quality gate workflow", () => {
     assertEquals(sonar.name, LEGACY_SONAR_CHECK_NAME);
     assertEquals(sonarGate.name, SONAR_CHECK_NAME);
     assertEquals(sonarGate.needs, ["sonar"]);
-    assertEquals(sonarGate.if, "${{ always() }}");
+    assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
     const sonarProperties = parseProperties(
       await readRepoFile("sonar-project.properties"),
     );
@@ -254,7 +250,6 @@ describe("merge quality gate workflow", () => {
         `required Sonar result ${result} must fail the canonical check`,
       );
     }
-    assertEquals((await runSonarGate("skipped", false)).code, 0);
   });
 
   it("imports normalized shard coverage with pinned actions and no private-measures API", async () => {
