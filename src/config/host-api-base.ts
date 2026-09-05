@@ -6,11 +6,21 @@ const stringCharCodeAt = String.prototype.charCodeAt;
 const stringEndsWith = String.prototype.endsWith;
 const stringSlice = String.prototype.slice;
 const stringTrim = String.prototype.trim;
+const stringToLowerCase = String.prototype.toLowerCase;
 
 function normalizeHostApiEnv(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = applyIntrinsic(stringTrim, value, []) as string;
   return trimmed || undefined;
+}
+
+/** Require encrypted transport before attaching host-private credentials. */
+export function requireHostPrivateApiHttps(value: string): string {
+  const prefix = applyIntrinsic(stringSlice, value, [0, 8]) as string;
+  if (applyIntrinsic(stringToLowerCase, prefix, []) !== "https://") {
+    throw new TypeError("Host-private credentials require an HTTPS API endpoint");
+  }
+  return value;
 }
 
 function normalizeHostApiUrl(value: string): string {

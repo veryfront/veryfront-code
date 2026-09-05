@@ -213,5 +213,14 @@ describe("platform/adapters/token/integration", () => {
       await adapter.delete("test-key");
       assertEquals(await adapter.get("test-key"), null);
     });
+
+    it("keeps unauthenticated memory storage independent of the host API scheme", async () => {
+      deleteEnv("VERYFRONT_API_TOKEN");
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+      setEnv("VERYFRONT_API_URL", "http://api.example.test/api");
+      const adapter = await getTokenStorageAdapter();
+      await adapter.set("test-key", "test-value");
+      assertEquals(await adapter.get("test-key"), "test-value");
+    });
   });
 });

@@ -13,7 +13,10 @@
 
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 import { defineError, retryWithBackoff, VeryfrontError } from "#veryfront/errors";
 import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -274,9 +277,10 @@ function resolveRequestAuth(
   if (isValidApiToken(environmentToken)) return { baseUrl, token: environmentToken };
 
   const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
+  if (!isValidApiToken(hostToken)) return { baseUrl, token: undefined };
   return {
-    baseUrl: resolveHostOwnedApiBaseUrl(),
-    token: isValidApiToken(hostToken) ? hostToken : undefined,
+    baseUrl: requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl()),
+    token: hostToken,
   };
 }
 

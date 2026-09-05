@@ -31,7 +31,10 @@ import {
 } from "#cli/shared/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { getHostSecret } from "#cli/process-env";
-import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 import {
   buildProjectApiPath,
   buildProjectFilePath,
@@ -143,7 +146,9 @@ async function apiRequest<T>(
   if (!candidate) {
     const hostPrivateToken = getHostSecret("VERYFRONT_API_TOKEN");
     if (hostPrivateToken) {
-      const hostEndpoint = validatedEndpoint(resolveHostOwnedApiBaseUrl());
+      const hostEndpoint = validatedEndpoint(
+        requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl()),
+      );
       if (!(hostEndpoint instanceof NativeURL)) return hostEndpoint;
       return await sendApiRequest<T>(hostEndpoint, method, path, hostPrivateToken, options.body);
     }

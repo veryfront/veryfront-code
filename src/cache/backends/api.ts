@@ -11,7 +11,10 @@ import {
 } from "#veryfront/cache/request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -216,6 +219,7 @@ export class ApiCacheBackend implements CacheBackend {
             !this.hasExplicitApiBaseUrl && tokenSource === "host-private"
           ? this.hostApiBaseUrl
           : this.apiBaseUrl;
+        if (tokenSource === "host-private") requireHostPrivateApiHttps(apiBaseUrl);
         const parsedApiBaseUrl = new NativeURL(apiBaseUrl);
         const apiOrigin = readUrlProperty(parsedApiBaseUrl, urlOriginGetter);
         const url = `${apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;

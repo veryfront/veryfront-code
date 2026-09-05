@@ -3,7 +3,10 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
-import { resolveHostOwnedApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import {
+  requireHostPrivateApiHttps,
+  resolveHostOwnedApiBaseUrl,
+} from "#veryfront/config/host-api-base.ts";
 // Load credential validation with the framework so its captured string
 // intrinsics predate project code that can replace global prototypes.
 import "./veryfront/types.ts";
@@ -66,14 +69,13 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
   const exportedApiToken = getExportedApiToken();
   const apiToken = exportedApiToken ?? getHostEnv("VERYFRONT_API_TOKEN");
   const projectSlug = getEnvVar("VERYFRONT_PROJECT_SLUG");
-  const apiBaseUrl = exportedApiToken
-    ? getEnvVar("VERYFRONT_API_URL")
-    : resolveHostOwnedApiBaseUrl();
-
   if (!apiToken || !projectSlug) {
     logger.debug("Using in-memory storage (development)");
     return { type: "memory" };
   }
+  const apiBaseUrl = exportedApiToken
+    ? getEnvVar("VERYFRONT_API_URL")
+    : requireHostPrivateApiHttps(resolveHostOwnedApiBaseUrl());
 
   logger.debug("Using Veryfront Cloud storage", { projectSlug });
 
