@@ -811,6 +811,19 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("preserves trusted matches beside unrelated assertion alternatives", async () => {
+    for (const pattern of [/safe|foo(?=bar)/, /(?:safe|foo(?<=bar))/, /safe|foo$/, /safe|\\bfoo/]) {
+      const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
+      const context = createContext({
+        input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "hello" }] }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      await validate("safe", context.input as Message[]);
+    }
+  });
+
   it("checks multiline end anchors at the trusted match boundary", async () => {
     for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
       for (const historical of [false, true]) {

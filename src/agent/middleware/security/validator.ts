@@ -926,6 +926,50 @@ interface ProviderValidationRun {
   trustedSegments: Array<{ start: number; text: string }>;
 }
 
+/** Prove an alternative matches without executing any context assertions. */
+function hasContextIndependentMatch(
+  pattern: RegExp,
+  segment: { start: number; text: string },
+  match: { index: number; text: string },
+  assembled: string,
+): boolean {
+  let source = "";
+  let classDepth = 0;
+  for (let index = 0; index < pattern.source.length; index++) {
+    const character = pattern.source[index];
+    if (character === "\\") {
+      const escaped = pattern.source[++index];
+      if (classDepth === 0 && (escaped === "b" || escaped === "B")) source += "(?!)";
+      source += character + escaped;
+      continue;
+    }
+    if (character === "[" && (classDepth === 0 || pattern.unicodeSets)) classDepth++;
+    else if (character === "]" && classDepth > 0) classDepth--;
+    else if (
+      classDepth === 0 &&
+      (character === "^" || character === "$" ||
+        pattern.source.startsWith("(?=", index) || pattern.source.startsWith("(?!", index) ||
+        pattern.source.startsWith("(?<=", index) || pattern.source.startsWith("(?<!", index))
+    ) {
+      // Keep the original assertion and its captures intact, but make that
+      // execution path fail. Other alternatives retain their capture numbers.
+      source += "(?!)";
+    }
+    source += character;
+  }
+  try {
+    const matcher = new RegExp(source, pattern.flags.replace(/[gy]/g, "") + "y");
+    matcher.lastIndex = match.index;
+    const local = matcher.exec(segment.text);
+    if (local?.[0] !== match.text) return false;
+    matcher.lastIndex = segment.start + match.index;
+    return matcher.exec(assembled)?.[0] === match.text;
+  } catch {
+    // An unsupported pattern rewrite cannot establish a trusted match.
+    return false;
+  }
+}
+
 /** Assertions can change the meaning of a match without changing its span. */
 function patternInspectsMatchContext(
   pattern: RegExp,
@@ -1003,7 +1047,10 @@ async function assertProviderRunsValid(
       }
       const trustedMatches = trustedSegments.flatMap((segment) =>
         patternOccurrences(segment.text, pattern)
-          .filter((match) => !patternInspectsMatchContext(pattern, segment, match, text))
+          .filter((match) =>
+            !patternInspectsMatchContext(pattern, segment, match, text) ||
+            hasContextIndependentMatch(pattern, segment, match, text)
+          )
           .map((match) => ({
             index: segment.start + match.index,
             text: match.text,
