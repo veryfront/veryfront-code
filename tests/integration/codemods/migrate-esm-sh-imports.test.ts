@@ -1,19 +1,47 @@
-import { assert, assertEquals, assertStringIncludes } from "#std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { parse } from "npm:@babel/parser@7.29.2";
 import {
+  assertPathInsideProject,
+  collectSourceFiles,
   filterNeedsResolution,
+  joinReportPath,
   main,
   mergeEsmShPins,
   migrateEsmShImports,
   parseCliOptions,
   readProjectPackageJson,
-} from "./migrate-esm-sh-imports.ts";
+  writeTextFileInsideProject,
+} from "../../../scripts/codemods/migrate-esm-sh-imports.ts";
+import {
+  openPinnedPosixFile,
+  openPinnedWindowsFile,
+  readPinnedDirectory,
+} from "../../../scripts/codemods/pinned-directory.ts";
+
+async function readFileIdentity(path: string, root: string) {
+  const canonical = await Deno.realPath(path);
+  const file = Deno.build.os === "windows"
+    ? openPinnedWindowsFile(canonical, root, "r")
+    : openPinnedPosixFile(canonical, root, "r");
+  try {
+    return await file.stat({ bigint: true });
+  } finally {
+    await file.close();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // CLI option parsing
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod accepts the deno task separator", () => {
+it("esm-sh codemod accepts the deno task separator", () => {
   assertEquals(parseCliOptions(["--", "--dry-run", "./project"]), {
     projectDir: "./project",
     dryRun: true,
@@ -21,7 +49,7 @@ Deno.test("esm-sh codemod accepts the deno task separator", () => {
   });
 });
 
-Deno.test("esm-sh codemod rejects multiple positional arguments", () => {
+it("esm-sh codemod rejects multiple positional arguments", () => {
   let threw = false;
   try {
     parseCliOptions(["./a", "./b"]);
@@ -31,11 +59,17 @@ Deno.test("esm-sh codemod rejects multiple positional arguments", () => {
   assert(threw);
 });
 
+it("esm-sh codemod preserves a drive-relative report root", () => {
+  assertEquals(joinReportPath("C:", "app.ts", true), "C:app.ts");
+  assertEquals(joinReportPath("C:\\project", "app.ts", true), "C:\\project/app.ts");
+  assertEquals(joinReportPath("C:\\", "app.ts", true), "C:\\app.ts");
+});
+
 // ---------------------------------------------------------------------------
 // No-op cases
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod leaves unrelated imports unchanged", () => {
+it("esm-sh codemod leaves unrelated imports unchanged", () => {
   const source = 'import { x } from "veryfront/ui";\nexport const v = x;\n';
   const result = migrateEsmShImports(source);
   assertEquals(result, {
@@ -48,7 +82,7 @@ Deno.test("esm-sh codemod leaves unrelated imports unchanged", () => {
   });
 });
 
-Deno.test("esm-sh codemod leaves non-esm.sh URLs untouched", () => {
+it("esm-sh codemod leaves non-esm.sh URLs untouched", () => {
   const source = 'import { x } from "https://cdn.skypack.dev/pkg@1.0.0";\n';
   const result = migrateEsmShImports(source);
   assertEquals(result.changed, false);
@@ -58,7 +92,7 @@ Deno.test("esm-sh codemod leaves non-esm.sh URLs untouched", () => {
 // Versioned URL → bare specifier + pin
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod rewrites a versioned esm.sh import to bare + pin", () => {
+it("esm-sh codemod rewrites a versioned esm.sh import to bare + pin", () => {
   const source = 'import { something } from "https://esm.sh/some-pkg@1.2.3";\n';
   const result = migrateEsmShImports(source);
 
@@ -70,7 +104,7 @@ Deno.test("esm-sh codemod rewrites a versioned esm.sh import to bare + pin", () 
   assertEquals(result.rewrites, [{ from: "https://esm.sh/some-pkg@1.2.3", to: "some-pkg" }]);
 });
 
-Deno.test("esm-sh codemod rewrites an export-from with a versioned URL", () => {
+it("esm-sh codemod rewrites an export-from with a versioned URL", () => {
   const source = 'export { Foo } from "https://esm.sh/lib@2.0.0";\n';
   const result = migrateEsmShImports(source);
 
@@ -79,7 +113,7 @@ Deno.test("esm-sh codemod rewrites an export-from with a versioned URL", () => {
   assertEquals(result.pins, { lib: "2.0.0" });
 });
 
-Deno.test("esm-sh codemod rewrites an export-all with a versioned URL", () => {
+it("esm-sh codemod rewrites an export-all with a versioned URL", () => {
   const source = 'export * from "https://esm.sh/lib@3.1.0";\n';
   const result = migrateEsmShImports(source);
 
@@ -92,7 +126,7 @@ Deno.test("esm-sh codemod rewrites an export-all with a versioned URL", () => {
 // Unversioned URL → bare specifier + needs-resolution
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod rewrites an unversioned URL to bare and records needs-resolution", () => {
+it("esm-sh codemod rewrites an unversioned URL to bare and records needs-resolution", () => {
   const source = 'import { something } from "https://esm.sh/some-pkg";\n';
   const result = migrateEsmShImports(source);
 
@@ -102,7 +136,7 @@ Deno.test("esm-sh codemod rewrites an unversioned URL to bare and records needs-
   assertEquals(result.needsResolution, ["some-pkg"]);
 });
 
-Deno.test("esm-sh codemod does not request resolution when the same file provides a pin", () => {
+it("esm-sh codemod does not request resolution when the same file provides a pin", () => {
   const source = [
     'import { a } from "https://esm.sh/some-pkg";',
     'import { b } from "https://esm.sh/some-pkg@1.2.3/subpath";',
@@ -118,7 +152,7 @@ Deno.test("esm-sh codemod does not request resolution when the same file provide
 // Scoped package with subpath
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles a scoped package with a subpath", () => {
+it("esm-sh codemod handles a scoped package with a subpath", () => {
   const source = 'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist/index";\n';
   const result = migrateEsmShImports(source);
 
@@ -128,7 +162,7 @@ Deno.test("esm-sh codemod handles a scoped package with a subpath", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod handles scoped package without version and with subpath", () => {
+it("esm-sh codemod handles scoped package without version and with subpath", () => {
   const source = 'import type { Bar } from "https://esm.sh/@scope/pkg/types";\n';
   const result = migrateEsmShImports(source);
 
@@ -138,7 +172,7 @@ Deno.test("esm-sh codemod handles scoped package without version and with subpat
   assertEquals(result.needsResolution, ["@scope/pkg"]);
 });
 
-Deno.test("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
+it("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
   const source = 'import { x } from "https://esm.sh/v135/zod@3.22.4";\n';
   const result = migrateEsmShImports(source);
 
@@ -147,7 +181,7 @@ Deno.test("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
   assertEquals(result.pins, { zod: "3.22.4" });
 });
 
-Deno.test("esm-sh codemod handles esm.sh stable prefix", () => {
+it("esm-sh codemod handles esm.sh stable prefix", () => {
   const source = 'import { x } from "https://esm.sh/stable/zod@3.22.4/lib/index.js";\n';
   const result = migrateEsmShImports(source);
 
@@ -157,7 +191,7 @@ Deno.test("esm-sh codemod handles esm.sh stable prefix", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod skips stable-prefixed react imports", () => {
+it("esm-sh codemod skips stable-prefixed react imports", () => {
   const source = 'import React from "https://esm.sh/stable/react@18.3.1/index.js";\n';
   const result = migrateEsmShImports(source);
 
@@ -171,7 +205,7 @@ Deno.test("esm-sh codemod skips stable-prefixed react imports", () => {
 // Unsafe URL forms
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod leaves behavior-changing query options untouched", () => {
+it("esm-sh codemod leaves behavior-changing query options untouched", () => {
   const source = [
     'import worker from "https://esm.sh/pkg@1.2.3?worker";',
     'import raw from "https://esm.sh/pkg@1.2.3?raw";',
@@ -186,7 +220,7 @@ Deno.test("esm-sh codemod leaves behavior-changing query options untouched", () 
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
+it("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
   const source = [
     'import gh from "https://esm.sh/gh/owner/repository@1.2.3";',
     'import github from "https://esm.sh/github.com/owner/repository@1.2.3";',
@@ -208,7 +242,7 @@ Deno.test("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
+it("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
   const source = String.raw`import value from 'https://esm.sh/pkg@1.2.3/foo\'bar';` + "\n";
   const result = migrateEsmShImports(source);
 
@@ -219,7 +253,7 @@ Deno.test("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
   parse(result.code, { sourceType: "module" });
 });
 
-Deno.test("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
+it("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
   const source = [
     'import parent from "https://esm.sh/pkg@1.2.3/../evil";',
     'import current from "https://esm.sh/pkg@1.2.3/./feature";',
@@ -237,7 +271,7 @@ Deno.test("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod leaves tags, partial versions, and ranges untouched", () => {
+it("esm-sh codemod leaves tags, partial versions, and ranges untouched", () => {
   const source = [
     'import tagged from "https://esm.sh/pkg@next";',
     'import major from "https://esm.sh/pkg@4";',
@@ -253,7 +287,7 @@ Deno.test("esm-sh codemod leaves tags, partial versions, and ranges untouched", 
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod accepts exact prerelease and build SemVer pins", () => {
+it("esm-sh codemod accepts exact prerelease and build SemVer pins", () => {
   const source = [
     'import prerelease from "https://esm.sh/pkg-a@1.2.3-rc.1";',
     'import build from "https://esm.sh/pkg-b@2.0.0+build.7";',
@@ -272,7 +306,7 @@ Deno.test("esm-sh codemod accepts exact prerelease and build SemVer pins", () =>
 // Dynamic import()
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod rewrites a dynamic import() specifier", () => {
+it("esm-sh codemod rewrites a dynamic import() specifier", () => {
   const source = `const mod = await import("https://esm.sh/some-pkg@3.0.0");\n`;
   const result = migrateEsmShImports(source);
 
@@ -282,7 +316,7 @@ Deno.test("esm-sh codemod rewrites a dynamic import() specifier", () => {
   assertEquals(result.pins, { "some-pkg": "3.0.0" });
 });
 
-Deno.test("esm-sh codemod rewrites a dynamic import() nested inside a function", () => {
+it("esm-sh codemod rewrites a dynamic import() nested inside a function", () => {
   const source = `
 async function load() {
   const { foo } = await import("https://esm.sh/foo-lib@1.0.0");
@@ -300,7 +334,7 @@ async function load() {
 // React specifiers skipped
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod skips react esm.sh imports", () => {
+it("esm-sh codemod skips react esm.sh imports", () => {
   const source = [
     'import React from "https://esm.sh/react@18.2.0";',
     'import ReactDOM from "https://esm.sh/react-dom@18.2.0";',
@@ -313,7 +347,7 @@ Deno.test("esm-sh codemod skips react esm.sh imports", () => {
   assertStringIncludes(result.code, "https://esm.sh/react-dom@18.2.0");
 });
 
-Deno.test("esm-sh codemod skips react while rewriting other packages", () => {
+it("esm-sh codemod skips react while rewriting other packages", () => {
   const source = [
     'import React from "https://esm.sh/react@18.2.0";',
     'import { something } from "https://esm.sh/other-pkg@1.0.0";',
@@ -331,7 +365,7 @@ Deno.test("esm-sh codemod skips react while rewriting other packages", () => {
 // Idempotency
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod is idempotent: second run produces no changes", () => {
+it("esm-sh codemod is idempotent: second run produces no changes", () => {
   const source = [
     'import { something } from "https://esm.sh/some-pkg@1.2.3";',
     'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist/index?target=es2022";',
@@ -349,7 +383,7 @@ Deno.test("esm-sh codemod is idempotent: second run produces no changes", () => 
   assertEquals(second.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod is idempotent for dynamic imports", () => {
+it("esm-sh codemod is idempotent for dynamic imports", () => {
   const source = `const m = await import("https://esm.sh/pkg@4.0.0");\n`;
 
   const first = migrateEsmShImports(source);
@@ -363,7 +397,7 @@ Deno.test("esm-sh codemod is idempotent for dynamic imports", () => {
 // Conflict detection via mergeEsmShPins
 // ---------------------------------------------------------------------------
 
-Deno.test("mergeEsmShPins: existing exact pin beats URL-derived version", () => {
+it("mergeEsmShPins: existing exact pin beats URL-derived version", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { "some-pkg": "1.0.0" },
     { "some-pkg": "2.0.0" },
@@ -374,7 +408,7 @@ Deno.test("mergeEsmShPins: existing exact pin beats URL-derived version", () => 
   assertEquals(conflicts, [{ pkg: "some-pkg", existing: "1.0.0", fromVersion: "2.0.0" }]);
 });
 
-Deno.test("mergeEsmShPins: existing range entry beats URL-derived exact version", () => {
+it("mergeEsmShPins: existing range entry beats URL-derived exact version", () => {
   // Policy: never modify user-authored entries, whether exact or a range.
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { "some-pkg": "^1.0.0" },
@@ -386,7 +420,7 @@ Deno.test("mergeEsmShPins: existing range entry beats URL-derived exact version"
   assertEquals(conflicts, [{ pkg: "some-pkg", existing: "^1.0.0", fromVersion: "1.2.3" }]);
 });
 
-Deno.test("mergeEsmShPins: new package not in existing deps is added", () => {
+it("mergeEsmShPins: new package not in existing deps is added", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { existing: "0.1.0" },
     { "new-pkg": "3.0.0" },
@@ -397,7 +431,7 @@ Deno.test("mergeEsmShPins: new package not in existing deps is added", () => {
   assertEquals(conflicts, []);
 });
 
-Deno.test("mergeEsmShPins: matching version in existing deps causes no conflict", () => {
+it("mergeEsmShPins: matching version in existing deps causes no conflict", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins(
     { "some-pkg": "1.0.0" },
     { "some-pkg": "1.0.0" },
@@ -407,13 +441,13 @@ Deno.test("mergeEsmShPins: matching version in existing deps causes no conflict"
   assertEquals(conflicts, []);
 });
 
-Deno.test("mergeEsmShPins: empty new pins leaves existing deps unchanged", () => {
+it("mergeEsmShPins: empty new pins leaves existing deps unchanged", () => {
   const { updatedDeps, conflicts } = mergeEsmShPins({ "a": "1.0.0" }, {});
   assertEquals(updatedDeps, { "a": "1.0.0" });
   assertEquals(conflicts, []);
 });
 
-Deno.test("mergeEsmShPins: new pins are inserted in sorted key order", () => {
+it("mergeEsmShPins: new pins are inserted in sorted key order", () => {
   const { updatedDeps } = mergeEsmShPins(
     { "zod": "3.23.8", "axios": "1.7.0" },
     { "lodash": "4.17.21", "chalk": "5.3.0" },
@@ -421,7 +455,7 @@ Deno.test("mergeEsmShPins: new pins are inserted in sorted key order", () => {
   assertEquals(Object.keys(updatedDeps), ["axios", "chalk", "lodash", "zod"]);
 });
 
-Deno.test("mergeEsmShPins: no insertion preserves the existing key order", () => {
+it("mergeEsmShPins: no insertion preserves the existing key order", () => {
   // An idempotent re-run must not rewrite package.json just to re-order keys.
   const { updatedDeps } = mergeEsmShPins(
     { "zod": "3.23.8", "axios": "1.7.0" },
@@ -434,7 +468,7 @@ Deno.test("mergeEsmShPins: no insertion preserves the existing key order", () =>
 // Intra-file version conflicts
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod records an intra-file version conflict instead of silently dropping", () => {
+it("esm-sh codemod records an intra-file version conflict instead of silently dropping", () => {
   // Same package imported at two different versions in one file.
   // Both specifiers are rewritten to the same bare form; the first version wins
   // for the pin, and the second is recorded as a conflict.
@@ -457,7 +491,7 @@ Deno.test("esm-sh codemod records an intra-file version conflict instead of sile
   assertEquals(result.needsResolution, []);
 });
 
-Deno.test("esm-sh codemod does not conflict when same package appears at same version twice", () => {
+it("esm-sh codemod does not conflict when same package appears at same version twice", () => {
   const source = [
     'import { a } from "https://esm.sh/pkg@1.0.0";',
     'import { b } from "https://esm.sh/pkg@1.0.0";',
@@ -474,7 +508,7 @@ Deno.test("esm-sh codemod does not conflict when same package appears at same ve
 // Mixed scenarios
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles multiple imports in one file", () => {
+it("esm-sh codemod handles multiple imports in one file", () => {
   const source = [
     'import { a } from "https://esm.sh/pkg-a@1.0.0";',
     'import { b } from "https://esm.sh/pkg-b";',
@@ -492,7 +526,7 @@ Deno.test("esm-sh codemod handles multiple imports in one file", () => {
   assertEquals(result.rewrites.length, 3);
 });
 
-Deno.test("esm-sh codemod keeps a static import URL untouched alongside a dynamic one", () => {
+it("esm-sh codemod keeps a static import URL untouched alongside a dynamic one", () => {
   const source = `
 import { x } from "https://esm.sh/pkg@1.0.0";
 const y = import("https://esm.sh/pkg@1.0.0");
@@ -505,7 +539,7 @@ const y = import("https://esm.sh/pkg@1.0.0");
   assertEquals(result.pins, { pkg: "1.0.0" });
 });
 
-Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
+it("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
   const source = [
     'import { a } from "https://esm.sh/pkg-a@1.0.0";',
     'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist?target=es2022";',
@@ -525,10 +559,10 @@ Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
 // readProjectPackageJson
 // ---------------------------------------------------------------------------
 
-Deno.test("readProjectPackageJson returns null parseError when file is absent", async () => {
-  const dir = await Deno.makeTempDir();
+it("readProjectPackageJson returns null parseError when file is absent", async () => {
+  const dir = await makeTempDir();
   try {
-    const result = await readProjectPackageJson(`${dir}/package.json`);
+    const result = await readProjectPackageJson(`${dir}/package.json`, await Deno.realPath(dir));
     assertEquals(result.parseError, null);
     assertEquals(result.existingDeps, {});
   } finally {
@@ -536,8 +570,8 @@ Deno.test("readProjectPackageJson returns null parseError when file is absent", 
   }
 });
 
-Deno.test("readProjectPackageJson returns parseError for corrupt JSON, leaving file intact", async () => {
-  const dir = await Deno.makeTempDir();
+it("readProjectPackageJson returns parseError for corrupt JSON, leaving file intact", async () => {
+  const dir = await makeTempDir();
   const pkgPath = `${dir}/package.json`;
   const corrupt = "{ not valid json }";
   try {
@@ -553,8 +587,8 @@ Deno.test("readProjectPackageJson returns parseError for corrupt JSON, leaving f
   }
 });
 
-Deno.test("readProjectPackageJson returns parseError for unreadable file, not null", async () => {
-  const dir = await Deno.makeTempDir();
+it("readProjectPackageJson returns parseError for unreadable file, not null", async () => {
+  const dir = await makeTempDir();
   const pkgPath = `${dir}/package.json`;
   try {
     await Deno.writeTextFile(pkgPath, '{"dependencies":{}}');
@@ -586,8 +620,8 @@ Deno.test("readProjectPackageJson returns parseError for unreadable file, not nu
   }
 });
 
-Deno.test("readProjectPackageJson extracts dependencies from a valid file", async () => {
-  const dir = await Deno.makeTempDir();
+it("readProjectPackageJson extracts dependencies from a valid file", async () => {
+  const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
       `${dir}/package.json`,
@@ -601,8 +635,55 @@ Deno.test("readProjectPackageJson extracts dependencies from a valid file", asyn
   }
 });
 
-Deno.test("readProjectPackageJson collects declarations from other dependency fields", async () => {
-  const dir = await Deno.makeTempDir();
+it("manifest writes remain bound to the file identity that was read", async () => {
+  const project = await makeTempDir();
+  const pkgPath = `${project}/package.json`;
+  try {
+    await Deno.writeTextFile(pkgPath, '{"dependencies":{}}\n');
+    const projectRoot = await Deno.realPath(project);
+    const result = await readProjectPackageJson(pkgPath, projectRoot);
+    assert(result.fileIdentity, "a guarded manifest read must return its file identity");
+
+    await Deno.writeTextFile(`${project}/replacement.json`, '{"name":"replacement"}\n');
+    await Deno.rename(`${project}/replacement.json`, pkgPath);
+
+    const error = await assertRejects(
+      () =>
+        writeTextFileInsideProject(pkgPath, projectRoot, '{"name":"codemod"}\n', {
+          expectedIdentity: result.fileIdentity,
+        }),
+      Error,
+    );
+    assert(error instanceof Error);
+    assertStringIncludes(error.message, "changed after being read");
+    assertEquals(await Deno.readTextFile(pkgPath), '{"name":"replacement"}\n');
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("guarded manifest read errors do not expose resolved paths", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const pkgPath = `${project}/package.json`;
+  try {
+    await Deno.writeTextFile(`${outside}/victim.json`, "{}\n");
+    await Deno.symlink(`${outside}/victim.json`, pkgPath);
+
+    const result = await readProjectPackageJson(pkgPath, await Deno.realPath(project));
+
+    assert(result.parseError);
+    assertStringIncludes(result.parseError, "could not be read safely");
+    assert(!result.parseError.includes(project));
+    assert(!result.parseError.includes(outside));
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+it("readProjectPackageJson collects declarations from other dependency fields", async () => {
+  const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
       `${dir}/package.json`,
@@ -629,8 +710,8 @@ Deno.test("readProjectPackageJson collects declarations from other dependency fi
   }
 });
 
-Deno.test("readProjectPackageJson returns parseError for malformed devDependencies", async () => {
-  const dir = await Deno.makeTempDir();
+it("readProjectPackageJson returns parseError for malformed devDependencies", async () => {
+  const dir = await makeTempDir();
   try {
     await Deno.writeTextFile(
       `${dir}/package.json`,
@@ -648,7 +729,7 @@ Deno.test("readProjectPackageJson returns parseError for malformed devDependenci
 // filterNeedsResolution
 // ---------------------------------------------------------------------------
 
-Deno.test("filterNeedsResolution removes packages that are already pinned", () => {
+it("filterNeedsResolution removes packages that are already pinned", () => {
   const result = filterNeedsResolution(["pkg-a", "pkg-b", "pkg-c"], {
     "pkg-a": "1.0.0",
   });
@@ -656,11 +737,11 @@ Deno.test("filterNeedsResolution removes packages that are already pinned", () =
   assertEquals(result, ["pkg-b", "pkg-c"]);
 });
 
-Deno.test("filterNeedsResolution returns all when no packages are pinned", () => {
+it("filterNeedsResolution returns all when no packages are pinned", () => {
   assertEquals(filterNeedsResolution(["b", "a"], {}), ["a", "b"]);
 });
 
-Deno.test("filterNeedsResolution: package pinned in one file not in needsResolution for another", () => {
+it("filterNeedsResolution: package pinned in one file not in needsResolution for another", () => {
   // Simulate: file-1 imports pkg@1.0.0 (versioned), file-2 imports pkg (unversioned).
   // After aggregation allPins has pkg, so pkg must NOT appear in needsResolution.
   const allNeedsResolution = new Set(["pkg", "other-pkg"]);
@@ -673,8 +754,8 @@ Deno.test("filterNeedsResolution: package pinned in one file not in needsResolut
 // main() integration: abort on corrupt/unreadable package.json
 // ---------------------------------------------------------------------------
 
-Deno.test("source parse errors identify the file that could not be migrated", async () => {
-  const dir = await Deno.makeTempDir();
+it("source parse errors identify the file that could not be migrated", async () => {
+  const dir = await makeTempDir();
   const srcPath = `${dir}/broken.ts`;
   try {
     await Deno.writeTextFile(srcPath, "import {");
@@ -697,10 +778,10 @@ Deno.test("source parse errors identify the file that could not be migrated", as
   }
 });
 
-Deno.test(
+it(
   "corrupt package.json aborts run: source files are not modified",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const srcPath = `${dir}/app.ts`;
     const pkgPath = `${dir}/package.json`;
     const original = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
@@ -724,9 +805,9 @@ Deno.test(
   },
 );
 
-Deno.test(
+describe(
   "invalid package.json shapes abort without modifying source or manifest",
-  async (testContext) => {
+  () => {
     const cases = [
       { name: "array root", manifest: "[]\n" },
       { name: "null root", manifest: "null\n" },
@@ -738,8 +819,8 @@ Deno.test(
     ];
 
     for (const testCase of cases) {
-      await testContext.step(testCase.name, async () => {
-        const dir = await Deno.makeTempDir();
+      it(testCase.name, async () => {
+        const dir = await makeTempDir();
         const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
         try {
           await Deno.writeTextFile(`${dir}/app.ts`, source);
@@ -764,10 +845,10 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "happy path: package.json written before source files, both updated",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     try {
       await Deno.writeTextFile(
         `${dir}/app.ts`,
@@ -796,17 +877,780 @@ Deno.test(
   },
 );
 
+it(
+  "main creates package.json for a project that has no manifest",
+  async () => {
+    const project = await makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+
+      await main(["--", project]);
+
+      // The manifest is created with the pin the rewrite depends on.
+      const pkg = JSON.parse(await Deno.readTextFile(`${project}/package.json`)) as {
+        dependencies?: Record<string, string>;
+      };
+      assertEquals(pkg.dependencies?.lodash, "4.17.21");
+      const src = await Deno.readTextFile(`${project}/app.ts`);
+      assertStringIncludes(src, 'from "lodash"');
+      assert(!src.includes("esm.sh"));
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+it(
+  "main reports why a source file could not be read",
+  async () => {
+    const project = await makeTempDir();
+    const srcPath = `${project}/app.ts`;
+    try {
+      await Deno.writeTextFile(srcPath, 'import { x } from "https://esm.sh/lodash@4.17.21";\n');
+      await Deno.writeTextFile(`${project}/package.json`, '{"dependencies":{}}\n');
+      await Deno.chmod(srcPath, 0o000);
+
+      // Running as root ignores the mode; skip rather than fail.
+      let unreadable = false;
+      try {
+        (await Deno.open(srcPath, { read: true })).close();
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) return;
+
+      const error = await assertRejects(() => main(["--", project]), Error);
+      assert(error instanceof Error);
+      assertStringIncludes(error.message, "Failed to read");
+      assert(error.cause instanceof Error, "the underlying failure must survive as the cause");
+      const failureKind = (error.cause as Error & { code?: string }).code ??
+        error.cause.name;
+      assertStringIncludes(error.message, failureKind);
+      assert(
+        !error.message.includes(error.cause.message),
+        "the wrapped error must not echo the filesystem error body",
+      );
+    } finally {
+      try {
+        await Deno.chmod(srcPath, 0o644);
+      } catch { /* ignore */ }
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+it(
+  "manifest read failures are not reported as symlink problems",
+  async () => {
+    const project = await makeTempDir();
+    const pkgPath = `${project}/package.json`;
+    try {
+      await Deno.writeTextFile(pkgPath, '{"dependencies":{}}\n');
+      await Deno.chmod(pkgPath, 0o000);
+
+      // Running as root ignores the mode; skip rather than fail.
+      let unreadable = false;
+      try {
+        (await Deno.open(pkgPath, { read: true })).close();
+      } catch {
+        unreadable = true;
+      }
+      if (!unreadable) return;
+
+      const result = await readProjectPackageJson(pkgPath, await Deno.realPath(project));
+
+      assert(result.parseError, "a permission failure must not read as an absent manifest");
+      assertStringIncludes(result.parseError, "could not be read");
+      assert(
+        !result.parseError.includes("symlink"),
+        `a permission failure must not be diagnosed as a symlink: ${result.parseError}`,
+      );
+      // The report must still not echo resolved paths.
+      assert(!result.parseError.includes(project));
+    } finally {
+      try {
+        await Deno.chmod(pkgPath, 0o644);
+      } catch { /* ignore */ }
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// main() integration: symlinked paths must never be followed
+// ---------------------------------------------------------------------------
+
+it(
+  "package.json symlink pointing outside the project aborts without writing through the link",
+  async () => {
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    const outsideContent = JSON.stringify({ name: "victim", dependencies: {} }) + "\n";
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+      await Deno.writeTextFile(`${outside}/victim.json`, outsideContent);
+      await Deno.symlink(`${outside}/victim.json`, `${project}/package.json`);
+
+      let thrown: unknown;
+      try {
+        await main(["--", project]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should refuse a symlinked package.json");
+      assertStringIncludes(thrown.message, "symlink");
+      // The file outside the project must be untouched, and no source file may
+      // have been rewritten without a recorded pin.
+      assertEquals(await Deno.readTextFile(`${outside}/victim.json`), outsideContent);
+      assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+it(
+  "dangling package.json symlink aborts instead of creating the target file",
+  async () => {
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    const target = `${outside}/planted.json`;
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+      // Dangling symlink: lstat succeeds and reports isSymlink, the target
+      // does not exist.  Without the guard, readTextFile reports NotFound
+      // (treated as an absent manifest) and the write phase would then CREATE
+      // the target outside the project.
+      await Deno.symlink(target, `${project}/package.json`, { type: "file" });
+
+      let thrown: unknown;
+      try {
+        await main(["--", project]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should refuse a dangling package.json symlink");
+      assertStringIncludes(thrown.message, "symlink");
+      let targetCreated = true;
+      try {
+        await Deno.lstat(target);
+      } catch (e) {
+        if (e instanceof Deno.errors.NotFound) targetCreated = false;
+      }
+      assert(!targetCreated, "the symlink target outside the project must not be created");
+      assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+it(
+  "symlinked source files and directories are not collected or rewritten",
+  async () => {
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
+    const outsideSource = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    try {
+      await Deno.writeTextFile(`${outside}/victim.ts`, outsideSource);
+      await Deno.mkdir(`${outside}/victim-dir`);
+      await Deno.writeTextFile(`${outside}/victim-dir/nested.ts`, outsideSource);
+      await Deno.writeTextFile(
+        `${project}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }) + "\n",
+      );
+      await Deno.symlink(`${outside}/victim.ts`, `${project}/linked.ts`);
+      await Deno.symlink(`${outside}/victim-dir`, `${project}/linked-dir`);
+
+      // End-to-end cover for the same invariant the collectSourceFiles unit
+      // test pins: a link must never reach the rewrite phase.
+      await main(["--", project]);
+
+      // Files reachable only through symlinks must keep their esm.sh URLs.
+      assertEquals(await Deno.readTextFile(`${outside}/victim.ts`), outsideSource);
+      assertEquals(await Deno.readTextFile(`${outside}/victim-dir/nested.ts`), outsideSource);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+it(
+  "collection skips symlinked entries even when readDir reports them as files",
+  async () => {
+    // The skip must not rely on the runtime declining to classify a link as a
+    // file: this reader sets both flags, the way a runtime that resolved the
+    // entry would, so only the isSymlink check can keep the link out.
+    const project = await makeTempDir();
+    const entries: Record<string, Deno.DirEntry[]> = {
+      [project]: [
+        { name: "app.ts", isFile: true, isDirectory: false, isSymlink: false },
+        { name: "linked.ts", isFile: true, isDirectory: false, isSymlink: true },
+        { name: "linked-dir", isFile: false, isDirectory: true, isSymlink: true },
+      ],
+      [`${project}/linked-dir`]: [
+        { name: "nested.ts", isFile: true, isDirectory: false, isSymlink: false },
+      ],
+    };
+    const readDir = (path: string): AsyncIterable<Deno.DirEntry> =>
+      (async function* () {
+        for (const entry of entries[path] ?? []) yield entry;
+      })();
+
+    try {
+      const files: string[] = [];
+      await collectSourceFiles(project, files, readDir);
+
+      assertEquals(files, [`${project}/app.ts`]);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+it("collection revalidates a directory before recursive traversal", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const nested = `${project}/nested`;
+  const originalNested = `${project}/nested-original`;
+  let nestedRead = false;
+  try {
+    await Deno.mkdir(nested);
+    const readDir = (path: string): AsyncIterable<Deno.DirEntry> =>
+      (async function* () {
+        if (path === project) {
+          yield { name: "nested", isFile: false, isDirectory: true, isSymlink: false };
+          await Deno.rename(nested, originalNested);
+          await Deno.symlink(outside, nested, { type: "dir" });
+          return;
+        }
+        nestedRead = true;
+      })();
+
+    await assertRejects(
+      () => collectSourceFiles(project, [], readDir),
+      Error,
+      "symlinked directory",
+    );
+    assertEquals(nestedRead, false);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+it("assertPathInsideProject rejects an out-of-project real path", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  try {
+    const projectRoot = await Deno.realPath(project);
+    await Deno.writeTextFile(`${outside}/file.txt`, "x");
+
+    let thrown: unknown;
+    try {
+      await assertPathInsideProject(`${outside}/file.txt`, projectRoot);
+    } catch (error) {
+      thrown = error;
+    }
+    assert(thrown instanceof Error, "a path outside the project root must be rejected");
+
+    // A regular file directly under the resolved root passes.
+    await Deno.writeTextFile(`${project}/inside.txt`, "x");
+    await assertPathInsideProject(`${project}/inside.txt`, projectRoot);
+
+    // A missing file is rejected unless explicitly allowed.
+    let missingThrown = false;
+    try {
+      await assertPathInsideProject(`${project}/missing.txt`, projectRoot);
+    } catch {
+      missingThrown = true;
+    }
+    assert(missingThrown, "a missing file must be rejected by default");
+    await assertPathInsideProject(`${project}/missing.txt`, projectRoot, {
+      allowMissing: true,
+    });
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+it(
+  "assertPathInsideProject rejects a missing file whose parent escapes the project",
+  async () => {
+    const project = await makeTempDir();
+    const outside = await makeTempDir();
+    try {
+      const projectRoot = await Deno.realPath(project);
+      // Intermediate symlink: the leaf does not exist, so lstat reports
+      // NotFound, but creating it would write into `outside`.
+      await Deno.symlink(outside, `${project}/linked-dir`);
+
+      let thrown: unknown;
+      try {
+        await assertPathInsideProject(`${project}/linked-dir/package.json`, projectRoot, {
+          allowMissing: true,
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      assert(
+        thrown instanceof Error,
+        "a missing path reached through a symlinked parent must be rejected",
+      );
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+it(
+  "assertPathInsideProject accepts children of a root that already ends in a separator",
+  async () => {
+    const separator = Deno.build.os === "windows" ? "\\" : "/";
+    const project = await makeTempDir();
+    try {
+      const projectRoot = await Deno.realPath(project);
+      await Deno.writeTextFile(`${project}/inside.txt`, "x");
+      // A filesystem root such as "/" or a drive root already carries the
+      // separator. Doubling it would reject every real child.
+      await assertPathInsideProject(`${project}/inside.txt`, projectRoot + separator);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+it("missing POSIX filenames may contain a literal backslash", async () => {
+  if (Deno.build.os === "windows") return;
+  const project = await makeTempDir();
+  try {
+    await assertPathInsideProject(
+      `${project}/foo\\bar.ts`,
+      await Deno.realPath(project),
+      { allowMissing: true },
+    );
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("project writes support regular files on Windows", async () => {
+  if (Deno.build.os !== "windows") return;
+
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  try {
+    await Deno.writeTextFile(target, "original");
+    await writeTextFileInsideProject(target, await Deno.realPath(project), "updated");
+    assertEquals(await Deno.readTextFile(target), "updated");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("project writes create a missing manifest", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/package.json`;
+  try {
+    await writeTextFileInsideProject(target, await Deno.realPath(project), "{}\n", {
+      allowMissing: true,
+    });
+    assertEquals(await Deno.readTextFile(target), "{}\n");
+    assert((await Deno.lstat(target)).isFile, "the manifest must be a regular file");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("a failed manifest creation does not unlink through a revalidated path", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/package.json`;
+  try {
+    const projectRoot = await Deno.realPath(project);
+    const error = await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "{}\n", {
+          allowMissing: true,
+          requireMissing: true,
+          expectedIdentity: { device: "unexpected", inode: "unexpected" },
+        }),
+      Error,
+      "changed after being read",
+    );
+    assert(error instanceof Error);
+    assertStringIncludes(error.message, '"package.json"');
+    assertStringIncludes(error.message, "Inspect it before retrying");
+    assert(!error.message.includes(project), "creation errors must not expose absolute paths");
+    assertEquals(await Deno.readTextFile(target), "");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+for (const mutation of ["edit", "replace"] as const) {
+  it(`revalidates unchanged manifest pins after a concurrent ${mutation}`, async () => {
+    const project = await makeTempDir();
+    const path = `${project}/package.json`;
+    const source = 'import "https://esm.sh/lodash@4.17.21";\n';
+    const stringify = JSON.stringify;
+    let changed = false;
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+      await Deno.writeTextFile(path, '{"dependencies":{"lodash":"4.17.21"}}\n');
+      await Deno.writeTextFile(`${project}/replacement.json`, '{"dependencies":{}}\n');
+      JSON.stringify = new Proxy(stringify, {
+        apply(target, receiver, args) {
+          const value = args[0];
+          if (
+            !changed && value && typeof value === "object" &&
+            Object.keys(value).length === 1 && value.lodash === "4.17.21"
+          ) {
+            changed = true;
+            if (mutation === "replace") Deno.renameSync(`${project}/replacement.json`, path);
+            else Deno.writeTextFileSync(path, '{"dependencies":{}}\n');
+          }
+          return Reflect.apply(target, receiver, args);
+        },
+      });
+      await assertRejects(() => main([project]), Error, "package.json changed after analysis");
+      assertEquals(changed, true);
+      assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+      assertEquals(await Deno.readTextFile(path), '{"dependencies":{}}\n');
+    } finally {
+      JSON.stringify = stringify;
+      await Deno.remove(project, { recursive: true });
+    }
+  });
+}
+
+it("a manifest deleted after analysis is not recreated", async () => {
+  const project = await makeTempDir();
+  const path = `${project}/package.json`;
+  const source = 'import "https://esm.sh/lodash@4.17.21";\n';
+  const stringify = JSON.stringify;
+  let deleted = false;
+  try {
+    await Deno.writeTextFile(`${project}/app.ts`, source);
+    await Deno.writeTextFile(path, '{"dependencies":{}}\n');
+    JSON.stringify = new Proxy(stringify, {
+      apply(target, receiver, args) {
+        const value = args[0];
+        if (
+          !deleted && value && typeof value === "object" &&
+          Object.keys(value).length === 1 && value.lodash === "4.17.21"
+        ) {
+          deleted = true;
+          Deno.removeSync(path);
+        }
+        return Reflect.apply(target, receiver, args);
+      },
+    });
+
+    await assertRejects(() => main([project]), Error);
+    assertEquals(deleted, true);
+    await assertRejects(() => Deno.lstat(path), Deno.errors.NotFound);
+    assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+  } finally {
+    JSON.stringify = stringify;
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("a manifest that appears after analysis is not overwritten", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/package.json`;
+  try {
+    const projectRoot = await Deno.realPath(project);
+    const read = await readProjectPackageJson(target, projectRoot);
+    assertEquals(read.missingAtRead, true);
+    await Deno.writeTextFile(target, '{"name":"created-concurrently"}\n');
+
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "{}\n", {
+          allowMissing: true,
+          requireMissing: read.missingAtRead,
+        }),
+      Error,
+    );
+    assertEquals(await Deno.readTextFile(target), '{"name":"created-concurrently"}\n');
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("creating a missing manifest never follows a planted symlink", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const target = `${outside}/planted.json`;
+  try {
+    // Dangling link: the manifest is "absent" through the link, so the write
+    // must reject it rather than creating the file it points at.
+    await Deno.symlink(target, `${project}/package.json`, { type: "file" });
+    const projectRoot = await Deno.realPath(project);
+
+    const error = await assertRejects(
+      () =>
+        writeTextFileInsideProject(`${project}/package.json`, projectRoot, "{}\n", {
+          allowMissing: true,
+        }),
+      Error,
+    );
+    assert(error instanceof Error);
+    assertStringIncludes(error.message, "symlink");
+    await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+it("assertPathInsideProject rejects a path that is not a regular file", async () => {
+  const project = await makeTempDir();
+  try {
+    // A directory stands in for any non-regular entry. A FIFO planted as
+    // package.json takes the same branch, and opening one would block until a
+    // writer appears, hanging the codemod.
+    await Deno.mkdir(`${project}/package.json`);
+    const projectRoot = await Deno.realPath(project);
+
+    const error = await assertRejects(
+      () => assertPathInsideProject(`${project}/package.json`, projectRoot),
+      Error,
+    );
+    assert(error instanceof Error);
+    assertStringIncludes(error.message, "regular file");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("project writes reject a file replaced after its source was read", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  const replacement = `${project}/replacement.ts`;
+  try {
+    const projectRoot = await Deno.realPath(project);
+    await Deno.writeTextFile(target, "original");
+    const identity = await readFileIdentity(target, projectRoot);
+    await Deno.writeTextFile(replacement, "replacement");
+    await Deno.rename(replacement, target);
+
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, "updated", {
+          expectedIdentity: {
+            device: String(identity.dev),
+            inode: String(identity.ino),
+          },
+        }),
+      Error,
+      "changed after being read",
+    );
+    assertEquals(await Deno.readTextFile(target), "replacement");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("project writes reject an in-place edit after analysis", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  try {
+    const original = 'import "https://esm.sh/pkg@1.0.0";\n';
+    const newer = 'import "https://esm.sh/pkg@2.0.0";\n';
+    await Deno.writeTextFile(target, original);
+    const projectRoot = await Deno.realPath(project);
+    const identity = await readFileIdentity(target, projectRoot);
+    await Deno.writeTextFile(target, newer);
+
+    await assertRejects(
+      () =>
+        writeTextFileInsideProject(target, projectRoot, 'import "pkg";\n', {
+          expectedIdentity: {
+            device: String(identity.dev),
+            inode: String(identity.ino),
+          },
+          expectedContent: original,
+        }),
+      Error,
+      "contents changed after being read",
+    );
+    assertEquals(await Deno.readTextFile(target), newer);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+it("project writes use bigint identity stats when number-valued inode stats lose precision", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  const originalStat = Deno.stat;
+  try {
+    await Deno.writeTextFile(target, "original");
+    const root = await Deno.realPath(project);
+    const info = await readFileIdentity(target, root);
+    Object.defineProperty(Deno, "stat", {
+      configurable: true,
+      value: async (path: string | URL) => ({
+        ...await originalStat(path),
+        ino: Number.MAX_SAFE_INTEGER + 2,
+      }),
+    });
+    await writeTextFileInsideProject(target, root, "updated", {
+      expectedIdentity: { device: String(info.dev), inode: String(info.ino) },
+      expectedContent: "original",
+    });
+    assertEquals(await Deno.readTextFile(target), "updated");
+  } finally {
+    Object.defineProperty(Deno, "stat", { configurable: true, value: originalStat });
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // main() integration: version conflicts are preflighted
 // ---------------------------------------------------------------------------
 
-Deno.test(
+it(
+  "report paths keep the project directory spelling the caller passed",
+  async () => {
+    // Traversal and writes use the resolved root, but the report must echo the
+    // caller's project argument instead of substituting the resolved path.
+    // A symlinked project directory makes the two differ on every platform,
+    // the same way a relative argument such as "." does.
+    const parent = await makeTempDir();
+    const real = `${parent}/real`;
+    const link = `${parent}/link`;
+    try {
+      await Deno.mkdir(real);
+      await Deno.writeTextFile(
+        `${real}/app.ts`,
+        'import { x } from "https://esm.sh/lodash@4.17.21";\n',
+      );
+      await Deno.writeTextFile(
+        `${real}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n",
+      );
+      await Deno.symlink(real, link);
+
+      let report: { rewrites: Array<{ file: string }> } | undefined;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+      };
+      try {
+        await main(["--", link]);
+      } finally {
+        console.log = origLog;
+      }
+
+      assert(report !== undefined, "main() must print a JSON report");
+      assertEquals(report.rewrites.map((rewrite) => rewrite.file), [`${link}/app.ts`]);
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+);
+
+it(
+  "POSIX report paths preserve literal backslashes in file names",
+  async () => {
+    if (Deno.build.os === "windows") return;
+
+    const project = await makeTempDir();
+    const sourceName = "foo\\bar.ts";
+    try {
+      await Deno.writeTextFile(
+        `${project}/${sourceName}`,
+        'import { x } from "https://esm.sh/lodash@4.17.21";\n',
+      );
+      await Deno.writeTextFile(
+        `${project}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n",
+      );
+
+      let report: { rewrites: Array<{ file: string }> } | undefined;
+      const originalLog = console.log.bind(console);
+      console.log = (message: string) => {
+        try {
+          report = JSON.parse(message);
+        } catch { /* ignore non-JSON lines */ }
+      };
+      try {
+        await main(["--", project]);
+      } finally {
+        console.log = originalLog;
+      }
+
+      assert(report !== undefined);
+      assertEquals(report.rewrites.map((rewrite) => rewrite.file), [
+        `${project}/${sourceName}`,
+      ]);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+    }
+  },
+);
+
+it(
+  "POSIX report paths preserve a trailing backslash in the project name",
+  async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parent = await makeTempDir();
+    const project = `${parent}/project\\`;
+    try {
+      await Deno.mkdir(project);
+      await Deno.writeTextFile(
+        `${project}/app.ts`,
+        'import { x } from "https://esm.sh/lodash@4.17.21";\n',
+      );
+      await Deno.writeTextFile(
+        `${project}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n",
+      );
+
+      let report: { rewrites: Array<{ file: string }> } | undefined;
+      const originalLog = console.log.bind(console);
+      console.log = (message: string) => {
+        try {
+          report = JSON.parse(message);
+        } catch { /* ignore non-JSON lines */ }
+      };
+      try {
+        await main(["--", project]);
+      } finally {
+        console.log = originalLog;
+      }
+
+      assert(report !== undefined);
+      assertEquals(report.rewrites.map((rewrite) => rewrite.file), [`${project}/app.ts`]);
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+);
+
+it(
   "intra-file version conflict leaves source and package.json unchanged",
   async () => {
     // Same package at two different versions in one file: an intra-file conflict.
     // The migration completes, but the conflicting package is left untouched so
     // the codemod cannot collapse two incompatible URLs to one bare specifier.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
       'import second from "https://esm.sh/pkg@2.0.0";',
@@ -827,13 +1671,13 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "cross-file version conflict skips both package rewrites and reports the conflicting file",
   async () => {
     // Two files import the same package at different versions. The run completes,
     // but neither URL is collapsed to a bare specifier and no arbitrary version
     // is pinned.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const firstSource = 'import first from "https://esm.sh/pkg@1.0.0";\n';
     const secondSource = 'import second from "https://esm.sh/pkg@2.0.0";\n';
     const manifest = JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n";
@@ -880,13 +1724,13 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "devDependencies version disagreement is a conflict: source and manifest unchanged",
   async () => {
     // A URL-derived pin that disagrees with a devDependencies declaration must
     // not be added to `dependencies` - that would leave two disagreeing
     // declarations for one package.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
       { name: "test", dependencies: {}, devDependencies: { lodash: "4.17.20" } },
@@ -931,12 +1775,12 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "matching devDependencies version is not a conflict: pin lands in dependencies",
   async () => {
     // The runtime import justifies a `dependencies` entry; an agreeing
     // devDependencies declaration is not a disagreement.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
       { name: "test", dependencies: {}, devDependencies: { lodash: "4.17.21" } },
@@ -961,13 +1805,13 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "package.json range conflict leaves its import untouched and reports the conflict",
   async () => {
     // A project has "lodash": "^4.17.0" in package.json and imports
     // https://esm.sh/lodash@4.17.21. The URL and existing range are both kept
     // because the codemod cannot prove that they resolve to equivalent code.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = 'import value from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
       { name: "test", dependencies: { lodash: "^4.17.0" } },
@@ -1015,7 +1859,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "mixed versioned+unversioned imports: conflict specifier points at the versioned URL",
   async () => {
     // A file imports the same package both without and with a version.  The
@@ -1023,7 +1867,7 @@ Deno.test(
     // on result.rewrites would pick "https://esm.sh/lodash" as the specifier,
     // a URL that has nothing to do with the version conflict.  pickSpecifier()
     // must prefer the rewrite whose URL carries the conflicting version.
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import a from "https://esm.sh/lodash";',
       'import b from "https://esm.sh/lodash@4.17.21";',
@@ -1078,10 +1922,10 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "unversioned subpath containing version text does not mask conflict specifier",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import a from "https://esm.sh/lodash/subpath@4.17.21";',
       'import b from "https://esm.sh/lodash@4.17.21";',
@@ -1132,10 +1976,10 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "default conflict handling still migrates independent packages",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
       'import second from "https://esm.sh/pkg@2.0.0";',
@@ -1164,10 +2008,10 @@ Deno.test(
   },
 );
 
-Deno.test(
+it(
   "--fail-on-conflict exits before any source or package.json write",
   async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
       'import second from "https://esm.sh/pkg@2.0.0";',
@@ -1200,7 +2044,7 @@ Deno.test(
 // Prototype-key collision safety (Fix 1)
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles a package name that collides with Object.prototype key", () => {
+it("esm-sh codemod handles a package name that collides with Object.prototype key", () => {
   // "hasOwnProperty", "toString", "constructor" etc. are inherited from
   // Object.prototype.  The `in` operator would report them as present on any
   // plain object, causing a spurious conflict even on first encounter.
@@ -1221,7 +2065,7 @@ Deno.test("esm-sh codemod handles a package name that collides with Object.proto
   assertEquals(result.conflicts, []);
 });
 
-Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, no prototype pollution', () => {
+it('mergeEsmShPins: package named "__proto__" is stored as own property, no prototype pollution', () => {
   // If updatedDeps is a regular object, `updatedDeps["__proto__"] = version`
   // triggers the inherited setter and mutates the object's prototype instead
   // of creating an own property.  With a null-prototype object the key is
@@ -1250,7 +2094,7 @@ Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, 
 // Non-top-level import declaration (Fix 2)
 // ---------------------------------------------------------------------------
 
-Deno.test(
+it(
   "esm-sh codemod rewrites an import declaration in a non-top-level position",
   () => {
     // allowImportExportEverywhere lets the parser accept import declarations
@@ -1270,3 +2114,118 @@ Deno.test(
     assertEquals(result.needsResolution, []);
   },
 );
+
+it("collection does not enumerate a replacement symlink between identity checks", async () => {
+  const project = await makeTempDir();
+  const outside = await makeTempDir();
+  const nested = `${project}/nested`;
+  const saved = `${project}/saved`;
+  const originalReadDir = Deno.readDir;
+  try {
+    await Deno.mkdir(nested);
+    await Deno.writeTextFile(`${nested}/inside.ts`, "export {};");
+    await Deno.writeTextFile(`${outside}/outside.ts`, "export {};");
+    Object.defineProperty(Deno, "readDir", {
+      configurable: true,
+      value: (path: string | URL) =>
+        (async function* () {
+          if (path !== nested) {
+            yield* originalReadDir(path);
+            return;
+          }
+          await Deno.rename(nested, saved);
+          await Deno.symlink(outside, nested, { type: "dir" });
+          try {
+            yield* originalReadDir(nested);
+          } finally {
+            await Deno.remove(nested);
+            await Deno.rename(saved, nested);
+          }
+        })(),
+    });
+    const files: string[] = [];
+    await collectSourceFiles(project, files);
+    assertEquals(files, [`${nested}/inside.ts`]);
+  } finally {
+    Object.defineProperty(Deno, "readDir", {
+      configurable: true,
+      value: originalReadDir,
+    });
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+it("pinned enumeration keeps reading the opened directory after its path is replaced", async () => {
+  const parent = await Deno.realPath(await makeTempDir());
+  const project = `${parent}/project`;
+  const saved = `${parent}/saved`;
+  const outside = `${parent}/outside`;
+  await Deno.mkdir(project);
+  await Deno.mkdir(outside);
+  await Deno.writeTextFile(`${project}/one.ts`, "export {};");
+  await Deno.writeTextFile(`${project}/two.ts`, "export {};");
+  await Deno.writeTextFile(`${outside}/outside.ts`, "export {};");
+  const iterator = readPinnedDirectory(project, project);
+  try {
+    const first = await iterator.next();
+    assertEquals(first.done, false);
+    await Deno.rename(project, saved);
+    await Deno.symlink(outside, project, { type: "dir" });
+    const names = [first.value!.name];
+    for await (const entry of iterator) names.push(entry.name);
+    assertEquals(names.sort(), ["one.ts", "two.ts"]);
+  } finally {
+    await iterator.return(undefined);
+    await Deno.remove(parent, { recursive: true });
+  }
+});
+
+it("pinned enumeration rejects symlinked parent components", async () => {
+  const project = await Deno.realPath(await makeTempDir());
+  const outside = await makeTempDir();
+  try {
+    await Deno.mkdir(`${outside}/nested`);
+    await Deno.symlink(outside, `${project}/link`, { type: "dir" });
+    await assertRejects(
+      async () => {
+        for await (const _entry of readPinnedDirectory(`${project}/link/nested`, project)) {
+          throw new Error("Unexpected entry");
+        }
+      },
+      Error,
+      "stable no-follow handle",
+    );
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+it("pinned enumeration preserves leading BOM characters in filenames", async () => {
+  const root = await Deno.realPath(await makeTempDir());
+  try {
+    await Deno.writeTextFile(`${root}/app.ts`, "export {};");
+    await Deno.writeTextFile(`${root}/\uFEFFapp.ts`, "export {};");
+    const names: string[] = [];
+    for await (const entry of readPinnedDirectory(root, root)) names.push(entry.name);
+    assertEquals(names.sort(), ["app.ts", "\uFEFFapp.ts"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("codemod migrates BOM-prefixed source without a false content-change rejection", async () => {
+  const project = await makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${project}/app.ts`,
+      '\uFEFFimport "https://esm.sh/lodash@4.17.21";\n',
+    );
+    await Deno.writeTextFile(`${project}/package.json`, "{}\n");
+    await main([project]);
+    assertEquals((await Deno.readTextFile(`${project}/app.ts`)).includes("esm.sh"), false);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});

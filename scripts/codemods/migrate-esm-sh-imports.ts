@@ -1,8 +1,17 @@
-#!/usr/bin/env -S deno run --allow-read --allow-write --allow-env=BABEL_TYPES_8_BREAKING
+#!/usr/bin/env -S deno run --allow-read --allow-write --allow-ffi --allow-env=BABEL_TYPES_8_BREAKING
 
 import { parse } from "npm:@babel/parser@7.29.2";
 import * as generateModule from "npm:@babel/generator@7.29.1";
 import * as t from "npm:@babel/types@7.29.0";
+import { lstat as lstatNativeFile } from "node:fs/promises";
+import { dirname as nativeDirname, isAbsolute, parse as parsePath, relative } from "node:path";
+import {
+  capturePinnedDirectoryIdentity,
+  openPinnedPosixFile,
+  openPinnedWindowsFile,
+  type PinnedDirectoryIdentity,
+  readPinnedDirectory,
+} from "./pinned-directory.ts";
 
 interface BabelGeneratorResult {
   code: string;
@@ -145,6 +154,17 @@ export interface PackageJsonReadResult {
   otherFieldDeps: Record<string, { field: string; version: string }>;
   /** Set when the file could not be read, parsed, or validated; it must not be overwritten. */
   parseError: string | null;
+  /** Identity of the manifest handle whose bytes were parsed. */
+  fileIdentity?: StableFileIdentity;
+  /** Exact manifest text parsed during analysis. */
+  sourceText?: string;
+  /** True only when the guarded analysis observed no manifest at this path. */
+  missingAtRead?: true;
+}
+
+export interface StableFileIdentity {
+  device: string;
+  inode: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -452,30 +472,383 @@ function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
     Object.getPrototypeOf(value) === Object.prototype;
 }
 
+const PATH_SEPARATOR = Deno.build.os === "windows" ? "\\" : "/";
+
+/**
+ * Prefix that every path strictly inside `root` must start with.
+ *
+ * A filesystem root such as `/` or a drive root already ends in the separator,
+ * so appending another would produce `//` and reject every real child.
+ */
+function containmentPrefix(root: string): string {
+  return root.endsWith(PATH_SEPARATOR) ? root : root + PATH_SEPARATOR;
+}
+
+/** Directory portion of `path`, accepting either separator spelling. */
+function parentDirOf(path: string): string {
+  return nativeDirname(path);
+}
+
+class SafeFileGuardError extends Error {
+  override readonly name = "SafeFileGuardError";
+}
+
+/**
+ * Fail closed before reading or writing a path collected under the project
+ * directory.
+ *
+ * Deno.readTextFile/Deno.writeTextFile follow symlinks, so a malicious project
+ * could plant package.json (or swap a collected source file) as a symlink,
+ * possibly dangling, that points outside the project, turning the codemod's
+ * --allow-write into an arbitrary file create/overwrite under the operator's
+ * account.  Reject every symlink (lstat reports a dangling one too, as
+ * isSymlink) and require the resolved path to stay inside the resolved project
+ * root.
+ *
+ * A path that exists must also be a regular file.  A FIFO, socket, or device
+ * planted as package.json is not a symlink, but opening one blocks until a
+ * peer connects, which hangs the codemod indefinitely.
+ *
+ * `allowMissing` permits a genuinely absent file: package.json may not exist
+ * yet.  The parent directory is still resolved and checked, so an intermediate
+ * symlink cannot make the creating write land outside the project.
+ *
+ * Known limitation: a hardlink is indistinguishable from the file it shares an
+ * inode with, so lstat reports a regular file and realPath stays inside the
+ * project.  Rewriting through one edits the outside file.  Creating a hardlink
+ * requires write access to the target's filesystem and directory, so this
+ * residual is out of scope for this guard.
+ */
+export async function assertPathInsideProject(
+  path: string,
+  projectRoot: string,
+  { allowMissing = false }: { allowMissing?: boolean } = {},
+): Promise<void> {
+  const prefix = containmentPrefix(projectRoot);
+  let info: Deno.FileInfo;
+  try {
+    info = await Deno.lstat(path);
+  } catch (e) {
+    if (allowMissing && e instanceof Deno.errors.NotFound) {
+      // The file may still be created, but only where its existing parent
+      // resolves inside the project.
+      let realParent: string;
+      try {
+        realParent = await Deno.realPath(parentDirOf(path));
+      } catch (parentError) {
+        throw new SafeFileGuardError(
+          "Refusing to create a file because its parent directory could not be verified.",
+          { cause: parentError },
+        );
+      }
+      if (realParent !== projectRoot && !realParent.startsWith(prefix)) {
+        throw new SafeFileGuardError(
+          "Refusing to create a path outside the project directory.",
+        );
+      }
+      return;
+    }
+    throw new SafeFileGuardError(
+      "Refusing to touch a path because its file type could not be verified.",
+      { cause: e },
+    );
+  }
+  if (info.isSymlink) {
+    throw new SafeFileGuardError("Refusing to follow a symlink.");
+  }
+  if (!info.isFile) {
+    throw new SafeFileGuardError("Refusing to use a path that is not a regular file.");
+  }
+  const real = await Deno.realPath(path);
+  if (real !== projectRoot && !real.startsWith(prefix)) {
+    throw new SafeFileGuardError("Refusing to access a path outside the project directory.");
+  }
+}
+
+function stableFileIdentity(
+  info: Readonly<{ dev: number | bigint | null; ino: number | bigint | null }>,
+): StableFileIdentity {
+  if (
+    info.dev === null || info.ino === null ||
+    (typeof info.dev === "number" && (!Number.isSafeInteger(info.dev) || info.dev <= 0)) ||
+    (typeof info.ino === "number" && (!Number.isSafeInteger(info.ino) || info.ino <= 0)) ||
+    (typeof info.dev === "bigint" && info.dev <= 0n) ||
+    (typeof info.ino === "bigint" && info.ino <= 0n)
+  ) {
+    throw new SafeFileGuardError("Stable file identity is unavailable.");
+  }
+  return { device: String(info.dev), inode: String(info.ino) };
+}
+
+function sameFileIdentity(opened: StableFileIdentity, current: StableFileIdentity): boolean {
+  return opened.device === current.device && opened.inode === current.inode;
+}
+
+function failedCreation(error: unknown, path: string): SafeFileGuardError {
+  const reason = error instanceof SafeFileGuardError
+    ? error.message
+    : "File creation did not finish.";
+  return new SafeFileGuardError(
+    `${reason} A newly created file may remain at ${
+      JSON.stringify(parsePath(path).base)
+    }. Inspect it before retrying.`,
+    { cause: error },
+  );
+}
+
+async function openProjectFile(
+  path: string,
+  projectRoot: string,
+  mode: "r" | "r+" | "wx+",
+  rootIdentity?: PinnedDirectoryIdentity,
+) {
+  const parent = await Deno.realPath(nativeDirname(path));
+  const canonicalPath = parent + "/" + parsePath(path).base;
+  return Deno.build.os === "windows"
+    ? openPinnedWindowsFile(canonicalPath, projectRoot, mode, rootIdentity)
+    : openPinnedPosixFile(canonicalPath, projectRoot, mode, rootIdentity);
+}
+
+async function pathFileIdentity(
+  path: string,
+  projectRoot: string,
+  rootIdentity?: PinnedDirectoryIdentity,
+): Promise<StableFileIdentity> {
+  const file = await openProjectFile(path, projectRoot, "r", rootIdentity);
+  try {
+    return stableFileIdentity(await file.stat({ bigint: true }));
+  } finally {
+    await file.close();
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Deno.errors.NotFound ||
+    (typeof error === "object" && error !== null && "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT");
+}
+
+async function writeTextFileInsideProjectWithNativeHandle(
+  path: string,
+  projectRoot: string,
+  content: string,
+  expectedIdentity?: StableFileIdentity,
+  expectedContent?: string,
+  allowMissing = false,
+  requireMissing = false,
+  rootIdentity?: PinnedDirectoryIdentity,
+): Promise<void> {
+  // Open the destination before trusting its path, but do not mutate it until
+  // the opened identity and current in-project path agree. A parent swapped to
+  // a junction or symlink can redirect this open, but never a later write.
+  let file: Awaited<ReturnType<typeof openProjectFile>>;
+  let created = false;
+  try {
+    file = await openProjectFile(
+      path,
+      projectRoot,
+      requireMissing ? "wx+" : "r+",
+      rootIdentity,
+    );
+    created = requireMissing;
+  } catch (error) {
+    if (
+      requireMissing || !allowMissing || (Deno.build.os === "windows" && !isNotFoundError(error))
+    ) throw error;
+    // "wx+" is O_CREAT|O_EXCL|O_RDWR: it fails instead of following a link
+    // planted at the path, so creating an absent manifest stays contained.
+    file = await openProjectFile(path, projectRoot, "wx+", rootIdentity);
+    created = true;
+  }
+  try {
+    const opened = stableFileIdentity(await file.stat({ bigint: true }));
+    await assertPathInsideProject(path, projectRoot);
+    if (!sameFileIdentity(opened, await pathFileIdentity(path, projectRoot, rootIdentity))) {
+      throw new SafeFileGuardError("Refusing to write a path that changed after it was opened.");
+    }
+    if (expectedIdentity && !sameFileIdentity(expectedIdentity, opened)) {
+      throw new SafeFileGuardError("Refusing to write a file because it changed after being read.");
+    }
+    if (expectedContent !== undefined) {
+      const expected = new TextEncoder().encode(expectedContent);
+      const current = new Uint8Array(expected.length + 1);
+      let offset = 0;
+      while (offset < current.length) {
+        const { bytesRead } = await file.read(current, offset, current.length - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      if (offset !== expected.length || !expected.every((byte, index) => current[index] === byte)) {
+        throw new SafeFileGuardError(
+          "Refusing to write a file because its contents changed after being read.",
+        );
+      }
+    }
+    await file.truncate(0);
+    const bytes = new TextEncoder().encode(content);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesWritten } = await file.write(
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (bytesWritten === 0) throw new SafeFileGuardError("Could not finish writing the file.");
+      offset += bytesWritten;
+    }
+    let unchanged = false;
+    try {
+      unchanged = sameFileIdentity(
+        opened,
+        await pathFileIdentity(path, projectRoot, rootIdentity),
+      );
+    } catch { /* A missing or linked destination is no longer the opened file. */ }
+    if (!unchanged) {
+      throw new SafeFileGuardError(
+        "Refusing to finish a write because the destination path changed.",
+      );
+    }
+  } catch (error) {
+    throw created ? failedCreation(error, path) : error;
+  } finally {
+    await file.close();
+  }
+}
+
+/**
+ * Write through a verified file handle so a later path swap cannot redirect
+ * truncation or content outside the project.
+ *
+ * `allowMissing` creates the file when it does not exist yet, which the
+ * manifest write needs: a project with esm.sh URLs and no package.json is the
+ * codemod's main case.  Creation uses exclusive open semantics, so a symlink
+ * planted at the path fails the create instead of being followed. If later
+ * validation fails, the created entry is left in place because a portable
+ * pathname unlink cannot be atomic with a preceding identity check.
+ */
+export async function writeTextFileInsideProject(
+  path: string,
+  projectRoot: string,
+  content: string,
+  { allowMissing = false, expectedIdentity, expectedContent, requireMissing = false, rootIdentity }:
+    {
+      allowMissing?: boolean;
+      expectedIdentity?: StableFileIdentity;
+      expectedContent?: string;
+      requireMissing?: boolean;
+      rootIdentity?: PinnedDirectoryIdentity;
+    } = {},
+): Promise<void> {
+  await assertPathInsideProject(path, projectRoot, { allowMissing });
+  await writeTextFileInsideProjectWithNativeHandle(
+    path,
+    projectRoot,
+    content,
+    expectedIdentity,
+    expectedContent,
+    allowMissing,
+    requireMissing,
+    rootIdentity,
+  );
+}
+
+async function readTextFileInsideProject(
+  path: string,
+  projectRoot: string,
+  rootIdentity?: PinnedDirectoryIdentity,
+): Promise<{ text: string; identity: StableFileIdentity }> {
+  const file = await openProjectFile(path, projectRoot, "r", rootIdentity);
+  try {
+    const identity = stableFileIdentity(await file.stat({ bigint: true }));
+    await assertPathInsideProject(path, projectRoot);
+    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot, rootIdentity))) {
+      throw new SafeFileGuardError("A file changed while it was being opened.");
+    }
+    const text = await file.readFile({ encoding: "utf8" });
+    await assertPathInsideProject(path, projectRoot);
+    if (!sameFileIdentity(identity, await pathFileIdentity(path, projectRoot, rootIdentity))) {
+      throw new SafeFileGuardError("A file changed while it was being read.");
+    }
+    return { text, identity };
+  } finally {
+    await file.close();
+  }
+}
+
+/**
+ * Name a filesystem failure without echoing the path it carries.
+ *
+ * Runtime errors embed the absolute path they failed on, and this text reaches
+ * the JSON report, so keep the error code or class and drop the message body.
+ */
+function describeFileError(error: unknown): string {
+  if (error instanceof SafeFileGuardError) return error.message;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string") return code;
+  if (error instanceof Error) return error.name;
+  return "unknown error";
+}
+
 /**
  * Read and parse the project's package.json.
  *
  * Returns `parseError: null` when the file is absent (treat as empty).
  * Returns a non-null `parseError` when the file exists but cannot be read,
  * parsed, or validated. The caller must NOT overwrite the file in that case.
+ *
+ * When `projectRoot` (the real path of the project directory) is provided, a
+ * symlinked or out-of-project manifest is rejected as a `parseError` before
+ * any read, so the caller aborts without following the link.
  */
-export async function readProjectPackageJson(path: string): Promise<PackageJsonReadResult> {
+export async function readProjectPackageJson(
+  path: string,
+  projectRoot?: string,
+  rootIdentity?: PinnedDirectoryIdentity,
+): Promise<PackageJsonReadResult> {
+  if (projectRoot !== undefined) {
+    try {
+      await assertPathInsideProject(path, projectRoot, { allowMissing: true });
+    } catch {
+      return {
+        data: {},
+        existingDeps: {},
+        otherFieldDeps: {},
+        parseError:
+          "package.json could not be read safely; check that it is a stable regular file, not a symlink.",
+      };
+    }
+  }
   let text: string;
+  let fileIdentity: StableFileIdentity | undefined;
   try {
-    text = await Deno.readTextFile(path);
+    if (projectRoot === undefined) {
+      text = await Deno.readTextFile(path);
+    } else {
+      const opened = await readTextFileInsideProject(path, projectRoot, rootIdentity);
+      text = opened.text;
+      fileIdentity = opened.identity;
+    }
   } catch (e) {
-    if (e instanceof Deno.errors.NotFound) {
+    if (isNotFoundError(e)) {
       // File does not exist, treat as absent and start with empty deps.
-      return { data: {}, existingDeps: {}, otherFieldDeps: {}, parseError: null };
+      return {
+        data: {},
+        existingDeps: {},
+        otherFieldDeps: {},
+        parseError: null,
+        missingAtRead: true,
+      };
     }
     // Any other error (permission denied, I/O failure, etc.) must not be
     // silently treated as "absent", which would risk overwriting a file we
-    // could not safely read.  Surface the error so the caller skips the write.
+    // could not safely read.  Report the failure kind so a permission or I/O
+    // error is not misdiagnosed as a symlink.
     return {
       data: {},
       existingDeps: {},
       otherFieldDeps: {},
-      parseError: `package.json could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      parseError: `package.json could not be read: ${describeFileError(e)}.`,
     };
   }
   try {
@@ -534,7 +907,14 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
 
     const existingDeps = (dependencies ?? {}) as Record<string, string>;
     const data = parsed;
-    return { data, existingDeps, otherFieldDeps, parseError: null };
+    return {
+      data,
+      existingDeps,
+      otherFieldDeps,
+      parseError: null,
+      ...(fileIdentity ? { fileIdentity } : {}),
+      sourceText: text,
+    };
   } catch (e) {
     return {
       data: {},
@@ -588,6 +968,7 @@ export function parseCliOptions(args: string[]): CliOptions {
           "\n" +
           "Rewrites esm.sh import URLs in source files to bare specifiers and pins\n" +
           "the extracted versions in package.json.\n" +
+          "The task enables native directory handles with --allow-ffi for safe traversal.\n" +
           "\n" +
           "Options:\n" +
           "  --dry-run           Report changes without writing any files.\n" +
@@ -610,12 +991,62 @@ export function parseCliOptions(args: string[]): CliOptions {
   return { projectDir, dryRun, failOnConflict };
 }
 
-async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
-  for await (const entry of Deno.readDir(dir)) {
+/**
+ * Collect the source files under `dir`.
+ *
+ * `readDir` is injectable so the symlink skip can be exercised directly: the
+ * skip must not depend on the runtime declining to classify a link as a file.
+ */
+async function assertDirectoryInsideProject(
+  path: string,
+  projectRoot: string,
+  expectedIdentity?: StableFileIdentity,
+): Promise<StableFileIdentity> {
+  const info = await lstatNativeFile(path, { bigint: true });
+  if (info.isSymbolicLink()) {
+    throw new SafeFileGuardError("Refusing to traverse a symlinked directory.");
+  }
+  if (!info.isDirectory()) {
+    throw new SafeFileGuardError("Refusing to traverse a path that is not a directory.");
+  }
+  const identity = stableFileIdentity(info);
+  if (expectedIdentity && !sameFileIdentity(expectedIdentity, identity)) {
+    throw new SafeFileGuardError("Refusing to traverse a directory that changed.");
+  }
+  const real = await Deno.realPath(path);
+  const prefix = containmentPrefix(projectRoot);
+  if (real !== projectRoot && !real.startsWith(prefix)) {
+    throw new SafeFileGuardError("Refusing to traverse a directory outside the project.");
+  }
+  return identity;
+}
+
+export async function collectSourceFiles(
+  dir: string,
+  files: string[],
+  readDir?: (path: string) => AsyncIterable<Deno.DirEntry>,
+  projectRoot?: string,
+  rootIdentity?: PinnedDirectoryIdentity,
+): Promise<void> {
+  const root = projectRoot ?? await Deno.realPath(dir);
+  const pinnedRoot = rootIdentity ?? capturePinnedDirectoryIdentity(root);
+  const directoryIdentity = await assertDirectoryInsideProject(dir, root);
+  const entries: Deno.DirEntry[] = [];
+  const directory = await Deno.realPath(dir);
+  const entriesForDirectory = readDir
+    ? readDir(dir)
+    : readPinnedDirectory(directory, root, pinnedRoot);
+  for await (const entry of entriesForDirectory) entries.push(entry);
+  await assertDirectoryInsideProject(dir, root, directoryIdentity);
+
+  for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
+    // Never traverse or collect symlinks: a link to a file or directory
+    // outside the project must not be rewritten through the link.
+    if (entry.isSymlink) continue;
     const path = `${dir}/${entry.name}`;
     if (entry.isDirectory) {
-      await collectSourceFiles(path, files);
+      await collectSourceFiles(path, files, readDir, root, pinnedRoot);
     } else if (entry.isFile && SOURCE_FILE_RE.test(entry.name)) {
       files.push(path);
     }
@@ -645,11 +1076,66 @@ function pickSpecifier(
   );
 }
 
+/** Join a caller-spelled project root to a normalized report path. */
+export function joinReportPath(
+  displayRoot: string,
+  normalizedRelative: string,
+  windows = Deno.build.os === "windows",
+): string {
+  if (!normalizedRelative) return displayRoot;
+  // `C:` is drive-relative on Windows. Inserting a slash changes it into the
+  // drive root (`C:/`) and reports a different file from the one traversed.
+  if (windows && /^[A-Za-z]:$/.test(displayRoot)) {
+    return `${displayRoot}${normalizedRelative}`;
+  }
+  const endsWithSeparator = windows ? /[/\\]$/ : /\/$/;
+  return endsWithSeparator.test(displayRoot)
+    ? `${displayRoot}${normalizedRelative}`
+    : `${displayRoot}/${normalizedRelative}`;
+}
+
 async function main(args: string[]): Promise<void> {
   const { projectDir, dryRun, failOnConflict } = parseCliOptions(args);
 
+  // Resolve the project root once so every subsequent containment check
+  // compares against a symlink-free absolute path.
+  const projectRoot = await Deno.realPath(projectDir);
+  const projectRootIdentity = capturePinnedDirectoryIdentity(projectRoot);
+  // Traversal and writes use the resolved root, but the report keeps the
+  // spelling the caller passed: a relative project directory stays relative,
+  // and no machine-specific filesystem layout leaks into the JSON output.
+  const trailingSeparators = Deno.build.os === "windows" ? /[/\\]+$/ : /\/+$/;
+  const displayRoot = projectDir === parsePath(projectDir).root
+    ? projectDir
+    : projectDir.replace(trailingSeparators, "") || projectDir;
+  const toReportPath = (absolute: string): string => {
+    const projectRelative = relative(projectRoot, absolute);
+    if (
+      isAbsolute(projectRelative) || projectRelative === ".." ||
+      projectRelative.startsWith(`..${PATH_SEPARATOR}`)
+    ) {
+      throw new Error("Refusing to report a path outside the project directory");
+    }
+    const normalizedRelative = Deno.build.os === "windows"
+      ? projectRelative.replaceAll("\\", "/")
+      : projectRelative;
+    return joinReportPath(displayRoot, normalizedRelative);
+  };
+
   const sourceFiles: string[] = [];
-  await collectSourceFiles(projectDir, sourceFiles);
+  try {
+    await collectSourceFiles(
+      projectRoot,
+      sourceFiles,
+      undefined,
+      projectRoot,
+      projectRootIdentity,
+    );
+  } catch (error) {
+    throw new Error(`Failed to scan ${displayRoot} safely: ${describeFileError(error)}`, {
+      cause: error,
+    });
+  }
   sourceFiles.sort(compareCodeUnits);
 
   const report: EsmShReport = {
@@ -664,25 +1150,41 @@ async function main(args: string[]): Promise<void> {
   // Track the first-seen pin for each package across all files, including the
   // source file path and original URL so conflicts carry full location context.
   const allPins = new Map<string, { version: string; file: string; specifier: string }>();
-  const analyzedFiles: Array<{ file: string; source: string; result: EsmShFileResult }> = [];
+  const analyzedFiles: Array<{
+    file: string;
+    source: string;
+    identity: StableFileIdentity;
+    result: EsmShFileResult;
+  }> = [];
 
   for (const file of sourceFiles) {
-    const source = await Deno.readTextFile(file);
+    const reportFile = toReportPath(file);
+    let source: string;
+    let identity: StableFileIdentity;
+    try {
+      const opened = await readTextFileInsideProject(file, projectRoot, projectRootIdentity);
+      source = opened.text;
+      identity = opened.identity;
+    } catch (error) {
+      throw new Error(`Failed to read ${reportFile} safely: ${describeFileError(error)}`, {
+        cause: error,
+      });
+    }
     let result: EsmShFileResult;
     try {
       result = migrateEsmShImports(source);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to migrate ${file}: ${message}`, {
+      throw new Error(`Failed to migrate ${reportFile}: ${message}`, {
         cause: error,
       });
     }
     if (!result.changed) continue;
 
-    analyzedFiles.push({ file, source, result });
+    analyzedFiles.push({ file, source, identity, result });
     // Collect every conflict before deciding which transformations are safe.
     for (const c of result.conflicts) {
-      report.conflicts.push({ ...c, file });
+      report.conflicts.push({ ...c, file: reportFile });
     }
 
     for (const [pkg, version] of Object.entries(result.pins)) {
@@ -697,24 +1199,28 @@ async function main(args: string[]): Promise<void> {
           pkg,
           existing: existing.version,
           fromVersion: version,
-          file,
+          file: reportFile,
           specifier,
         });
       } else if (existing === undefined) {
         const specifier = pickSpecifier(result.rewrites, pkg, version);
-        allPins.set(pkg, { version, file, specifier });
+        allPins.set(pkg, { version, file: reportFile, specifier });
       }
     }
   }
 
-  // Read existing package.json.  A corrupt file must not be overwritten.
-  const pkgJsonPath = `${projectDir}/package.json`;
+  // Read existing package.json.  A corrupt file must not be overwritten, and
+  // a symlinked or out-of-project manifest must not be followed.
+  const pkgJsonPath = `${projectRoot}/package.json`;
   const {
     data: pkgJson,
     existingDeps,
     otherFieldDeps,
     parseError: pkgJsonParseError,
-  } = await readProjectPackageJson(pkgJsonPath);
+    fileIdentity: pkgJsonFileIdentity,
+    sourceText: pkgJsonSource,
+    missingAtRead: pkgJsonMissingAtRead,
+  } = await readProjectPackageJson(pkgJsonPath, projectRoot, projectRootIdentity);
 
   const candidatePins = Object.fromEntries(
     [...allPins.entries()].map(([pkg, { version }]) => [pkg, version]),
@@ -777,17 +1283,22 @@ async function main(args: string[]): Promise<void> {
   const allNeedsResolution = new Set<string>();
   // Defer every write until analysis, manifest validation, conflict filtering,
   // and strict-mode gating have completed.
-  const fileResults: Array<{ file: string; code: string }> = [];
-  for (const { file, source, result: analyzedResult } of analyzedFiles) {
+  const fileResults: Array<{
+    file: string;
+    source: string;
+    code: string;
+    identity: StableFileIdentity;
+  }> = [];
+  for (const { file, source, identity, result: analyzedResult } of analyzedFiles) {
     const result = conflictedPackages.size === 0
       ? analyzedResult
       : transformEsmShImports(source, conflictedPackages);
     if (!result.changed) continue;
 
-    fileResults.push({ file, code: result.code });
+    fileResults.push({ file, source, code: result.code, identity });
     report.filesChanged++;
     for (const rw of result.rewrites) {
-      report.rewrites.push({ file, from: rw.from, to: rw.to });
+      report.rewrites.push({ file: toReportPath(file), from: rw.from, to: rw.to });
     }
     for (const pkg of result.needsResolution) {
       allNeedsResolution.add(pkg);
@@ -812,11 +1323,65 @@ async function main(args: string[]): Promise<void> {
     // specifiers in source files without a corresponding pin entry.
     if (JSON.stringify(updatedDeps) !== JSON.stringify(existingDeps)) {
       pkgJson["dependencies"] = updatedDeps;
-      await Deno.writeTextFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + "\n");
+      try {
+        await writeTextFileInsideProject(
+          pkgJsonPath,
+          projectRoot,
+          JSON.stringify(pkgJson, null, 2) + "\n",
+          {
+            allowMissing: pkgJsonMissingAtRead === true,
+            expectedIdentity: pkgJsonFileIdentity,
+            expectedContent: pkgJsonSource,
+            requireMissing: pkgJsonMissingAtRead,
+            rootIdentity: projectRootIdentity,
+          },
+        );
+      } catch (error) {
+        throw new Error(
+          `Failed to write ${toReportPath(pkgJsonPath)} safely: ${describeFileError(error)}`,
+          { cause: error },
+        );
+      }
+    } else if (fileResults.length > 0 && pkgJsonFileIdentity && pkgJsonSource !== undefined) {
+      // Matching pins still authorize the source rewrite. Revalidate their
+      // analyzed snapshot even when the manifest itself needs no update.
+      let current: Awaited<ReturnType<typeof readTextFileInsideProject>>;
+      try {
+        current = await readTextFileInsideProject(
+          pkgJsonPath,
+          projectRoot,
+          projectRootIdentity,
+        );
+      } catch (error) {
+        throw new SafeFileGuardError(
+          "Refusing to rewrite source files because package.json could not be revalidated safely.",
+          { cause: error },
+        );
+      }
+      if (
+        !sameFileIdentity(pkgJsonFileIdentity, current.identity) || current.text !== pkgJsonSource
+      ) {
+        throw new SafeFileGuardError(
+          "Refusing to rewrite source files because package.json changed after analysis.",
+        );
+      }
     }
 
-    for (const { file, code } of fileResults) {
-      await Deno.writeTextFile(file, code);
+    for (const { file, source, code, identity } of fileResults) {
+      try {
+        await writeTextFileInsideProject(file, projectRoot, code, {
+          expectedIdentity: identity,
+          expectedContent: source,
+          rootIdentity: projectRootIdentity,
+        });
+      } catch (error) {
+        throw new Error(
+          `Failed to write ${toReportPath(file)} safely: ${describeFileError(error)}`,
+          {
+            cause: error,
+          },
+        );
+      }
     }
   }
 
