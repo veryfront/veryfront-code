@@ -68,9 +68,9 @@ import {
   getTurnMessageProjectionValidator,
   getTurnMessageValidator,
   getTurnProviderRequestValidator,
+  markStatefulTurn,
   type TurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
-import { disableResponseCacheForContext } from "#veryfront/agent/middleware/cache/cache.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -1737,10 +1737,10 @@ export class AgentRuntime {
     // the security middleware keep the pre-existing concurrency, and one slow
     // memory backend cannot hold up unrelated concurrent turns.
     //
-    // Hold the queue through the whole validated turn. Built-in memory writes
-    // are visible before finalization, so another rollback snapshot must not
-    // capture messages this turn can still reject. Stateless turns bypass the
-    // queue; stateful conversations execute sequentially on each runtime.
+    // Keep the queue until the entire turn finalizes: every provider step can
+    // reject the caller input, and overlapping rollback snapshots can restore
+    // another turn's rejected messages. This serializes validated stateful
+    // turns on one runtime instance, including time spent awaiting tools.
     if (
       this.memory instanceof NoMemory || !context ||
       !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
@@ -1771,6 +1771,7 @@ export class AgentRuntime {
     validationState: () => "pending" | "accepted" | "rejected";
     validateProviderRequest: TurnProviderRequestValidator;
   } {
+    if (!(this.memory instanceof NoMemory)) markStatefulTurn(context);
     // Memoized on the first call: persistence now runs inside the middleware
     // continuation, so a middleware that invokes `next()` more than once (a
     // retry or fallback wrapper) would otherwise write this turn's input to
@@ -1835,6 +1836,8 @@ export class AgentRuntime {
           throw error;
         }
         validationState = "accepted";
+        // Keep validated stateful turns serialized until finalization. An
+        // overlapping rollback could otherwise restore another rejected turn.
       },
     };
     return persistence;
@@ -2128,7 +2131,6 @@ export class AgentRuntime {
           data: context,
           platform: detectPlatform(),
         };
-        if (!(this.memory instanceof NoMemory)) disableResponseCacheForContext(agentContext);
 
         // Persist only after the middleware chain accepted this turn. Committing
         // to memory first would store a rejected (hostile) message, and the next
@@ -2304,7 +2306,6 @@ export class AgentRuntime {
         data: context,
         platform: detectPlatform(),
       };
-      if (!(this.memory instanceof NoMemory)) disableResponseCacheForContext(agentContext);
       const chain = new MiddlewareChain(this.config.middleware);
 
       // Persist only after the middleware chain accepted this turn, so a

@@ -1,9 +1,5 @@
-import type {
-  AgentContext,
-  AgentMiddleware,
-  AgentResponse,
-  Message,
-} from "#veryfront/agent/types.ts";
+import type { AgentMiddleware, AgentResponse, Message } from "#veryfront/agent/types.ts";
+import { isStatefulTurn } from "#veryfront/agent/middleware/turn-validation.ts";
 import {
   hasUnchangedSyntheticMessageId,
   hasUnchangedSyntheticMessageTimestamp,
@@ -14,12 +10,6 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const DEFAULT_LRU_MAX_SIZE = 100;
 const DEFAULT_TTL_MS = 300_000; // 5 minutes
 const TTL_CLEANUP_INTERVAL_MS = 60_000;
-const statefulContexts = new WeakSet<AgentContext>();
-
-/** @internal Stateful conversations depend on history and must execute each turn. */
-export function disableResponseCacheForContext(context: AgentContext): void {
-  statefulContexts.add(context);
-}
 
 export interface CacheConfig {
   strategy: "memory" | "lru" | "ttl";
@@ -323,7 +313,7 @@ export function cacheMiddleware(
     withSpan(
       "agent.middleware.cache",
       async () => {
-        if (statefulContexts.has(context)) return next();
+        if (isStatefulTurn(context)) return await next();
         const inputString = toCacheableInputString(context.input);
 
         const cached = cache.get(inputString, context);

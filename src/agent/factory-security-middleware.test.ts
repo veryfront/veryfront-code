@@ -7,6 +7,8 @@ import { agentAsTool } from "#veryfront/agent/composition/composition.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { ConversationMemory } from "#veryfront/agent/memory/index.ts";
 import { cacheMiddleware } from "#veryfront/agent/middleware/cache/cache.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   registerTurnMessageProjectionValidator,
   registerTurnMessageValidator,
@@ -270,6 +272,59 @@ describe("resolveSecurityMiddleware", () => {
 
     await assistant.generate({ input: "another benign follow-up" });
     assertEquals(providerCalls, 2, "a rejected stream assembly must not poison later turns");
+  });
+
+  it("rolls back input when a later provider validation rejects the same turn", async () => {
+    const retry: AgentMiddleware = async (context, next) => {
+      let validations = 0;
+      registerTurnProviderRequestValidator(context, async () => {
+        if (++validations === 2) throw new Error("later assembly rejected");
+      });
+      return await next();
+    };
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/later-validation",
+      async doGenerate() {
+        return {
+          content: [{ type: "tool-call", toolCallId: "call-1", toolName: "lookup", input: "{}" }],
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate");
+      },
+    };
+    const assistant = agent({
+      id: "later-validation",
+      model: model.modelId,
+      system: "Helpful",
+      skills: false,
+      maxSteps: 2,
+      tools: {
+        lookup: tool({
+          id: "lookup",
+          description: "Read a value",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => "ok",
+        }),
+      },
+      memory: { type: "conversation" },
+      middleware: [retry],
+      resolveModelTransport: async () => ({ model }),
+    });
+    await Promise.all([1, 2].map((index) =>
+      assertRejects(
+        () => assistant.generate({ input: `rejected caller turn ${index}` }),
+        Error,
+        "later assembly rejected",
+      )
+    ));
+    assertEquals(
+      JSON.stringify(await assistant.getMemory().getMessages()).includes("rejected caller turn"),
+      false,
+    );
   });
 
   it("serializes provider validation through rollback finalization", async () => {
@@ -1359,6 +1414,46 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(prompts[1]?.includes("mutated prototype failure"), false);
     assertEquals(prompts[1]?.includes("original array value"), true);
     assertEquals(prompts[1]?.includes("mutated array value"), false);
+  });
+
+  it("keeps repeated cached inputs complete in conversation memory", async () => {
+    let calls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/stateful-cache",
+      async doGenerate() {
+        calls++;
+        return {
+          content: [{ type: "text", text: "answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("Expected generate");
+      },
+    };
+    const cache = cacheMiddleware({ strategy: "memory" });
+    const assistant = agent({
+      id: "stateful-cache",
+      model: model.modelId,
+      system: "Helpful",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [cache],
+      resolveModelTransport: async () => ({ model }),
+    });
+    try {
+      await assistant.generate({ input: "hello" });
+      await leaveCurrentMillisecond();
+      await assistant.generate({ input: "hello" });
+      const messages = await assistant.getMemory().getMessages();
+      assertEquals(messages.filter((message) => message.role === "assistant").length, 2);
+      assertEquals(calls, 2);
+    } finally {
+      cache.destroy();
+    }
   });
 
   it("reuses and streams cached string-input responses across synthetic ids", async () => {
