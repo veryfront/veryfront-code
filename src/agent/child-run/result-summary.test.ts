@@ -946,6 +946,23 @@ describe("child-run-result-summary", () => {
       }
     });
 
+    it("retains a head ID after comments in a truncated source array", () => {
+      const text = 'tools: [/* required */ {"id":"critical_tool","description":"' +
+        "p".repeat(200_000) + '"}]';
+      assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+        toolIds: ["critical_tool"],
+      });
+    });
+
+    it("ignores quotes inside complete source comments when tracking the head", () => {
+      for (const comment of ['// say "hello\n', '/* say "hello */\n']) {
+        const text = comment + "p".repeat(130_000) + '\nmodel: "sonnet"';
+        assertEquals(buildChildRunResultSummary(text, { mode: "structured" }).contractFacts, {
+          modelIds: ["sonnet"],
+        });
+      }
+    });
+
     it("retains tail facts after common prose apostrophes", () => {
       for (
         const head of [

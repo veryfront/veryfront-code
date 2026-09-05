@@ -676,7 +676,12 @@ function normalizePseudoJson(text: string): string {
 
 function skipWhitespace(text: string, start: number): number {
   let index = start;
-  while (/\s/.test(text[index] ?? "")) index += 1;
+  while (index < text.length) {
+    while (/\s/.test(text[index] ?? "")) index += 1;
+    const commentEnd = sourceCommentEnd(text, index);
+    if (typeof commentEnd !== "number") break;
+    index = commentEnd;
+  }
   return index;
 }
 
@@ -1282,12 +1287,23 @@ function structuredHeadProseApostrophes(text: string): ReadonlySet<number> {
   return structured ? apostrophes : new Set();
 }
 
-function quoteAtEnd(text: string): { value: string; index: number } | undefined {
+function quoteAtEnd(
+  text: string,
+  nextCharacter?: string,
+): { value: string; index: number } | undefined {
   const proseApostrophes = structuredHeadProseApostrophes(text);
   let quote: { value: string; index: number } | undefined;
   for (let index = 0; index < text.length; index++) {
     const character = text[index]!;
     if (quote === undefined) {
+      if (character === "/" && ["/", "*"].includes(text[index + 1] ?? nextCharacter ?? "")) {
+        const end = sourceCommentEnd(text, index);
+        if (end === undefined || end === null || end === text.length && text[index + 1] === "/") {
+          return { value: "comment", index };
+        }
+        index = end - 1;
+        continue;
+      }
       if (character === "'" && proseApostrophes.has(index)) continue;
       if (character === '"' || character === "'") quote = { value: character, index };
       continue;
@@ -1306,7 +1322,7 @@ function quoteStateAtTail(
   start: number,
   end: number,
   initialQuote?: string,
-): { value: string; inherited: boolean; escaped: boolean } | undefined {
+): { value: string; inherited: boolean; escaped: boolean; commentEnd?: number } | undefined {
   let quote: { value: string; inherited: boolean } | undefined = initialQuote === undefined
     ? undefined
     : { value: initialQuote, inherited: true };
@@ -1322,6 +1338,19 @@ function quoteStateAtTail(
     if (index > start && text[index - 1] === "\n") lineStart = index;
     const character = text[index]!;
     if (quote === undefined) {
+      const commentEnd = sourceCommentEnd(text, index);
+      if (commentEnd !== undefined) {
+        if (commentEnd === null || commentEnd > end) {
+          return {
+            value: "comment",
+            inherited: false,
+            escaped: false,
+            commentEnd: commentEnd ?? text.length,
+          };
+        }
+        index = commentEnd - 1;
+        continue;
+      }
       if (character === "'") {
         if (cachedLineStart !== lineStart) {
           cachedLineStart = lineStart;
@@ -1494,20 +1523,29 @@ function boundedContractFactWindows(text: string, headLength: number): string[] 
 
   let tailStart = text.length - (CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT - headLength);
   const head = text.slice(0, headLength);
-  const openQuote = quoteAtEnd(head);
+  const openQuote = quoteAtEnd(head, text[headLength]);
   const omittedLength = tailStart - headLength;
   // A quote can open or close anywhere in an unscanned gap. Do not interpret
   // its tail as declarations when the bounded scan cannot establish its state.
   if (omittedLength > CHILD_RUN_QUOTE_STATE_GAP_LIMIT) return [head, ""];
+  let gapStart = headLength;
+  if (openQuote?.value === "comment") {
+    const commentEnd = sourceCommentEnd(text, openQuote.index);
+    if (typeof commentEnd !== "number") return [head, ""];
+    gapStart = commentEnd;
+    tailStart = Math.max(tailStart, commentEnd);
+  }
   const proseApostrophe = openQuote?.value === "'" &&
     isPlainProseApostrophe(head, openQuote.index);
   const tailQuote = quoteStateAtTail(
     text,
-    headLength,
+    gapStart,
     tailStart,
-    proseApostrophe ? undefined : openQuote?.value,
+    proseApostrophe || openQuote?.value === "comment" ? undefined : openQuote?.value,
   );
-  if (tailQuote !== undefined) {
+  if (tailQuote?.value === "comment") {
+    tailStart = tailQuote.commentEnd ?? text.length;
+  } else if (tailQuote !== undefined) {
     const quoteEnd = scanQuotedValueEnd(text, tailStart - 1, tailQuote.value, tailQuote.escaped);
     if (quoteEnd === undefined) {
       if (!tailQuote.inherited || !proseApostrophe) return [head, ""];
