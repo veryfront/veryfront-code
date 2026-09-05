@@ -970,7 +970,7 @@ function patternInspectsMatchContext(
     if (
       character === "$" && localEnd >= segment.text.length - 1 &&
       segment.start + segment.text.length !== assembled.length &&
-      !(pattern.multiline && isLineBreak(assembled[segment.start + segment.text.length]))
+      !(pattern.multiline && isLineBreak(assembled[end]))
     ) return true;
     if (
       source.startsWith("(?=", index) || source.startsWith("(?!", index) ||

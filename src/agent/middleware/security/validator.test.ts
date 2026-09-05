@@ -811,6 +811,31 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("checks multiline end anchors at the trusted match boundary", async () => {
+    for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+      for (const historical of [false, true]) {
+        const middleware = securityMiddleware({ input: { blockedPatterns: [/foo$/m] } });
+        const context = createContext({
+          input: [{ id: "caller", role: "system", parts: [{ type: "text", text: "bar" }] }],
+        });
+        await middleware(context, () => Promise.resolve(createResponse("ok")));
+        const validate = getTurnProviderRequestValidator(context);
+        if (!validate) throw new Error("Expected provider-request validation");
+        const trusted = `foo${newline}`;
+        const messages = context.input as Message[];
+        await validate(
+          historical ? "runtime" : trusted,
+          historical
+            ? [
+              { id: "history", role: "system", parts: [{ type: "text", text: trusted }] },
+              ...messages,
+            ]
+            : messages,
+        );
+      }
+    }
+  });
+
   it("rejects context-sensitive matches with the same trusted span", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/foo$|foo(?=\n\nbar)/] },

@@ -325,6 +325,7 @@ describe("resolveSecurityMiddleware", () => {
       JSON.stringify(await assistant.getMemory().getMessages()).includes("rejected caller turn"),
       false,
     );
+    assertEquals(await assistant.getMemory().getMessages(), [], "same-turn outputs also roll back");
   });
 
   it("serializes provider validation through rollback finalization", async () => {
