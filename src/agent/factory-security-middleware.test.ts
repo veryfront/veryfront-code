@@ -918,6 +918,15 @@ describe("resolveSecurityMiddleware", () => {
       },
     };
     const opaque = () => "caller-owned";
+    const part = { type: "text" as const, text: "hello" };
+    for (const enumerable of [true, false]) {
+      Object.defineProperty(part, `extension-${enumerable}`, {
+        enumerable,
+        get() {
+          throw new Error("unrelated extension accessor");
+        },
+      });
+    }
     const assistant = agent({
       id: "opaque-message-metadata",
       model: "hosted/opaque-message-metadata",
@@ -931,7 +940,7 @@ describe("resolveSecurityMiddleware", () => {
       input: [{
         id: "opaque-input",
         role: "user",
-        parts: [{ type: "text", text: "hello" }],
+        parts: [part],
         metadata: { opaque },
       }],
     });

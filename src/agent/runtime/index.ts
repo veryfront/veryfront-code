@@ -466,11 +466,18 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
   for (const key of ObjectKeys(descriptors)) {
     const descriptor = descriptors[key];
     if (!descriptor) continue;
-    const value = "value" in descriptor
-      ? descriptor.value
-      : descriptor.get
-      ? IntrinsicReflectApply(descriptor.get, part, [])
-      : undefined;
+    let value: unknown;
+    try {
+      value = "value" in descriptor
+        ? descriptor.value
+        : descriptor.get
+        ? IntrinsicReflectApply(descriptor.get, part, [])
+        : undefined;
+    } catch {
+      // Provider conversion ignores unrelated extension accessors. Preserve
+      // valid structural fields when one of those accessors cannot be read.
+      continue;
+    }
     ObjectDefineProperty(detached, key, {
       value: cloneStructuredValuePreservingOpaque(value),
       enumerable: descriptor.enumerable,
