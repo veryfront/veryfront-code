@@ -82,6 +82,7 @@ jobs:
         target: ${{ fromJSON(needs.timeout_targets.outputs.targets) }}
     permissions:
       contents: read
+      issues: read
       pull-requests: write
       statuses: write
     concurrency:

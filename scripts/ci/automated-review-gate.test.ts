@@ -6869,6 +6869,7 @@ describe("automated review workflow", () => {
       record(timeoutJob.permissions, "timeout publisher permissions"),
       {
         contents: "read",
+        issues: "read",
         "pull-requests": "write",
         statuses: "write",
       },
