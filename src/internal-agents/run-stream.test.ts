@@ -945,7 +945,6 @@ describe("internal-agents/run-stream", () => {
         });
         const response = await createRuntimeAgentStreamResponse(
           {
-            agentId: runtimeAgent.id,
             threadId: crypto.randomUUID(),
             runId: `run_issue_192_${lifecycleMode}`,
             messages: [{ id: "message-1", role: "user", content: "Hello" }],
