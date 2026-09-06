@@ -6,6 +6,56 @@ import { RenderGeneration } from "./render-generation.ts";
 const request = () => new Request("http://localhost/page");
 
 describe("RenderGeneration", () => {
+  it("rejects invalid limits before inspecting an executor", () => {
+    assertThrows(() =>
+      new RenderGeneration({
+        maxConcurrentRenders: 0,
+        drainTimeoutMs: 0,
+        get executor(): never {
+          throw new Error("Executor must not be inspected");
+        },
+        releaseArtifacts: async () => {},
+      }), RangeError);
+  });
+
+  it("uses the same capacity value that passed construction validation", async () => {
+    let reads = 0;
+    const generation = new RenderGeneration({
+      get maxConcurrentRenders() {
+        return ++reads === 1 ? 1 : 0;
+      },
+      drainTimeoutMs: 0,
+      executor: { render: async () => new Response("page"), stop: async () => {} },
+      releaseArtifacts: async () => {},
+    });
+    assertEquals(await (await generation.render(request())).text(), "page");
+    assertEquals(reads, 1);
+    await generation.close();
+  });
+
+  it("captures one executor object for both rendering and shutdown", async () => {
+    let reads = 0;
+    let stops = 0;
+    const executor = {
+      render: async () => new Response("page"),
+      stop: async () => {
+        stops++;
+      },
+    };
+    const generation = new RenderGeneration({
+      maxConcurrentRenders: 1,
+      drainTimeoutMs: 0,
+      get executor() {
+        if (++reads > 1) throw new Error("Executor must be captured once");
+        return executor;
+      },
+      releaseArtifacts: async () => {},
+    });
+    assertEquals(await (await generation.render(request())).text(), "page");
+    await generation.close();
+    assertEquals([reads, stops], [1, 1]);
+  });
+
   it("drains response bodies before stopping execution and releasing artifacts", async () => {
     const pending = Promise.withResolvers<Response>();
     const stopped = Promise.withResolvers<void>();

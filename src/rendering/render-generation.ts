@@ -45,23 +45,26 @@ export class RenderGeneration {
   #closing?: Promise<void>;
 
   constructor(options: RenderGenerationOptions) {
-    if (!Number.isSafeInteger(options.maxConcurrentRenders) || options.maxConcurrentRenders < 1) {
+    const { maxConcurrentRenders, drainTimeoutMs } = options;
+    if (!Number.isSafeInteger(maxConcurrentRenders) || maxConcurrentRenders < 1) {
       throw new RangeError("Render generation capacity must be a positive safe integer");
     }
     if (
-      !Number.isInteger(options.drainTimeoutMs) || options.drainTimeoutMs < 0 ||
-      options.drainTimeoutMs > MAX_TIMER_DELAY_MS
+      !Number.isInteger(drainTimeoutMs) || drainTimeoutMs < 0 ||
+      drainTimeoutMs > MAX_TIMER_DELAY_MS
     ) {
       throw new RangeError("Render generation drain timeout is outside the supported range");
     }
-    this.#render = options.executor.render.bind(options.executor);
-    this.#stop = options.executor.stop.bind(options.executor);
-    this.#releaseArtifacts = options.releaseArtifacts.bind(options);
-    this.#maxConcurrentRenders = options.maxConcurrentRenders;
-    this.#drainTimeoutMs = options.drainTimeoutMs;
+    const { executor, releaseArtifacts } = options;
+    this.#render = executor.render.bind(executor);
+    this.#stop = executor.stop.bind(executor);
+    this.#releaseArtifacts = releaseArtifacts.bind(options);
+    this.#maxConcurrentRenders = maxConcurrentRenders;
+    this.#drainTimeoutMs = drainTimeoutMs;
   }
 
-  async render(request: Request): Promise<Response> {
+  /** onComplete shares settlement with aggregate admission and must not throw. */
+  async render(request: Request, onComplete?: () => void): Promise<Response> {
     request.signal.throwIfAborted();
     if (!this.#accepting) {
       throw SERVICE_OVERLOADED.create({ detail: "Render generation is draining" });
@@ -75,6 +78,7 @@ export class RenderGeneration {
       if (finished) return;
       finished = true;
       if (--this.#active === 0) this.#drained?.();
+      onComplete?.();
     };
     try {
       const response = await this.#render(request);
