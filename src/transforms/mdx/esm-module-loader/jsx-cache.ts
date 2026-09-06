@@ -461,7 +461,7 @@ export async function refreshJsxArtifactMtime(
  * real `utime` write on a path this cache does not own, and it could fill the
  * served memo with fabricated entries that evict genuine marks.
  */
-function resolveOwnedJsxArtifactPath(
+export function resolveOwnedJsxArtifactPath(
   specifier: string | undefined,
   esmCacheDir: string,
 ): string | undefined {
@@ -488,6 +488,7 @@ function resolveOwnedJsxArtifactPath(
 export async function retainJsxArtifactsReferencedIn(
   code: string,
   esmCacheDir: string,
+  retainLazy = true,
 ): Promise<() => void> {
   const artifactPaths: string[] = [];
   const lazyArtifactPaths: string[] = [];
@@ -495,7 +496,7 @@ export async function retainJsxArtifactsReferencedIn(
     const artifactPath = resolveOwnedJsxArtifactPath(imported.n, esmCacheDir);
     if (artifactPath === undefined) continue;
     artifactPaths.push(artifactPath);
-    if (imported.d > -1) lazyArtifactPaths.push(artifactPath);
+    if (retainLazy && imported.d > -1) lazyArtifactPaths.push(artifactPath);
     // Both static and lazy artifacts stay actively pinned until the parent
     // import settles. Lazy retention starts only at release, when the parent
     // module cache lifetime begins.

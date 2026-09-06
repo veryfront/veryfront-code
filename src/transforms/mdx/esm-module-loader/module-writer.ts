@@ -31,6 +31,7 @@ import {
   extractHttpBundlePaths,
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
+import { LazyJsxImportScope } from "./lazy-jsx-imports.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
@@ -196,6 +197,7 @@ export async function doLoadModuleESM(
 
   /** Releases the JSX artifacts this render pins once its import settles. */
   let releaseJsxArtifacts: (() => void) | undefined;
+  const lazyJsxImports = new LazyJsxImportScope();
 
   try {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter START`, { projectSlug });
@@ -282,7 +284,8 @@ export async function doLoadModuleESM(
     // of this load: HTTP caching and bundle recovery below have no time bound,
     // and the grace period alone must not be what keeps a prune pass from
     // deleting an artifact before the dynamic import consumes it.
-    releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten, esmCacheDir);
+    releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten, esmCacheDir, false);
+    rewritten = await lazyJsxImports.rewrite(rewritten, esmCacheDir);
 
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
@@ -591,5 +594,6 @@ export async function doLoadModuleESM(
     throw error;
   } finally {
     releaseJsxArtifacts?.();
+    lazyJsxImports.release();
   }
 }

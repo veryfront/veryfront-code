@@ -7,12 +7,20 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
+import { join } from "#veryfront/compat/path";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import type { MDXModule } from "#veryfront/transforms/mdx/types.ts";
 import { loadModuleESM } from "#veryfront/transforms/mdx/esm-module-loader/loader.ts";
 import type { ESMLoaderContext } from "#veryfront/transforms/mdx/esm-module-loader/types.ts";
+import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { __jsxCacheInternals } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 
 /** Load a compiled program through the real loader entry point. */
 async function loadCompiledModule(code: string): Promise<MDXModule> {
@@ -56,6 +64,37 @@ describe("esm-module-loader/loader loadModuleESM", () => {
       "loaded-through-loader",
       "the loader must evaluate the compiled program and return its module namespace",
     );
+  });
+
+  it("recovers a lazy JSX artifact after the real parent loader releases its scope", async () => {
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-lazy-loader-" });
+    const source = "export const value = 17;";
+    const artifact = join(cacheDir, buildMdxJsxCacheFileName("/project/Lazy.tsx", source));
+    try {
+      await writeTextFile(artifact, source);
+      const context = {
+        moduleCache: new LRUCache({ maxEntries: 10 }),
+        adapter: await getLocalAdapter(),
+        projectId: "lazy-loader",
+        projectDir: cacheDir,
+        projectSlug: "lazy-loader",
+        contentSourceId: "release-1",
+        reactVersion: "19.1.1",
+        esmCacheDir: cacheDir,
+        isLocalProject: true,
+      } as ESMLoaderContext;
+      const code = `export const Symbol = "authored";
+export const load = () => import(${JSON.stringify(`file://${artifact}`)});`;
+      const module = await runWithCacheDir(cacheDir, () => loadModuleESM(code, context));
+      assertEquals(__jsxCacheInternals.isLazyArtifactRetained(artifact), false);
+      await remove(artifact);
+      const load = (module as { load: () => Promise<{ value: number }> }).load;
+      assertEquals((await load()).value, 17);
+      assertEquals(await readTextFile(artifact), source);
+    } finally {
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(cacheDir, { recursive: true });
+    }
   });
 
   describe("MDXLayout auto-export", () => {

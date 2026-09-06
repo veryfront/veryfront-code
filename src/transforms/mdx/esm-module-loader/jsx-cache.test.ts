@@ -2800,11 +2800,17 @@ describe("scheduled prune bound", () => {
   it("promotes work after persistence completes beyond an empty promotion scan", async () => {
     const localFs = getLocalFs();
     const originalWrite = localFs.writeTextFile.bind(localFs);
+    const originalReadDir = localFs.readDir.bind(localFs);
     const writeStarted = Promise.withResolvers<void>();
     const releaseWrite = Promise.withResolvers<void>();
     const nowMs = Date.now();
     const urgent = `${persistedTestPrefix}post-persist-promotion`;
+    let urgentScanStarted = false;
     try {
+      localFs.readDir = (path) => {
+        if (path === urgent) urgentScanStarted = true;
+        return originalReadDir(path);
+      };
       for (let entry = 0; entry < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES; entry++) {
         queueJsxCachePrune(`${persistedTestPrefix}queued-${entry}`, nowMs + 60_000);
       }
@@ -2822,17 +2828,20 @@ describe("scheduled prune bound", () => {
       releaseWrite.resolve();
 
       for (let attempt = 0; attempt < 100; attempt++) {
-        if (hasScheduledJsxCachePrune(urgent)) break;
+        if (urgentScanStarted) break;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
+      // A due-now timer can run and leave the schedule before the next poll.
+      // Observe execution, not that transient intermediate queue state.
       assertEquals(
-        hasScheduledJsxCachePrune(urgent),
+        urgentScanStarted,
         true,
         "successful persistence must wake promotion after an earlier empty scan",
       );
     } finally {
       releaseWrite.resolve();
       localFs.writeTextFile = originalWrite;
+      localFs.readDir = originalReadDir;
     }
   });
 

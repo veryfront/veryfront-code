@@ -201,6 +201,17 @@ function PageTitle() {
 }
 ```
 
+### Lazy JSX imports
+
+Veryfront bounds the on-disk JSX transform cache. A loaded MDX module keeps a
+recovery snapshot for its literal dynamic JSX imports, so a delayed import can
+restore an evicted artifact. Recovery uses the original transformed code, not
+the latest source at that path. Load the updated MDX module to use changed source.
+
+Recovery snapshots have a combined limit of 2 MiB per MDX module. Recovery follows
+the same cache capacity limits as initial compilation and can fail when active
+artifacts occupy the available capacity.
+
 ### Override rendered MDX elements
 
 Wrap an MDX page or layout with `MDXProvider` to replace generated elements:
