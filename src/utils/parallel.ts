@@ -17,6 +17,7 @@ import {
 } from "#veryfront/platform/compat/primordials/array.ts";
 
 const IntrinsicArray = Array;
+const NumberIsSafeInteger = Number.isSafeInteger;
 
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;
@@ -35,7 +36,7 @@ type ParallelOptions = {
 function resolveParallelSemaphore(options: ParallelOptions): Semaphore {
   if (options.semaphore !== undefined) return options.semaphore;
   if (options.concurrency === undefined) return apiSemaphore;
-  if (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1) {
+  if (!NumberIsSafeInteger(options.concurrency) || options.concurrency < 1) {
     throw new RangeError("parallel concurrency must be a positive safe integer");
   }
   return new Semaphore(options.concurrency);

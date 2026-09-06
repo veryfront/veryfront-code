@@ -20,8 +20,22 @@ const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "EOPNOTSUPP",
 ]);
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const reflectApply = Reflect.apply;
+
+function createDataDescriptor<T>(
+  value: T,
+  enumerable: boolean,
+): PropertyDescriptor {
+  const descriptor = createObject(null) as PropertyDescriptor;
+  descriptor.configurable = false;
+  descriptor.enumerable = enumerable;
+  descriptor.value = value;
+  descriptor.writable = false;
+  return descriptor;
+}
 
 function hasOwnDataValue(
   value: object,
@@ -178,11 +192,14 @@ class NodeFileSystem implements FileSystem {
       );
     }
 
-    const [fsModule, osModule, pathModule] = await primordialPromiseAll([
+    const modules = await primordialPromiseAll([
       import("node:fs/promises"),
       import("node:os"),
       import("node:path"),
     ]);
+    const fsModule = modules[0]!;
+    const osModule = modules[1]!;
+    const pathModule = modules[2]!;
 
     this.fs = fsModule as NodeFsPromises;
     this.os = osModule;
@@ -479,39 +496,47 @@ export function createFileSystem(): FileSystem {
       return new NodeCompatibleFileSystemAdapter();
     })();
 
-  Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
-    value: async (
-      path: string,
-      containmentRoot: string,
-      byteLimit: number,
-    ) => {
-      const snapshotReader = captureSnapshotReadCapability(
-        await loadSemanticAdapter(),
-        "Native filesystem adapter",
-      );
-      if (snapshotReader === undefined) {
-        throw new DOMException(
-          "Native filesystem adapter does not support snapshot reads",
-          "NotSupportedError",
+  defineProperty(
+    fileSystem,
+    "readFileSnapshotWithinLimit",
+    createDataDescriptor(
+      async (
+        path: string,
+        containmentRoot: string,
+        byteLimit: number,
+      ) => {
+        const snapshotReader = captureSnapshotReadCapability(
+          await loadSemanticAdapter(),
+          "Native filesystem adapter",
         );
-      }
-      return await snapshotReader.read(path, containmentRoot, byteLimit);
-    },
-    enumerable: true,
-  });
-  Object.defineProperty(fileSystem, "createFileBytesExclusive", {
-    value: async (path: string, content: Uint8Array) => {
-      const exclusiveCreator = captureExclusiveCreateCapability(
-        await loadSemanticAdapter(),
-        "Native filesystem adapter",
-      );
-      if (exclusiveCreator === undefined) {
-        throw new Error("Native filesystem adapter does not support exclusive creates");
-      }
-      await exclusiveCreator.create(path, content);
-    },
-    enumerable: true,
-  });
+        if (snapshotReader === undefined) {
+          throw new DOMException(
+            "Native filesystem adapter does not support snapshot reads",
+            "NotSupportedError",
+          );
+        }
+        return await snapshotReader.read(path, containmentRoot, byteLimit);
+      },
+      true,
+    ),
+  );
+  defineProperty(
+    fileSystem,
+    "createFileBytesExclusive",
+    createDataDescriptor(
+      async (path: string, content: Uint8Array) => {
+        const exclusiveCreator = captureExclusiveCreateCapability(
+          await loadSemanticAdapter(),
+          "Native filesystem adapter",
+        );
+        if (exclusiveCreator === undefined) {
+          throw new Error("Native filesystem adapter does not support exclusive creates");
+        }
+        await exclusiveCreator.create(path, content);
+      },
+      true,
+    ),
+  );
   return fileSystem;
 }
 

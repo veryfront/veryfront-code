@@ -5,6 +5,7 @@ import {
   primordialArrayMap,
   primordialArrayPush,
 } from "#veryfront/platform/compat/primordials/array.ts";
+import { primordialPromiseResolve } from "#veryfront/platform/compat/primordials/promise.ts";
 
 export type { ImportSpecifier };
 
@@ -12,6 +13,8 @@ const logger = baseLogger.component("es-module-lexer");
 const IntrinsicMap = Map;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicString = String;
+const MathMax = Math.max;
+const NumberParseInt = Number.parseInt;
 const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeSet = Map.prototype.set;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
@@ -129,7 +132,7 @@ export async function initLexer(): Promise<void> {
   }
 
   const lexer = getLexer();
-  initPromise = lexer.init ? lexer.init() : Promise.resolve();
+  initPromise = lexer.init ? lexer.init() : primordialPromiseResolve();
   await initPromise;
 }
 
@@ -142,10 +145,10 @@ function logParseError(error: unknown, code: string): void {
   ) as RegExpExecArray | null;
   if (!match) return;
 
-  const line = Number.parseInt(match[1] ?? "", 10);
-  const col = Number.parseInt(match[2] ?? "", 10);
+  const line = NumberParseInt(match[1] ?? "", 10);
+  const col = NumberParseInt(match[2] ?? "", 10);
   const lines = splitLines(code);
-  const start = Math.max(0, line - 3);
+  const start = MathMax(0, line - 3);
   let context = "";
   for (let index = start; index < lines.length && index < line + 2; index++) {
     const text = lines[index]!;

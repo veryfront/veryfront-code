@@ -13,6 +13,7 @@ import { UNRESOLVED_VF_MODULES_PATTERN } from "./constants.ts";
 import { hashString } from "./utils/hash.ts";
 
 const stringPadStart = Function.prototype.call.bind(String.prototype.padStart);
+const stringStartsWith = Function.prototype.call.bind(String.prototype.startsWith);
 
 const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
@@ -72,7 +73,9 @@ function formatMdxEsmTransformCacheKey(
   contentHash: string,
   cacheVariant?: string,
 ): string {
-  const variant = cacheVariant?.startsWith("on:") ? `:${cacheVariant}` : "";
+  const variant = cacheVariant !== undefined && stringStartsWith(cacheVariant, "on:")
+    ? `:${cacheVariant}`
+    : "";
   return `${namespace}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}${variant}:ssr`;
 }
 
@@ -82,7 +85,9 @@ function formatMdxEsmPathCacheKey(
   normalizedPath: string,
   cacheVariant?: string,
 ): string {
-  const variant = cacheVariant?.startsWith("on:") ? `:${cacheVariant}` : "";
+  const variant = cacheVariant !== undefined && stringStartsWith(cacheVariant, "on:")
+    ? `:${cacheVariant}`
+    : "";
   return `${namespace}:${reactVersion}${variant}:${normalizedPath}`;
 }
 

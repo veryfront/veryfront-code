@@ -21,6 +21,42 @@ import {
   type StaticImportSpan,
 } from "../utils/source-spans.ts";
 import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./limits.ts";
+import {
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
+
+const ReflectApply = Reflect.apply;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const RELATIVE_IMPORT_SPECIFIER_PATTERN = /^(\.\.?\/[^?]+)(?:\?.*)?$/;
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function relativeImportPath(specifier: string): string | undefined {
+  return (ReflectApply(
+    RegExpPrototypeExec,
+    RELATIVE_IMPORT_SPECIFIER_PATTERN,
+    [specifier],
+  ) as RegExpExecArray | null)?.[1];
+}
 
 const MODULE_FETCHER_VERYFRONT_CONTEXT: RewriteContext = {
   filePath: "",
@@ -83,19 +119,22 @@ function rewriteVeryfrontModuleSpecifier(specifier: string): string | null {
  * Uses deno.json exports/imports as the source of truth and appends ?ssr=true.
  */
 export function rewriteVeryfrontImports(code: string): string {
-  const replacements: SourceSpanReplacement[] = findBoundedStaticImportSpans(
+  const matches = findBoundedStaticImportSpans(
     code,
-    (specifier) => specifier.startsWith("veryfront/") ? specifier : null,
-  ).flatMap(({ original, path, start, end }) => {
+    (specifier) => stringStartsWith(specifier, "veryfront/") ? specifier : null,
+  );
+  const replacements: SourceSpanReplacement[] = [];
+  for (const match of primordialArrayValues(matches)) {
+    const { original, path, start, end } = match;
     const mapped = rewriteVeryfrontModuleSpecifier(path);
-    if (!mapped) return [];
-    return [{
+    if (!mapped) continue;
+    primordialArrayPush(replacements, {
       start,
       end,
       expected: original,
       replacement: `from "${mapped}"`,
-    }];
-  });
+    });
+  }
 
   return replaceSourceSpans(code, replacements);
 }
@@ -119,14 +158,20 @@ async function findExistingFrameworkRelativeTarget(
   const fs = getLocalFs();
   const candidates = [absolutePath, `${absolutePath}.src`];
 
-  if (absolutePath.endsWith(".js") || absolutePath.endsWith(".mjs")) {
-    const stem = absolutePath.replace(/\.(?:m?js)$/, "");
-    for (const ext of [".ts", ".tsx", ".jsx", ".js", ".mjs"]) {
-      candidates.push(`${stem}${ext}.src`, `${stem}${ext}`);
+  const suffixLength = stringEndsWith(absolutePath, ".mjs")
+    ? ".mjs".length
+    : stringEndsWith(absolutePath, ".js")
+    ? ".js".length
+    : 0;
+  if (suffixLength > 0) {
+    const stem = stringSlice(absolutePath, 0, -suffixLength);
+    for (const ext of primordialArrayValues([".ts", ".tsx", ".jsx", ".js", ".mjs"])) {
+      primordialArrayPush(candidates, `${stem}${ext}.src`);
+      primordialArrayPush(candidates, `${stem}${ext}`);
     }
   }
 
-  for (const candidate of candidates) {
+  for (const candidate of primordialArrayValues(candidates)) {
     try {
       await fs.stat(candidate);
       return candidate;
@@ -146,7 +191,7 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
   // Without this, project relative imports get rewritten to absolute file:// source
   // paths with .js extensions, which fail because actual files are .tsx/.ts.
   const isFrameworkSource = isFrameworkSourceFile(sourceFilePath);
-  const isFrameworkFile = isFrameworkSource || sourceFilePath.includes("/node_modules/");
+  const isFrameworkFile = isFrameworkSource || stringIncludes(sourceFilePath, "/node_modules/");
   if (!isFrameworkFile) {
     return code;
   }
@@ -160,7 +205,7 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
       findMatches: (source: string) =>
         findBoundedStaticImportSpans(
           source,
-          (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+          relativeImportPath,
         ),
       buildReplacement: (path: string) => `from "file://${path}"`,
     },
@@ -168,21 +213,21 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
       findMatches: (source: string) =>
         findBoundedStaticSideEffectImportSpans(
           source,
-          (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+          relativeImportPath,
         ),
       buildReplacement: (path: string) => `import "file://${path}"`,
     },
   ] as const;
 
-  for (const { findMatches, buildReplacement } of patterns) {
+  for (const { findMatches, buildReplacement } of primordialArrayValues(patterns)) {
     const matches = findMatches(rewritten);
     const replacements: SourceSpanReplacement[] = [];
-    for (const { original, path: relativePath, start, end } of matches) {
+    for (const { original, path: relativePath, start, end } of primordialArrayValues(matches)) {
       const absolutePath = resolve(sourceDir, relativePath);
       const resolvedPath = needsFrameworkSourceFallback
         ? await findExistingFrameworkRelativeTarget(absolutePath) ?? absolutePath
         : absolutePath;
-      replacements.push({
+      primordialArrayPush(replacements, {
         start,
         end,
         expected: original,

@@ -17,9 +17,17 @@ export const MAX_MDX_MODULE_TRANSFORM_CONCURRENCY = 16;
 export const MAX_MDX_MODULE_CODE_BYTES = 2 * 1024 * 1024;
 
 const utf8Encoder = new TextEncoder();
+const ReflectApply = Reflect.apply;
+const TextEncoderPrototypeEncode = TextEncoder.prototype.encode;
+const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const TypedArrayByteLengthGetter = Object.getOwnPropertyDescriptor(
+  TypedArrayPrototype,
+  "byteLength",
+)!.get!;
 
 export function utf8ByteLength(value: string): number {
-  return utf8Encoder.encode(value).byteLength;
+  const bytes = ReflectApply(TextEncoderPrototypeEncode, utf8Encoder, [value]) as Uint8Array;
+  return ReflectApply(TypedArrayByteLengthGetter, bytes, []) as number;
 }
 
 export class ModuleGraphLimitError extends Error {

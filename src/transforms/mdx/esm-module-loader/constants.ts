@@ -30,10 +30,17 @@ const FRAMEWORK_SOURCE_ROOTS = [
   `${join(FRAMEWORK_ROOT, "src")}/`,
   `${join(FRAMEWORK_ROOT, "dist", "framework-src")}/`,
 ];
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const ReflectApply = Reflect.apply;
 
 /** Whether `sourceFilePath` is framework source shipped in the npm package. */
 export function isFrameworkSourceFile(sourceFilePath: string): boolean {
-  return FRAMEWORK_SOURCE_ROOTS.some((root) => sourceFilePath.startsWith(root));
+  for (let index = 0; index < FRAMEWORK_SOURCE_ROOTS.length; index++) {
+    if (ReflectApply(StringPrototypeStartsWith, sourceFilePath, [FRAMEWORK_SOURCE_ROOTS[index]!])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";

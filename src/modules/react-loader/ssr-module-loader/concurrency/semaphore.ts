@@ -13,6 +13,7 @@ import {
 
 const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
 const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+const NumberIsFinite = Number.isFinite;
 
 /** Default timeout for acquiring a semaphore permit (ms) */
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
@@ -120,7 +121,7 @@ export class Semaphore {
         return;
       }
 
-      if (Number.isFinite(timeoutMs)) {
+      if (NumberIsFinite(timeoutMs)) {
         waiter.timeoutId = hostSetTimeout(() => {
           if (waiter.settled) return;
           waiter.settled = true;

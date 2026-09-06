@@ -4,6 +4,9 @@ import { pathToFileURL } from "node:url";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { FRAMEWORK_ROOT } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
+import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { __moduleWriterInternals } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
 import {
   primordialPromiseAll,
@@ -30,13 +33,104 @@ import {
   withJsxArtifactWriteCapacity,
 } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import {
+  buildMdxEsmPathCacheKey,
   buildMdxJsxCacheFileName,
   MDX_JSX_CACHE_NAMESPACE_PREFIX,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { utf8ByteLength } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
 
 // Real filesystem, native module loading, and process-wide prototype mutation
 // require the integration lane under the semantic unit-boundary audit.
 describe("MDX cache shared-realm lifecycle", () => {
+  it("classifies private framework roots without live array or string predicates", () => {
+    const some = Array.prototype.some;
+    const startsWith = String.prototype.startsWith;
+    let framework = false;
+    let project = true;
+    try {
+      Array.prototype.some = () => {
+        throw new Error("replaced Array.some");
+      };
+      String.prototype.startsWith = () => {
+        throw new Error("replaced String.startsWith");
+      };
+      framework = __importTransformerInternals.isFrameworkSourceFile(
+        `${FRAMEWORK_ROOT}/src/react/components/Head.tsx`,
+      );
+      project = __importTransformerInternals.isFrameworkSourceFile(
+        `${FRAMEWORK_ROOT}/projects/mine/components/Card.tsx`,
+      );
+    } finally {
+      Array.prototype.some = some;
+      String.prototype.startsWith = startsWith;
+    }
+    assertEquals(framework, true);
+    assertEquals(project, false);
+  });
+
+  it("keeps byte admission and cache variants independent of mutable primitives", () => {
+    const encode = TextEncoder.prototype.encode;
+    const byteLength = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "byteLength");
+    const startsWith = String.prototype.startsWith;
+    let encodedLength = 0;
+    let variantKey = "";
+    try {
+      TextEncoder.prototype.encode = () => {
+        throw new Error("replaced TextEncoder.encode");
+      };
+      Object.defineProperty(Uint8Array.prototype, "byteLength", {
+        configurable: true,
+        get() {
+          throw new Error("replaced Uint8Array.byteLength");
+        },
+      });
+      String.prototype.startsWith = () => {
+        throw new Error("replaced String.startsWith");
+      };
+      encodedLength = utf8ByteLength("é");
+      variantKey = buildMdxEsmPathCacheKey("/project/Card.tsx", "19.1.1", "on:compile-dev");
+    } finally {
+      TextEncoder.prototype.encode = encode;
+      if (byteLength) Object.defineProperty(Uint8Array.prototype, "byteLength", byteLength);
+      else delete (Uint8Array.prototype as unknown as { byteLength?: number }).byteLength;
+      String.prototype.startsWith = startsWith;
+    }
+    assertEquals(encodedLength, 2);
+    assertEquals(variantKey.includes(":on:compile-dev:"), true);
+  });
+
+  it("routes framework source locally and project source through the bounded adapter", async () => {
+    const projectDir = `${FRAMEWORK_ROOT}/projects/routing-fixture`;
+    const projectPath = `${projectDir}/Card.tsx`;
+    const frameworkPath = `${FRAMEWORK_ROOT}/src/transforms/mdx/esm-module-loader/constants.ts`;
+    let adapterReads = 0;
+    let localReads = 0;
+    const localFs = getLocalFs();
+    const readLocal = localFs.readTextFile.bind(localFs);
+    const adapter = {
+      fs: {
+        readFile: (path: string) => {
+          adapterReads++;
+          if (path !== projectPath) throw new Error(`unexpected adapter read: ${path}`);
+          return Promise.resolve("export const Card = () => <div />;");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    try {
+      localFs.readTextFile = (path) => {
+        localReads++;
+        if (path !== frameworkPath) throw new Error(`unexpected local read: ${path}`);
+        return Promise.resolve("export const Framework = true;");
+      };
+      await __importTransformerInternals.readJsxImportSource(frameworkPath, adapter, projectDir);
+      await __importTransformerInternals.readJsxImportSource(projectPath, adapter, projectDir);
+    } finally {
+      localFs.readTextFile = readLocal;
+    }
+    assertEquals(adapterReads, 1);
+    assertEquals(localReads, 1);
+  });
+
   it("the cache semaphore preserves queued work and permits after queue methods are replaced", async () => {
     const semaphore = new CacheSemaphore(1, { acquireTimeoutMs: 100 });
     const queue = Object.getOwnPropertyDescriptor(semaphore, "waiting")!.value;

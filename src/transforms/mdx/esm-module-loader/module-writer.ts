@@ -78,6 +78,7 @@ const mdxWriteFlight = new Singleflight<void>();
 const IntrinsicMap = Map;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicString = String;
+const IntrinsicObjectKeys = Object.keys;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -614,7 +615,7 @@ export async function doLoadModuleESM(
             if (stillFailed.length > 0) {
               throw BUNDLE_ERROR.create({
                 detail: `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
-                  stillFailed.join(", ")
+                  primordialArrayJoin(stillFailed, ", ")
                 }`,
               });
             }
@@ -719,7 +720,7 @@ export async function doLoadModuleESM(
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
       projectSlug,
-      exports: Object.keys(mod),
+      exports: IntrinsicObjectKeys(mod),
     });
 
     const result: MDXModule = {

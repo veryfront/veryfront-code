@@ -19,6 +19,7 @@ import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/con
 import {
   captureBoundedTextReader,
   copyFixedUint8ArrayWithinLimit,
+  getFixedUint8ArrayByteLength,
 } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { captureFileSystemCapabilities } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
@@ -94,6 +95,7 @@ const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 const IntrinsicObjectCreate = Object.create;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectEntries = Object.entries;
@@ -402,7 +404,7 @@ const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 /** Decode source bytes as strict UTF-8, matching the shared bounded reader. */
 function decodeStrictUtf8(bytes: Uint8Array, sourceIdentity: string): string {
   try {
-    return strictUtf8Decoder.decode(bytes);
+    return IntrinsicReflectApply(TextDecoderPrototypeDecode, strictUtf8Decoder, [bytes]) as string;
   } catch (cause) {
     throw new TypeError(`${sourceIdentity} must contain valid UTF-8`, { cause });
   }
@@ -476,7 +478,10 @@ async function readProjectJsxSourceWithinLimit(
       }
       throw error;
     }
-    assertMdxModuleSourceSize(sourceIdentity, bytes.byteLength);
+    assertMdxModuleSourceSize(
+      sourceIdentity,
+      getFixedUint8ArrayByteLength(bytes, sourceIdentity),
+    );
     return decodeStrictUtf8(bytes, sourceIdentity);
   }
 
@@ -484,6 +489,30 @@ async function readProjectJsxSourceWithinLimit(
   const sourceCode = typeof raw === "string" ? raw : decodeStrictUtf8(raw, sourceIdentity);
   assertMdxModuleSourceSize(sourceIdentity, utf8ByteLength(sourceCode));
   return sourceCode;
+}
+
+async function readJsxImportSource(
+  filePath: string,
+  adapter: ESMLoaderContext["adapter"],
+  projectDir?: string,
+): Promise<string | undefined> {
+  // Project identity is decided before the framework exception: a project can
+  // live beneath FRAMEWORK_ROOT, and its sources must stay on the bounded
+  // adapter even when their absolute paths begin with the framework root.
+  const isFrameworkFile = !isProjectSourceFile(filePath, projectDir) &&
+    (isFrameworkSourceFile(filePath) ||
+      (stringStartsWith(filePath, FRAMEWORK_ROOT) &&
+        stringIncludes(filePath, "/node_modules/")));
+  if (isFrameworkFile) return await getLocalFs().readTextFile(filePath);
+  if (adapter) {
+    return await readProjectJsxSourceWithinLimit(
+      adapter.fs,
+      filePath,
+      describeProjectSource(filePath, projectDir),
+    );
+  }
+  logger.warn(`${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`);
+  return undefined;
 }
 
 /**
@@ -539,6 +568,7 @@ export const __importTransformerInternals = {
   isFrameworkSourceFile,
   isProjectSourceFile,
   mapJsxTransformsWithCleanup,
+  readJsxImportSource,
 };
 
 /**
@@ -623,29 +653,8 @@ export async function transformJsxImports(
     { specifier, filePath, ext }: { specifier: string; filePath: string; ext: string },
   ): Promise<JsxImportTransformResult> => {
     try {
-      // Project identity is decided before the framework exception: a project
-      // can live beneath FRAMEWORK_ROOT, and everything inside it - its own
-      // source and the dependencies under its node_modules alike - is tenant
-      // controlled, so it has to go through the adapter that bounds the read.
-      const isFrameworkFile = !isProjectSourceFile(filePath, projectDir) &&
-        (isFrameworkSourceFile(filePath) ||
-          (stringStartsWith(filePath, FRAMEWORK_ROOT) &&
-            stringIncludes(filePath, "/node_modules/")));
-      let sourceCode: string;
-      if (isFrameworkFile) {
-        sourceCode = await getLocalFs().readTextFile(filePath);
-      } else if (adapter) {
-        sourceCode = await readProjectJsxSourceWithinLimit(
-          adapter.fs,
-          filePath,
-          describeProjectSource(filePath, projectDir),
-        );
-      } else {
-        logger.warn(
-          `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
-        );
-        return null;
-      }
+      const sourceCode = await readJsxImportSource(filePath, adapter, projectDir);
+      if (sourceCode === undefined) return null;
 
       const transformedFileName = buildMdxJsxCacheFileName(filePath, sourceCode);
       const transformedPath = join(esmCacheDir, transformedFileName);

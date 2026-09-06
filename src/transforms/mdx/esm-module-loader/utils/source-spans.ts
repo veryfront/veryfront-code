@@ -1,4 +1,12 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  primordialArrayAt,
+  primordialArrayMap,
+  primordialArrayPop,
+  primordialArrayPush,
+  primordialArraySort,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 
 /**
  * Source-span replacement helpers for import rewrites.
@@ -59,6 +67,29 @@ interface RawJsxTagOptions {
 
 const MAX_TEMPLATE_LITERAL_DEPTH = 512;
 const MAX_RAW_JSX_TEXT_CLOSING_LOOKAHEAD = 64 * 1024;
+const IntrinsicMap = Map;
+const IntrinsicSet = Set;
+const ReflectApply = Reflect.apply;
+const ArrayPrototypeIncludes = Array.prototype.includes;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const SetPrototypeAdd = Set.prototype.add;
+const SetPrototypeHas = Set.prototype.has;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeCodePointAt = String.prototype.codePointAt;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeTrim = String.prototype.trim;
+const StringPrototypeTrimStart = String.prototype.trimStart;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const NumberIsSafeInteger = Number.isSafeInteger;
+const NumberParseInt = Number.parseInt;
+const MathFloor = Math.floor;
+const MathMax = Math.max;
+const MathMin = Math.min;
 const StringFromCodePoint = String.fromCodePoint;
 const IDENTIFIER_START_PATTERN = /^[$_\p{ID_Start}]$/u;
 const IDENTIFIER_PART_PATTERN = /^[$_\p{ID_Continue}\u200C\u200D]$/u;
@@ -94,7 +125,8 @@ const TYPESCRIPT_AMBIENT_DECLARATION_PREFIX_PATTERN = new RegExp(
     .raw`^(?:export\s+)?declare\s+(?:(?:(?:const|let|var)\s+${IDENTIFIER_NAME_SOURCE}(?:\s*:\s*[\s\S]*\S)?)|(?:function\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?\s*\([\s\S]*\)\s*(?::\s*[\s\S]*\S)?)|(?:class\s+${IDENTIFIER_NAME_SOURCE}(?:\s*<[\s\S]*>)?(?:\s+extends\s+[\s\S]+?)?(?:\s+implements\s+[\s\S]+)?))\s*$`,
   "u",
 );
-const JSX_TEXT_BREAK_STATEMENT_KEYWORDS = new Set([
+const COMMENT_PATTERN = /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g;
+const JSX_TEXT_BREAK_STATEMENT_KEYWORDS = new IntrinsicSet([
   "async",
   "await",
   "break",
@@ -122,6 +154,83 @@ const JSX_TEXT_BREAK_STATEMENT_KEYWORDS = new Set([
   "yield",
 ]);
 
+function mapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return ReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  ReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function setAdd<T>(set: Set<T>, value: T): void {
+  ReflectApply(SetPrototypeAdd, set, [value]);
+}
+
+function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
+  return ReflectApply(SetPrototypeHas, set, [value]) as boolean;
+}
+
+function stringStartsWith(value: string, search: string, position?: number): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [search, position]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
+}
+
+function stringIndexOf(value: string, search: string, position?: number): number {
+  return ReflectApply(StringPrototypeIndexOf, value, [search, position]) as number;
+}
+
+function stringLastIndexOf(value: string, search: string, position?: number): number {
+  return ReflectApply(StringPrototypeLastIndexOf, value, [search, position]) as number;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function stringTrim(value: string): string {
+  return ReflectApply(StringPrototypeTrim, value, []) as string;
+}
+
+function stringTrimStart(value: string): string {
+  return ReflectApply(StringPrototypeTrimStart, value, []) as string;
+}
+
+function regexpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpPrototypeExec, pattern, [value]) !== null;
+}
+
+function regexpReplaceAll(pattern: RegExp, value: string, replacement: string): string {
+  let result = "";
+  let cursor = 0;
+  pattern.lastIndex = 0;
+  try {
+    for (;;) {
+      const match = ReflectApply(RegExpPrototypeExec, pattern, [value]) as RegExpExecArray | null;
+      if (match === null) return result + stringSlice(value, cursor);
+      result += stringSlice(value, cursor, match.index) + replacement;
+      cursor = match.index + match[0].length;
+      if (match[0].length === 0) pattern.lastIndex++;
+    }
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
+function arrayIncludes<T>(values: readonly T[], value: T): boolean {
+  return ReflectApply(ArrayPrototypeIncludes, values, [value]) as boolean;
+}
+
+function stringCharCodeAt(value: string, index: number): number {
+  return ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function stringCodePointAt(value: string, index: number): number | undefined {
+  return ReflectApply(StringPrototypeCodePointAt, value, [index]) as number | undefined;
+}
+
 function assertTemplateLiteralDepth(depth: number): void {
   if (depth > MAX_TEMPLATE_LITERAL_DEPTH) {
     throw new RangeError("Template literal nesting exceeds scanner limit");
@@ -134,7 +243,10 @@ export function replaceSourceSpans(
 ): string {
   let result = source;
   // Sort descending by start so we apply back-to-front and earlier spans stay valid.
-  const sorted = [...replacements].sort((left, right) => right.start - left.start);
+  const sorted = primordialArraySort(
+    primordialArrayMap(replacements, (replacement) => replacement),
+    (left, right) => right.start - left.start,
+  );
 
   // Detect overlapping or duplicate-start spans before touching `result`.
   // When two replacements share (or overlap on) the same start position the
@@ -150,44 +262,44 @@ export function replaceSourceSpans(
     }
   }
 
-  for (const { start, end, replacement, expected } of sorted) {
+  for (const { start, end, replacement, expected } of primordialArrayValues(sorted)) {
     if (start < 0 || end < start || end > source.length) {
       throw new RangeError(`Invalid source replacement span: ${start}-${end}`);
     }
 
-    if (expected !== undefined && source.slice(start, end) !== expected) {
+    if (expected !== undefined && stringSlice(source, start, end) !== expected) {
       throw INVALID_ARGUMENT.create({
         detail: `Source replacement span did not match expected text: ${expected}`,
       });
     }
 
-    result = result.slice(0, start) + replacement + result.slice(end);
+    result = stringSlice(result, 0, start) + replacement + stringSlice(result, end);
   }
 
   return result;
 }
 
 function isIdentifierChar(char: string | undefined): boolean {
-  return char !== undefined && IDENTIFIER_PART_PATTERN.test(char);
+  return char !== undefined && regexpTest(IDENTIFIER_PART_PATTERN, char);
 }
 
 function isIdentifierStart(char: string | undefined): boolean {
-  return char !== undefined && IDENTIFIER_START_PATTERN.test(char);
+  return char !== undefined && regexpTest(IDENTIFIER_START_PATTERN, char);
 }
 
 function identifierCharacterAt(source: string, index: number): string | undefined {
   if (index < 0 || index >= source.length) return undefined;
 
   let characterIndex = index;
-  const codeUnit = source.charCodeAt(characterIndex);
+  const codeUnit = stringCharCodeAt(source, characterIndex);
   if (
     codeUnit >= 0xdc00 && codeUnit <= 0xdfff && characterIndex > 0
   ) {
-    const previousCodeUnit = source.charCodeAt(characterIndex - 1);
+    const previousCodeUnit = stringCharCodeAt(source, characterIndex - 1);
     if (previousCodeUnit >= 0xd800 && previousCodeUnit <= 0xdbff) characterIndex--;
   }
 
-  const codePoint = source.codePointAt(characterIndex);
+  const codePoint = stringCodePointAt(source, characterIndex);
   return codePoint === undefined ? undefined : StringFromCodePoint(codePoint);
 }
 
@@ -200,7 +312,7 @@ function isIdentifierStartAt(source: string, index: number): boolean {
 }
 
 function isHexDigit(char: string | undefined): boolean {
-  return char !== undefined && /[0-9A-Fa-f]/.test(char);
+  return char !== undefined && regexpTest(/[0-9A-Fa-f]/, char);
 }
 
 function identifierEscapeCodePoint(source: string, start: number): {
@@ -214,8 +326,8 @@ function identifierEscapeCodePoint(source: string, start: number): {
     while (isHexDigit(source[cursor])) cursor++;
     if (cursor === start + 3 || source[cursor] !== "}") return undefined;
 
-    const codePoint = Number.parseInt(source.slice(start + 3, cursor), 16);
-    if (!Number.isSafeInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    const codePoint = NumberParseInt(stringSlice(source, start + 3, cursor), 16);
+    if (!NumberIsSafeInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
       return undefined;
     }
     return { codePoint, end: cursor + 1 };
@@ -225,7 +337,7 @@ function identifierEscapeCodePoint(source: string, start: number): {
     if (!isHexDigit(source[start + offset])) return undefined;
   }
   return {
-    codePoint: Number.parseInt(source.slice(start + 2, start + 6), 16),
+    codePoint: NumberParseInt(stringSlice(source, start + 2, start + 6), 16),
     end: start + 6,
   };
 }
@@ -284,7 +396,7 @@ function isStatementKeywordAt(
   atStatementStart: boolean,
 ): boolean {
   if (!atStatementStart) return false;
-  if (!source.startsWith(keyword, index)) return false;
+  if (!stringStartsWith(source, keyword, index)) return false;
   if (isIdentifierBoundaryBefore(source, index) || source[index - 1] === ".") return false;
   if (isIdentifierBoundaryAfter(source, index + keyword.length)) return false;
   return true;
@@ -299,7 +411,7 @@ function skipIgnored(source: string, index: number): number {
   }
 
   if (char === "/" && next === "*") {
-    const end = source.indexOf("*/", index + 2);
+    const end = stringIndexOf(source, "*/", index + 2);
     return end === -1 ? source.length : end + 2;
   }
 
@@ -321,7 +433,7 @@ function skipIgnored(source: string, index: number): number {
 
 function skipWhitespace(source: string, index: number): number {
   let cursor = index;
-  while (/\s/.test(source[cursor] ?? "")) cursor++;
+  while (regexpTest(/\s/, source[cursor] ?? "")) cursor++;
   return cursor;
 }
 
@@ -366,7 +478,7 @@ function nextStatementCursor(source: string, index: number): number {
 
 function hexDigitValue(char: string | undefined): number {
   if (char === undefined) return -1;
-  const code = char.charCodeAt(0);
+  const code = stringCharCodeAt(char, 0);
   if (code >= 48 && code <= 57) return code - 48;
   if (code >= 65 && code <= 70) return code - 55;
   if (code >= 97 && code <= 102) return code - 87;
@@ -439,12 +551,12 @@ function decodeLiteralContents(
     }
 
     if (escaped === "0") {
-      if (/[0-9]/.test(source[cursor + 2] ?? "")) invalidEscapedSpecifier();
+      if (regexpTest(/[0-9]/, source[cursor + 2] ?? "")) invalidEscapedSpecifier();
       result += "\0";
       cursor += 2;
       continue;
     }
-    if (/[1-9]/.test(escaped)) invalidEscapedSpecifier();
+    if (regexpTest(/[1-9]/, escaped)) invalidEscapedSpecifier();
 
     if (escaped === "x") {
       const value = decodeHexEscape(source, cursor + 2, 2);
@@ -574,7 +686,7 @@ function skipFullTemplateLiteral(
 
 function previousSignificantIndex(source: string, index: number): number {
   let cursor = index - 1;
-  while (cursor >= 0 && /\s/.test(source[cursor] ?? "")) cursor--;
+  while (cursor >= 0 && regexpTest(/\s/, source[cursor] ?? "")) cursor--;
   return cursor;
 }
 
@@ -608,20 +720,20 @@ function previousSignificantIndexBeforeIgnored(source: string, index: number): n
     if (cursor < 0) return cursor;
 
     if (source[cursor] === "/" && source[cursor - 1] === "*") {
-      const start = source.lastIndexOf("/*", cursor - 1);
+      const start = stringLastIndexOf(source, "/*", cursor - 1);
       if (start >= 0) {
         cursor = start;
         continue;
       }
     }
 
-    const lineStart = Math.max(
-      source.lastIndexOf("\n", cursor),
-      source.lastIndexOf("\r", cursor),
-      source.lastIndexOf("\u2028", cursor),
-      source.lastIndexOf("\u2029", cursor),
+    const lineStart = MathMax(
+      stringLastIndexOf(source, "\n", cursor),
+      stringLastIndexOf(source, "\r", cursor),
+      stringLastIndexOf(source, "\u2028", cursor),
+      stringLastIndexOf(source, "\u2029", cursor),
     ) + 1;
-    if (source.lastIndexOf("//", cursor) >= lineStart) {
+    if (stringLastIndexOf(source, "//", cursor) >= lineStart) {
       const commentStart = lineCommentStart(source, cursor);
       if (commentStart !== null) {
         cursor = commentStart;
@@ -644,7 +756,7 @@ function keywordBefore(
   let start = end;
   while (start > 0 && isIdentifierPartAt(source, start - 1)) start--;
   if (start === end) return null;
-  return source.slice(start, end);
+  return stringSlice(source, start, end);
 }
 
 /**
@@ -746,7 +858,7 @@ function isControlConditionCloseParen(
   rangeStart: number,
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
 ): boolean {
-  const openParen = matchingOpenParens.get(index);
+  const openParen = mapGet(matchingOpenParens, index);
   return openParen !== undefined && openParen.index >= rangeStart &&
     openParen.isControlCondition;
 }
@@ -758,7 +870,7 @@ function isControlBlockCloseBrace(
   matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
   matchingOpenParens: ReadonlyMap<number, OpenParenContext>,
 ): boolean {
-  const openBrace = matchingOpenBraces.get(index);
+  const openBrace = mapGet(matchingOpenBraces, index);
   if (openBrace === undefined) return false;
 
   const beforeOpenBrace = openBrace.previousTokenIndex;
@@ -768,10 +880,7 @@ function isControlBlockCloseBrace(
 }
 
 function normalizedDeclarationPrefix(source: string, start: number, end: number): string {
-  return source.slice(start, end).trimStart().replace(
-    /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g,
-    " ",
-  );
+  return regexpReplaceAll(COMMENT_PATTERN, stringTrimStart(stringSlice(source, start, end)), " ");
 }
 
 function declarationStatementStartBefore(
@@ -783,10 +892,10 @@ function declarationStatementStartBefore(
     "function",
   ],
 ): number {
-  const separatorStart = Math.max(
-    source.lastIndexOf(";", index - 1),
-    source.lastIndexOf("{", index - 1),
-    source.lastIndexOf("}", index - 1),
+  const separatorStart = MathMax(
+    stringLastIndexOf(source, ";", index - 1),
+    stringLastIndexOf(source, "{", index - 1),
+    stringLastIndexOf(source, "}", index - 1),
   ) + 1;
   return declarationAsiBoundaryBefore(source, separatorStart, index, keywords) ?? separatorStart;
 }
@@ -836,11 +945,14 @@ function startsWithDeclarationKeywordAt(
   index: number,
   keywords: readonly string[],
 ): boolean {
-  return keywords.some((keyword) =>
-    source.startsWith(keyword, index) &&
-    !isIdentifierBoundaryBefore(source, index) &&
-    !isIdentifierBoundaryAfter(source, index + keyword.length)
-  );
+  for (const keyword of primordialArrayValues(keywords)) {
+    if (
+      stringStartsWith(source, keyword, index) &&
+      !isIdentifierBoundaryBefore(source, index) &&
+      !isIdentifierBoundaryAfter(source, index + keyword.length)
+    ) return true;
+  }
+  return false;
 }
 
 function hasDeclarationKeywordBefore(
@@ -849,8 +961,8 @@ function hasDeclarationKeywordBefore(
   end: number,
   keywords: readonly string[],
 ): boolean {
-  for (const keyword of keywords) {
-    let index = source.indexOf(keyword, start);
+  for (const keyword of primordialArrayValues(keywords)) {
+    let index = stringIndexOf(source, keyword, start);
     while (index >= 0 && index < end) {
       if (
         !isIdentifierBoundaryBefore(source, index) &&
@@ -858,7 +970,7 @@ function hasDeclarationKeywordBefore(
       ) {
         return true;
       }
-      index = source.indexOf(keyword, index + keyword.length);
+      index = stringIndexOf(source, keyword, index + keyword.length);
     }
   }
   return false;
@@ -909,12 +1021,12 @@ function isFunctionDeclarationBlockOpenBrace(
 ): boolean {
   if (source[previousTokenIndex] !== ")") return false;
 
-  const openParen = matchingOpenParens.get(previousTokenIndex);
+  const openParen = mapGet(matchingOpenParens, previousTokenIndex);
   if (openParen === undefined) return false;
 
   const declarationStart = declarationStatementStartBefore(source, openParen.index);
   const prefix = normalizedDeclarationPrefix(source, declarationStart, openParen.index);
-  return FUNCTION_DECLARATION_PREFIX_PATTERN.test(prefix);
+  return regexpTest(FUNCTION_DECLARATION_PREFIX_PATTERN, prefix);
 }
 
 function isTypeScriptFunctionDeclarationBlockOpenBrace(
@@ -933,7 +1045,7 @@ function isTypeScriptFunctionDeclarationBlockOpenBrace(
     return false;
   }
 
-  const separatorStart = source.lastIndexOf(";", index - 1) + 1;
+  const separatorStart = stringLastIndexOf(source, ";", index - 1) + 1;
   if (
     !hasDeclarationKeywordBefore(source, separatorStart, index, [
       "async",
@@ -950,7 +1062,7 @@ function isTypeScriptFunctionDeclarationBlockOpenBrace(
     "function",
   ]);
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
-  return TYPESCRIPT_FUNCTION_DECLARATION_PREFIX_PATTERN.test(prefix);
+  return regexpTest(TYPESCRIPT_FUNCTION_DECLARATION_PREFIX_PATTERN, prefix);
 }
 
 function isClassDeclarationBlockOpenBrace(
@@ -970,7 +1082,7 @@ function isClassDeclarationBlockOpenBrace(
     return false;
   }
 
-  const separatorStart = source.lastIndexOf(";", index - 1) + 1;
+  const separatorStart = stringLastIndexOf(source, ";", index - 1) + 1;
   if (!hasDeclarationKeywordBefore(source, separatorStart, index, ["class", "export"])) {
     return false;
   }
@@ -979,7 +1091,7 @@ function isClassDeclarationBlockOpenBrace(
   if (currentParen !== undefined && currentParen.index >= declarationStart) return false;
 
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
-  return CLASS_DECLARATION_PREFIX_PATTERN.test(prefix);
+  return regexpTest(CLASS_DECLARATION_PREFIX_PATTERN, prefix);
 }
 
 function isTypeScriptDeclarationBlockOpenBrace(
@@ -1007,14 +1119,14 @@ function isTypeScriptDeclarationBlockOpenBrace(
     "module",
     "namespace",
   ];
-  const separatorStart = source.lastIndexOf(";", index - 1) + 1;
+  const separatorStart = stringLastIndexOf(source, ";", index - 1) + 1;
   if (!hasDeclarationKeywordBefore(source, separatorStart, index, keywords)) {
     return false;
   }
 
   const declarationStart = balancedDeclarationStatementStartBefore(source, index, keywords);
   const prefix = normalizedDeclarationPrefix(source, declarationStart, index);
-  return TYPESCRIPT_DECLARATION_PREFIX_PATTERN.test(prefix);
+  return regexpTest(TYPESCRIPT_DECLARATION_PREFIX_PATTERN, prefix);
 }
 
 function identifierStartBefore(source: string, end: number, rangeStart: number): number {
@@ -1065,7 +1177,7 @@ function switchClauseStartBeforeColon(
 
     if (parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
       if (
-        source.startsWith("case", cursor) &&
+        stringStartsWith(source, "case", cursor) &&
         !isIdentifierBoundaryBefore(source, cursor) &&
         !isIdentifierBoundaryAfter(source, cursor + "case".length)
       ) {
@@ -1074,7 +1186,7 @@ function switchClauseStartBeforeColon(
         continue;
       }
       if (
-        source.startsWith("default", cursor) &&
+        stringStartsWith(source, "default", cursor) &&
         !isIdentifierBoundaryBefore(source, cursor) &&
         !isIdentifierBoundaryAfter(source, cursor + "default".length)
       ) {
@@ -1096,12 +1208,12 @@ function isSwitchClauseBlockOpenBrace(
   rangeStart: number,
   enclosingOpenBrace: OpenBraceContext | undefined,
 ): boolean {
-  const searchStart = Math.max(rangeStart, (enclosingOpenBrace?.index ?? rangeStart - 1) + 1);
+  const searchStart = MathMax(rangeStart, (enclosingOpenBrace?.index ?? rangeStart - 1) + 1);
   const clauseStart = switchClauseStartBeforeColon(source, searchStart, colonIndex);
   if (clauseStart === null) return false;
 
-  const clausePrefix = normalizedDeclarationPrefix(source, clauseStart, colonIndex).trim();
-  return clausePrefix === "default" || /^case\b[\s\S]*\S$/.test(clausePrefix);
+  const clausePrefix = stringTrim(normalizedDeclarationPrefix(source, clauseStart, colonIndex));
+  return clausePrefix === "default" || regexpTest(/^case\b[\s\S]*\S$/, clausePrefix);
 }
 
 function canEndStatementBeforeLineTerminator(
@@ -1113,7 +1225,8 @@ function canEndStatementBeforeLineTerminator(
   if (char === ")" || char === "]" || char === "}") return true;
   if (char === '"' || char === "'" || char === "`") return true;
   if (char === "/") {
-    return completedRegexLiteralEnds?.has(previousTokenIndex) === true ||
+    return completedRegexLiteralEnds !== undefined &&
+        setHas(completedRegexLiteralEnds, previousTokenIndex) === true ||
       isCompletedRegexLiteralEnd(source, previousTokenIndex);
   }
   if (char === "+" && source[previousTokenIndex - 1] === "+") return true;
@@ -1135,10 +1248,10 @@ function isTypeAliasDeclarationBeforeRegex(
     return false;
   }
 
-  const separatorStart = Math.max(
-    source.lastIndexOf(";", regexIndex - 1),
-    source.lastIndexOf("{", regexIndex - 1),
-    source.lastIndexOf("}", regexIndex - 1),
+  const separatorStart = MathMax(
+    stringLastIndexOf(source, ";", regexIndex - 1),
+    stringLastIndexOf(source, "{", regexIndex - 1),
+    stringLastIndexOf(source, "}", regexIndex - 1),
   ) + 1;
   if (!hasDeclarationKeywordBefore(source, separatorStart, regexIndex, ["export", "type"])) {
     return false;
@@ -1151,7 +1264,7 @@ function isTypeAliasDeclarationBeforeRegex(
   if (declarationStart < rangeStart) return false;
 
   const prefix = normalizedDeclarationPrefix(source, declarationStart, regexIndex);
-  return TYPESCRIPT_TYPE_ALIAS_PREFIX_PATTERN.test(prefix);
+  return regexpTest(TYPESCRIPT_TYPE_ALIAS_PREFIX_PATTERN, prefix);
 }
 
 function isTypeScriptAmbientDeclarationBeforeRegex(
@@ -1167,10 +1280,10 @@ function isTypeScriptAmbientDeclarationBeforeRegex(
     return false;
   }
 
-  const separatorStart = Math.max(
-    source.lastIndexOf(";", regexIndex - 1),
-    source.lastIndexOf("{", regexIndex - 1),
-    source.lastIndexOf("}", regexIndex - 1),
+  const separatorStart = MathMax(
+    stringLastIndexOf(source, ";", regexIndex - 1),
+    stringLastIndexOf(source, "{", regexIndex - 1),
+    stringLastIndexOf(source, "}", regexIndex - 1),
   ) + 1;
   if (!hasDeclarationKeywordBefore(source, separatorStart, regexIndex, ["declare", "export"])) {
     return false;
@@ -1183,7 +1296,7 @@ function isTypeScriptAmbientDeclarationBeforeRegex(
   if (declarationStart < rangeStart) return false;
 
   const prefix = normalizedDeclarationPrefix(source, declarationStart, regexIndex);
-  return TYPESCRIPT_AMBIENT_DECLARATION_PREFIX_PATTERN.test(prefix);
+  return regexpTest(TYPESCRIPT_AMBIENT_DECLARATION_PREFIX_PATTERN, prefix);
 }
 
 function isCompletedRegexLiteralEnd(source: string, endIndex: number): boolean {
@@ -1192,8 +1305,8 @@ function isCompletedRegexLiteralEnd(source: string, endIndex: number): boolean {
     const before = previousSignificantIndexBeforeIgnored(source, start);
     const beforeChar = source[before];
     const canStart = before < 0 ||
-      (beforeChar !== undefined && "([{=,:;!~?&|+-*%^<>".includes(beforeChar)) ||
-      [
+      (beforeChar !== undefined && stringIncludes("([{=,:;!~?&|+-*%^<>", beforeChar)) ||
+      arrayIncludes([
         "case",
         "default",
         "delete",
@@ -1212,9 +1325,7 @@ function isCompletedRegexLiteralEnd(source: string, endIndex: number): boolean {
         "typeof",
         "void",
         "yield",
-      ].includes(
-        keywordBefore(source, start, before) ?? "",
-      );
+      ], keywordBefore(source, start, before) ?? "");
     if (!canStart) continue;
     if (skipRegexLiteral(source, start) === endIndex + 1) return true;
   }
@@ -1300,7 +1411,7 @@ function isDeclarationBlockCloseBrace(
   index: number,
   matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
 ): boolean {
-  return matchingOpenBraces.get(index)?.isDeclarationBlock === true;
+  return mapGet(matchingOpenBraces, index)?.isDeclarationBlock === true;
 }
 
 function isStatementBlockCloseBrace(
@@ -1308,7 +1419,7 @@ function isStatementBlockCloseBrace(
   index: number,
   matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
 ): boolean {
-  const openBrace = matchingOpenBraces.get(index);
+  const openBrace = mapGet(matchingOpenBraces, index);
   if (openBrace === undefined) return false;
   const keyword = keywordBefore(source, openBrace.index, openBrace.previousTokenIndex);
   return keyword === "try" || keyword === "catch" || keyword === "finally" ||
@@ -1319,7 +1430,7 @@ function isPlainStatementBlockCloseBrace(
   index: number,
   matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
 ): boolean {
-  return matchingOpenBraces.get(index)?.isPlainStatementBlock === true;
+  return mapGet(matchingOpenBraces, index)?.isPlainStatementBlock === true;
 }
 
 function isArrowFunctionBodyCloseBraceAtAsiBoundary(
@@ -1328,7 +1439,7 @@ function isArrowFunctionBodyCloseBraceAtAsiBoundary(
   nextTokenIndex: number,
   matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
 ): boolean {
-  const openBrace = matchingOpenBraces.get(index);
+  const openBrace = mapGet(matchingOpenBraces, index);
   if (openBrace === undefined || source[openBrace.previousTokenIndex] !== ">") return false;
 
   const beforeArrow = previousSignificantIndex(source, openBrace.previousTokenIndex);
@@ -1344,10 +1455,10 @@ function isForOfKeywordBefore(
 ): boolean {
   const keywordEnd = previousTokenIndex + 1;
   let keywordStart = keywordEnd;
-  while (keywordStart > rangeStart && /[A-Za-z_$]/.test(source[keywordStart - 1] ?? "")) {
+  while (keywordStart > rangeStart && regexpTest(/[A-Za-z_$]/, source[keywordStart - 1] ?? "")) {
     keywordStart--;
   }
-  if (source.slice(keywordStart, keywordEnd) !== "of") return false;
+  if (stringSlice(source, keywordStart, keywordEnd) !== "of") return false;
 
   const beforeKeyword = previousSignificantIndex(source, keywordStart);
   if (beforeKeyword >= rangeStart && source[beforeKeyword] === ".") return false;
@@ -1413,14 +1524,14 @@ function createModuleDeclarationTracker(
         cursor++;
         continue;
       }
-      if (/\s/.test(char ?? "")) {
+      if (regexpTest(/\s/, char ?? "")) {
         cursor++;
         continue;
       }
 
       if (atTopLevel && atStatementStart) {
         if (
-          source.startsWith("import", cursor) &&
+          stringStartsWith(source, "import", cursor) &&
           !isIdentifierBoundaryBefore(source, cursor) &&
           !isIdentifierBoundaryAfter(source, cursor + "import".length)
         ) {
@@ -1430,7 +1541,7 @@ function createModuleDeclarationTracker(
           continue;
         }
         if (
-          source.startsWith("export", cursor) &&
+          stringStartsWith(source, "export", cursor) &&
           !isIdentifierBoundaryBefore(source, cursor) &&
           !isIdentifierBoundaryAfter(source, cursor + "export".length)
         ) {
@@ -1462,20 +1573,20 @@ function isCompletedModuleDeclarationBeforeRegex(
   const declaration = moduleDeclarationBefore(previousTokenIndex);
   if (declaration === null) return false;
 
-  const declarationSource = normalizedDeclarationPrefix(
+  const declarationSource = stringTrim(normalizedDeclarationPrefix(
     source,
     declaration.index,
     previousTokenIndex + 1,
-  ).trim();
+  ));
 
   if (declaration.keyword === "import") {
     return (
-      /^import\s*["'`][\s\S]*["'`]$/.test(declarationSource) ||
-      /^import\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource)
-    ) && !/^import\s*[.(]/.test(declarationSource);
+      regexpTest(/^import\s*["'`][\s\S]*["'`]$/, declarationSource) ||
+      regexpTest(/^import\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/, declarationSource)
+    ) && !regexpTest(/^import\s*[.(]/, declarationSource);
   }
-  return /^export\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/.test(declarationSource) ||
-    /^export\s+(?:type\s+)?\{[\s\S]*\}$/.test(declarationSource);
+  return regexpTest(/^export\b[\s\S]*\bfrom\s*["'`][\s\S]*["'`]$/, declarationSource) ||
+    regexpTest(/^export\s+(?:type\s+)?\{[\s\S]*\}$/, declarationSource);
 }
 
 function isCompletedLocalExportListBeforeRegex(
@@ -1486,12 +1597,12 @@ function isCompletedLocalExportListBeforeRegex(
 ): boolean {
   if (!hasLineTerminatorBetween(source, previousTokenIndex + 1, index)) return false;
 
-  const declarationSource = normalizedDeclarationPrefix(
+  const declarationSource = stringTrim(normalizedDeclarationPrefix(
     source,
     statementStart,
     previousTokenIndex + 1,
-  ).trim();
-  return /^(?:type\s+)?\{[\s\S]*\}$/.test(declarationSource);
+  ));
+  return regexpTest(/^(?:type\s+)?\{[\s\S]*\}$/, declarationSource);
 }
 
 function isPostfixNonNullAssertionBefore(
@@ -1540,10 +1651,10 @@ function isCompletedTypeArgumentListBefore(
               beforeOpenChar === ")" ||
               beforeOpenChar === "]");
         }
-      } else if (!/\s/.test(char ?? "")) {
+      } else if (!regexpTest(/\s/, char ?? "")) {
         sawTypeContent = true;
       }
-    } else if (!/\s/.test(char ?? "")) {
+    } else if (!regexpTest(/\s/, char ?? "")) {
       sawTypeContent = true;
     }
 
@@ -1619,7 +1730,7 @@ function canStartRegexLiteral(
   if (char === ">" && isCompletedTypeArgumentListBefore(source, previous, rangeStart)) {
     return false;
   }
-  if (char !== undefined && "([{=,:;~?&|+-*%^<>".includes(char)) return true;
+  if (char !== undefined && stringIncludes("([{=,:;~?&|+-*%^<>", char)) return true;
 
   const keyword = keywordBefore(source, index, previous);
   // One gate for every keyword in the list below, rather than a guard per
@@ -1629,7 +1740,7 @@ function canStartRegexLiteral(
     return isForOfKeywordBefore(source, rangeStart, currentParen, previous);
   }
 
-  const isKeywordRegexPrefix = [
+  const isKeywordRegexPrefix = arrayIncludes([
     "case",
     "default",
     "delete",
@@ -1648,7 +1759,7 @@ function canStartRegexLiteral(
     "typeof",
     "void",
     "yield",
-  ].includes(keyword ?? "");
+  ], keyword ?? "");
   if (isKeywordRegexPrefix) return true;
   if (isTypeAliasDeclarationBeforeRegex(source, index, previous, rangeStart)) return true;
   if (isTypeScriptAmbientDeclarationBeforeRegex(source, index, previous, rangeStart)) return true;
@@ -1682,7 +1793,7 @@ function skipRegexLiteral(source: string, regexIndex: number): number {
 
     if (char === "/" && !inCharacterClass) {
       cursor++;
-      while (/[A-Za-z]/.test(source[cursor] ?? "")) cursor++;
+      while (regexpTest(/[A-Za-z]/, source[cursor] ?? "")) cursor++;
       return cursor;
     }
 
@@ -1699,11 +1810,11 @@ function canStartRawJsxOpeningTag(source: string, index: number): boolean {
   if (previous < 0) return true;
 
   const char = source[previous];
-  if (char !== undefined && "([{=,:;!~?&|+-*%^<>".includes(char)) return true;
+  if (char !== undefined && stringIncludes("([{=,:;!~?&|+-*%^<>", char)) return true;
   if (char === "}") return true;
 
   const keyword = keywordBefore(source, index, previous);
-  return ["case", "default", "return", "throw", "yield"].includes(keyword ?? "");
+  return arrayIncludes(["case", "default", "return", "throw", "yield"], keyword ?? "");
 }
 
 function rawJsxTagName(source: string, index: number): { name: string | null; end: number } {
@@ -1717,7 +1828,7 @@ function rawJsxTagName(source: string, index: number): { name: string | null; en
       char === ":" ||
       char === "-" ||
       isIdentifierStartAt(source, cursor) ||
-      IDENTIFIER_PART_PATTERN.test(char ?? "")
+      regexpTest(IDENTIFIER_PART_PATTERN, char ?? "")
     ) {
       cursor++;
       continue;
@@ -1725,7 +1836,7 @@ function rawJsxTagName(source: string, index: number): { name: string | null; en
     break;
   }
 
-  return { name: source.slice(index, cursor), end: cursor };
+  return { name: stringSlice(source, index, cursor), end: cursor };
 }
 
 function findParenEnd(source: string, index: number): number | null {
@@ -1751,7 +1862,11 @@ function findParenEnd(source: string, index: number): number | null {
 }
 
 function createRawJsxLookaheadCache(): RawJsxLookaheadCache {
-  return { closingTagsByStatementEnd: new Map(), statementEnds: [], statementEndCursor: 0 };
+  return {
+    closingTagsByStatementEnd: new IntrinsicMap(),
+    statementEnds: [],
+    statementEndCursor: 0,
+  };
 }
 
 function statementEndAfter(
@@ -1761,14 +1876,14 @@ function statementEndAfter(
 ): number {
   if (cache !== undefined) {
     const ranges = cache.statementEnds;
-    let rangeIndex = Math.min(cache.statementEndCursor, ranges.length - 1);
+    let rangeIndex = MathMin(cache.statementEndCursor, ranges.length - 1);
 
     if (rangeIndex >= 0) {
       if (start < ranges[rangeIndex]!.start) {
         let low = 0;
         let high = rangeIndex;
         while (low <= high) {
-          const mid = Math.floor((low + high) / 2);
+          const mid = MathFloor((low + high) / 2);
           const range = ranges[mid]!;
           if (start < range.start) high = mid - 1;
           else if (start >= range.end) low = mid + 1;
@@ -1792,7 +1907,7 @@ function statementEndAfter(
   }
 
   const end = nextStatementCursor(source, start);
-  cache?.statementEnds.push({ start, end });
+  if (cache) primordialArrayPush(cache.statementEnds, { start, end });
   if (cache !== undefined) cache.statementEndCursor = cache.statementEnds.length - 1;
   return end;
 }
@@ -1804,15 +1919,15 @@ function hasRawJsxClosingTagBeforeStatementEnd(
   cache?: RawJsxLookaheadCache,
 ): boolean {
   const statementEnd = statementEndAfter(source, start, cache);
-  const cached = cache?.closingTagsByStatementEnd.get(statementEnd);
+  const cached = cache ? mapGet(cache.closingTagsByStatementEnd, statementEnd) : undefined;
   const index = cached !== undefined && start >= cached.start
     ? cached
     : indexRawJsxClosingTags(source, start, statementEnd);
   if (cache !== undefined && index !== cached) {
-    cache.closingTagsByStatementEnd.set(statementEnd, index);
+    mapSet(cache.closingTagsByStatementEnd, statementEnd, index);
   }
 
-  const positions = index.tags.get(name);
+  const positions = mapGet(index.tags, name);
   if (positions !== undefined && hasPositionAtOrAfter(positions, start)) return true;
   return hasRawJsxClosingTagAcrossText(source, name, start, statementEnd);
 }
@@ -1822,25 +1937,25 @@ function indexRawJsxClosingTags(
   start: number,
   statementEnd: number,
 ): { start: number; tags: Map<string, number[]> } {
-  const tags = new Map<string, number[]>();
-  let closing = source.indexOf("<", start);
+  const tags = new IntrinsicMap<string, number[]>();
+  let closing = stringIndexOf(source, "<", start);
   while (closing >= 0 && closing < statementEnd) {
     if (source[closing + 1] === "/") {
       const tag = rawJsxTagName(source, closing + 2);
       const afterName = source[tag.end];
       if (
         tag.name !== null && tag.name !== "" &&
-        (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? ""))
+        (afterName === ">" || afterName === "/" || regexpTest(/\s/, afterName ?? ""))
       ) {
-        let positions = tags.get(tag.name);
+        let positions = mapGet(tags, tag.name);
         if (positions === undefined) {
           positions = [];
-          tags.set(tag.name, positions);
+          mapSet(tags, tag.name, positions);
         }
-        positions.push(closing);
+        primordialArrayPush(positions, closing);
       }
     }
-    closing = source.indexOf("<", closing + 1);
+    closing = stringIndexOf(source, "<", closing + 1);
   }
   return { start, tags };
 }
@@ -1849,13 +1964,13 @@ function identifierAt(source: string, index: number): string | null {
   if (!isIdentifierStartAt(source, index)) return null;
   let cursor = index + 1;
   while (cursor < source.length && isIdentifierPartAt(source, cursor)) cursor++;
-  return source.slice(index, cursor);
+  return stringSlice(source, index, cursor);
 }
 
 function looksLikeStatementAfterJsxTextBreak(source: string, index: number): boolean {
   const start = skipWhitespace(source, index);
   const keyword = identifierAt(source, start);
-  return keyword !== null && JSX_TEXT_BREAK_STATEMENT_KEYWORDS.has(keyword);
+  return keyword !== null && setHas(JSX_TEXT_BREAK_STATEMENT_KEYWORDS, keyword);
 }
 
 function hasRawJsxClosingTagAcrossText(
@@ -1864,7 +1979,7 @@ function hasRawJsxClosingTagAcrossText(
   start: number,
   statementEnd: number,
 ): boolean {
-  const limit = Math.min(source.length, start + MAX_RAW_JSX_TEXT_CLOSING_LOOKAHEAD);
+  const limit = MathMin(source.length, start + MAX_RAW_JSX_TEXT_CLOSING_LOOKAHEAD);
   let cursor = start;
 
   while (cursor < limit) {
@@ -1875,7 +1990,7 @@ function hasRawJsxClosingTagAcrossText(
       const tag = rawJsxTagName(source, cursor + 2);
       const afterName = source[tag.end];
       return tag.name === name &&
-        (afterName === ">" || afterName === "/" || /\s/.test(afterName ?? ""));
+        (afterName === ">" || afterName === "/" || regexpTest(/\s/, afterName ?? ""));
     }
 
     if (char === "{") {
@@ -1904,7 +2019,7 @@ function hasPositionAtOrAfter(positions: readonly number[], start: number): bool
   let low = 0;
   let high = positions.length;
   while (low < high) {
-    const mid = Math.floor((low + high) / 2);
+    const mid = MathFloor((low + high) / 2);
     if (positions[mid]! < start) low = mid + 1;
     else high = mid;
   }
@@ -1924,7 +2039,7 @@ function looksLikeTypeScriptAngleConstruct(
   if (source[next] === "(") {
     const parenEnd = findParenEnd(source, next);
     const afterParen = parenEnd === null ? -1 : skipWhitespaceAndComments(source, parenEnd);
-    if (afterParen >= 0 && source.slice(afterParen, afterParen + 2) === "=>") {
+    if (afterParen >= 0 && stringSlice(source, afterParen, afterParen + 2) === "=>") {
       return true;
     }
   }
@@ -1938,7 +2053,7 @@ function looksLikeTypeScriptAngleConstruct(
     !hasRawJsxClosingTagBeforeStatementEnd(source, name, quotedValueEnd, cache)
   ) {
     const before = previousSignificantIndex(source, tagStart);
-    return before >= 0 && "=(:,[!~?&|+-*%^<>".includes(source[before] ?? "");
+    return before >= 0 && stringIncludes("=(:,[!~?&|+-*%^<>", source[before] ?? "");
   }
 
   return false;
@@ -1988,7 +2103,7 @@ function readRawJsxTag(
     if (char === "{") {
       const expressionEnd = findTemplateExpressionEnd(source, cursor + 1);
       if (expressionEnd === null) return null;
-      expressionRanges.push({ start: cursor + 1, end: expressionEnd });
+      primordialArrayPush(expressionRanges, { start: cursor + 1, end: expressionEnd });
       cursor = expressionEnd + 1;
       continue;
     }
@@ -2027,11 +2142,11 @@ function skipRawJsxTag(
 }
 
 function skipRawJsxText(source: string, index: number): number {
-  const nextTag = source.indexOf("<", index);
-  const nextExpression = source.indexOf("{", index);
+  const nextTag = stringIndexOf(source, "<", index);
+  const nextExpression = stringIndexOf(source, "{", index);
   if (nextTag === -1) return nextExpression === -1 ? source.length : nextExpression;
   if (nextExpression === -1) return nextTag;
-  return Math.min(nextTag, nextExpression);
+  return MathMin(nextTag, nextExpression);
 }
 
 function skipExpressionIgnored(
@@ -2060,7 +2175,7 @@ function skipExpressionIgnored(
   }
 
   if (char === "/" && next === "*") {
-    const end = source.indexOf("*/", index + 2);
+    const end = stringIndexOf(source, "*/", index + 2);
     return end === -1 ? source.length : end + 2;
   }
 
@@ -2080,7 +2195,7 @@ function skipExpressionIgnored(
     )
   ) {
     const end = skipRegexLiteral(source, index);
-    completedRegexLiteralEnds?.add(end - 1);
+    if (completedRegexLiteralEnds !== undefined) setAdd(completedRegexLiteralEnds, end - 1);
     return end;
   }
 
@@ -2095,7 +2210,7 @@ function tokenIndexAfterIgnored(
 ): number {
   const isComment = source[index] === "/" &&
     (source[index + 1] === "/" || source[index + 1] === "*");
-  return isComment ? previousTokenIndex : Math.max(index, skipped - 1);
+  return isComment ? previousTokenIndex : MathMax(index, skipped - 1);
 }
 
 function isPropertyAccessBeforeImport(
@@ -2122,13 +2237,13 @@ function findTemplateExpressionEnd(
   let cursor = expressionIndex;
   let braceDepth = 1;
   const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
   const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new Map<number, OpenParenContext>();
+  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
   let previousTokenIndex = expressionIndex - 1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, expressionIndex);
   const rawJsxLookaheadCache = createRawJsxLookaheadCache();
-  const completedRegexLiteralEnds = new Set<number>();
+  const completedRegexLiteralEnds = new IntrinsicSet<number>();
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
@@ -2140,7 +2255,7 @@ function findTemplateExpressionEnd(
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
       } else if (!jsxTag.isSelfClosingTag) {
         rawJsxTextDepth++;
       }
@@ -2164,7 +2279,7 @@ function findTemplateExpressionEnd(
       depth,
       matchingOpenBraces,
       matchingOpenParens,
-      openParens.at(-1),
+      primordialArrayAt(openParens, -1),
       previousTokenIndex,
       moduleDeclarationBefore,
       rawJsxLookaheadCache,
@@ -2186,17 +2301,18 @@ function findTemplateExpressionEnd(
         rawJsxTextDepth,
         rawJsxExpressionBraceDepth,
       );
-      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      openBraces.push(
+      primordialArrayPush(
+        openBraces,
         openBraceContext(
           source,
           expressionIndex,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
-          openParens.at(-1),
-          openBraces.at(-1),
+          primordialArrayAt(openParens, -1),
+          primordialArrayAt(openBraces, -1),
           completedRegexLiteralEnds,
         ),
       );
@@ -2209,37 +2325,37 @@ function findTemplateExpressionEnd(
     if (source[cursor] === "}") {
       braceDepth--;
       if (braceDepth === 0) return cursor;
-      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
       if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
       }
-      const openBrace = openBraces.pop();
-      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      const openBrace = primordialArrayPop(openBraces);
+      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
     if (source[cursor] === "(") {
-      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
     if (source[cursor] === ")") {
-      const openParen = openParens.pop();
-      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      const openParen = primordialArrayPop(openParens);
+      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
-    if (source[cursor] === ";" && openParens.at(-1)?.isForHeader) {
-      openParens.at(-1)!.hasSemicolon = true;
+    if (source[cursor] === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
+      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
     }
 
-    if (!/\s/.test(source[cursor] ?? "")) previousTokenIndex = cursor;
+    if (!regexpTest(/\s/, source[cursor] ?? "")) previousTokenIndex = cursor;
     cursor++;
   }
 
@@ -2254,8 +2370,8 @@ function findFromSpan(
 ): StaticImportSpan | null {
   let cursor = statementStart;
   let previousTokenIndex = previousSignificantIndexBeforeIgnored(source, statementStart);
-  const matchingOpenBraces = new Map<number, OpenBraceContext>();
-  const matchingOpenParens = new Map<number, OpenParenContext>();
+  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
+  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
   const moduleDeclarationBefore = () => null;
 
   while (cursor < source.length) {
@@ -2300,7 +2416,7 @@ function findFromSpan(
     }
 
     if (
-      source.startsWith("from", cursor) &&
+      stringStartsWith(source, "from", cursor) &&
       !isIdentifierPartAt(source, cursor - 1) &&
       !isIdentifierPartAt(source, cursor + 4)
     ) {
@@ -2315,14 +2431,14 @@ function findFromSpan(
       if (!matchedPath) return null;
 
       return {
-        original: source.slice(cursor, quoted.end),
+        original: stringSlice(source, cursor, quoted.end),
         path: matchedPath,
         start: cursor,
         end: quoted.end,
       };
     }
 
-    if (!/\s/.test(source[cursor] ?? "")) previousTokenIndex = cursor;
+    if (!regexpTest(/\s/, source[cursor] ?? "")) previousTokenIndex = cursor;
     cursor++;
   }
 
@@ -2332,7 +2448,7 @@ function findFromSpan(
 function canExportHaveFromClause(source: string, statementStart: number): boolean {
   let cursor = skipWhitespaceAndComments(source, statementStart);
   if (
-    source.startsWith("type", cursor) &&
+    stringStartsWith(source, "type", cursor) &&
     !isIdentifierPartAt(source, cursor - 1) &&
     !isIdentifierPartAt(source, cursor + "type".length)
   ) {
@@ -2343,7 +2459,7 @@ function canExportHaveFromClause(source: string, statementStart: number): boolea
 }
 
 function tokenAt(source: string, index: number, token: string): boolean {
-  return source.startsWith(token, index) &&
+  return stringStartsWith(source, token, index) &&
     !isIdentifierPartAt(source, index - 1) &&
     !isIdentifierPartAt(source, index + token.length);
 }
@@ -2402,7 +2518,7 @@ function isTypeOnlyModuleClause(source: string, start: number, end: number): boo
  * pointing at unresolved specifiers.
  */
 function assertMaxMatches(maxMatches: number): void {
-  if (!Number.isSafeInteger(maxMatches) || maxMatches <= 0) {
+  if (!NumberIsSafeInteger(maxMatches) || maxMatches <= 0) {
     throw new RangeError("maxMatches must be a positive safe integer");
   }
 }
@@ -2418,12 +2534,12 @@ export function findStaticImportFromSpans(
   let cursor = 0;
   let atStatementStart = true;
   const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
   const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new Map<number, OpenParenContext>();
+  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
   let previousTokenIndex = -1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
-  const completedRegexLiteralEnds = new Set<number>();
+  const completedRegexLiteralEnds = new IntrinsicSet<number>();
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
@@ -2437,7 +2553,7 @@ export function findStaticImportFromSpans(
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
       } else if (!jsxTag.isSelfClosingTag) {
         rawJsxTextDepth++;
       }
@@ -2463,7 +2579,7 @@ export function findStaticImportFromSpans(
       0,
       matchingOpenBraces,
       matchingOpenParens,
-      openParens.at(-1),
+      primordialArrayAt(openParens, -1),
       previousTokenIndex,
       moduleDeclarationBefore,
       rawJsxLookaheadCache,
@@ -2489,17 +2605,18 @@ export function findStaticImportFromSpans(
         rawJsxTextDepth,
         rawJsxExpressionBraceDepth,
       );
-      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      openBraces.push(
+      primordialArrayPush(
+        openBraces,
         openBraceContext(
           source,
           0,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
-          openParens.at(-1),
-          openBraces.at(-1),
+          primordialArrayAt(openParens, -1),
+          primordialArrayAt(openBraces, -1),
           completedRegexLiteralEnds,
         ),
       );
@@ -2509,34 +2626,34 @@ export function findStaticImportFromSpans(
       continue;
     }
     if (char === "}") {
-      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
       if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
       }
-      const openBrace = openBraces.pop();
-      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      const openBrace = primordialArrayPop(openBraces);
+      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
       atStatementStart = true;
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
     if (char === "(") {
-      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
     if (char === ")") {
-      const openParen = openParens.pop();
-      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      const openParen = primordialArrayPop(openParens);
+      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
-    if (char === ";" && openParens.at(-1)?.isForHeader) {
-      openParens.at(-1)!.hasSemicolon = true;
+    if (char === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
+      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
     }
     if (char === ";" || (char !== undefined && isLineTerminator(char))) {
       atStatementStart = true;
@@ -2544,7 +2661,7 @@ export function findStaticImportFromSpans(
       cursor++;
       continue;
     }
-    if (/\s/.test(char ?? "")) {
+    if (regexpTest(/\s/, char ?? "")) {
       cursor++;
       continue;
     }
@@ -2562,7 +2679,7 @@ export function findStaticImportFromSpans(
     const afterKeyword = skipWhitespaceAndComments(source, cursor + keywordLength);
     if (isImport && source[afterKeyword] === "(") {
       atStatementStart = false;
-      openParens.push({
+      primordialArrayPush(openParens, {
         index: afterKeyword,
         isControlCondition: false,
         isForHeader: false,
@@ -2582,7 +2699,7 @@ export function findStaticImportFromSpans(
 
     const span = findFromSpan(source, afterKeyword, matcher, isExport);
     if (span) {
-      spans.push({
+      primordialArrayPush(spans, {
         ...span,
         typeOnly: isTypeOnlyModuleClause(source, afterKeyword, span.start),
       });
@@ -2595,7 +2712,7 @@ export function findStaticImportFromSpans(
 
     atStatementStart = true;
     cursor = nextStatementCursor(source, afterKeyword);
-    previousTokenIndex = Math.max(previousTokenIndex, cursor - 1);
+    previousTokenIndex = MathMax(previousTokenIndex, cursor - 1);
   }
 
   return spans;
@@ -2647,16 +2764,16 @@ function scanDynamicImportRange(
 ): void {
   let cursor = rangeStart;
   const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
   const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new Map<number, OpenParenContext>();
+  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
   let previousTokenIndex = rangeStart - 1;
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, rangeStart);
   const rawJsxLookaheadCache = createRawJsxLookaheadCache();
-  const completedRegexLiteralEnds = new Set<number>();
+  const completedRegexLiteralEnds = new IntrinsicSet<number>();
 
   while (cursor < rangeEnd) {
     const char = source[cursor];
@@ -2667,12 +2784,12 @@ function scanDynamicImportRange(
       lookaheadCache: rawJsxLookaheadCache,
     });
     if (jsxTag !== null) {
-      for (const range of jsxTag.expressionRanges) {
+      for (const range of primordialArrayValues(jsxTag.expressionRanges)) {
         scanDynamicImportRange(source, range.start, range.end, matcher, maxMatches, spans);
         if (spans.length >= maxMatches) return;
       }
       if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
       } else if (!jsxTag.isSelfClosingTag) {
         rawJsxTextDepth++;
       }
@@ -2713,14 +2830,14 @@ function scanDynamicImportRange(
         rangeStart,
         matchingOpenBraces,
         matchingOpenParens,
-        openParens.at(-1),
+        primordialArrayAt(openParens, -1),
         previousTokenIndex,
         moduleDeclarationBefore,
       )
     ) {
       cursor = skipRegexLiteral(source, cursor);
       previousTokenIndex = cursor - 1;
-      completedRegexLiteralEnds.add(previousTokenIndex);
+      setAdd(completedRegexLiteralEnds, previousTokenIndex);
       continue;
     }
 
@@ -2743,17 +2860,18 @@ function scanDynamicImportRange(
         rawJsxTextDepth,
         rawJsxExpressionBraceDepth,
       );
-      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      openBraces.push(
+      primordialArrayPush(
+        openBraces,
         openBraceContext(
           source,
           rangeStart,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
-          openParens.at(-1),
-          openBraces.at(-1),
+          primordialArrayAt(openParens, -1),
+          primordialArrayAt(openBraces, -1),
           completedRegexLiteralEnds,
         ),
       );
@@ -2763,37 +2881,37 @@ function scanDynamicImportRange(
     }
 
     if (char === "}") {
-      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
       if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
       }
-      const openBrace = openBraces.pop();
-      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      const openBrace = primordialArrayPop(openBraces);
+      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
     if (char === "(") {
-      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
     if (char === ")") {
-      const openParen = openParens.pop();
-      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      const openParen = primordialArrayPop(openParens);
+      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
 
-    if (char === ";" && openParens.at(-1)?.isForHeader) {
-      openParens.at(-1)!.hasSemicolon = true;
+    if (char === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
+      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
     }
 
-    if (/\s/.test(char ?? "")) {
+    if (regexpTest(/\s/, char ?? "")) {
       cursor++;
       continue;
     }
@@ -2801,7 +2919,7 @@ function scanDynamicImportRange(
     // `import` used as an expression: not preceded by an identifier char or a
     // dot (which would make it `foo.import` or part of a longer word).
     if (
-      !source.startsWith("import", cursor) ||
+      !stringStartsWith(source, "import", cursor) ||
       isIdentifierBoundaryBefore(source, cursor) ||
       isPropertyAccessBeforeImport(source, previousTokenIndex, rangeStart) ||
       isIdentifierBoundaryAfter(source, cursor + "import".length)
@@ -2819,7 +2937,7 @@ function scanDynamicImportRange(
     }
     // The scanner jumps directly from `import` to its argument, so record the
     // opening parenthesis that the ordinary character walk does not visit.
-    openParens.push({
+    primordialArrayPush(openParens, {
       index: parenIndex,
       isControlCondition: false,
       isForHeader: false,
@@ -2849,8 +2967,8 @@ function scanDynamicImportRange(
 
     const matchedPath = isWholeArgument ? matcher(literal.specifier) : null;
     if (matchedPath) {
-      spans.push({
-        original: source.slice(literalIndex, literal.end),
+      primordialArrayPush(spans, {
+        original: stringSlice(source, literalIndex, literal.end),
         path: matchedPath,
         start: literalIndex,
         end: literal.end,
@@ -2911,12 +3029,12 @@ export function findStaticSideEffectImportSpans(
   let cursor = 0;
   let atStatementStart = true;
   const openBraces: OpenBraceContext[] = [];
-  const matchingOpenBraces = new Map<number, OpenBraceContext>();
+  const matchingOpenBraces = new IntrinsicMap<number, OpenBraceContext>();
   const openParens: OpenParenContext[] = [];
-  const matchingOpenParens = new Map<number, OpenParenContext>();
+  const matchingOpenParens = new IntrinsicMap<number, OpenParenContext>();
   let previousTokenIndex = -1;
   const moduleDeclarationBefore = createModuleDeclarationTracker(source, 0);
-  const completedRegexLiteralEnds = new Set<number>();
+  const completedRegexLiteralEnds = new IntrinsicSet<number>();
   let rawJsxTextDepth = 0;
   let rawJsxExpressionBraceDepth = 0;
   const rawJsxExpressionBraceStack: boolean[] = [];
@@ -2930,7 +3048,7 @@ export function findStaticSideEffectImportSpans(
     });
     if (jsxTag !== null) {
       if (jsxTag.isClosingTag) {
-        rawJsxTextDepth = Math.max(0, rawJsxTextDepth - 1);
+        rawJsxTextDepth = MathMax(0, rawJsxTextDepth - 1);
       } else if (!jsxTag.isSelfClosingTag) {
         rawJsxTextDepth++;
       }
@@ -2956,7 +3074,7 @@ export function findStaticSideEffectImportSpans(
       0,
       matchingOpenBraces,
       matchingOpenParens,
-      openParens.at(-1),
+      primordialArrayAt(openParens, -1),
       previousTokenIndex,
       moduleDeclarationBefore,
       rawJsxLookaheadCache,
@@ -2982,17 +3100,18 @@ export function findStaticSideEffectImportSpans(
         rawJsxTextDepth,
         rawJsxExpressionBraceDepth,
       );
-      rawJsxExpressionBraceStack.push(isRawJsxExpressionBrace);
+      primordialArrayPush(rawJsxExpressionBraceStack, isRawJsxExpressionBrace);
       if (isRawJsxExpressionBrace) rawJsxExpressionBraceDepth++;
-      openBraces.push(
+      primordialArrayPush(
+        openBraces,
         openBraceContext(
           source,
           0,
           cursor,
           previousTokenIndex,
           matchingOpenParens,
-          openParens.at(-1),
-          openBraces.at(-1),
+          primordialArrayAt(openParens, -1),
+          primordialArrayAt(openBraces, -1),
           completedRegexLiteralEnds,
         ),
       );
@@ -3002,34 +3121,34 @@ export function findStaticSideEffectImportSpans(
       continue;
     }
     if (char === "}") {
-      const isRawJsxExpressionBrace = rawJsxExpressionBraceStack.pop();
+      const isRawJsxExpressionBrace = primordialArrayPop(rawJsxExpressionBraceStack);
       if (isRawJsxExpressionBrace) {
-        rawJsxExpressionBraceDepth = Math.max(0, rawJsxExpressionBraceDepth - 1);
+        rawJsxExpressionBraceDepth = MathMax(0, rawJsxExpressionBraceDepth - 1);
       }
-      const openBrace = openBraces.pop();
-      if (openBrace !== undefined) matchingOpenBraces.set(cursor, openBrace);
+      const openBrace = primordialArrayPop(openBraces);
+      if (openBrace !== undefined) mapSet(matchingOpenBraces, cursor, openBrace);
       atStatementStart = true;
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
     if (char === "(") {
-      openParens.push(openParenContext(source, cursor, previousTokenIndex));
+      primordialArrayPush(openParens, openParenContext(source, cursor, previousTokenIndex));
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
     if (char === ")") {
-      const openParen = openParens.pop();
-      if (openParen !== undefined) matchingOpenParens.set(cursor, openParen);
+      const openParen = primordialArrayPop(openParens);
+      if (openParen !== undefined) mapSet(matchingOpenParens, cursor, openParen);
       atStatementStart = false;
       previousTokenIndex = cursor;
       cursor++;
       continue;
     }
-    if (char === ";" && openParens.at(-1)?.isForHeader) {
-      openParens.at(-1)!.hasSemicolon = true;
+    if (char === ";" && primordialArrayAt(openParens, -1)?.isForHeader) {
+      primordialArrayAt(openParens, -1)!.hasSemicolon = true;
     }
     if (char === ";" || (char !== undefined && isLineTerminator(char))) {
       atStatementStart = true;
@@ -3037,7 +3156,7 @@ export function findStaticSideEffectImportSpans(
       cursor++;
       continue;
     }
-    if (/\s/.test(char ?? "")) {
+    if (regexpTest(/\s/, char ?? "")) {
       cursor++;
       continue;
     }
@@ -3054,14 +3173,14 @@ export function findStaticSideEffectImportSpans(
     if (!literal) {
       atStatementStart = true;
       cursor = nextStatementCursor(source, literalIndex);
-      previousTokenIndex = Math.max(previousTokenIndex, cursor - 1);
+      previousTokenIndex = MathMax(previousTokenIndex, cursor - 1);
       continue;
     }
 
     const matchedPath = matcher(literal.specifier);
     if (matchedPath) {
-      spans.push({
-        original: source.slice(cursor, literal.end),
+      primordialArrayPush(spans, {
+        original: stringSlice(source, cursor, literal.end),
         path: matchedPath,
         start: cursor,
         end: literal.end,
