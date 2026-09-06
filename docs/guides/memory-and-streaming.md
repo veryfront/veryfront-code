@@ -87,6 +87,82 @@ export default agent({
 When the conversation grows long, the agent compresses older messages into a
 summary while keeping recent messages intact.
 
+Response-cache middleware skips stateful agents. Each turn must use the current
+conversation and persist its assistant reply. Stateless agents can reuse cached
+responses.
+
+### Replay trust boundary
+
+Input validation checks caller-supplied `user` and `system` messages. It does not
+scan `assistant` replay or `tool` results as new caller instructions. This keeps
+existing conversations replayable, but message roles do not prove their origin.
+
+Your host must load assistant replay and tool results from trusted storage or
+trusted model execution and ensure they belong to the authorized conversation.
+Do not forward client-supplied assistant or tool messages directly as trusted
+replay. The input-validation middleware does not authenticate replay provenance.
+Direct writes through `getMemory().add()` also cross this host-owned trust
+boundary; validate untrusted input before adding it.
+
+For violations detected in assembled provider instructions, `onViolation`
+receives `[REDACTED]` as `content`. This keeps trusted system and historical text
+out of callback-based audit logs. The violation type and reason remain available.
+
+### Custom memory transactions
+
+When transactional input validation is enabled, your custom `Memory` backend
+must implement `beginTransaction(): Promise<MemoryTransaction>`. Veryfront rejects
+an unsupported backend before writing input. Configured conversation, buffer,
+summary, and stateless memory need no changes. Without transactional validators,
+the existing custom-memory interface still works.
+
+Import the `Memory` and `MemoryTransaction` types from `veryfront/agent`. Your
+transaction must provide these methods:
+
+- `getMessages()` reads a stable snapshot plus this transaction's staged messages.
+- `add(message)` stages caller input, assistant replies, and tool results and
+  applies your retention or summarization policy to that view. It must not publish
+  those messages to shared storage.
+- `commit()` atomically checks that the snapshot is still current and publishes
+  the validated view. If another operation added messages, cleared history, or
+  otherwise changed the snapshot, reject without publishing. A later attempt
+  must take a fresh snapshot and validate again.
+- `rollback()` discards only this transaction's staged work and releases its
+  resources. It must preserve concurrent additions and clears, including after
+  a failed `add()` or `commit()`.
+
+Make commit and rollback idempotent. Use a database transaction or an atomic
+version check in your storage backend. Ensure version checks detect clears even
+when history returns to the same content. Do not implement rollback by calling
+`clear()` and replaying an earlier snapshot: that can resurrect deleted history
+or overwrite concurrent messages. Surface storage and rollback errors instead
+of reporting success.
+
+Veryfront keeps the transaction open through every provider validation in the
+turn. A later validation failure rolls back the staged turn. Commit runs after
+the turn finishes validation, so concurrent storage changes can reject commit
+even after the provider has produced output.
+
+For built-in stateful memory, a direct `getMemory().add()` or
+`getMemory().clear()` during an active validated turn also rejects commit.
+Rollback removes the rejected turn and preserves your concurrent memory changes.
+
+Memory projection validation checks newly merged message groups after trimming.
+Unchanged retained groups keep their previous validation status.
+
+Validated turns on one stateful agent runtime run sequentially until commit or
+rollback finishes. Your delegation graph must not call back into an ancestor
+runtime with an active validated turn. Veryfront rejects that cycle before it
+waits on memory, so the cycle cannot block later turns. Independent concurrent
+calls still wait for their turn normally.
+Cancelling a queued turn stops that request without persisting its input. Later
+turns still wait for the active turn to finish.
+
+The standalone `RedisMemory` class does not currently implement this transaction
+capability. If you connect it to transactional agent validation through a custom
+adapter, that adapter must supply atomic transactions. Its existing standalone
+`add()`, `getMessages()`, and `clear()` methods remain unchanged.
+
 ### Distributed memory
 
 Agent configuration currently supports `conversation`, `buffer`, and

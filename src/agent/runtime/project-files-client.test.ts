@@ -1416,7 +1416,11 @@ Deno.test("strict trace success cannot fabricate a result ahead of its operation
 
   assertEquals((error as Error).name, "TimeoutError");
   assertStringIncludes(getErrorMessage(error), "request timed out");
-  assertEquals(fetchSignal?.aborted, true);
+  assertEquals(
+    fetchSignal === undefined || fetchSignal.aborted,
+    true,
+    "A fetch reached before the deadline must be aborted; expiration may prevent it from starting",
+  );
 });
 
 Deno.test("strict trace returns the validated operation result instead of its own value", async () => {

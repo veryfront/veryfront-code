@@ -43,6 +43,29 @@ export interface Memory<M extends MinimalMessage = MinimalMessage> {
   getMessages(): Promise<M[]>;
   clear(): Promise<void>;
   getStats(): Promise<MemoryStats>;
+  /** Required for custom backends used with transactional input validation. */
+  beginTransaction?(): Promise<MemoryTransaction<M>>;
+}
+
+/**
+ * An isolated view of one turn, including your backend's retention policy.
+ *
+ * Your backend must stage writes until commit. Commit must atomically verify
+ * that the validated snapshot is still current and publish the staged state,
+ * or reject without publishing it. Concurrent additions and clears must cause
+ * a conflict, never overwrite newer history. Rollback discards only this
+ * transaction's work, including after a failed add or commit, and releases
+ * backend resources. Commit and rollback must be safe to call repeatedly.
+ */
+export interface MemoryTransaction<M extends MinimalMessage = MinimalMessage> {
+  /** Stage caller, assistant, or tool messages without publishing them. */
+  add(message: M): Promise<void>;
+  /** Read the snapshot and staged messages that validation must examine. */
+  getMessages(): Promise<M[]>;
+  /** Atomically publish the validated view, rejecting concurrent changes. */
+  commit(): Promise<void>;
+  /** Discard this transaction's work without restoring or clearing shared history. */
+  rollback(): Promise<void>;
 }
 
 /** Public API contract for memory persistence. */

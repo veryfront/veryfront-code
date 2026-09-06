@@ -12,6 +12,10 @@
  */
 
 import {
+  enterSerializedTurn,
+  withRuntimeTurnLineage,
+} from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
+import {
   type AgentConfig,
   type AgentContext,
   type AgentGenerateToolReplacements,
@@ -35,7 +39,9 @@ import {
   canIdentifyProxyWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
-import { createAgentMemory, type Memory } from "../memory/index.ts";
+import { createAgentMemory, type Memory, NoMemory } from "#veryfront/agent/memory/index.ts";
+import { beginMemoryTransaction } from "#veryfront/agent/memory/memory.ts";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
@@ -45,7 +51,12 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
-import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
+import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
@@ -53,6 +64,7 @@ import {
   getRuntimeRemoteToolSources,
 } from "./mcp-server-tool-sources.ts";
 import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+
 import {
   announceStreamedToolCallInput,
   createStreamState,
@@ -62,6 +74,14 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
+import {
+  getTurnInputValidator,
+  getTurnMessageProjectionValidator,
+  getTurnMessageValidator,
+  getTurnProviderRequestValidator,
+  markStatefulTurn,
+  type TurnProviderRequestValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
@@ -100,7 +120,10 @@ import {
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
 import { AgentLoopSkillState } from "./agent-loop-skill-state.ts";
-import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -289,7 +312,13 @@ import {
   resolveConfiguredTool,
   type ToolConfigEntry,
 } from "./tool-helpers.ts";
-import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  accumulateUsage,
+  getMaxSteps,
+  normalizeInput,
+  propagateSyntheticMessageMarks,
+  resolveValidatedTurnInput,
+} from "./input-utils.ts";
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
@@ -322,18 +351,373 @@ const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicStructuredClone = globalThis.structuredClone;
 const IntrinsicReadableStream = ReadableStream;
 const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectIs = Object.is;
+const ObjectKeys = Object.keys;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
 const WeakMapGet = IntrinsicWeakMap.prototype.get;
 const WeakMapSet = IntrinsicWeakMap.prototype.set;
+const IntrinsicURL = URL;
+const URLHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = false): T {
+  class UnsafeInputCopyError extends TypeError {}
+  const seen = new IntrinsicWeakMap<object, unknown>();
+  const clone = (candidate: unknown): unknown => {
+    if (candidate === null || typeof candidate !== "object") {
+      try {
+        return IntrinsicStructuredClone(candidate);
+      } catch {
+        return candidate;
+      }
+    }
+    if (URLHrefGetter) {
+      try {
+        return new IntrinsicURL(IntrinsicReflectApply(URLHrefGetter, candidate, []));
+      } catch {
+        // The native URL getter rejects every non-URL object without invoking
+        // caller hooks, so ordinary values continue through recursive clone.
+      }
+    }
+    const existing = IntrinsicReflectApply(WeakMapGet, seen, [candidate]);
+    if (existing !== undefined) return existing;
+    let isArray: boolean;
+    try {
+      isArray = ArrayIsArray(candidate);
+    } catch {
+      if (allowOpaqueObjects) return candidate;
+      throw new UnsafeInputCopyError("Object input cannot be safely copied");
+    }
+    if (isArray) {
+      const candidateArray = candidate as unknown[];
+      const array: unknown[] = [];
+      IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
+      try {
+        const length = candidateArray.length;
+        for (let index = 0; index < length; index++) {
+          array[index] = clone(candidateArray[index]);
+        }
+      } catch (error) {
+        if (error instanceof UnsafeInputCopyError) throw error;
+        try {
+          // Read array descriptors without invoking a Proxy's indexed get
+          // traps. Provider-visible values must not retain the caller's array.
+          const descriptors = ObjectGetOwnPropertyDescriptors(candidate);
+          const length = descriptors.length?.value;
+          if (typeof length !== "number") throw new TypeError("Invalid array length");
+          array.length = 0;
+          array.length = length;
+          for (let index = 0; index < length; index++) {
+            const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
+            array[index] = descriptor
+              ? clone(
+                "value" in descriptor
+                  ? descriptor.value
+                  : descriptor.get
+                  ? IntrinsicReflectApply(descriptor.get, candidate, [])
+                  : undefined,
+              )
+              : undefined;
+          }
+        } catch (error) {
+          if (error instanceof UnsafeInputCopyError) throw error;
+          if (!allowOpaqueObjects) {
+            throw new UnsafeInputCopyError("Array input cannot be safely copied");
+          }
+          IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+          return candidate;
+        }
+      }
+      return array;
+    }
+    let prototype: object | null;
+    let descriptors: PropertyDescriptorMap;
+    try {
+      try {
+        prototype = ObjectGetPrototypeOf(candidate);
+      } catch {
+        prototype = ObjectPrototype;
+      }
+      if (prototype !== ObjectPrototype && prototype !== null) {
+        try {
+          const serialize = (candidate as { toJSON?: unknown }).toJSON;
+          if (typeof serialize === "function") {
+            IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+            const serialized = IntrinsicReflectApply(serialize, candidate, []);
+            if (serialized !== candidate) {
+              const detached = clone(serialized);
+              IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+              return detached;
+            }
+          }
+          const detached = IntrinsicStructuredClone(candidate);
+          IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+          return detached;
+        } catch (error) {
+          if (error instanceof UnsafeInputCopyError) throw error;
+          // A nested Proxy can report a native prototype while exposing an
+          // ordinary record. Detach its readable fields instead of keeping a
+          // caller-owned reference after native cloning rejects it.
+          prototype = ObjectPrototype;
+        }
+      }
+      descriptors = ObjectGetOwnPropertyDescriptors(candidate);
+    } catch (error) {
+      if (error instanceof UnsafeInputCopyError) throw error;
+      if (!allowOpaqueObjects) {
+        throw new UnsafeInputCopyError("Object input cannot be safely copied");
+      }
+      return candidate;
+    }
+    const object = ObjectCreate(prototype) as Record<PropertyKey, unknown>;
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
+    for (const key of ReflectOwnKeys(descriptors)) {
+      const descriptor = descriptors[key as keyof typeof descriptors];
+      if (!descriptor?.enumerable) continue;
+      let detachedValue: unknown;
+      try {
+        detachedValue = "value" in descriptor
+          ? clone(descriptor.value)
+          : descriptor.get
+          ? clone(IntrinsicReflectApply(descriptor.get, candidate, []))
+          : undefined;
+        ObjectDefineProperty(object, key, {
+          value: detachedValue,
+          enumerable: descriptor.enumerable,
+          configurable: true,
+          writable: true,
+        });
+      } catch (error) {
+        if (error instanceof UnsafeInputCopyError) throw error;
+        continue;
+      }
+    }
+    return object;
+  };
+  return clone(value) as T;
+}
+
+const PROVIDER_VISIBLE_MESSAGE_PART_FIELDS = [
+  "type",
+  "text",
+  "signature",
+  "redactedData",
+  "toolCallId",
+  "tool_call_id",
+  "id",
+  "toolName",
+  "tool_name",
+  "name",
+  "args",
+  "input",
+  "inputText",
+  "providerExecuted",
+  "supportsDeferredResults",
+  "result",
+  "output",
+  "sourceId",
+  "url",
+  "title",
+  "mediaType",
+  "filename",
+  "uploadId",
+  "upload_id",
+  "uploadPath",
+  "upload_path",
+] as const;
+
+function cloneKnownMessagePartFields(part: MessagePart): MessagePart {
+  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+  const source = part as Record<string, unknown>;
+  for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
+    let value: unknown;
+    try {
+      value = source[key];
+    } catch {
+      continue;
+    }
+    if (value === undefined) continue;
+    ObjectDefineProperty(detached, key, {
+      value: cloneStructuredValuePreservingOpaque(value),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return detached as MessagePart;
+}
+
+function cloneMessagePartForCommit(part: MessagePart): MessagePart {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(part);
+  } catch {
+    // A structurally valid Proxy can expose the fields consumed by provider
+    // conversion while refusing descriptor enumeration. Detach those known
+    // fields individually so persistence does not introduce a new failure.
+    return cloneKnownMessagePartFields(part);
+  }
+  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+  for (const key of ObjectKeys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (!descriptor) continue;
+    let value: unknown;
+    try {
+      value = "value" in descriptor
+        ? descriptor.value
+        : descriptor.get
+        ? IntrinsicReflectApply(descriptor.get, part, [])
+        : undefined;
+    } catch {
+      // Provider conversion ignores unrelated extension accessors. Preserve
+      // valid structural fields when one of those accessors cannot be read.
+      continue;
+    }
+    ObjectDefineProperty(detached, key, {
+      value: cloneStructuredValuePreservingOpaque(
+        value,
+        !(PROVIDER_VISIBLE_MESSAGE_PART_FIELDS as readonly string[]).includes(key),
+      ),
+      enumerable: descriptor.enumerable,
+      configurable: true,
+      writable: true,
+    });
+  }
+  const source = part as Record<string, unknown>;
+  for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
+    if (ObjectHasOwn(descriptors, key)) continue;
+    let value: unknown;
+    try {
+      value = source[key];
+    } catch {
+      continue;
+    }
+    if (value === undefined) continue;
+    ObjectDefineProperty(detached, key, {
+      value: cloneStructuredValuePreservingOpaque(value),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return detached as MessagePart;
+}
+
+function cloneMessageForCommit(message: Message): Message {
+  const parts: MessagePart[] = [];
+  for (let index = 0; index < message.parts.length; index++) {
+    const part = message.parts[index];
+    if (part !== undefined) parts[parts.length] = cloneMessagePartForCommit(part);
+  }
+  return {
+    id: message.id,
+    role: message.role,
+    parts,
+    ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
+    ...(message.metadata === undefined
+      ? {}
+      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata, true) }),
+  };
+}
+
+function providerValuesEqual(
+  left: unknown,
+  right: unknown,
+  seen: WeakMap<object, object>,
+): boolean {
+  if (ObjectIs(left, right)) return true;
+  if (
+    left === null || right === null ||
+    typeof left !== "object" || typeof right !== "object"
+  ) return false;
+
+  const knownRight = IntrinsicReflectApply(WeakMapGet, seen, [left]);
+  if (knownRight !== undefined) return knownRight === right;
+  IntrinsicReflectApply(WeakMapSet, seen, [left, right]);
+
+  const leftIsArray = ArrayIsArray(left);
+  if (leftIsArray !== ArrayIsArray(right)) return false;
+  if (leftIsArray) {
+    const leftArray = left as unknown[];
+    const rightArray = right as unknown[];
+    if (leftArray.length !== rightArray.length) return false;
+    for (let index = 0; index < leftArray.length; index++) {
+      if (!providerValuesEqual(leftArray[index], rightArray[index], seen)) return false;
+    }
+    return true;
+  }
+
+  const leftPrototype = ObjectGetPrototypeOf(left);
+  const rightPrototype = ObjectGetPrototypeOf(right);
+  if (
+    leftPrototype !== rightPrototype ||
+    leftPrototype !== ObjectPrototype && leftPrototype !== null
+  ) return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = ObjectKeys(leftRecord);
+  const rightKeys = ObjectKeys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let index = 0; index < leftKeys.length; index++) {
+    const key = leftKeys[index]!;
+    if (
+      !ObjectHasOwn(rightRecord, key) ||
+      !providerValuesEqual(leftRecord[key], rightRecord[key], seen)
+    ) return false;
+  }
+  return true;
+}
+
+function providerMessagesEqual(left: Message, right: Message): boolean {
+  return left.role === right.role &&
+    providerValuesEqual(left.parts, right.parts, new IntrinsicWeakMap()) &&
+    providerValuesEqual(
+      readAttachedProviderMetadata(left),
+      readAttachedProviderMetadata(right),
+      new IntrinsicWeakMap(),
+    ) && isProviderReplayDelivered(left) === isProviderReplayDelivered(right);
+}
+
+function providerTranscriptsEqual(left: readonly Message[], right: readonly Message[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    const leftMessage = left[index]!;
+    const rightMessage = right[index]!;
+    if (!providerMessagesEqual(leftMessage, rightMessage)) return false;
+  }
+  return true;
+}
+
+function providerTranscriptIsOrderedSubset(
+  subset: readonly Message[],
+  full: readonly Message[],
+): boolean {
+  let fullIndex = 0;
+  for (let subsetIndex = 0; subsetIndex < subset.length; subsetIndex++) {
+    const candidate = subset[subsetIndex]!;
+    let matched = false;
+    while (fullIndex < full.length) {
+      const current = full[fullIndex++]!;
+      if (providerMessagesEqual(candidate, current)) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return false;
+  }
+  return true;
+}
 
 function getStructuredCloneFailureFingerprint(error: unknown): string | undefined {
   if (!(error instanceof DOMException) || error.name !== "DataCloneError") {
@@ -1354,11 +1738,312 @@ export class AgentRuntime {
    * this turn's input. That fallback is what keeps concurrent stream()/
    * generate() calls on a shared instance isolated instead of interleaving into
    * one conversation.
+   *
+   * Before anything is committed, a cross-turn validator registered on the
+   * middleware context checks the assembled conversation (history + this
+   * turn's input). Per-turn validation cannot see memory, so a blocked phrase
+   * split between an earlier turn's trailing system message (left behind when
+   * that turn failed or was cancelled before its assistant reply persisted)
+   * and this turn's leading system message would otherwise reassemble at the
+   * provider unvalidated. Validating before the write keeps a rejected turn
+   * out of memory.
    */
-  private async prepareTurnMessages(inputMessages: Message[]): Promise<Message[]> {
-    for (const msg of inputMessages) await this.memory.add(msg);
-    const persisted = await this.memory.getMessages();
-    return persisted.length > 0 ? persisted : inputMessages;
+  private async restoreInputReplayMetadata(inputMessages: Message[]): Promise<void> {
+    const checkpoints = getRuntimeProviderReplayCheckpoints(this.config);
+    if (!checkpoints?.length) return;
+    const history = (await this.memory.getMessages()).map(cloneMessageForCommit);
+    applyProviderReplayCheckpointsToMessages([...history, ...inputMessages], checkpoints);
+  }
+
+  private prepareTurnMessages(
+    inputMessages: Message[],
+    context?: AgentContext,
+    abortSignal?: AbortSignal,
+  ): Promise<{
+    messages: Message[];
+    addMessage: (message: Message) => Promise<void>;
+    commit: () => Promise<void>;
+    rollback: () => Promise<void>;
+    finalized: Promise<void>;
+  }> {
+    // Serialize validate-then-write per runtime: two concurrent turns that
+    // both read the same history before either writes could each validate an
+    // individually harmless fragment whose interleaved writes become adjacent
+    // in the persisted transcript. The queue makes the second turn's
+    // validation see the first turn's write. A rejected or failed commit must
+    // not poison the queue for later turns, hence the swallowed catch on the
+    // stored chain; callers still observe the rejection through the returned
+    // promise.
+    //
+    // Only a turn that actually runs a cross-turn validator is queued. Without
+    // one there is nothing to serialize: the write no longer depends on the
+    // history read, so a stateless agent (no `memory` config, where
+    // `createAgentMemory(undefined)` persists nothing) and every agent without
+    // the security middleware keep the pre-existing concurrency, and one slow
+    // memory backend cannot hold up unrelated concurrent turns.
+    //
+    // Keep the queue until the entire turn finalizes: every provider step can
+    // reject the caller input, and overlapping rollback snapshots can restore
+    // another turn's rejected messages. This serializes validated stateful
+    // turns on one runtime instance, including time spent awaiting tools.
+    if (
+      this.memory instanceof NoMemory || !context ||
+      !getTurnMessageValidator(context) && !getTurnProviderRequestValidator(context) &&
+        !getTurnMessageProjectionValidator(context)
+    ) {
+      return this.#commitTurnMessages(inputMessages, context);
+    }
+
+    const leaveLineage = enterSerializedTurn(this);
+    const predecessor = this.#turnCommitQueue;
+    const task = awaitAbortable(predecessor, abortSignal).then(async () => {
+      try {
+        throwIfAborted(abortSignal);
+        const prepared = await this.#commitTurnMessages(inputMessages, context);
+        return {
+          ...prepared,
+          commit: async () => {
+            try {
+              await prepared.commit();
+            } finally {
+              leaveLineage();
+            }
+          },
+          rollback: async () => {
+            try {
+              await prepared.rollback();
+            } finally {
+              leaveLineage();
+            }
+          },
+        };
+      } catch (error) {
+        leaveLineage();
+        throw error;
+      }
+    }, (error: unknown) => {
+      leaveLineage();
+      throw error;
+    });
+    const finalized = task.then(
+      ({ finalized }) => finalized,
+      () => undefined,
+    );
+    // Cancellation releases this caller, not the preceding turn's queue slot.
+    // Later turns must still wait until that predecessor has finalized.
+    this.#turnCommitQueue = Promise.all([predecessor, finalized]).then(() => undefined);
+    return task;
+  }
+
+  #turnCommitQueue: Promise<void> = Promise.resolve();
+
+  private createTurnPersistence(
+    inputMessages: Message[],
+    context: AgentContext,
+    abortSignal?: AbortSignal,
+  ): {
+    persisted: boolean;
+    persist: () => Promise<Message[]>;
+    addMessage: (message: Message) => Promise<void>;
+    commit: () => Promise<void>;
+    finalize: () => Promise<void>;
+    validationState: () => "pending" | "accepted" | "rejected";
+    validateProviderRequest: TurnProviderRequestValidator;
+  } {
+    if (!(this.memory instanceof NoMemory)) markStatefulTurn(context);
+    // Memoized on the first call: persistence now runs inside the middleware
+    // continuation, so a middleware that invokes `next()` more than once (a
+    // retry or fallback wrapper) would otherwise write this turn's input to
+    // memory once per attempt. Every attempt shares the first commit, including
+    // its rejection, so a turn that failed validation stays rejected.
+    let transaction: ReturnType<AgentRuntime["prepareTurnMessages"]> | undefined;
+    let finalization: Promise<void> | undefined;
+    let rejection: { error: unknown } | undefined;
+    let validationState: "pending" | "accepted" | "rejected" = "pending";
+    const commit = async (): Promise<void> => {
+      if (rejection) throw rejection.error;
+      if (transaction === undefined) return;
+      finalization ??= transaction.then(async (prepared) => {
+        try {
+          await prepared.commit();
+        } catch (error) {
+          rejection = { error };
+          validationState = "rejected";
+          throw error;
+        }
+      });
+      await finalization;
+    };
+    const rollback = async (): Promise<void> => {
+      if (transaction === undefined) return;
+      if (finalization !== undefined) {
+        // The original caller observes commit or rollback errors. Cleanup must
+        // still finish so streaming can report that error and close replay state.
+        await finalization.catch(() => undefined);
+        return;
+      }
+      finalization = transaction.catch(() => undefined).then((prepared) => prepared?.rollback());
+      await finalization;
+    };
+    const persistence = {
+      persisted: false,
+      persist: (): Promise<Message[]> => {
+        if (rejection) return Promise.reject(rejection.error);
+        persistence.persisted = true;
+        transaction ??= this.prepareTurnMessages(
+          resolveValidatedTurnInput(context.input, inputMessages),
+          context,
+          abortSignal,
+        );
+        return transaction.then(({ messages }) => messages);
+      },
+      commit,
+      addMessage: async (message: Message) => {
+        if (rejection) throw rejection.error;
+        try {
+          await persistence.persist();
+          await (await transaction!).addMessage(message);
+        } catch (error) {
+          rejection = { error };
+          validationState = "rejected";
+          await rollback();
+          throw error;
+        }
+      },
+      finalize: () => validationState === "accepted" ? commit() : rollback(),
+      validationState: () => validationState,
+      validateProviderRequest: async (providerSystem: AgentSystem, messages: Message[]) => {
+        if (rejection) throw rejection.error;
+        try {
+          await getTurnProviderRequestValidator(context)?.(providerSystem, messages);
+        } catch (error) {
+          rejection = { error };
+          validationState = "rejected";
+          await rollback();
+          throw error;
+        }
+        validationState = "accepted";
+        // Keep validated stateful turns serialized until finalization. An
+        // overlapping rollback could otherwise restore another rejected turn.
+      },
+    };
+    return persistence;
+  }
+
+  async #commitTurnMessages(
+    inputMessages: Message[],
+    context?: AgentContext,
+  ): Promise<{
+    messages: Message[];
+    addMessage: (message: Message) => Promise<void>;
+    commit: () => Promise<void>;
+    rollback: () => Promise<void>;
+    finalized: Promise<void>;
+  }> {
+    const committedInputMessages = inputMessages.map((message) => {
+      const cloned = cloneMessageForCommit(message);
+      propagateSyntheticMessageMarks(message, cloned);
+      return isRuntimeGeneratedUserMessage(message)
+        ? markRuntimeGeneratedUserMessage(cloned)
+        : cloned;
+    });
+    // The security middleware validated `context.input` when it ran, but a
+    // later middleware can replace the array or mutate a message in place, and
+    // the resolved value is exactly what gets persisted and dispatched below.
+    // The registered hook re-validates the resolved input (skipping texts the
+    // middleware already approved), including on a first turn where the
+    // cross-turn validator has no history to check.
+    const validateTurnInput = context && getTurnInputValidator(context);
+    await this.restoreInputReplayMetadata(committedInputMessages);
+    if (validateTurnInput) await validateTurnInput(committedInputMessages);
+
+    const validateTurnMessages = context && getTurnMessageValidator(context);
+    const validateProjectedMessages = context && getTurnMessageProjectionValidator(context);
+    const validateProviderRequest = context && getTurnProviderRequestValidator(context);
+    const memoryTransaction =
+      validateTurnMessages || validateProjectedMessages || validateProviderRequest
+        ? await beginMemoryTransaction(this.memory)
+        : undefined;
+    const turnMemory = memoryTransaction ?? this.memory;
+    let validated = committedInputMessages;
+    let history: Message[] = [];
+    let persisted: Message[];
+    try {
+      if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
+        history = await turnMemory.getMessages();
+        if (history.length > 0) validated = [...history, ...committedInputMessages];
+        // Durable provider replay metadata can keep a reasoning-only assistant
+        // turn in the actual provider request. Attach it before validation so
+        // the validator does not incorrectly merge the user turns around it.
+        applyProviderReplayCheckpointsToMessages(
+          validated,
+          getRuntimeProviderReplayCheckpoints(this.config),
+        );
+        // With no history the assembled conversation is exactly this turn's
+        // input, which the middleware already validated.
+        if (validateTurnMessages && history.length > 0) {
+          await validateTurnMessages(history, committedInputMessages);
+        }
+      }
+      // Memory adapters may normalize staged objects in place. Keep validation
+      // provenance detached from every object the transaction receives, while
+      // preserving replay metadata that determines provider message boundaries.
+      if (validateTurnMessages || validateProjectedMessages) {
+        validated = validated.map((message) => {
+          const snapshot = cloneMessageForCommit(message);
+          propagateSyntheticMessageMarks(message, snapshot);
+          if (isRuntimeGeneratedUserMessage(message)) markRuntimeGeneratedUserMessage(snapshot);
+          attachProviderMetadata(
+            snapshot,
+            cloneStructuredValuePreservingOpaque(readAttachedProviderMetadata(message)),
+          );
+          if (isProviderReplayDelivered(message)) markProviderReplayDelivered(snapshot);
+          return snapshot;
+        });
+      }
+      for (const msg of committedInputMessages) await turnMemory.add(msg);
+      persisted = await turnMemory.getMessages();
+      if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
+        if (validateProjectedMessages) {
+          await validateProjectedMessages(persisted, validated);
+        } else if (!providerTranscriptIsOrderedSubset(persisted, validated)) {
+          // A turn-only validator has no projection provenance contract. Keep
+          // its historical fail-closed behavior for replacement projections.
+          await validateTurnMessages?.([], persisted);
+        }
+      }
+    } catch (error) {
+      await memoryTransaction?.rollback();
+      throw error;
+    }
+    let isFinalized = false;
+    const finalization = Promise.withResolvers<void>();
+    return {
+      messages: persisted.length > 0 ? persisted : committedInputMessages,
+      addMessage: (message) => turnMemory.add(message),
+      commit: async () => {
+        if (isFinalized) return;
+        isFinalized = true;
+        try {
+          await memoryTransaction?.commit();
+        } catch (error) {
+          await memoryTransaction?.rollback();
+          throw error;
+        } finally {
+          finalization.resolve();
+        }
+      },
+      rollback: async () => {
+        if (isFinalized) return;
+        isFinalized = true;
+        try {
+          await memoryTransaction?.rollback();
+        } finally {
+          finalization.resolve();
+        }
+      },
+      finalized: finalization.promise,
+    };
   }
 
   async #resolveModelTransport(
@@ -1500,7 +2185,11 @@ export class AgentRuntime {
     );
   }
 
-  async #generate(
+  #generate(...args: AgentRuntimeGenerateArgs): Promise<AgentResponse> {
+    return withRuntimeTurnLineage(this, () => this.#generateWithinTurn(...args));
+  }
+
+  async #generateWithinTurn(
     input: string | Message[],
     context?: Record<string, unknown>,
     modelOverride?: string,
@@ -1540,7 +2229,7 @@ export class AgentRuntime {
         });
 
         const inputMessages = normalizeInput(input);
-        const messages = await this.prepareTurnMessages(inputMessages);
+        await this.restoreInputReplayMetadata(inputMessages);
 
         const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
@@ -1552,43 +2241,74 @@ export class AgentRuntime {
           platform: detectPlatform(),
         };
 
-        const chain = new MiddlewareChain(this.config.middleware);
-        return chain.execute(
+        // Persist only after the middleware chain accepted this turn. Committing
+        // to memory first would store a rejected (hostile) message, and the next
+        // benign turn would replay it to the provider without ever being
+        // validated again. A middleware that answers without calling `next()`
+        // (a cache hit) still accepted the turn, so persistence runs after the
+        // chain resolves when the continuation never reached it.
+        const turnPersistence = this.createTurnPersistence(
+          inputMessages,
           agentContext,
-          async () => {
-            try {
-              return await runWithRemoteIntegrationToolDiscoveryScope(() =>
-                this.#executeAgentLoop(
-                  systemPrompt,
-                  messages,
-                  {
-                    agentId: this.id,
-                    projectId: tryGetCacheKeyContext()?.projectId,
-                  },
-                  context,
-                  runRuntimeContext,
-                  supportsToolCalling,
-                  providerReplayCheckpointEmission,
-                  resolvedModelString,
-                  transport.languageModel,
-                  transport.headers,
-                  transport.providerOptions,
-                  transport.reasoning,
-                  maxOutputTokensOverride,
-                  requestedModel,
-                  this.createGenerateReplacementTools(
-                    options?.toolReplacements,
-                    options?.retainSkillLoaderTools,
-                  ),
-                  abortSignal,
-                  outputSchema,
-                )
-              );
-            } finally {
-              abortGuard.revoke();
-            }
-          },
+          abortSignal,
         );
+
+        const chain = new MiddlewareChain(this.config.middleware);
+        let response: AgentResponse;
+        try {
+          response = await chain.execute(
+            agentContext,
+            async () => {
+              const messages = await turnPersistence.persist();
+              try {
+                return await runWithRemoteIntegrationToolDiscoveryScope(() =>
+                  this.#executeAgentLoop(
+                    systemPrompt,
+                    messages,
+                    turnPersistence.validateProviderRequest,
+                    turnPersistence.addMessage,
+                    {
+                      agentId: this.id,
+                      projectId: tryGetCacheKeyContext()?.projectId,
+                    },
+                    context,
+                    runRuntimeContext,
+                    supportsToolCalling,
+                    providerReplayCheckpointEmission,
+                    resolvedModelString,
+                    transport.languageModel,
+                    transport.headers,
+                    transport.providerOptions,
+                    transport.reasoning,
+                    maxOutputTokensOverride,
+                    requestedModel,
+                    this.createGenerateReplacementTools(
+                      options?.toolReplacements,
+                      options?.retainSkillLoaderTools,
+                    ),
+                    abortSignal,
+                    outputSchema,
+                  )
+                );
+              } finally {
+                abortGuard.revoke();
+              }
+            },
+          );
+        } catch (error) {
+          await turnPersistence.finalize();
+          throw error;
+        }
+
+        const messages = await turnPersistence.persist();
+        if (turnPersistence.validationState() === "pending") {
+          await turnPersistence.validateProviderRequest(
+            withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+            messages,
+          );
+        }
+        await turnPersistence.commit();
+        return response;
       }).catch(async (error) => {
         await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
         throw error;
@@ -1622,7 +2342,11 @@ export class AgentRuntime {
     );
   }
 
-  async #stream(
+  #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
+    return withRuntimeTurnLineage(this, () => this.#streamWithinTurn(...args));
+  }
+
+  async #streamWithinTurn(
     messages: Message[],
     context?: Record<string, unknown>,
     callbacks?: AgentRuntimeStreamCallbacks,
@@ -1650,7 +2374,6 @@ export class AgentRuntime {
       debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
       const inputMessages = normalizeInput(messages);
-      const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
       const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
@@ -1689,14 +2412,37 @@ export class AgentRuntime {
         throw error;
       }
 
+      // The context carries the normalized clones, not the caller's raw array:
+      // a middleware that mutates a message in place must be mutating the same
+      // objects that are later persisted and dispatched to the provider.
+      await this.restoreInputReplayMetadata(inputMessages);
       const agentContext: AgentContext = {
         agentId: this.id,
         model: resolvedModelString,
-        input: messages,
+        input: inputMessages,
         data: context,
         platform: detectPlatform(),
       };
       const chain = new MiddlewareChain(this.config.middleware);
+
+      // Persist only after the middleware chain accepted this turn, so a
+      // rejected message never lands in memory to be replayed to the provider on
+      // a later, benign turn. A middleware that answers without calling `next()`
+      // (a cache hit) still accepted the turn, so persistence runs after the
+      // chain resolves when the continuation never reached it.
+      const turnPersistence = this.createTurnPersistence(
+        inputMessages,
+        agentContext,
+        streamAbortSignal,
+      );
+
+      // Deferring persistence into the stream body moved the memory calls past
+      // the point where the route can still return a 5xx, so probe the memory
+      // backend BEFORE creating the ReadableStream: an unreachable store (e.g.
+      // a Redis outage) rejects this call instead of surfacing as an in-band
+      // SSE error inside a committed 200 response. The write itself still
+      // happens only after the middleware chain accepts the turn.
+      await this.memory.getMessages();
 
       // Hold the in-flight agent-loop promise so stream cancellation can detach a
       // no-op rejection handler. When the client cancels, we abort the shared
@@ -1727,17 +2473,28 @@ export class AgentRuntime {
               type: "data-veryfront.runtime_context",
               data: runRuntimeContext,
             });
+            let streamedResponseText = "";
+            const streamingCallbacks: AgentRuntimeStreamCallbacks = {
+              ...callbacks,
+              onChunk: (chunk) => {
+                streamedResponseText += chunk;
+                callbacks?.onChunk?.(chunk);
+              },
+            };
             inFlight = chain.execute(
               agentContext,
               async () => {
                 try {
+                  const memoryMessages = await turnPersistence.persist();
                   return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                     this.#executeAgentLoopStreaming(
                       systemPrompt,
                       memoryMessages,
+                      turnPersistence.validateProviderRequest,
+                      turnPersistence.addMessage,
                       controller,
                       encoder,
-                      callbacks,
+                      streamingCallbacks,
                       textPartId,
                       toolContext,
                       context,
@@ -1761,7 +2518,25 @@ export class AgentRuntime {
               },
             );
             const response = await inFlight;
+            const messages = await turnPersistence.persist();
+            if (turnPersistence.validationState() === "pending") {
+              await turnPersistence.validateProviderRequest(
+                withAgentRunRuntimeContext(systemPrompt, runRuntimeContext),
+                messages,
+              );
+            }
+            await turnPersistence.commit();
             throwIfAborted(streamAbortSignal);
+            if (response.text.length > 0 && streamedResponseText.length === 0) {
+              sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+              sendSSE(controller, encoder, {
+                type: "text-delta",
+                id: textPartId,
+                delta: response.text,
+              });
+              callbacks?.onChunk?.(response.text);
+              sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+            }
             callbacks?.onFinish?.(response);
             throwIfAborted(streamAbortSignal);
 
@@ -1776,7 +2551,13 @@ export class AgentRuntime {
                 : {}),
             });
             closeSSEStream(controller);
-          } catch (error) {
+          } catch (streamError) {
+            let error = streamError;
+            try {
+              await turnPersistence.finalize();
+            } catch (finalizationError) {
+              error = finalizationError;
+            }
             try {
               await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
             } catch (failureHookError) {
@@ -1829,6 +2610,8 @@ export class AgentRuntime {
   async #executeAgentLoop( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
+    validateProviderRequest: TurnProviderRequestValidator,
+    persistMessage: (message: Message) => Promise<void>,
     toolContextBase: ToolExecutionContext | undefined,
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
@@ -2010,6 +2793,10 @@ export class AgentRuntime {
             currentSystemPrompt,
             runRuntimeContext,
           );
+          await validateProviderRequest(
+            providerSystemPrompt,
+            currentMessages,
+          );
           const result = await generateText({
             model: languageModel,
             system: providerSystemPrompt,
@@ -2070,7 +2857,7 @@ export class AgentRuntime {
           timestamp: Date.now(),
         });
         currentMessages.push(assistantMessage);
-        await this.memory.add(assistantMessage);
+        await persistMessage(assistantMessage);
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
@@ -2090,7 +2877,7 @@ export class AgentRuntime {
             generatedToolResult.providerExecuted === true,
           );
           currentMessages.push(toolResultMessage);
-          await this.memory.add(toolResultMessage);
+          await persistMessage(toolResultMessage);
           throwIfAborted(abortSignal);
         };
 
@@ -2117,7 +2904,7 @@ export class AgentRuntime {
             error,
           );
           currentMessages.push(errorMessage);
-          await this.memory.add(errorMessage);
+          await persistMessage(errorMessage);
           return true;
         };
 
@@ -2197,7 +2984,7 @@ export class AgentRuntime {
                 toolCall.error,
               );
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await persistMessage(errorMessage);
               toolCalls.push(toolCall);
               return;
             }
@@ -2229,7 +3016,7 @@ export class AgentRuntime {
                   search.result,
                 );
                 currentMessages.push(toolResultMessage);
-                await this.memory.add(toolResultMessage);
+                await persistMessage(toolResultMessage);
                 checkpoint = search.checkpoint;
               } catch (error) {
                 toolCall.status = "error";
@@ -2240,7 +3027,7 @@ export class AgentRuntime {
                   toolCall.error,
                 );
                 currentMessages.push(errorMessage);
-                await this.memory.add(errorMessage);
+                await persistMessage(errorMessage);
                 toolCalls.push(toolCall);
                 return;
               }
@@ -2339,7 +3126,7 @@ export class AgentRuntime {
                 timestamp: Date.now(),
               };
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await persistMessage(errorMessage);
               toolCalls.push(toolCall);
               return;
             }
@@ -2436,7 +3223,7 @@ export class AgentRuntime {
                 result,
               );
               currentMessages.push(toolResultMessage);
-              await this.memory.add(toolResultMessage);
+              await persistMessage(toolResultMessage);
             } catch (error) {
               throwIfAborted(abortSignal);
               toolCall.status = "error";
@@ -2453,7 +3240,7 @@ export class AgentRuntime {
                 toolCall.error,
               );
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await persistMessage(errorMessage);
             }
 
             toolCalls.push(toolCall);
@@ -2496,6 +3283,8 @@ export class AgentRuntime {
   async #executeAgentLoopStreaming( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
+    validateProviderRequest: TurnProviderRequestValidator,
+    persistMessage: (message: Message) => Promise<void>,
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
     callbacks: {
@@ -2657,6 +3446,10 @@ export class AgentRuntime {
       const providerSystemPrompt = withAgentRunRuntimeContext(
         currentSystemPrompt,
         runRuntimeContext,
+      );
+      await validateProviderRequest(
+        providerSystemPrompt,
+        currentMessages,
       );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamText({
@@ -3034,7 +3827,7 @@ export class AgentRuntime {
         latestAssistantText = stepAssistantText;
       }
       currentMessages.push(assistantMessage);
-      await this.memory.add(assistantMessage);
+      await persistMessage(assistantMessage);
       await persistProviderReplayCheckpointAfterTurn({
         emission: providerReplayCheckpointEmission,
         providerMetadata: readAttachedProviderMetadata(assistantMessage),
@@ -3054,7 +3847,7 @@ export class AgentRuntime {
           toolResult.providerExecuted === true,
         );
         currentMessages.push(toolResultMessage);
-        await this.memory.add(toolResultMessage);
+        await persistMessage(toolResultMessage);
         currentStepToolResults.set(
           toolResult.toolCallId,
           toolResultMessage.parts[0] as ToolResultPart,
@@ -3100,6 +3893,7 @@ export class AgentRuntime {
           status: "pending",
         };
         await this.recordToolError(
+          persistMessage,
           incompleteToolCall,
           `Stream terminated before tool-call event fired for "${toolCall.name}". ` +
             `Received ${toolCall.arguments.length} chars of partial tool-input deltas.`,
@@ -3160,6 +3954,7 @@ export class AgentRuntime {
             status: "pending",
           };
           await this.recordToolError(
+            persistMessage,
             interruptedBatchToolCall,
             "Tool execution skipped because another tool call in the same model step " +
               "was interrupted before its input completed.",
@@ -3281,6 +4076,7 @@ export class AgentRuntime {
           });
 
           await this.recordToolError(
+            persistMessage,
             toolCall,
             `Invalid tool arguments: ${capturedInput.parseError}`,
             controller,
@@ -3318,11 +4114,12 @@ export class AgentRuntime {
             });
             const toolResultMessage = createToolResultMessage(tc.id, tc.name, search.result);
             currentMessages.push(toolResultMessage);
-            await this.memory.add(toolResultMessage);
+            await persistMessage(toolResultMessage);
             checkpoint = search.checkpoint;
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           } catch (error) {
             await this.recordToolError(
+              persistMessage,
               toolCall,
               error instanceof Error ? error.message : String(error),
               controller,
@@ -3346,6 +4143,7 @@ export class AgentRuntime {
         });
         if (executionAuthority === undefined) {
           await this.recordToolError(
+            persistMessage,
             toolCall,
             toolNotVisibleError(tc.name),
             controller,
@@ -3366,6 +4164,7 @@ export class AgentRuntime {
         );
         if (!policyCheck.allowed) {
           await this.recordToolError(
+            persistMessage,
             toolCall,
             policyCheck.error,
             controller,
@@ -3459,12 +4258,13 @@ export class AgentRuntime {
           const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
             currentMessages.push(toolResultMessage);
-            await this.memory.add(toolResultMessage);
+            await persistMessage(toolResultMessage);
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
           const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
+            persistMessage,
             toolCall,
             errorStr,
             controller,
@@ -3546,6 +4346,7 @@ export class AgentRuntime {
    * Record a tool error and send SSE event.
    */
   private async recordToolError(
+    persistMessage: (message: Message) => Promise<void>,
     toolCall: ToolCall,
     errorStr: string,
     controller: ReadableStreamDefaultController,
@@ -3576,7 +4377,7 @@ export class AgentRuntime {
       errorStr,
     );
     currentMessages.push(errorMessage);
-    await this.memory.add(errorMessage);
+    await persistMessage(errorMessage);
   }
 
   /**
