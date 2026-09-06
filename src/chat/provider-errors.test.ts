@@ -5,6 +5,37 @@ import { parseProviderError } from "./provider-errors.ts";
 import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
+  it("does not expose provider text from recognized problem bodies", async () => {
+    for (const slug of ["insufficient-credits", "resource-limit-exceeded"]) {
+      const problem = {
+        slug,
+        error: "private prompt fragment",
+        suggestion: "private provider diagnostic",
+      };
+      const expected = {
+        code: slug === "insufficient-credits" ? "INSUFFICIENT_CREDITS" : "RESOURCE_LIMIT_EXCEEDED",
+        message: slug === "insufficient-credits"
+          ? "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan."
+          : "Resource limit exceeded",
+        status: 402,
+      };
+
+      assertEquals(parseProviderError(problem), expected);
+      assertEquals(
+        parseProviderError(
+          await buildProviderError(
+            "openai",
+            new Response(JSON.stringify(problem), {
+              status: 402,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        ),
+        expected,
+      );
+    }
+  });
+
   it("parses gateway problem JSON strings and direct provider problem objects", () => {
     assertEquals(
       parseProviderError(JSON.stringify({
@@ -13,7 +44,8 @@ describe("chat/provider-errors", () => {
       })),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Insufficient AI credits",
+        message:
+          "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
         status: 402,
       },
     );
@@ -49,7 +81,8 @@ describe("chat/provider-errors", () => {
 
     assertEquals(parseProviderError(error), {
       code: "INSUFFICIENT_CREDITS",
-      message: "Insufficient AI credits",
+      message:
+        "Agent run credit limit exceeded: 85.5 credits required, 57.25 remaining. Start a new reviewed run or reduce the scope of this run.",
       status: 402,
     });
 
@@ -63,7 +96,41 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Insufficient AI credits",
+        message:
+          "AI credit limit exceeded: 20 credits required, 12 available. Purchase additional credits or upgrade your subscription plan.",
+        status: 402,
+      },
+    );
+  });
+
+  it("keeps validated credit amounts without copying private problem text", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "private prompt fragment",
+        suggestion: "private provider diagnostic",
+        balance: 12,
+        required: 20,
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message:
+          "Insufficient AI credits: 20 credits required, 12 available. Purchase additional credits or upgrade your subscription plan.",
+        status: 402,
+      },
+    );
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded: private prompt fragment",
+        suggestion: "private provider diagnostic",
+        balance: 57.25,
+        required: 85.5,
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message:
+          "Agent run credit limit exceeded: 85.5 credits required, 57.25 remaining. Start a new reviewed run or reduce the scope of this run.",
         status: 402,
       },
     );
@@ -80,7 +147,8 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Insufficient AI credits",
+        message:
+          "Agent run credit limit exceeded. Start a new reviewed run or reduce the scope of this run.",
         status: 402,
       },
     );
@@ -97,6 +165,26 @@ describe("chat/provider-errors", () => {
         message: "Insufficient AI credits",
         status: 402,
       },
+    );
+  });
+
+  it("preserves guidance presence without requiring usable credit amounts", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "private provider detail",
+        suggestion: "private provider guidance",
+        balance: 12,
+        required: -1,
+      }).message,
+      "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+    );
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded",
+      }).message,
+      "Agent run credit limit exceeded",
     );
   });
 

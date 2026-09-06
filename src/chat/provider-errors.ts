@@ -133,7 +133,33 @@ function parseEmbeddedErrorJson(value: string): unknown | null {
   return null;
 }
 
-/** Parses known problem body. */
+function formatCreditProblemMessage(
+  body: Record<string, unknown>,
+  error: string | null,
+  hasSuggestion: boolean,
+): string {
+  const balance = body.balance;
+  const required = body.required;
+  const isRunLimit = error?.toLowerCase().includes("agent run credit limit") ?? false;
+  const fallback = isRunLimit ? "Agent run credit limit exceeded" : "Insufficient AI credits";
+  const suggestion = isRunLimit
+    ? "Start a new reviewed run or reduce the scope of this run."
+    : "Purchase additional credits or upgrade your subscription plan.";
+  if (
+    typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
+    typeof required !== "number" || !Number.isFinite(required) || required < 0
+  ) {
+    return hasSuggestion ? `${fallback}. ${suggestion}` : fallback;
+  }
+
+  const summary = error === "AI credit limit exceeded" ? "AI credit limit exceeded" : fallback;
+  const availability = isRunLimit ? "remaining" : "available";
+  return `${summary}: ${required} credits required, ${balance} ${availability}.${
+    hasSuggestion ? ` ${suggestion}` : ""
+  }`;
+}
+
+/** Parses known problem bodies without exposing provider-controlled text. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
     return null;
@@ -151,7 +177,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: "Insufficient AI credits",
+      message: formatCreditProblemMessage(body, error, Boolean(suggestion)),
       status: 402,
     };
   }
