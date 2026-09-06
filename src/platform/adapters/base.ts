@@ -24,6 +24,14 @@ export interface RuntimeAdapter {
   /** Filesystem operations */
   fs: FileSystemAdapter;
 
+  /**
+   * Optional executor-owned imports from one prepared source generation.
+   * An own data property fixed for the lifetime of one dedicated execution realm.
+   * The filesystem and loader must refer to the same immutable source generation.
+   * This capability does not grant permission to execute project code in a host.
+   */
+  readonly moduleLoader?: RuntimeModuleLoader;
+
   /** Environment variable access */
   env: EnvironmentAdapter;
 
@@ -50,6 +58,19 @@ export interface RuntimeAdapter {
   /** Clean shutdown (close connections, etc.) */
   shutdown?(): Promise<void>;
 }
+
+/**
+ * Realm-local imports from an already prepared graph, including its React runtime.
+ * Unknown identifiers must reject without cache or network recovery.
+ */
+export interface RuntimeModuleLoader {
+  /** Own data-property function importing an original source path or package specifier. */
+  importModule(reference: RuntimeModuleReference): Promise<Record<string, unknown>>;
+}
+
+export type RuntimeModuleReference =
+  | { readonly kind: "source"; readonly path: string }
+  | { readonly kind: "package"; readonly specifier: string };
 
 /**
  * Runtime capabilities for feature detection

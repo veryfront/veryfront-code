@@ -137,7 +137,7 @@ export class SSRRenderer {
 
   constructor(
     mode: string,
-    _adapter?: RuntimeAdapter,
+    private readonly adapter?: RuntimeAdapter,
     projectDir?: string,
     _projectId?: string,
     config?: VeryfrontConfig,
@@ -224,7 +224,7 @@ export class SSRRenderer {
             renderContext: options.renderContext,
             reactVersion,
             reactRuntime: options.reactRuntime,
-          }),
+          }, this.adapter),
         {
           "ssr.method": "string",
           "ssr.react_version": reactVersion,
@@ -249,7 +249,7 @@ export class SSRRenderer {
           renderContext: options.renderContext,
           reactVersion,
           reactRuntime: options.reactRuntime,
-        }),
+        }, this.adapter),
       {
         "ssr.method": "streaming",
         "ssr.react_version": reactVersion,

@@ -68,6 +68,60 @@ function layoutAdapter(source: string): RuntimeAdapter {
 }
 
 describe("rendering/layouts/utils/component-loader", () => {
+  it("loads prepared TSX and MDX layouts without reading source or sharing cached exports", async () => {
+    const Component = () => null;
+    const paths: string[] = [];
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("Source must not be reloaded");
+        },
+      },
+      moduleLoader: {
+        importModule: async (reference: { kind: string; path: string }) => {
+          paths.push(reference.path);
+          return { default: Component };
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const cache = {
+      get: () => {
+        throw new Error("Live exports must not use shared caches");
+      },
+      set: () => {
+        throw new Error("Live exports must not use shared caches");
+      },
+      delete() {},
+      clear() {},
+    };
+    assertStrictEquals(
+      await loadTSXComponent(
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        adapter,
+        "project",
+        "project",
+        "release",
+        PRODUCTION_MODES,
+      ),
+      Component,
+    );
+    assertStrictEquals(
+      await loadMDXLayout({
+        bundle: { compiledCode: 'throw new Error("Do not execute inline code");' },
+        sourcePath: "/project/app/layout.mdx",
+        projectDir: "/project",
+        adapter,
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "release",
+        modes: PRODUCTION_MODES,
+      }),
+      Component,
+    );
+    assertEquals(paths, ["/project/app/layout.tsx", "/project/app/layout.mdx"]);
+  });
   describe("createLayoutComponentCache", () => {
     it("should create a cache with default max entries", () => {
       const cache = createLayoutComponentCache();

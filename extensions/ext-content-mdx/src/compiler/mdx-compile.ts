@@ -5,6 +5,7 @@ import { extractFrontmatter } from "veryfront/transforms/frontmatter";
 import { rewriteBodyImports, rewriteCompiledImports } from "veryfront/transforms/import-rewriter";
 import { getRehypePlugins, getRemarkPlugins } from "../plugins/plugin-loader.ts";
 import { rehypeNodePositions } from "../plugins/rehype-node-positions.ts";
+import { recmaLayoutExport } from "../plugins/recma-layout-export.ts";
 
 type PluggableList = Pluggable[];
 
@@ -54,6 +55,7 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
     development: false,
     remarkPlugins,
     rehypePlugins,
+    recmaPlugins: outputFormat === "program" ? [recmaLayoutExport] : [],
     providerImportSource,
     jsxImportSource: "react",
   });

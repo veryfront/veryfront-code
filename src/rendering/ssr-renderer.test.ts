@@ -21,6 +21,8 @@ import { ColorModeScript } from "#veryfront/react/components/ui/color-mode.tsx";
 import { Head } from "#veryfront/react/runtime/core.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
@@ -69,6 +71,31 @@ function readScriptNonce(nonce: unknown): string | undefined {
 }
 
 describe("rendering/ssr-renderer", () => {
+  it("selects the adapter's prepared runtime for string and streaming renders", async () => {
+    const adapter = createMockAdapter();
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async (reference: RuntimeModuleReference) =>
+          reference.kind === "package" && reference.specifier === "react"
+            ? { default: React }
+            : { ...actualReactDOMServer },
+      },
+    });
+    for (const mode of ["development", "production"]) {
+      const renderer = new SSRRenderer(mode, adapter, undefined, undefined, {
+        react: { version: React.version },
+      });
+      const result = await renderer.renderToHTML(React.createElement("div", null, "prepared"), {
+        mode,
+        wantsStream: mode === "production",
+      });
+      assertEquals(
+        result.stream ? await new Response(result.stream).text() : result.html,
+        "<div>prepared</div>",
+        `${mode} uses the executor runtime`,
+      );
+    }
+  });
   afterEach(() => {
     __injectReactDOMServerForTests(null);
     resetReactCache();

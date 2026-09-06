@@ -502,7 +502,8 @@ export async function computePipelineConfigIdentity(
     studioEmbed,
     dev,
   });
-  let identity = "veryfront:transform-pipeline:v4;";
+  // v5 preserves MDX layout exports before minification.
+  let identity = "veryfront:transform-pipeline:v5;";
   if (ssrImports === "references") identity += "ssr-imports=references-v1;";
   identity += `base=${encodeIdentityPrimitive(baseIdentity)};`;
   identity += `ssr=${encodeIdentityPrimitive(ssr)};`;

@@ -3,6 +3,7 @@ import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveSSRRuntime } from "./server-loader.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getSSRAdapterDeadlineRuntime,
   getSSRAdapterTimeoutMs,
@@ -147,9 +148,10 @@ function notifyErrorObserver(observer: SSROptions["onError"], error: unknown): v
 export async function renderToStringAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
+  adapter?: RuntimeAdapter,
 ): Promise<string> {
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
-  const { server, react: projectReact } = await resolveSSRRuntime(options);
+  const { server, react: projectReact } = await resolveSSRRuntime(options, adapter);
   const renderElement = projectReact
     ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
     : element;
@@ -238,10 +240,12 @@ export async function renderToStringAdapter(
 export async function renderToStaticMarkupAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
+  adapter?: RuntimeAdapter,
 ): Promise<string> {
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
   const { server: { renderToStaticMarkup }, react: projectReact } = await resolveSSRRuntime(
     options,
+    adapter,
   );
   const renderElement = projectReact
     ? wrapWithServerRenderContext(element, options.renderContext, projectReact)

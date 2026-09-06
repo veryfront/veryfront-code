@@ -271,6 +271,7 @@ export class LayoutOrchestrator {
               try {
                 await preloadMDXLayoutModule({
                   bundle: layout.bundle!,
+                  sourcePath: layout.path,
                   projectDir: this.config.projectDir,
                   adapter: this.config.adapter,
                   projectId: this.config.projectId,
