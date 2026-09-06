@@ -58,6 +58,8 @@ loading project modules. Custom host route handlers still receive the original
 request and remain responsible for authentication and credential handling.
 Dispatch visits the host route table and matched path segments by index so a
 replaced array iterator cannot inject a handler before host authentication.
+CORS allowlist membership, response header writes, and route path parsing also
+use captured operations.
 
 The service discovers the same project primitives as the app runtime:
 

@@ -5,6 +5,9 @@ import type { Agent } from "../types.ts";
 const IntrinsicReflectApply = Reflect.apply;
 const NativeRequest = Request;
 const NativeURL = URL;
+const NativeHeaders = Headers;
+const NativeResponse = Response;
+const NativeString = String;
 const NativeHasInstance = Function.prototype[Symbol.hasInstance];
 const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
@@ -12,6 +15,14 @@ const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototyp
 const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
 const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
 const HeadersGet = Headers.prototype.get;
+const HeadersSet = Headers.prototype.set;
+const HeadersAppend = Headers.prototype.append;
+const ArrayIncludes = Array.prototype.includes;
+const ArrayJoin = Array.prototype.join;
+const StringStartsWith = String.prototype.startsWith;
+const StringIndexOf = String.prototype.indexOf;
+const StringSlice = String.prototype.slice;
+const NativeDecodeURIComponent = decodeURIComponent;
 const StringToUpperCase = String.prototype.toUpperCase;
 
 function readNativeValue<T>(target: Request | URL, getter: (() => T) | undefined): T {
@@ -200,13 +211,27 @@ function normalizeAgentServiceContract<
 
 function normalizePath(path: string): string {
   if (path === "") return "/";
-  return path.startsWith("/") ? path : `/${path}`;
+  return IntrinsicReflectApply(StringStartsWith, path, ["/"]) ? path : `/${path}`;
 }
 
-function splitPath(path: string): string[] {
+function splitPath(path: string): { length: number; [index: number]: string } {
   const normalized = normalizePath(path);
-  if (normalized === "/") return [];
-  return normalized.split("/").filter(Boolean);
+  // A private, prototype-free list avoids replaceable string split hooks and
+  // Array species/iterators during route matching.
+  const parts = { __proto__: null, length: 0 } as { length: number; [index: number]: string };
+  let start = 0;
+  while (start < normalized.length) {
+    const separator = IntrinsicReflectApply(StringIndexOf, normalized, ["/", start]) as number;
+    const end = separator === -1 ? normalized.length : separator;
+    if (end > start) {
+      parts[parts.length++] = IntrinsicReflectApply(StringSlice, normalized, [
+        start,
+        end,
+      ]) as string;
+    }
+    start = end + 1;
+  }
+  return parts;
 }
 
 function matchRoute(
@@ -232,8 +257,9 @@ function matchRoute(
       return undefined;
     }
 
-    if (routePart.startsWith(":")) {
-      params[routePart.slice(1)] = decodeURIComponent(requestPart);
+    if (IntrinsicReflectApply(StringStartsWith, routePart, [":"])) {
+      params[IntrinsicReflectApply(StringSlice, routePart, [1]) as string] =
+        NativeDecodeURIComponent(requestPart);
       continue;
     }
 
@@ -262,11 +288,11 @@ function getAllowedCorsOrigin(
   if (!origin) return undefined;
 
   const origins = config.origins ?? ["*"];
-  if (origins.includes("*")) {
+  if (IntrinsicReflectApply(ArrayIncludes, origins, ["*"])) {
     return config.credentials ? origin : "*";
   }
 
-  return origins.includes(origin) ? origin : undefined;
+  return IntrinsicReflectApply(ArrayIncludes, origins, [origin]) ? origin : undefined;
 }
 
 function appendCorsHeaders(
@@ -277,11 +303,11 @@ function appendCorsHeaders(
   const allowedOrigin = getAllowedCorsOrigin(config, request);
   if (!allowedOrigin) return;
 
-  headers.set("Access-Control-Allow-Origin", allowedOrigin);
-  headers.append("Vary", "Origin");
+  IntrinsicReflectApply(HeadersSet, headers, ["Access-Control-Allow-Origin", allowedOrigin]);
+  IntrinsicReflectApply(HeadersAppend, headers, ["Vary", "Origin"]);
 
   if (config.credentials) {
-    headers.set("Access-Control-Allow-Credentials", "true");
+    IntrinsicReflectApply(HeadersSet, headers, ["Access-Control-Allow-Credentials", "true"]);
   }
 }
 
@@ -289,23 +315,31 @@ function createCorsPreflightResponse(
   request: Request,
   config: AgentServiceCorsConfig,
 ): Response {
-  const headers = new Headers();
+  const headers = new NativeHeaders();
   appendCorsHeaders(headers, config, request);
 
   const allowMethods = config.allowMethods ?? ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
-  headers.set("Access-Control-Allow-Methods", allowMethods.join(", "));
+  IntrinsicReflectApply(HeadersSet, headers, [
+    "Access-Control-Allow-Methods",
+    IntrinsicReflectApply(ArrayJoin, allowMethods, [", "]),
+  ]);
 
   const requestedHeaders = readRequestHeader(request, "Access-Control-Request-Headers");
-  const allowHeaders = config.allowHeaders?.join(", ") ?? requestedHeaders;
+  const allowHeaders = config.allowHeaders
+    ? IntrinsicReflectApply(ArrayJoin, config.allowHeaders, [", "]) as string
+    : requestedHeaders;
   if (allowHeaders) {
-    headers.set("Access-Control-Allow-Headers", allowHeaders);
+    IntrinsicReflectApply(HeadersSet, headers, ["Access-Control-Allow-Headers", allowHeaders]);
   }
 
   if (config.maxAgeSeconds !== undefined) {
-    headers.set("Access-Control-Max-Age", String(config.maxAgeSeconds));
+    IntrinsicReflectApply(HeadersSet, headers, [
+      "Access-Control-Max-Age",
+      NativeString(config.maxAgeSeconds),
+    ]);
   }
 
-  return new Response(null, { status: 204, headers });
+  return new NativeResponse(null, { status: 204, headers });
 }
 
 function withCorsHeaders(
@@ -315,9 +349,9 @@ function withCorsHeaders(
 ): Response {
   if (!config) return response;
 
-  const headers = new Headers(response.headers);
+  const headers = new NativeHeaders(response.headers);
   appendCorsHeaders(headers, config, request);
-  return new Response(response.body, {
+  return new NativeResponse(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -362,12 +396,12 @@ function createAgentServiceRuntime<
       let response: Response;
       if (method === "GET" && path === "/readiness") {
         response = shuttingDown
-          ? new Response("Shutting down", { status: 503 })
-          : new Response("OK");
+          ? new NativeResponse("Shutting down", { status: 503 })
+          : new NativeResponse("OK");
         return withCorsHeaders(response, corsConfig, request);
       }
       if (method === "GET" && path === "/liveness") {
-        response = new Response("OK");
+        response = new NativeResponse("OK");
         return withCorsHeaders(response, corsConfig, request);
       }
 
@@ -382,7 +416,7 @@ function createAgentServiceRuntime<
         }
       }
 
-      response = new Response("Not Found", { status: 404 });
+      response = new NativeResponse("Not Found", { status: 404 });
       return withCorsHeaders(response, corsConfig, request);
     },
     request(input, init) {

@@ -42,19 +42,20 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
       },
     }],
   });
-  const cases = [
+  const cases: Array<{ path: string; method: string; status: number; origin?: string }> = [
     { path: "/readiness", method: "GET", status: 200 },
     { path: "/liveness", method: "GET", status: 200 },
     { path: "/custom/item%20one?ignored=yes", method: "POST", status: 200 },
     { path: "/missing", method: "GET", status: 404 },
     { path: "/custom/item", method: "GET", status: 404 },
     { path: "/custom/item", method: "OPTIONS", status: 204 },
+    { path: "/missing", method: "GET", status: 404, origin: "https://untrusted.example.test" },
   ];
-  const requests = cases.map(({ path, method }) =>
+  const requests = cases.map(({ path, method, origin = TEST_ORIGIN }) =>
     new NativeRequest(`https://agent.example.test${path}`, {
       method,
       headers: {
-        Origin: TEST_ORIGIN,
+        Origin: origin,
         "Access-Control-Request-Method": "POST",
         "Access-Control-Request-Headers": "Content-Type,Authorization",
         "X-Veryfront-Run-Event-Token": "test-event-token",
@@ -87,9 +88,11 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
   assertEquals(dispatched.length, 1);
   assertStrictEquals(dispatched[0], requests[2], "the trusted route receives the original Request");
   assertEquals(await responses[2]!.json(), { id: "item one" });
-  for (const response of responses) {
-    assertEquals(response.headers.get("Access-Control-Allow-Origin"), TEST_ORIGIN);
-    assertEquals(response.headers.get("Access-Control-Allow-Credentials"), "true");
+  for (let index = 0; index < responses.length; index++) {
+    const response = responses[index]!;
+    const allowed = !cases[index]?.origin || cases[index]?.origin === TEST_ORIGIN;
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), allowed ? TEST_ORIGIN : null);
+    assertEquals(response.headers.get("Access-Control-Allow-Credentials"), allowed ? "true" : null);
   }
   assertEquals(
     responses[5]!.headers.get("Access-Control-Allow-Headers"),
@@ -98,6 +101,49 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
 }
 
 describe("agent service request dispatch intrinsics", () => {
+  it("ignores replaced string splitting and filtering during route selection", async () => {
+    await exerciseDispatch((_requests, leaks) => {
+      const original = String.prototype.split;
+      String.prototype.split = new Proxy(original, {
+        apply(target, receiver, args) {
+          if (receiver === "/custom/:id") {
+            leaks.push("route path split");
+            return ["missing"];
+          }
+          return ReflectApply(target, receiver, args);
+        },
+      });
+      return () => {
+        String.prototype.split = original;
+      };
+    });
+  });
+
+  it("keeps a replaced membership check from admitting an untrusted CORS origin", async () => {
+    await exerciseDispatch(() => {
+      const original = Array.prototype.includes;
+      Array.prototype.includes = () => true;
+      return () => {
+        Array.prototype.includes = original;
+      };
+    });
+  });
+
+  it("keeps CORS response headers out of replaced header writers", async () => {
+    await exerciseDispatch(() => {
+      const original = Headers.prototype.set;
+      Headers.prototype.set = function (name, value) {
+        return ReflectApply(original, this, [
+          name,
+          name === "Access-Control-Allow-Origin" ? "https://untrusted.example.test" : value,
+        ]);
+      };
+      return () => {
+        Headers.prototype.set = original;
+      };
+    });
+  });
+
   it("never exposes trusted routes to a replaced array iterator", async () => {
     await exerciseDispatch((_requests, leaks) => {
       const original = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
