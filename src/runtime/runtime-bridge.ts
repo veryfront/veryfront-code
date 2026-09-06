@@ -1295,42 +1295,38 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
   };
 }
 
+function materializeProviderStreamPart(part: unknown): unknown {
+  try {
+    const materializedPart = materializeRuntimeStreamPart(part);
+    if (
+      typeof materializedPart === "object" && materializedPart !== null &&
+      (materializedPart as { type?: unknown }).type === "error"
+    ) {
+      throw createRuntimeProviderStreamFailure(
+        (materializedPart as { error?: unknown }).error,
+      );
+    }
+    return materializedPart;
+  } catch (error) {
+    throw createRuntimeProviderStreamFailure(error);
+  }
+}
+
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
   for await (const part of stream) {
-    try {
-      const materializedPart = materializeRuntimeStreamPart(part);
-      if (
-        typeof materializedPart === "object" && materializedPart !== null &&
-        (materializedPart as { type?: unknown }).type === "error"
-      ) {
-        throw createRuntimeProviderStreamFailure(
-          (materializedPart as { error?: unknown }).error,
-        );
-      }
-      yield materializedPart;
-    } catch (error) {
-      throw createRuntimeProviderStreamFailure(error);
-    }
+    yield materializeProviderStreamPart(part);
   }
 }
 
 async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
   for await (const part of stream) {
-    try {
-      if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text-delta") {
-        continue;
-      }
-
-      if ("text" in part && typeof part.text === "string") {
-        yield part.text;
-        continue;
-      }
-
-      if ("delta" in part && typeof part.delta === "string") {
-        yield part.delta;
-      }
-    } catch (error) {
-      throw createRuntimeProviderStreamFailure(error);
+    const materializedPart = materializeProviderStreamPart(part);
+    if (
+      typeof materializedPart === "object" && materializedPart !== null &&
+      (materializedPart as { type?: unknown }).type === "text-delta"
+    ) {
+      const text = (materializedPart as { text?: unknown }).text;
+      if (typeof text === "string") yield text;
     }
   }
 }
