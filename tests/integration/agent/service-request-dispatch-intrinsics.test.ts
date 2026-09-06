@@ -115,6 +115,114 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
 }
 
 describe("agent service request dispatch intrinsics", () => {
+  it("rejects inherited routes in a sparse host route table", async () => {
+    const routes = new Array(1);
+    const runtime = defineAgentService({
+      serviceName: "sparse-routes",
+      agents: {},
+      defaultAgentId: "test",
+    }).createRuntime({ routes });
+    const request = new NativeRequest("https://agent.example.test/sparse", {
+      headers: {
+        "X-Veryfront-Run-Event-Token": "test-event-token",
+        "X-Veryfront-Inference-Token": "test-inference-token",
+      },
+    });
+    let leaked = false;
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    Object.defineProperty(Array.prototype, "0", {
+      configurable: true,
+      get() {
+        return this === routes
+          ? {
+            method: "GET",
+            path: "/sparse",
+            handler(value: Request) {
+              leaked = hasCredentials(value);
+              return new Response("injected");
+            },
+          }
+          : undefined;
+      },
+      set(value) {
+        Object.defineProperty(this, "0", {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      },
+    });
+    let response: Response;
+    try {
+      response = await runtime.fetch(request);
+    } finally {
+      if (original) Object.defineProperty(Array.prototype, "0", original);
+      else Reflect.deleteProperty(Array.prototype, "0");
+    }
+    assertEquals(leaked, false);
+    assertEquals(response.status, 404);
+  });
+
+  it("rejects an inherited wildcard in a sparse CORS allowlist", async () => {
+    const origins = new Array<string>(1);
+    const runtime = defineAgentService({
+      serviceName: "sparse-cors",
+      agents: {},
+      defaultAgentId: "test",
+      server: { cors: { origins, credentials: true } },
+    }).createRuntime();
+    const request = new NativeRequest("https://agent.example.test/readiness", {
+      headers: { Origin: "https://untrusted.example.test" },
+    });
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    Object.defineProperty(Array.prototype, "0", {
+      configurable: true,
+      get() {
+        return this === origins ? "*" : undefined;
+      },
+      set(value) {
+        Object.defineProperty(this, "0", {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      },
+    });
+    let response: Response;
+    try {
+      response = await runtime.fetch(request);
+    } finally {
+      if (original) Object.defineProperty(Array.prototype, "0", original);
+      else Reflect.deleteProperty(Array.prototype, "0");
+    }
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
+    assertEquals(response.headers.get("Access-Control-Allow-Credentials"), null);
+  });
+
+  it("preserves ordinary-object route params while bypassing inherited setters", async () => {
+    const runtime = defineAgentService({
+      serviceName: "params-compatibility",
+      agents: {},
+      defaultAgentId: "test",
+    }).createRuntime({
+      routes: [{
+        method: "GET",
+        path: "/custom/:id",
+        handler(_request, params) {
+          assertStrictEquals(Object.getPrototypeOf(params), Object.prototype);
+          assertStrictEquals(params.hasOwnProperty, Object.prototype.hasOwnProperty);
+          assertEquals(Object.hasOwn(params, "id"), true);
+          assertEquals(params.toString(), "[object Object]");
+          return Response.json(params);
+        },
+      }],
+    });
+    const response = await runtime.request("/custom/item%20one");
+    assertEquals(await response.json(), { id: "item one" });
+  });
+
   it("ignores replaced string splitting and filtering during route selection", async () => {
     await exerciseDispatch((_requests, leaks) => {
       const original = String.prototype.split;

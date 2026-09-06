@@ -17,6 +17,7 @@ const NativeArrayFrom = Array.from;
 const NativeArrayIsArray = Array.isArray;
 const ObjectCreate = Object.create;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectKeys = Object.keys;
 const NativeObjectPrototype = Object.prototype;
@@ -42,7 +43,6 @@ const HeadersForEach = Headers.prototype.forEach;
 const MapForEach = Map.prototype.forEach;
 const SetForEach = Set.prototype.forEach;
 const URLSearchParamsForEach = URLSearchParams.prototype.forEach;
-const ArrayIncludes = Array.prototype.includes;
 const ArrayJoin = Array.prototype.join;
 const StringStartsWith = String.prototype.startsWith;
 const StringIndexOf = String.prototype.indexOf;
@@ -479,7 +479,7 @@ function matchRoute(
     return undefined;
   }
 
-  const params: Record<string, string> = ObjectCreate(null);
+  const params: Record<string, string> = {};
   for (let index = 0; index < routeParts.length; index++) {
     const routePart = routeParts[index]!;
     const requestPart = requestParts[index];
@@ -488,8 +488,16 @@ function matchRoute(
     }
 
     if (IntrinsicReflectApply(StringStartsWith, routePart, [":"])) {
-      params[IntrinsicReflectApply(StringSlice, routePart, [1]) as string] =
-        NativeDecodeURIComponent(requestPart);
+      const descriptor: PropertyDescriptor = ObjectCreate(null);
+      descriptor.value = NativeDecodeURIComponent(requestPart);
+      descriptor.writable = true;
+      descriptor.enumerable = true;
+      descriptor.configurable = true;
+      ObjectDefineProperty(
+        params,
+        IntrinsicReflectApply(StringSlice, routePart, [1]) as string,
+        descriptor,
+      );
       continue;
     }
 
@@ -538,6 +546,13 @@ function normalizeCorsConfig(
   return normalized;
 }
 
+function includesOwnOrigin(origins: string[], value: string): boolean {
+  for (let index = 0; index < origins.length; index++) {
+    if (ObjectHasOwn(origins, index) && origins[index] === value) return true;
+  }
+  return false;
+}
+
 function getAllowedCorsOrigin(
   config: AgentServiceCorsConfig,
   request: Request,
@@ -546,11 +561,11 @@ function getAllowedCorsOrigin(
   if (!origin) return undefined;
 
   const origins = config.origins ?? ["*"];
-  if (IntrinsicReflectApply(ArrayIncludes, origins, ["*"])) {
+  if (includesOwnOrigin(origins, "*")) {
     return config.credentials ? origin : "*";
   }
 
-  return IntrinsicReflectApply(ArrayIncludes, origins, [origin]) ? origin : undefined;
+  return includesOwnOrigin(origins, origin) ? origin : undefined;
 }
 
 function appendCorsHeaders(
@@ -688,6 +703,7 @@ function createAgentServiceRuntime<
       // Never hand the host route table to project-replaceable iterators:
       // an injected route would receive the original credentialed request.
       for (let index = 0; index < routes.length; index++) {
+        if (!ObjectHasOwn(routes, index)) continue;
         const route = routes[index]!;
         const params = matchRoute(route, method, path);
         if (params) {

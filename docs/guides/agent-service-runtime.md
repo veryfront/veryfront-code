@@ -59,7 +59,9 @@ request and remain responsible for authentication and credential handling.
 Dispatch visits the host route table and matched path segments by index so a
 replaced array iterator cannot inject a handler before host authentication.
 CORS allowlist membership, response header writes, and route path parsing also
-use captured operations.
+use captured operations. Sparse route and origin arrays ignore inherited
+entries. Route handlers retain ordinary-object params; decoded keys bypass
+inherited setters.
 
 The service discovers the same project primitives as the app runtime:
 
