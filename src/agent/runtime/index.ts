@@ -2659,17 +2659,18 @@ export class AgentRuntime {
       );
       const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
       const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
+      const providerMessages = convertToTextGenerationRuntimeRequestMessages(
+        currentMessages,
+        // A server-local runtime fetches attachments from this machine,
+        // where a loopback or private-network URL resolves; only a remote
+        // provider needs the URL to be reachable from the internet.
+        { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
+      );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamText({
           model: streamModel,
           system: providerSystemPrompt,
-          messages: convertToTextGenerationRuntimeRequestMessages(
-            currentMessages,
-            // A server-local runtime fetches attachments from this machine,
-            // where a loopback or private-network URL resolves; only a remote
-            // provider needs the URL to be reachable from the internet.
-            { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
-          ),
+          messages: providerMessages,
           tools: runtimeTools,
           experimental_repairToolCall: repairToolCall,
           maxOutputTokens,

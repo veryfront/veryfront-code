@@ -128,20 +128,36 @@ function wrapRuntimeProviderReadableStream(
   stream: ReadableStream<unknown>,
 ): ReadableStream<unknown> {
   const reader = stream.getReader();
-  return new ReadableStream<unknown>({
-    async pull(controller) {
-      try {
-        const next = await reader.read();
-        if (next.done) controller.close();
-        else controller.enqueue(next.value);
-      } catch (error) {
-        controller.error(createRuntimeProviderStreamFailure(error));
-      }
+  let released = false;
+  const releaseReader = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+  return new ReadableStream<unknown>(
+    {
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            releaseReader();
+            controller.close();
+          } else controller.enqueue(next.value);
+        } catch (error) {
+          releaseReader();
+          controller.error(createRuntimeProviderStreamFailure(error));
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          releaseReader();
+        }
+      },
     },
-    cancel(reason) {
-      return reader.cancel(reason);
-    },
-  });
+    { highWaterMark: 0 },
+  );
 }
 
 /** Mark failures thrown by a model and its stream as provider-originated. */
@@ -194,7 +210,16 @@ function resolveRuntimeFallbackErrorEvent(error: unknown): RuntimeStreamErrorEve
 /** Serialize an outer runtime failure without inferring provider provenance. */
 export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStreamErrorEvent {
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
-  if (providerFailure.found) return resolveRuntimeStreamErrorEvent(providerFailure.cause);
+  if (providerFailure.found) {
+    const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);
+    return knownProviderError
+      ? {
+        type: "error",
+        error: knownProviderError.message,
+        code: knownProviderError.code,
+      }
+      : { type: "error", error: "Provider stream failed" };
+  }
   if (isStreamLifecycleFailure(error)) return resolveRuntimeStreamErrorEvent(error);
   return resolveRuntimeFallbackErrorEvent(error);
 }

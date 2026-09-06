@@ -109,6 +109,86 @@ describe("agent runtime stream error provenance", () => {
     assertEquals(model.streamCalls, 1);
   });
 
+  it("releases provider reader locks after completion, failure, and cancellation", async () => {
+    const completedSource = new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    });
+    const failedSource = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("private provider read failure"));
+      },
+    });
+    let cancelCount = 0;
+    let cancelReason: unknown;
+    const cancelledSource = new ReadableStream({
+      cancel(reason) {
+        cancelCount += 1;
+        cancelReason = reason;
+      },
+    });
+    const sources = [completedSource, failedSource, cancelledSource];
+    let call = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-reader-release",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () => Promise.resolve({ stream: sources[call++]! }),
+    };
+    const wrapped = withRuntimeProviderStreamErrorProvenance(model);
+
+    const completedReader = (await wrapped.doStream({})).stream.getReader();
+    assertEquals((await completedReader.read()).done, true);
+    completedReader.releaseLock();
+    assertEquals(completedSource.locked, false);
+
+    const failedReader = (await wrapped.doStream({})).stream.getReader();
+    await captureFailure(async () => {
+      await failedReader.read();
+    });
+    failedReader.releaseLock();
+    assertEquals(failedSource.locked, false);
+
+    const cancelledReader = (await wrapped.doStream({})).stream.getReader();
+    await cancelledReader.cancel("consumer stopped");
+    cancelledReader.releaseLock();
+    assertEquals(cancelledSource.locked, false);
+    assertEquals(cancelCount, 1);
+    assertEquals(cancelReason, "consumer stopped");
+  });
+
+  it("does not read ahead of a provider stream consumer", async () => {
+    let providerPulls = 0;
+    const providerStream = new ReadableStream(
+      {
+        pull() {
+          providerPulls += 1;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-backpressure",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () => Promise.resolve({ stream: providerStream }),
+    };
+
+    const wrapped = await withRuntimeProviderStreamErrorProvenance(model).doStream({});
+    await Promise.resolve();
+    assertEquals(providerPulls, 0);
+
+    const reader = wrapped.stream.getReader();
+    const read = reader.read();
+    await Promise.resolve();
+    assertEquals(providerPulls, 1);
+    await reader.cancel("consumer stopped");
+    assertEquals((await read).done, true);
+    reader.releaseLock();
+    assertEquals(providerStream.locked, false);
+  });
+
   it("keeps ignoring a late provider body-read failure after a completed legacy step", async () => {
     await withLifecycleMode("legacy", async () => {
       let pullCount = 0;
@@ -300,6 +380,29 @@ describe("agent runtime stream error provenance", () => {
           assertStringIncludes(body, `"error":"${providerFailure.expected.error}"`);
           assertStringIncludes(body, `"code":"${providerFailure.expected.code}"`);
         }
+      });
+    });
+
+    it(`redacts unknown ${mode} provider rejection details`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const privateMarker = `private-provider-token-${mode}`;
+        const model: ModelRuntime = {
+          provider: "hosted",
+          modelId: `hosted/provider-private-rejection-${mode}`,
+          doGenerate: () => Promise.reject(new Error("generate must not be called")),
+          doStream: () => Promise.reject(new Error(privateMarker)),
+        };
+        const runtimeAgent = agent({
+          model: model.modelId,
+          system: "Provider rejection privacy test",
+          resolveModelTransport: async () => ({ model }),
+        });
+
+        const body = await streamBody(runtimeAgent);
+
+        assertStringIncludes(body, '"error":"Provider stream failed"');
+        assertEquals(body.includes(privateMarker), false);
+        assertEquals(body.includes('"code"'), false);
       });
     });
 
