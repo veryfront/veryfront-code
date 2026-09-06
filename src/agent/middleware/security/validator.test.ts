@@ -1849,6 +1849,21 @@ describe("securityMiddleware", () => {
     assertEquals(assembled.includes("alert(1)"), false);
   });
 
+  it("sanitizes the separator-free assembly that triggered a merged rewrite", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [
+        { id: "system-1", role: "system", parts: [{ type: "text", text: "<script>" }] },
+        { id: "system-2", role: "system", parts: [{ type: "text", text: "alert(1)</script>" }] },
+      ],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    if (typeof context.input === "string") throw new Error("Expected structured input");
+    const text = context.input.flatMap((message) => message.parts.map(textPartValue)).join("");
+    assertEquals(text.includes("<script>"), false);
+    assertEquals(text.includes("alert(1)"), false);
+  });
+
   it("sanitizes a harmful sequence split across user-separated system messages", async () => {
     // "<script" and ">alert(1)</script>" sit in system messages a user turn
     // separates, so no adjacent run contains both - but the Anthropic and
@@ -1910,8 +1925,7 @@ describe("securityMiddleware", () => {
     // with no separator at all, which is exactly what an unspecified
     // server-side concatenation of Google `systemInstruction` parts could do.
     // The rewrite must trigger on the bare concatenation and collapse the run
-    // so the provider receives a single part whose literal blank line keeps
-    // the tag broken.
+    // so the provider receives a single part with the assembled tag removed.
     const middleware = securityMiddleware({ input: { sanitize: true } });
     const context = createContext({
       input: [

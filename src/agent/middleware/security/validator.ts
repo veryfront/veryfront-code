@@ -861,20 +861,24 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
     // a separate `systemInstruction` part whose server-side concatenation
     // separator is unspecified, as is Anthropic's between the text blocks of a
     // merged user turn, so the bare concatenation must trigger a rewrite too.
-    const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((partSeparator) =>
-      ASSEMBLED_TEXT_SEPARATORS.some((runSeparator) => {
+    let unsafeAssembly: string | undefined;
+    for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
+      for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
         const assembled = run
           .map((message) => messageTextParts(message, false).join(partSeparator))
           .join(runSeparator);
-        return (validator.sanitize(assembled) ?? assembled) !== assembled;
-      })
-    );
-    if (!runNeedsRewrite) continue;
+        if ((validator.sanitize(assembled) ?? assembled) !== assembled) {
+          unsafeAssembly = assembled;
+          break;
+        }
+      }
+      if (unsafeAssembly !== undefined) break;
+    }
+    if (unsafeAssembly === undefined) continue;
 
-    const collapsedText = sanitizeTextToFixpoint(
-      validator,
-      run.map((message) => messageTextParts(message, false).join("")).join("\n\n"),
-    );
+    // Keep the triggering assembly: introducing a newline before sanitizing
+    // can hide a script body from a pattern whose dot does not span lines.
+    const collapsedText = sanitizeTextToFixpoint(validator, unsafeAssembly);
     run.forEach((message, index) => {
       rewrites.set(
         message,
