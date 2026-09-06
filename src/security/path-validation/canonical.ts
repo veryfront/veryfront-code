@@ -15,7 +15,8 @@ function dirnamePreservingDriveRoot(path: string): string {
   return /^[A-Za-z]:$/.test(parent) && /^[A-Za-z]:\//.test(path) ? `${parent}/` : parent;
 }
 
-async function resolveThroughExistingAncestor(
+/** Resolve a physical path through its nearest existing ancestor, or return null. */
+export async function resolveThroughExistingAncestor(
   path: string,
   realPath: (candidate: string) => Promise<string>,
   allowNormalizedRetry = true,

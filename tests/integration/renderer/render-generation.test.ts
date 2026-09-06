@@ -1,20 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { execPath, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path";
-import { prepareModuleESM } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
+import { fromFileUrl, join, relative } from "#veryfront/compat/path";
+import { RenderArtifacts } from "#veryfront/transforms/esm/render-artifacts.ts";
+import { build, stop as stopBundler } from "veryfront/extensions/bundler";
 
 describe("render generation process lifetime", () => {
+  afterAll(stopBundler);
   for (const completion of ["drain", "cancel"] as const) {
     it(`retains a prepared lazy graph until process exit after ${completion}`, async () => {
       const fs = createFileSystem();
       const adapter = await runtime.get();
-      const artifacts = await fs.makeTempDir();
       const cache = await fs.makeTempDir();
       const ready = Promise.withResolvers<number>();
       const continueImport = Promise.withResolvers<void>();
@@ -31,30 +32,60 @@ describe("render generation process lifetime", () => {
       let artifactsReleased = false;
       let processResult: ReturnType<typeof runCommand> | undefined;
       let generation: RenderGeneration | undefined;
+      let artifacts: RenderArtifacts | undefined;
+      let peerArtifacts: RenderArtifacts | undefined;
       try {
-        const childPath = join(artifacts, "child.mjs");
-        await fs.writeTextFile(childPath, 'export const load = () => import("./leaf.mjs");');
-        await fs.writeTextFile(join(artifacts, "leaf.mjs"), 'export const value = "original";');
-        const prepared = await prepareModuleESM(
+        await fs.writeTextFile(
+          join(cache, "child.mjs"),
+          'export const load = () => import("./leaf.mjs");',
+        );
+        await fs.writeTextFile(join(cache, "leaf.mjs"), 'export const value = "original";');
+        await fs.writeTextFile(
+          join(cache, "entry.mjs"),
           `export async function load() {
-  const child = await import(${JSON.stringify(toFileUrl(childPath).href)});
+  const child = await import("./child.mjs");
   return (await child.load()).value;
 }`,
-          {
-            adapter,
-            projectDir: artifacts,
-            projectId: "generation-test",
-            contentSourceId: "release-test",
-            esmCacheDir: artifacts,
-            dependencyPinningCacheKey: "off",
-          },
         );
+        const output = join(cache, "output");
+        const bundled = await build({
+          entryPoints: { entry: join(cache, "entry.mjs") },
+          outdir: output,
+          bundle: true,
+          splitting: true,
+          format: "esm",
+          platform: "neutral",
+          outExtension: { ".js": ".mjs" },
+          write: false,
+        });
+        const graph = {
+          files: bundled.outputFiles.map((file) => ({
+            path: relative(output, file.path).replaceAll("\\", "/"),
+            source: file.text,
+          })),
+          entrypoints: ["entry.mjs"],
+        };
+        artifacts = new RenderArtifacts(graph, { maxEntries: 8, maxBytes: 4096 });
+        peerArtifacts = new RenderArtifacts(graph, { maxEntries: 8, maxBytes: 4096 });
+        const [prepared, peer] = await Promise.all([artifacts.prepare(), peerArtifacts.prepare()]);
+        assertEquals(prepared.id, peer.id, "replicas agree on the immutable graph identity");
+        assertEquals(
+          prepared.directory === peer.directory,
+          false,
+          "publication roots are replica-local",
+        );
+        assertEquals(
+          prepared.fileCount >= 3,
+          true,
+          "the fixture must contain separate lazy chunks",
+        );
+        await fs.writeTextFile(join(cache, "leaf.mjs"), 'export const value = "changed";');
         const fixture = fromFileUrl(new URL("./fixtures/generation-executor.mjs", import.meta.url));
         processResult = runCommand(execPath(), {
           args: [
             ...(isDeno ? ["run", "--no-config", "--allow-read", "--allow-net=127.0.0.1"] : []),
             fixture,
-            prepared.importUrl,
+            prepared.entrypointUrls[0]!,
             `http://127.0.0.1:${coordinator.addr.port}`,
           ],
           clearEnv: true,
@@ -86,7 +117,7 @@ describe("render generation process lifetime", () => {
           },
           releaseArtifacts: async () => {
             assertEquals(processExited, true, "termination must complete before artifact deletion");
-            await fs.remove(artifacts, { recursive: true });
+            await artifacts!.release();
             artifactsReleased = true;
           },
         });
@@ -96,7 +127,11 @@ describe("render generation process lifetime", () => {
           generation.render(request()),
         ]);
         await fs.remove(cache, { recursive: true });
-        assertEquals(await fs.exists(childPath), true);
+        // Another replica can discard its unexecuted copy without touching
+        // this executor's live graph, even when both copies share a filesystem.
+        await peerArtifacts.release();
+        assertEquals(await fs.exists(peer.directory), false);
+        assertEquals(await fs.exists(join(prepared.directory, "entry.mjs")), true);
         const closing = generation.close();
         await assertRejects(() => generation!.render(request()), Error, "draining");
         if (completion === "drain") {
@@ -109,14 +144,15 @@ describe("render generation process lifetime", () => {
         }
         await closing;
         assertEquals(processExited, true);
-        assertEquals(await fs.exists(artifacts), false);
+        assertEquals(await fs.exists(prepared.directory), false);
       } finally {
         continueImport.resolve();
         stop.abort();
         await Promise.allSettled([processResult, generation?.close()]);
+        await artifacts?.release();
+        await peerArtifacts?.release();
         await coordinator.stop();
         if (await fs.exists(cache)) await fs.remove(cache, { recursive: true });
-        if (await fs.exists(artifacts)) await fs.remove(artifacts, { recursive: true });
       }
     });
   }
