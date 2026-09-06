@@ -220,8 +220,11 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
     assertEquals(encoder.encode(sourceUrl), [sourceUrl]);
 
-    assertEquals(encoder.encode({ type: "error", error: "boom" }), [
-      { type: "error", errorText: "wrapped:boom" },
+    assertEquals(encoder.encode({ type: "error", error: "boom", code: "INSUFFICIENT_CREDITS" }), [
+      { type: "error", errorText: "wrapped:boom", code: "INSUFFICIENT_CREDITS" },
+    ]);
+    assertEquals(encoder.encode({ type: "error", error: "unknown" }), [
+      { type: "error", errorText: "wrapped:unknown" },
     ]);
     assertEquals(encoder.state.finishReason, "error");
   });

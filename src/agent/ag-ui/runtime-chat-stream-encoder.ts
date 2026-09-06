@@ -561,12 +561,14 @@ export function createAgUiRuntimeChatStreamEncoder(
         }
         case "error": {
           state.finishReason = "error";
+          const code = getStringField(event, "code");
           events.push({
             type: "error",
             errorText: formatErrorText(
               getStringField(event, "error") ?? "Framework stream failed",
               options.onError,
             ),
+            ...(code ? { code } : {}),
           });
           return events;
         }

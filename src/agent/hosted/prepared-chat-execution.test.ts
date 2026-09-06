@@ -16,6 +16,7 @@ import {
   runPreparedHostedChatExecutionDetached,
   streamPreparedHostedChatExecutionToAgUiResponse,
 } from "./prepared-chat-execution.ts";
+import { createHostedChatRuntimeAgentAdapter } from "./chat-runtime-agent-adapter.ts";
 
 async function* emptyStream(): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {}
 
@@ -161,6 +162,45 @@ function createPreparedExecution(input?: {
 }
 
 describe("agent/prepared-hosted-chat-execution", () => {
+  it("preserves terminal codes through the standard hosted ChatUI bridge", async () => {
+    const runtimeAgent = {
+      stream: () =>
+        Promise.resolve({
+          toDataStreamResponse: () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"error","error":"Purchase additional credits.","code":"INSUFFICIENT_CREDITS"}\n\n',
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+            ),
+        }),
+    };
+    const agent = createHostedChatRuntimeAgentAdapter({
+      runtimeAgent,
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+    });
+
+    const response = await streamPreparedHostedChatExecutionToAgUiResponse({
+      execution: {
+        ...createPreparedExecution({ stream: agent.stream }),
+        requestAbortSignal: new AbortController().signal,
+        agUiInput: createAgUiInput(),
+      },
+      runtime: createRuntimeOptions(),
+    });
+    const body = await response.text();
+
+    assertEquals(body.includes("event: RunError"), true);
+    assertEquals(body.includes('"code":"INSUFFICIENT_CREDITS"'), true);
+    assertEquals(body.includes('"message":"Purchase additional credits."'), true);
+  });
+
   it("streams a prepared execution to an AG-UI response with stable defaults", async () => {
     const traces: string[] = [];
     const activeAttributes: Record<string, unknown>[] = [];

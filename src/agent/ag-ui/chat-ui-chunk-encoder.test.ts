@@ -147,11 +147,20 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
       type: "step-end",
     });
     assertEquals(
-      normalizeChatUiMessageChunkToAgUiRuntimeEvent({ type: "error", errorText: "boom" }),
+      normalizeChatUiMessageChunkToAgUiRuntimeEvent({
+        type: "error",
+        errorText: "boom",
+        code: "INSUFFICIENT_CREDITS",
+      }),
       {
         type: "error",
         error: "boom",
+        code: "INSUFFICIENT_CREDITS",
       },
+    );
+    assertEquals(
+      normalizeChatUiMessageChunkToAgUiRuntimeEvent({ type: "error", errorText: "unknown" }),
+      { type: "error", error: "unknown" },
     );
   });
 

@@ -345,6 +345,8 @@ export type ChatStreamEvent =
   | {
     type: "error";
     errorText: string;
+    /** Stable public terminal error code, when the runtime classified the failure. */
+    code?: string;
   };
 
 /** Public API contract for message lifecycle chunk. */
@@ -471,6 +473,8 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
   | {
     type: "error";
     errorText: string;
+    /** Stable public terminal error code, when the runtime classified the failure. */
+    code?: string;
   }
   | {
     type: `data-${string}`;
