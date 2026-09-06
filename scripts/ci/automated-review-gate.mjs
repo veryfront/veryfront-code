@@ -19,6 +19,7 @@ const REVIEW_REQUEST_MARKER =
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
+const CODEX_REACTION_RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
 const TIMEOUT_DISCOVERY_ROTATION_MS = 10 * 60 * 1000;
@@ -50,6 +51,8 @@ const REVIEW_BOUNDARY_REQUEST_KEYS = new Map([
 const NO_COMMIT = () => Promise.resolve(undefined);
 /** @type {(login: string) => Promise<boolean>} */
 const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
+const WAIT_FOR_REACTION = (delayMs) =>
+  new Promise((resolve) => setTimeout(resolve, delayMs));
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 export const AUTOMATED_REVIEW_TIMEOUT_MS = 30 * 60 * 1000;
@@ -183,6 +186,37 @@ function parseCompletedCodexSummary(comment) {
     completedAt > updatedAt
   ) return undefined;
   return { shortRef: row[3], completedAt, updatedAt };
+}
+
+async function resolvedCompletedCodexSummary(
+  comment,
+  headSha,
+  boundary,
+  resolveCommit,
+) {
+  const summary = parseCompletedCodexSummary(comment);
+  if (
+    !summary ||
+    (boundary !== undefined &&
+      (summary.completedAt <= boundary.time ||
+        summary.updatedAt <= boundary.time)) ||
+    !headSha.toLowerCase().startsWith(summary.shortRef.toLowerCase())
+  ) return undefined;
+  const resolved = await resolveCommit(summary.shortRef);
+  return typeof resolved === "string" && FULL_SHA.test(resolved) &&
+      resolved.toLowerCase() === headSha.toLowerCase()
+    ? summary
+    : undefined;
+}
+
+function codexCompletionReaction(reactions, summary, boundary) {
+  return reactions.find((candidate) => {
+    const createdAt = Date.parse(candidate?.created_at ?? "");
+    return isPinnedCodexReaction(candidate?.user) &&
+      candidate?.content === "+1" &&
+      Number.isFinite(createdAt) && createdAt > summary.updatedAt &&
+      (boundary === undefined || createdAt > boundary.time);
+  });
 }
 
 function isPinnedGraphqlBot(user, login) {
@@ -1002,26 +1036,14 @@ export async function findAutomatedReview(
   }
 
   for (const comment of comments) {
-    const summary = parseCompletedCodexSummary(comment);
-    if (
-      !summary ||
-      (boundary !== undefined &&
-        (summary.completedAt <= boundary.time ||
-          summary.updatedAt <= boundary.time)) ||
-      !headSha.toLowerCase().startsWith(summary.shortRef.toLowerCase())
-    ) continue;
-    const resolved = await resolveCommit(summary.shortRef);
-    if (
-      typeof resolved !== "string" || !FULL_SHA.test(resolved) ||
-      resolved.toLowerCase() !== headSha.toLowerCase()
-    ) continue;
-    const reaction = reactions.find((candidate) => {
-      const createdAt = Date.parse(candidate?.created_at ?? "");
-      return isPinnedCodexReaction(candidate?.user) &&
-        candidate?.content === "+1" &&
-        Number.isFinite(createdAt) && createdAt > summary.updatedAt &&
-        (boundary === undefined || createdAt > boundary.time);
-    });
+    const summary = await resolvedCompletedCodexSummary(
+      comment,
+      headSha,
+      boundary,
+      resolveCommit,
+    );
+    if (!summary) continue;
+    const reaction = codexCompletionReaction(reactions, summary, boundary);
     if (!reaction) continue;
     codexSuccesses.push({
       evidence: reaction,
@@ -1361,6 +1383,9 @@ export async function publishAutomatedReviewStatus({
   queuePropagationPending = false,
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
   reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
+  reactionRetryAttempt = 0,
+  waitForReaction = WAIT_FOR_REACTION,
+  retrySnapshot = undefined,
 }) {
   let review;
   let failure;
@@ -1401,6 +1426,12 @@ export async function publishAutomatedReviewStatus({
     (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1)
   ) {
     failure = new Error("Review timeout is invalid");
+  } else if (
+    !Number.isSafeInteger(reactionRetryAttempt) || reactionRetryAttempt < 0 ||
+    reactionRetryAttempt > CODEX_REACTION_RETRY_DELAYS_MS.length ||
+    typeof waitForReaction !== "function"
+  ) {
+    failure = new Error("Review reaction retry is invalid");
   } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
   } else {
@@ -1418,6 +1449,10 @@ export async function publishAutomatedReviewStatus({
       pullAuthor = current?.data?.user?.login;
       pullSnapshotUpdatedAt = current?.data?.updated_at;
       baseBinding = pullRequestBaseBinding(current?.data);
+      if (
+        retrySnapshot !== undefined &&
+        retrySnapshot?.baseBinding !== baseBinding
+      ) throw new Error("Pull request base changed during reaction retry");
       baseRef = current?.data?.base?.ref;
       isDraft = current?.data?.draft === true;
     } catch (error) {
@@ -1494,6 +1529,13 @@ export async function publishAutomatedReviewStatus({
         baseBinding,
       );
       reviewEpochAtEvaluation = latestReviewEpochChange(events);
+      if (
+        retrySnapshot !== undefined &&
+        !sameReviewEpoch(
+          retrySnapshot?.reviewEpoch,
+          reviewEpochAtEvaluation,
+        )
+      ) throw new Error("Pull request lifecycle changed during reaction retry");
       reviewBoundary = activeReviewBoundary(
         latestReviewRequest(comments, headSha),
         reviewNotBefore,
@@ -1573,6 +1615,59 @@ export async function publishAutomatedReviewStatus({
           reviewNotBefore,
           runBoundRequest !== undefined,
         );
+        if (
+          !review &&
+          reactionRetryAttempt < CODEX_REACTION_RETRY_DELAYS_MS.length
+        ) {
+          const summaryBoundary = activeReviewBoundary(
+            latestReviewRequest(comments, headSha),
+            reviewNotBefore,
+            reviewEpochAtEvaluation,
+            runBoundRequest !== undefined,
+          );
+          let waitsForReaction = false;
+          for (const comment of comments) {
+            const summary = await resolvedCompletedCodexSummary(
+              comment,
+              headSha,
+              summaryBoundary,
+              (ref) => resolveCommitRef(github, common, ref),
+            );
+            if (
+              summary &&
+              !codexCompletionReaction(reactions, summary, summaryBoundary)
+            ) {
+              waitsForReaction = true;
+              break;
+            }
+          }
+          if (waitsForReaction) {
+            await waitForReaction(
+              CODEX_REACTION_RETRY_DELAYS_MS[reactionRetryAttempt],
+            );
+            return publishAutomatedReviewStatus({
+              github,
+              owner,
+              repo,
+              pullNumber,
+              headSha,
+              pullUrl,
+              reviewResetKey,
+              reviewFailureCommentId,
+              now,
+              reviewTimeoutMs,
+              queuePropagationPending,
+              reviewEpochNotBefore,
+              reviewEpochRunKey,
+              reactionRetryAttempt: reactionRetryAttempt + 1,
+              waitForReaction,
+              retrySnapshot: {
+                baseBinding,
+                reviewEpoch: reviewEpochAtEvaluation,
+              },
+            });
+          }
+        }
         if (!review) {
           if (
             existingPropagationRetryStatus &&

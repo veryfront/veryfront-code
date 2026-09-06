@@ -1470,6 +1470,127 @@ function githubFixture(options: {
 }
 
 describe("automated review publication", () => {
+  it("retries a completed summary until its connector reaction is visible", async () => {
+    let waits = 0;
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexReviewSummary()]],
+      },
+      pageResponses: {
+        reactions: [[[]], [[codexCompletionReaction()]]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      waitForReaction: () => {
+        waits++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(result.review?.source, "codex-summary");
+    assertEquals(waits, 1);
+    assertEquals(fixture.published.length, 1);
+  });
+
+  it("bounds completed-summary reaction retries before remaining pending", async () => {
+    let waits = 0;
+    const fixture = githubFixture({
+      pages: { comments: [[codexReviewSummary()]] },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      waitForReaction: () => {
+        waits++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(waits, 3);
+    assertEquals(fixture.published.length, 1);
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("cancels reaction retry when the head, base, or lifecycle changes", async () => {
+    const changedSnapshots = [
+      githubFixture({
+        pages: { comments: [[codexReviewSummary()]] },
+        headResponses: [HEAD, OTHER_HEAD],
+        commit: HEAD,
+      }),
+      githubFixture({
+        pages: { comments: [[codexReviewSummary()]] },
+        pullResponses: [
+          associatedPull(),
+          associatedPull({ base: { ref: OTHER_BASE_REF, repo: { id: BASE_REPOSITORY_ID } } }),
+        ],
+        commit: HEAD,
+      }),
+      githubFixture({
+        pages: { comments: [[codexReviewSummary()]] },
+        pageResponses: {
+          events: [[[]], [[{
+            event: "base_ref_changed",
+            id: 42,
+            created_at: "2026-09-06T14:32:44Z",
+          }]]],
+        },
+        commit: HEAD,
+      }),
+    ];
+
+    for (const fixture of changedSnapshots) {
+      const result = await publishAutomatedReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+        waitForReaction: () => Promise.resolve(),
+      });
+      assertEquals(result.state, "failure");
+      assertEquals(fixture.published.length, 1);
+      assertEquals(fixture.published[0]?.state, "failure");
+    }
+  });
+
+  it("fails closed when reaction retrieval fails during a retry", async () => {
+    const malformedPage = {} as unknown as unknown[];
+    const fixture = githubFixture({
+      pages: { comments: [[codexReviewSummary()]] },
+      pageResponses: { reactions: [[[]], [malformedPage]] },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      waitForReaction: () => Promise.resolve(),
+    });
+
+    assertEquals(result.state, "failure");
+    assert(result.failure instanceof Error);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
   it("fully paginates every evidence source before publishing success", async () => {
     const fixture = githubFixture({
       pages: {
