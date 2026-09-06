@@ -4,9 +4,18 @@ import { fromFileUrl } from "#std/path";
 
 const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
 
-async function readImports(relPath: string): Promise<Record<string, string>> {
+interface DenoConfig {
+  imports?: Record<string, string>;
+  exports?: Record<string, string>;
+}
+
+async function readConfig(relPath: string): Promise<DenoConfig> {
   const text = await Deno.readTextFile(`${repoRoot}${relPath}`);
-  const parsed = JSON.parse(text);
+  return JSON.parse(text);
+}
+
+async function readImports(relPath: string): Promise<Record<string, string>> {
+  const parsed = await readConfig(relPath);
   return parsed.imports ?? {};
 }
 
@@ -54,4 +63,17 @@ Deno.test("every #cli/* and #veryfront/cli/* import alias has at least one calle
   }
 
   assertEquals(dead, [], `Dead cli aliases (no callers in cli/ or src/): ${dead.join(", ")}`);
+});
+
+Deno.test("host-private CLI aliases remain exact and unpublished", async () => {
+  const config = await readConfig("deno.json");
+  const aliases = {
+    "#cli/environment-config": "./src/config/environment-config.ts",
+    "#cli/host-api-base": "./src/config/host-api-base.ts",
+  } as const;
+
+  for (const [alias, target] of Object.entries(aliases)) {
+    assertEquals(config.imports?.[alias], target);
+    assertEquals(Object.values(config.exports ?? {}).includes(target), false);
+  }
 });

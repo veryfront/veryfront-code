@@ -3728,6 +3728,25 @@ export default config as const;
       }, { prefix: "vf-config-import-alias-" });
     });
 
+    it("does not inherit host-private CLI aliases into project configuration", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "module" }));
+
+        for (const specifier of ["#cli/environment-config", "#cli/host-api-base"]) {
+          await assertRejects(
+            () =>
+              rewriteProjectConfigImportsFromProject(
+                `import value from ${JSON.stringify(specifier)};\nexport default value;\n`,
+                configPath,
+              ),
+            Error,
+            `Cannot find module '${specifier}'`,
+          );
+        }
+      }, { prefix: "vf-config-host-private-cli-alias-" });
+    });
+
     it("rejects invalid slash-prefixed project package import names", async () => {
       await withTempDir(async (projectDir) => {
         const configPath = `${projectDir}/veryfront.config.ts`;

@@ -395,6 +395,8 @@
     "#cli/observability/error-collector": "./src/observability/error-collector.ts",
     "#cli/observability/log-buffer": "./src/observability/log-buffer.ts",
     "#cli/production-error-reporting": "./src/server/production-error-reporting.ts",
+    "#cli/environment-config": "./src/config/environment-config.ts",
+    "#cli/host-api-base": "./src/config/host-api-base.ts",
     "#cli/host-runtime": "./src/platform/compat/process/host-runtime.ts",
     "#cli/platform-runtime": "./src/platform/compat/runtime.ts",
     "#cli/process-env": "./src/platform/compat/process/env.ts",
