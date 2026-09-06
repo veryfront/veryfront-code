@@ -604,10 +604,10 @@ describe("agent/hosted-child-lifecycle", () => {
       getExecutionSnapshot: () => null,
     });
 
-    assertEquals(calls, ["failed:INSUFFICIENT_CREDITS:Purchase credits."]);
+    assertEquals(calls, ["failed:INSUFFICIENT_CREDITS:Insufficient AI credits"]);
     assertEquals(result.status, "failed");
     assertEquals(result.terminalState.terminalErrorCode, "INSUFFICIENT_CREDITS");
-    assertEquals(result.terminalState.terminalErrorMessage, "Purchase credits.");
+    assertEquals(result.terminalState.terminalErrorMessage, "Insufficient AI credits");
   });
 
   it("skips selected terminal persistence while preserving failure state", async () => {
