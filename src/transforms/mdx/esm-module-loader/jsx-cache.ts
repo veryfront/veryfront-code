@@ -42,6 +42,12 @@ const IntrinsicMap = Map;
 const stringStartsWith = Function.prototype.call.bind(String.prototype.startsWith);
 const stringEndsWith = Function.prototype.call.bind(String.prototype.endsWith);
 const stringSlice = Function.prototype.call.bind(String.prototype.slice);
+const IntrinsicDate = Date;
+const hostNow = Date.now;
+const mathMin = Math.min;
+const mathMax = Math.max;
+const DatePrototypeGetTime = Date.prototype.getTime;
+const RegExpPrototypeExec = RegExp.prototype.exec;
 const IntrinsicSet = Set;
 const IntrinsicReflectApply = Reflect.apply;
 const MapPrototypeClear = Map.prototype.clear;
@@ -65,6 +71,12 @@ const cryptoRandomUUID = crypto.randomUUID.bind(crypto);
 const IntrinsicJSONParse = JSON.parse;
 const IntrinsicJSONStringify = JSON.stringify;
 const IntrinsicObjectCreate = Object.create;
+
+function dateTime(value: Date | null | undefined): number | undefined {
+  return value == null
+    ? undefined
+    : IntrinsicReflectApply(DatePrototypeGetTime, value, []) as number;
+}
 
 function mapClear<K, V>(map: Map<K, V>): void {
   IntrinsicReflectApply(MapPrototypeClear, map, []);
@@ -331,7 +343,7 @@ const servedArtifactTimestamps = new IntrinsicMap<string, number>();
 
 export function markJsxArtifactServed(
   transformedPath: string,
-  servedAtMs: number = Date.now(),
+  servedAtMs: number = hostNow(),
 ): void {
   // Delete-before-set keeps the map in recency order, so reaching capacity
   // evicts the artifact served longest ago instead of wiping the whole memo
@@ -387,7 +399,7 @@ export function refreshJsxArtifactsBounded(
   required = false,
 ): Promise<void> {
   let nextIndex = 0;
-  const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, artifactPaths.length);
+  const workerCount = mathMin(JSX_ARTIFACT_REFRESH_CONCURRENCY, artifactPaths.length);
   const workers: Array<Promise<void>> = [];
   for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
     workers[workers.length] = (async () => {
@@ -397,7 +409,7 @@ export function refreshJsxArtifactsBounded(
         await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
           await withJsxArtifactRefreshSlot(async () => {
             await assertLeaseOwned();
-            await refreshJsxArtifactMtime(artifactPath, 0, Date.now(), required);
+            await refreshJsxArtifactMtime(artifactPath, 0, hostNow(), required);
           });
         });
       }
@@ -424,7 +436,7 @@ function releaseJsxArtifact(artifactPath: string): void {
 function runLazyJsxArtifactHeartbeat(): Promise<void> {
   if (lazyJsxArtifactHeartbeatInFlight) return lazyJsxArtifactHeartbeatInFlight;
   const run = (async () => {
-    const nowMs = Date.now();
+    const nowMs = hostNow();
     const artifactPaths: string[] = [];
     for (const entry of primordialArrayValues(mapEntries(lazyJsxArtifactExpirations))) {
       const artifactPath = entry[0];
@@ -437,7 +449,7 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
     }
     let nextIndex = 0;
     const workers: Array<Promise<void>> = [];
-    const workerCount = Math.min(
+    const workerCount = mathMin(
       LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY,
       artifactPaths.length,
     );
@@ -480,7 +492,7 @@ function reserveLazyJsxArtifacts(paths: readonly string[]): (retain: boolean) =>
   const additionalCount = () =>
     primordialArrayFilter(unique, (path) => !mapHas(lazyJsxArtifactExpirations, path)).length;
   if (mapSize(lazyJsxArtifactExpirations) + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
-    const now = Date.now();
+    const now = hostNow();
     for (const entry of primordialArrayValues(mapEntries(lazyJsxArtifactExpirations))) {
       const path = entry[0];
       const record = entry[1];
@@ -506,12 +518,12 @@ function reserveLazyJsxArtifacts(paths: readonly string[]): (retain: boolean) =>
   return (retain) => {
     if (released) return;
     released = true;
-    const now = Date.now();
+    const now = hostNow();
     for (const { path, record } of primordialArrayValues(reservations)) {
       if (mapGet(lazyJsxArtifactExpirations, path) !== record) continue;
       record.reservations--;
       if (retain) {
-        record.expiresAtMs = Math.max(record.expiresAtMs, now + LAZY_JSX_ARTIFACT_RETENTION_MS);
+        record.expiresAtMs = mathMax(record.expiresAtMs, now + LAZY_JSX_ARTIFACT_RETENTION_MS);
       }
       if (record.reservations === 0 && record.expiresAtMs <= now) {
         mapDelete(lazyJsxArtifactExpirations, path);
@@ -524,7 +536,7 @@ function retainLazyJsxArtifact(artifactPath: string): void {
   reserveLazyJsxArtifacts([artifactPath])(true);
 }
 
-function isLazyJsxArtifactRetained(artifactPath: string, nowMs: number = Date.now()): boolean {
+function isLazyJsxArtifactRetained(artifactPath: string, nowMs: number = hostNow()): boolean {
   const retention = mapGet(lazyJsxArtifactExpirations, artifactPath);
   if (retention === undefined) return false;
   if (retention.reservations > 0 || retention.expiresAtMs > nowMs) return true;
@@ -564,10 +576,10 @@ function recordJsxArtifactMtimeRefresh(artifactPath: string, refreshedAtMs: numb
 export async function refreshJsxArtifactMtime(
   artifactPath: string,
   modifiedAtMs: number,
-  nowMs: number = Date.now(),
+  nowMs: number = hostNow(),
   required = false,
 ): Promise<void> {
-  const lastRefreshedMs = Math.max(
+  const lastRefreshedMs = mathMax(
     modifiedAtMs,
     mapGet(mtimeRefreshTimestamps, artifactPath) ?? 0,
   );
@@ -578,7 +590,7 @@ export async function refreshJsxArtifactMtime(
     return;
   }
   try {
-    await localFs.utime(artifactPath, new Date(nowMs), new Date(nowMs));
+    await localFs.utime(artifactPath, new IntrinsicDate(nowMs), new IntrinsicDate(nowMs));
     recordJsxArtifactMtimeRefresh(artifactPath, nowMs);
   } catch (error) {
     if (required) {
@@ -653,6 +665,11 @@ export function retainJsxArtifactForWrite(artifactPath: string): Promise<() => v
   return retainJsxArtifactPaths([artifactPath], [], false);
 }
 
+/** Pin an already validated host-owned artifact until its native import settles. */
+export function retainJsxArtifactForImport(artifactPath: string): Promise<() => void> {
+  return retainJsxArtifactPaths([artifactPath], [], true);
+}
+
 async function retainJsxArtifactPaths(
   artifactPaths: string[],
   lazyArtifactPaths: string[],
@@ -695,7 +712,7 @@ async function retainJsxArtifactPaths(
     if (released) return;
     released = true;
     hostClearInterval(heartbeat);
-    const nowMs = Date.now();
+    const nowMs = hostNow();
     for (const artifactPath of primordialArrayValues(artifactPaths)) {
       // The import just completed, so the module is as recently used as a
       // fresh cache hit: the served mark bridges the release and any
@@ -720,6 +737,7 @@ const JSX_ARTIFACT_LEASE_STALE_MS = 60_000;
 const JSX_ARTIFACT_LEASE_HEARTBEAT_MS = JSX_ARTIFACT_LEASE_STALE_MS / 3;
 const JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX = ".transition";
 const leaseEncoder = new TextEncoder();
+const encodeLeaseOwner = leaseEncoder.encode.bind(leaseEncoder);
 
 /** Base name of the directory-wide lock the artifact quota serializes on. */
 const JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME = ".jsx-directory-quota";
@@ -741,24 +759,24 @@ const JSX_LEASE_TOMBSTONE_PATTERN =
  */
 function isJsxLeaseTombstoneName(name: string): boolean {
   if (
-    !name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
-    !name.startsWith(JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME) &&
-    !name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)
+    !stringStartsWith(name, MDX_JSX_CACHE_ROOT_PREFIX) &&
+    !stringStartsWith(name, JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME) &&
+    !stringStartsWith(name, JSX_CACHE_PRUNE_REQUEST_PREFIX)
   ) {
     return false;
   }
-  return JSX_LEASE_TOMBSTONE_PATTERN.test(name);
+  return IntrinsicReflectApply(RegExpPrototypeExec, JSX_LEASE_TOMBSTONE_PATTERN, [name]) !== null;
 }
 
 function isJsxLeaseTransitionName(name: string): boolean {
   if (
-    !name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) &&
-    !name.startsWith(JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME) &&
-    !name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)
+    !stringStartsWith(name, MDX_JSX_CACHE_ROOT_PREFIX) &&
+    !stringStartsWith(name, JSX_DIRECTORY_QUOTA_LOCK_BASE_NAME) &&
+    !stringStartsWith(name, JSX_CACHE_PRUNE_REQUEST_PREFIX)
   ) {
     return false;
   }
-  return name.endsWith(`.lock${JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX}`);
+  return stringEndsWith(name, `.lock${JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX}`);
 }
 
 async function sweepJsxLeaseTombstones(
@@ -768,7 +786,7 @@ async function sweepJsxLeaseTombstones(
 ): Promise<number | undefined> {
   let retryAtMs: number | undefined;
   const noteRetry = (readyAtMs: number) => {
-    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
+    retryAtMs = retryAtMs === undefined ? readyAtMs : mathMin(retryAtMs, readyAtMs);
   };
 
   // A recovery rename can capture a fresh replacement owner after validating
@@ -802,15 +820,15 @@ function leaseTransitionPath(lockPath: string): string {
 
 async function hasLiveFilesystemLeaseTransition(
   lockPath: string,
-  nowMs = Date.now(),
+  nowMs = hostNow(),
 ): Promise<boolean> {
   const path = leaseTransitionPath(lockPath);
   let observedOwner: string;
   let modifiedAtMs: number;
   try {
-    modifiedAtMs = (await getLocalFs().stat(path)).mtime?.getTime() ?? nowMs;
+    modifiedAtMs = dateTime((await getLocalFs().stat(path)).mtime) ?? nowMs;
     observedOwner = await getLocalFs().readTextFile(path);
-    const confirmedModifiedAtMs = (await getLocalFs().stat(path)).mtime?.getTime() ?? nowMs;
+    const confirmedModifiedAtMs = dateTime((await getLocalFs().stat(path)).mtime) ?? nowMs;
     if (confirmedModifiedAtMs !== modifiedAtMs) return true;
   } catch (error) {
     if (isNotFoundError(error)) return false;
@@ -837,19 +855,19 @@ async function sweepJsxLeaseTransitions(
 
   let retryAtMs: number | undefined;
   const noteRetry = (readyAtMs: number) => {
-    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
+    retryAtMs = retryAtMs === undefined ? readyAtMs : mathMin(retryAtMs, readyAtMs);
   };
   for (const name of primordialArrayValues(names)) {
     const transitionPath = join(directory, name);
-    const lockPath = transitionPath.slice(0, -JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX.length);
+    const lockPath = stringSlice(transitionPath, 0, -JSX_ARTIFACT_LEASE_TRANSITION_SUFFIX.length);
     try {
       const modifiedAtMs = await readArtifactModifiedAtMs(transitionPath);
       if (modifiedAtMs > 0 && nowMs - modifiedAtMs >= JSX_ARTIFACT_LEASE_STALE_MS) {
-        await withJsxArtifactLock(lockPath.slice(0, -".lock".length), async () => undefined);
+        await withJsxArtifactLock(stringSlice(lockPath, 0, -".lock".length), async () => undefined);
         continue;
       }
       noteRetry(
-        modifiedAtMs === 0 ? nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS : Math.max(
+        modifiedAtMs === 0 ? nowMs + JSX_CACHE_VARIANT_MIN_AGE_MS : mathMax(
           nowMs + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
           modifiedAtMs + JSX_ARTIFACT_LEASE_STALE_MS,
         ),
@@ -867,7 +885,7 @@ async function acquireFilesystemLeaseTransition(
 ): Promise<string> {
   const path = leaseTransitionPath(lockPath);
   const owner = cryptoRandomUUID();
-  const bytes = leaseEncoder.encode(owner);
+  const bytes = encodeLeaseOwner(owner);
   for (let attempt = 0; attempt < JSX_ARTIFACT_LEASE_ATTEMPTS; attempt++) {
     try {
       await createExclusive(path, bytes);
@@ -891,9 +909,9 @@ async function recoverStaleFilesystemLease(
   let modifiedAtMs: number;
   let observedOwner: string;
   try {
-    modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+    modifiedAtMs = dateTime((await localFs.stat(lockPath)).mtime) ?? nowMs;
     await localFs.readTextFile(lockPath);
-    const confirmedModifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+    const confirmedModifiedAtMs = dateTime((await localFs.stat(lockPath)).mtime) ?? nowMs;
     if (confirmedModifiedAtMs !== modifiedAtMs) return false;
   } catch (error) {
     return isNotFoundError(error);
@@ -904,7 +922,7 @@ async function recoverStaleFilesystemLease(
   const transitionPath = leaseTransitionPath(lockPath);
   try {
     transitionOwner = cryptoRandomUUID();
-    await createExclusive(transitionPath, leaseEncoder.encode(transitionOwner));
+    await createExclusive(transitionPath, encodeLeaseOwner(transitionOwner));
   } catch (error) {
     if (!isAlreadyExistsError(error)) throw error;
     transitionOwner = undefined;
@@ -918,7 +936,7 @@ async function recoverStaleFilesystemLease(
   let releaseTransition = true;
   try {
     try {
-      modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
+      modifiedAtMs = dateTime((await localFs.stat(lockPath)).mtime) ?? nowMs;
       observedOwner = await localFs.readTextFile(lockPath);
       if (nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return false;
       await localFs.rename(lockPath, stalePath);
@@ -1000,7 +1018,7 @@ async function restoreDisplacedFilesystemLease(
 ): Promise<void> {
   for (let attempt = 0; attempt < JSX_ARTIFACT_LEASE_ATTEMPTS; attempt++) {
     try {
-      await createExclusive(lockPath, leaseEncoder.encode(owner));
+      await createExclusive(lockPath, encodeLeaseOwner(owner));
       return;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
@@ -1023,7 +1041,7 @@ async function withFilesystemLease<T>(
   if (!createExclusive || !rename) throw new Error("Atomic JSX cache leases are unavailable");
 
   const leaseOwner = cryptoRandomUUID();
-  const leaseBytes = leaseEncoder.encode(leaseOwner);
+  const leaseBytes = encodeLeaseOwner(leaseOwner);
   let acquired = false;
   for (
     let attempt = 0;
@@ -1046,7 +1064,7 @@ async function withFilesystemLease<T>(
       break;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
-      if (await recoverStaleFilesystemLease(lockPath, Date.now(), createExclusive)) continue;
+      if (await recoverStaleFilesystemLease(lockPath, hostNow(), createExclusive)) continue;
       await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
@@ -1054,7 +1072,7 @@ async function withFilesystemLease<T>(
 
   const heartbeat = localFs.utime
     ? hostSetInterval(() => {
-      const now = new Date();
+      const now = new IntrinsicDate();
       void localFs.utime?.(lockPath, now, now).catch(() => undefined);
     }, JSX_ARTIFACT_LEASE_HEARTBEAT_MS)
     : undefined;
@@ -1149,7 +1167,7 @@ export async function withJsxArtifactLock<T>(
 async function readArtifactModifiedAtMs(path: string): Promise<number> {
   return await withJsxArtifactRefreshSlot(async () => {
     try {
-      return (await getLocalFs().stat(path)).mtime?.getTime() ?? 0;
+      return dateTime((await getLocalFs().stat(path)).mtime) ?? 0;
     } catch (error) {
       if (isNotFoundError(error)) {
         // A concurrent transform may have removed the variant already.
@@ -1256,7 +1274,7 @@ async function persistJsxCachePruneRequest(
           (existing as { esmCacheDir?: unknown }).esmCacheDir === esmCacheDir &&
           typeof (existing as { fireAtMs?: unknown }).fireAtMs === "number"
         ) {
-          effectiveFireAtMs = Math.min(
+          effectiveFireAtMs = mathMin(
             (existing as { fireAtMs: number }).fireAtMs,
             fireAtMs,
           );
@@ -1380,7 +1398,7 @@ async function promotePersistedJsxCachePruneRequest(
   const noteRequestMaintenanceRetry = (readyAtMs: number) => {
     requestTombstoneRetryAtMs = requestTombstoneRetryAtMs === undefined
       ? readyAtMs
-      : Math.min(requestTombstoneRetryAtMs, readyAtMs);
+      : mathMin(requestTombstoneRetryAtMs, readyAtMs);
   };
   const retainPersistedCandidate = (request: PersistedJsxCachePruneRequest): void => {
     let index = 0;
@@ -1388,7 +1406,7 @@ async function promotePersistedJsxCachePruneRequest(
       index < persistedCandidates.length && persistedCandidates[index]!.fireAtMs <= request.fireAtMs
     ) index++;
     for (
-      let move = Math.min(persistedCandidates.length, MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES - 1);
+      let move = mathMin(persistedCandidates.length, MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES - 1);
       move > index;
       move--
     ) {
@@ -1398,7 +1416,7 @@ async function promotePersistedJsxCachePruneRequest(
   };
   try {
     const localFs = getLocalFs();
-    const nowMs = Date.now();
+    const nowMs = hostNow();
     for await (const entry of getLocalFs().readDir(requestDirectory)) {
       if (entry.isFile && isJsxLeaseTombstoneName(entry.name)) {
         const retryAtMs = await sweepJsxLeaseTombstones(
@@ -1419,10 +1437,10 @@ async function promotePersistedJsxCachePruneRequest(
         continue;
       }
       if (
-        entry.isFile && entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX) &&
-        entry.name.endsWith(".json.lock")
+        entry.isFile && stringStartsWith(entry.name, JSX_CACHE_PRUNE_REQUEST_PREFIX) &&
+        stringEndsWith(entry.name, ".json.lock")
       ) {
-        const requestName = entry.name.slice(0, -".lock".length);
+        const requestName = stringSlice(entry.name, 0, -".lock".length);
         if (await localFs.exists(join(requestDirectory, requestName))) continue;
         const lockPath = join(requestDirectory, entry.name);
         const modifiedAtMs = await readArtifactModifiedAtMs(lockPath);
@@ -1436,8 +1454,8 @@ async function promotePersistedJsxCachePruneRequest(
         continue;
       }
       if (
-        !entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX) ||
-        !entry.name.endsWith(".json")
+        !entry.isFile || !stringStartsWith(entry.name, JSX_CACHE_PRUNE_REQUEST_PREFIX) ||
+        !stringEndsWith(entry.name, ".json")
       ) continue;
       const requestPath = join(requestDirectory, entry.name);
       const request = await readPersistedJsxCachePruneRequest(requestPath);
@@ -1458,7 +1476,7 @@ async function promotePersistedJsxCachePruneRequest(
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read persisted JSX prune requests`, {
         error: cacheFilesystemErrorCode(error),
       });
-      requestTombstoneRetryAtMs = Date.now() + JSX_CACHE_VARIANT_MIN_AGE_MS;
+      requestTombstoneRetryAtMs = hostNow() + JSX_CACHE_VARIANT_MIN_AGE_MS;
     }
   }
   let queuedIndex = 0;
@@ -1472,7 +1490,7 @@ async function promotePersistedJsxCachePruneRequest(
       persistedIndex++;
       scheduleJsxCachePruneRetry(
         persisted.esmCacheDir,
-        Math.max(persisted.fireAtMs - Date.now(), 0),
+        mathMax(persisted.fireAtMs - hostNow(), 0),
         persisted.generation,
         requestDirectory,
       );
@@ -1481,7 +1499,7 @@ async function promotePersistedJsxCachePruneRequest(
       mapDelete(queuedJsxCachePrunes, queued[0]);
       scheduleJsxCachePruneRetry(
         queued[1].esmCacheDir,
-        Math.max(queued[1].fireAtMs - Date.now(), 0),
+        mathMax(queued[1].fireAtMs - hostNow(), 0),
         queued[1].persistedGeneration,
         queued[1].requestDirectory,
       );
@@ -1498,7 +1516,7 @@ async function promotePersistedJsxCachePruneRequest(
       persistedIndex++;
       scheduleJsxCachePruneRetry(
         persisted.esmCacheDir,
-        Math.max(persisted.fireAtMs - Date.now(), 0),
+        mathMax(persisted.fireAtMs - hostNow(), 0),
         persisted.generation,
         requestDirectory,
       );
@@ -1509,7 +1527,7 @@ async function promotePersistedJsxCachePruneRequest(
       mapDelete(queuedJsxCachePrunes, queued[0]);
       scheduleJsxCachePruneRetry(
         queued[1].esmCacheDir,
-        Math.max(queued[1].fireAtMs - Date.now(), 0),
+        mathMax(queued[1].fireAtMs - hostNow(), 0),
         queued[1].persistedGeneration,
         queued[1].requestDirectory,
       );
@@ -1520,7 +1538,7 @@ async function promotePersistedJsxCachePruneRequest(
     // slot a persisted project request with an earlier deadline just freed.
     scheduleJsxCachePruneRetry(
       requestDirectory,
-      Math.max(requestTombstoneRetryAtMs - Date.now(), 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      mathMax(requestTombstoneRetryAtMs - hostNow(), 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
       undefined,
       requestDirectory,
     );
@@ -1626,7 +1644,7 @@ function queueJsxCachePrune(
     if (fireAtMs < queued.fireAtMs || queued.persistedGeneration === undefined) {
       mapSet(queuedJsxCachePrunes, pruneKey, {
         esmCacheDir,
-        fireAtMs: Math.min(fireAtMs, queued.fireAtMs),
+        fireAtMs: mathMin(fireAtMs, queued.fireAtMs),
         requestDirectory,
         persistedGeneration: queued.persistedGeneration ?? persistedGeneration,
       });
@@ -1645,7 +1663,7 @@ function queueJsxCachePrune(
     // renew it, so an older in-flight sweep cannot retire work queued behind it.
     mapSet(pendingJsxCachePersistence, pruneKey, {
       esmCacheDir,
-      fireAtMs: Math.min(fireAtMs, pending?.fireAtMs ?? fireAtMs),
+      fireAtMs: mathMin(fireAtMs, pending?.fireAtMs ?? fireAtMs),
       requestDirectory,
     });
     pumpJsxCachePersistence();
@@ -1661,14 +1679,14 @@ function queueJsxCachePrune(
 
 async function revisitJsxCacheDirectory(
   esmCacheDir: string,
-  requestDirectory: string,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<void> {
   try {
     await scheduledJsxCachePruneSemaphore.acquire(() =>
       collectExcessJsxArtifacts(
         esmCacheDir,
         new IntrinsicMap(),
-        Date.now(),
+        hostNow(),
         0,
         requestDirectory,
       ).then(() => undefined)
@@ -1707,7 +1725,7 @@ function scheduleJsxCachePruneRetry(
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): void {
   const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
-  const fireAtMs = Date.now() + delayMs;
+  const fireAtMs = hostNow() + delayMs;
   const pending = mapGet(scheduledJsxCachePrunes, pruneKey);
   if (pending) {
     if (pending.timer !== undefined && pending.fireAtMs <= fireAtMs) return;
@@ -1839,7 +1857,7 @@ async function hasPersistedJsxCachePrune(esmCacheDir: string): Promise<boolean> 
   const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   try {
     for await (const entry of getLocalFs().readDir(requestDirectory)) {
-      if (!entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)) continue;
+      if (!entry.isFile || !stringStartsWith(entry.name, JSX_CACHE_PRUNE_REQUEST_PREFIX)) continue;
       try {
         const request = IntrinsicJSONParse(
           await getLocalFs().readTextFile(
@@ -1864,14 +1882,14 @@ async function clearPersistedJsxCachePruneRequestsForTests(
   try {
     const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
     for await (const entry of getLocalFs().readDir(requestDirectory)) {
-      if (!entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)) continue;
+      if (!entry.isFile || !stringStartsWith(entry.name, JSX_CACHE_PRUNE_REQUEST_PREFIX)) continue;
       const path = join(requestDirectory, entry.name);
       try {
         const request = IntrinsicJSONParse(await getLocalFs().readTextFile(path));
         if (
           typeof request === "object" && request !== null &&
           typeof (request as { esmCacheDir?: unknown }).esmCacheDir === "string" &&
-          (request as { esmCacheDir: string }).esmCacheDir.startsWith(directoryPrefix)
+          stringStartsWith((request as { esmCacheDir: string }).esmCacheDir, directoryPrefix)
         ) await removePersistedJsxCachePruneRequest(path);
       } catch { /* malformed requests are owned by the production pump */ }
     }
@@ -1885,15 +1903,15 @@ export class JsxCacheCapacityError extends Error {
 }
 
 function isJsxArtifactName(name: string): boolean {
-  return name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) && name.endsWith(".mjs");
+  return stringStartsWith(name, MDX_JSX_CACHE_ROOT_PREFIX) && stringEndsWith(name, ".mjs");
 }
 
 async function countCurrentNamespaceJsxArtifacts(esmCacheDir: string): Promise<number> {
   let count = 0;
   for await (const entry of getLocalFs().readDir(esmCacheDir)) {
     if (
-      entry.isFile && entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX) &&
-      entry.name.endsWith(".mjs")
+      entry.isFile && stringStartsWith(entry.name, MDX_JSX_CACHE_NAMESPACE_PREFIX) &&
+      stringEndsWith(entry.name, ".mjs")
     ) count++;
   }
   return count;
@@ -1919,7 +1937,7 @@ export function withJsxArtifactWriteCapacity<T>(
         remainingArtifacts = await collectExcessJsxArtifacts(
           esmCacheDir,
           new IntrinsicMap(),
-          Date.now(),
+          hostNow(),
           1,
         ) ?? await countCurrentNamespaceJsxArtifacts(esmCacheDir);
       }
@@ -1952,7 +1970,7 @@ async function removeJsxArtifactUnlessServed(
   nowMs: number,
 ): Promise<JsxArtifactRemoval> {
   return await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-    const checkedAtMs = Math.max(nowMs, Date.now());
+    const checkedAtMs = mathMax(nowMs, hostNow());
     if (
       mapHas(jsxArtifactActiveRefs, artifactPath) ||
       isLazyJsxArtifactRetained(artifactPath, checkedAtMs)
@@ -2017,7 +2035,7 @@ async function removeJsxArtifactUnlessServed(
 export async function pruneSupersededJsxArtifacts(
   esmCacheDir: string,
   writtenArtifacts: ReadonlyMap<string, string>,
-  nowMs: number = Date.now(),
+  nowMs: number = hostNow(),
 ): Promise<void> {
   if (mapSize(writtenArtifacts) === 0) return;
 
@@ -2048,7 +2066,7 @@ async function readJsxArtifactDates(
   const dated: Array<{ name: string; modifiedAtMs: number }> = [];
   let next = 0;
   const workers: Array<Promise<void>> = [];
-  const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, names.length);
+  const workerCount = mathMin(JSX_ARTIFACT_REFRESH_CONCURRENCY, names.length);
   for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
     workers[workerIndex] = (async () => {
       while (next < names.length) {
@@ -2088,8 +2106,8 @@ async function collectExcessJsxArtifacts(
         primordialArrayPush(leaseTransitions, entry.name);
         continue;
       }
-      if (entry.name.endsWith(".mjs.lock")) {
-        const artifactName = entry.name.slice(0, -".lock".length);
+      if (stringEndsWith(entry.name, ".mjs.lock")) {
+        const artifactName = stringSlice(entry.name, 0, -".lock".length);
         if (isJsxArtifactName(artifactName)) {
           possibleOrphanLeaseArtifacts[possibleOrphanLeaseArtifacts.length] = {
             artifactName,
@@ -2098,14 +2116,14 @@ async function collectExcessJsxArtifacts(
         }
         continue;
       }
-      if (!entry.name.endsWith(".mjs")) continue;
+      if (!stringEndsWith(entry.name, ".mjs")) continue;
       if (isJsxArtifactName(entry.name)) primordialArrayPush(allArtifactNames, entry.name);
-      if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
+      if (!stringStartsWith(entry.name, MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
         continue;
       }
       if (entry.name.length <= MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH) continue;
 
-      const prefix = entry.name.slice(0, MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH);
+      const prefix = stringSlice(entry.name, 0, MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH);
       if (entry.name === mapGet(currentByPrefix, prefix)) continue;
 
       const variants = mapGet(variantsByPrefix, prefix);
@@ -2129,11 +2147,11 @@ async function collectExcessJsxArtifacts(
 
   let remainingCurrentNamespaceArtifacts = primordialArrayFilter(
     allArtifactNames,
-    (name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX),
+    (name) => stringStartsWith(name, MDX_JSX_CACHE_NAMESPACE_PREFIX),
   ).length;
   const artifactNames = setFromArray(allArtifactNames);
   const noteArtifactRemoval = (name: string, removal: JsxArtifactRemoval): void => {
-    if (removal.removed && name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
+    if (removal.removed && stringStartsWith(name, MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
       remainingCurrentNamespaceArtifacts--;
     }
   };
@@ -2141,7 +2159,7 @@ async function collectExcessJsxArtifacts(
   /** Earliest moment a variant this pass left behind becomes collectable. */
   let retryAtMs: number | undefined;
   const noteRetry = (readyAtMs: number) => {
-    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
+    retryAtMs = retryAtMs === undefined ? readyAtMs : mathMin(retryAtMs, readyAtMs);
   };
   if (mapSize(currentByPrefix) > 0) {
     noteRetry(nowMs + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS);
@@ -2174,11 +2192,11 @@ async function collectExcessJsxArtifacts(
   }
 
   const quotaHandled = new IntrinsicSet<string>();
-  let directoryExcess = Math.max(
+  let directoryExcess = mathMax(
     0,
     primordialArrayFilter(
       allArtifactNames,
-      (name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX),
+      (name) => stringStartsWith(name, MDX_JSX_CACHE_NAMESPACE_PREFIX),
     ).length +
       reservedSlots -
       MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
@@ -2189,7 +2207,8 @@ async function collectExcessJsxArtifacts(
       esmCacheDir,
       primordialArrayFilter(
         allArtifactNames,
-        (name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX) && !setHas(protectedNames, name),
+        (name) =>
+          stringStartsWith(name, MDX_JSX_CACHE_NAMESPACE_PREFIX) && !setHas(protectedNames, name),
       ),
     );
     primordialArraySort(datedArtifacts, (left, right) => left.modifiedAtMs - right.modifiedAtMs);
@@ -2227,7 +2246,7 @@ async function collectExcessJsxArtifacts(
       if (setHas(quotaHandled, name)) continue;
       const artifactPath = join(esmCacheDir, name);
       const servedAtMs = mapGet(servedArtifactTimestamps, artifactPath) ?? 0;
-      const lastUsedMs = Math.max(modifiedAtMs, servedAtMs);
+      const lastUsedMs = mathMax(modifiedAtMs, servedAtMs);
       // A variant over the per-path window goes as soon as its grace period
       // ends. A variant inside the window is bounded by idle age instead:
       // without that, a path retired by a rename keeps its last variants
@@ -2249,7 +2268,7 @@ async function collectExcessJsxArtifacts(
   if (retryAtMs !== undefined) {
     scheduleJsxCachePruneRetry(
       esmCacheDir,
-      Math.max(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      mathMax(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
       undefined,
       requestDirectory,
     );
@@ -2311,6 +2330,7 @@ export const __jsxCacheInternals = {
     )?.timer !== undefined;
   },
   runLazyJsxArtifactHeartbeat,
+  revisitJsxCacheDirectory,
   servedArtifactMemoSize: (): number => mapSize(servedArtifactTimestamps),
   withJsxArtifactRefreshSlot,
   waitForJsxCacheMaintenanceForTests,

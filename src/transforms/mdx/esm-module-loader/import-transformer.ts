@@ -74,6 +74,8 @@ import type { ESMLoaderContext } from "./types.ts";
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
 const IntrinsicMap = Map;
 const IntrinsicSet = Set;
+const hostNow = Date.now;
+const dateGetTime = Function.prototype.call.bind(Date.prototype.getTime);
 const IntrinsicReflectApply = Reflect.apply;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
@@ -594,8 +596,8 @@ export async function transformJsxImports(
           markJsxArtifactServed(transformedPath);
           await refreshJsxArtifactMtime(
             transformedPath,
-            stat.mtime?.getTime() ?? 0,
-            Date.now(),
+            stat.mtime == null ? 0 : dateGetTime(stat.mtime),
+            hostNow(),
             true,
           );
           return true;

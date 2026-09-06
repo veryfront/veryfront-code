@@ -12,6 +12,8 @@ import {
 import { UNRESOLVED_VF_MODULES_PATTERN } from "./constants.ts";
 import { hashString } from "./utils/hash.ts";
 
+const stringPadStart = Function.prototype.call.bind(String.prototype.padStart);
+
 const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
@@ -117,9 +119,12 @@ const JSX_PATH_DIGEST_SALT = "vf-jsx-path\0";
  * any realistic project file count.
  */
 function formatMdxJsxCachePathDigest(filePath: string): string {
-  const low = hashString(filePath).padStart(FNV1A_DIGEST_HEX_WIDTH, "0");
-  const high = hashString(`${JSX_PATH_DIGEST_SALT}${filePath}`)
-    .padStart(FNV1A_DIGEST_HEX_WIDTH, "0");
+  const low = stringPadStart(hashString(filePath), FNV1A_DIGEST_HEX_WIDTH, "0");
+  const high = stringPadStart(
+    hashString(`${JSX_PATH_DIGEST_SALT}${filePath}`),
+    FNV1A_DIGEST_HEX_WIDTH,
+    "0",
+  );
   return `${high}${low}`;
 }
 

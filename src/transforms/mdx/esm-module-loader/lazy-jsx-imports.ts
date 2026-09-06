@@ -12,7 +12,7 @@ import {
   markJsxArtifactServed,
   refreshJsxArtifactMtime,
   resolveOwnedJsxArtifactPath,
-  retainJsxArtifactsReferencedIn,
+  retainJsxArtifactForImport,
   withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
 } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
@@ -31,6 +31,7 @@ interface Registration {
 }
 
 const IntrinsicMap = Map;
+const hostNow = Date.now;
 const IntrinsicReflectApply = Reflect.apply;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
@@ -131,7 +132,7 @@ function createLoader(path: string, snapshotKey: string, cacheDir: string): Lazy
     ensureJsxCacheSweepArmed(cacheDir);
     const hit = await withJsxArtifactLock(path, async () => {
       if (!await fs.exists(path)) return false;
-      await refreshJsxArtifactMtime(path, 0, Date.now(), true);
+      await refreshJsxArtifactMtime(path, 0, hostNow(), true);
       markJsxArtifactServed(path);
       return true;
     });
@@ -151,16 +152,12 @@ function createLoader(path: string, snapshotKey: string, cacheDir: string): Lazy
             await assertArtifactOwned();
             await fs.writeTextFile(path, source);
           }
-          await refreshJsxArtifactMtime(path, 0, Date.now(), true);
+          await refreshJsxArtifactMtime(path, 0, hostNow(), true);
           markJsxArtifactServed(path);
         });
       });
     }
-    const release = await retainJsxArtifactsReferencedIn(
-      `import ${stringify(`file://${path}`)};`,
-      cacheDir,
-      false,
-    );
+    const release = await retainJsxArtifactForImport(path);
     try {
       return await load(stableOptions);
     } finally {
