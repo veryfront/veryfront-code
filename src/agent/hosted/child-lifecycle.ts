@@ -358,7 +358,9 @@ function resolveHostedChildExecutionErrorState(
   }
 
   if (error instanceof HostedChildExecutionFailure) {
-    const providerError = resolveKnownProviderTerminalError(error);
+    const providerError = error.terminalErrorCode === undefined
+      ? resolveKnownProviderTerminalError(error)
+      : null;
     return {
       status: "failed",
       terminalErrorCode: error.terminalErrorCode ?? providerError?.code ??

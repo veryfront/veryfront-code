@@ -277,7 +277,7 @@ export function buildHostedDurableChildInvokeSuccessResult<
     snapshot: input.snapshot,
     resultMode: options.resultMode,
   });
-  const terminalError = input.snapshot.success
+  const terminalError = input.snapshot.success || input.snapshot.terminalErrorCode !== undefined
     ? null
     : resolveKnownProviderTerminalError(input.snapshot.error);
 

@@ -321,6 +321,41 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
   });
 
+  it("preserves canonical credit details from coded failed snapshots", () => {
+    const canonicalMessage = "Agent run credit limit exceeded: 2 credits required, 1 remaining. " +
+      "Start a new reviewed run or reduce the scope of this run.";
+    const result: ChildRunExecutionResult = {
+      success: false,
+      description: "Inspect logs",
+      error: canonicalMessage,
+      terminalErrorCode: "INSUFFICIENT_CREDITS",
+      steps: 0,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 12,
+    };
+
+    const durableResult = buildHostedDurableChildInvokeSuccessResult({
+      result,
+      snapshot: buildChildRunExecutionSnapshot(result),
+      identifiers: {
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        latestEventId: 7,
+        latestExternalEventSequence: 3,
+      },
+      targets: {
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        targetBranchId: BRANCH_ID,
+      },
+    });
+
+    assertEquals(durableResult.terminalErrorCode, "INSUFFICIENT_CREDITS");
+    assertEquals(durableResult.terminalErrorMessage, canonicalMessage);
+  });
+
   it("sanitizes malformed child transcript text in durable invoke success results", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,

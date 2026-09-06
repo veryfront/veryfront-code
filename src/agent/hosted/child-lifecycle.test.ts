@@ -842,4 +842,32 @@ describe("agent/hosted-child-lifecycle", () => {
     assertEquals(result.terminalState.terminalErrorCode, "RESOURCE_LIMIT_EXCEEDED");
     assertEquals(result.terminalState.terminalErrorMessage, "Resource limit exceeded");
   });
+
+  it("preserves canonical credit details with a fork runtime terminal code", async () => {
+    const canonicalMessage = "Agent run credit limit exceeded: 2 credits required, 1 remaining. " +
+      "Start a new reviewed run or reduce the scope of this run.";
+    const snapshots: ChildRunExecutionSnapshot[] = [];
+    const childResult = await handleHostedChildForkFailure({
+      error: new ForkRuntimeStreamError(canonicalMessage, "INSUFFICIENT_CREDITS"),
+      description: "Summarize the repo",
+      kind: "invoke_agent",
+      finalText: "",
+      toolCalls: [],
+      toolResults: [],
+      startTime: Date.now(),
+      onSettled: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => Promise.resolve(childResult),
+      getExecutionSnapshot: () => snapshots[0] ?? null,
+    });
+
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.terminalErrorCode, "INSUFFICIENT_CREDITS");
+    assertEquals(result.terminalState.terminalErrorMessage, canonicalMessage);
+  });
 });
