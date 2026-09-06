@@ -170,18 +170,21 @@ describe("agent/agent-service", () => {
           }),
       }],
     });
-    const init = new Request("https://source.example.test", {
-      method: "POST",
-      body: "hello",
-    });
+    const createInit = () =>
+      new Request("https://source.example.test", {
+        method: "POST",
+        body: "hello",
+      });
+    const expectedRequest = new Request("http://localhost/echo", createInit());
+    const expected = {
+      body: await expectedRequest.text(),
+      contentType: expectedRequest.headers.get("Content-Type"),
+    };
 
-    const response = await runtime.request("/echo", init);
+    const response = await runtime.request("/echo", createInit());
 
     assertEquals(response.status, 200);
-    assertEquals(await response.json(), {
-      body: "hello",
-      contentType: "text/plain;charset=UTF-8",
-    });
+    assertEquals(await response.json(), expected);
   });
 
   it("dispatches host-owned routes without taking over product policy", async () => {
