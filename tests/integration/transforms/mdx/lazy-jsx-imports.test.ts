@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
@@ -8,15 +13,20 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
-import { buildMdxJsxCacheFileName } from "./cache-format.ts";
-import { __jsxCacheInternals } from "./jsx-cache.ts";
-import { LazyJsxImportScope } from "./lazy-jsx-imports.ts";
-import { getLocalFs } from "./cache/index.ts";
-import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
+import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { __jsxCacheInternals } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import {
+  __lazyJsxImportInternals,
+  LazyJsxImportScope,
+} from "#veryfront/transforms/mdx/esm-module-loader/lazy-jsx-imports.ts";
+import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import {
+  MAX_MDX_MODULE_CODE_BYTES,
+  ModuleSourceLimitError,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
 
 function bridgeSize(): number {
-  const key = Symbol.for("veryfront.mdx.lazy-jsx-imports.v1");
-  return (globalThis as typeof globalThis & { [key]: Map<string, unknown> })[key].size;
+  return __lazyJsxImportInternals.registrationCount();
 }
 
 describe("lazy JSX regeneration", () => {
@@ -40,9 +50,11 @@ describe("lazy JSX regeneration", () => {
       scope.release();
       scope.release();
       assertEquals(bridgeSize(), initialSize);
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
       await remove(artifact);
       assertEquals((await module.load()).value, 42);
       assertEquals(await readTextFile(artifact), source);
+      assertEquals(__jsxCacheInternals.hasScheduledJsxCachePrune(dir), true);
       await remove(artifact);
       assertEquals((await module.load()).value, 42);
       assertEquals(await readTextFile(artifact), source);
@@ -149,6 +161,79 @@ export function* generate() { return import(${specifier}, yield "options"); }`;
       await assertRejects(() => import("file:///missing/module.mjs"));
     } finally {
       scope.release();
+    }
+  });
+
+  it("keeps the bridge immutable and does not expose mutable registrations", async () => {
+    const dir = await makeTempDir({ prefix: "vf-lazy-private-" });
+    const source = "export const value = 23;";
+    const artifact = join(dir, buildMdxJsxCacheFileName("/project/Lazy.tsx", source));
+    const scope = new LazyJsxImportScope();
+    try {
+      await writeTextFile(artifact, source);
+      const code = await scope.rewrite(
+        `export const load = () => import(${JSON.stringify(`file://${artifact}`)});`,
+        dir,
+      );
+      const name = Object.getOwnPropertyNames(globalThis).find((name) =>
+        name.startsWith("__vf_lazy_jsx_bridge_")
+      );
+      assertExists(name);
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+      assertExists(descriptor);
+      assertEquals(descriptor.writable, false);
+      assertEquals(descriptor.configurable, false);
+      assertEquals(Reflect.set(globalThis, name, () => []), false);
+      const key = code.match(/_bridge\("([a-f0-9]+)"\)/)?.[1];
+      assertExists(key);
+      const lookup = descriptor.value as (key: string) => unknown[];
+      const loaders = lookup(key);
+      assertEquals(Object.isFrozen(loaders), true);
+      assertEquals(Reflect.set(loaders, "0", () => Promise.resolve({ value: -1 })), false);
+      assertThrows(() => lookup("unknown"), Error, "unavailable");
+      const parent = join(dir, "parent.mjs");
+      await writeTextFile(parent, code);
+      const module = await import(`file://${parent}`);
+      scope.release();
+      assertThrows(() => lookup(key), Error, "unavailable");
+      await remove(artifact);
+      assertEquals((await module.load()).value, 23);
+    } finally {
+      scope.release();
+      await remove(dir, { recursive: true });
+    }
+  });
+
+  it("captures import attributes synchronously before recovery awaits filesystem work", async () => {
+    const dir = await makeTempDir({ prefix: "vf-lazy-attributes-" });
+    const source = "export const value = 19;";
+    const artifact = join(dir, buildMdxJsxCacheFileName("/project/Lazy.tsx", source));
+    const scope = new LazyJsxImportScope();
+    try {
+      await writeTextFile(artifact, source);
+      const code = `export const load = (options) => import(${
+        JSON.stringify(`file://${artifact}`)
+      }, options);`;
+      const parent = join(dir, "parent.mjs");
+      await writeTextFile(parent, await scope.rewrite(code, dir));
+      const module = await import(`file://${parent}`);
+      scope.release();
+      await remove(artifact);
+      let reads = 0;
+      const attributes: Record<string, string> = {};
+      const pending = module.load({
+        get with() {
+          reads++;
+          return attributes;
+        },
+      });
+      const immediateReads = reads;
+      attributes.type = "json";
+      assertEquals((await pending).value, 19);
+      assertEquals(immediateReads, 1);
+    } finally {
+      scope.release();
+      await remove(dir, { recursive: true });
     }
   });
 

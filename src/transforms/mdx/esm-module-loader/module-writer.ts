@@ -31,7 +31,7 @@ import {
   extractHttpBundlePaths,
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
-import { LazyJsxImportScope } from "./lazy-jsx-imports.ts";
+import { LazyJsxImportScope } from "#veryfront/transforms/mdx/esm-module-loader/lazy-jsx-imports.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";

@@ -1,45 +1,65 @@
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { parseMaskedImports } from "../../esm/lexer.ts";
-import { getLocalFs } from "./cache/index.ts";
+import { parseMaskedImports } from "#veryfront/transforms/esm/lexer.ts";
+import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
+  ensureJsxCacheSweepArmed,
   markJsxArtifactServed,
   refreshJsxArtifactMtime,
   resolveOwnedJsxArtifactPath,
   retainJsxArtifactsReferencedIn,
   withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
-} from "./jsx-cache.ts";
-import { assertMdxModuleSourceSize, MAX_MDX_MODULE_CODE_BYTES } from "./module-fetcher/limits.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import {
+  assertMdxModuleSourceSize,
+  MAX_MDX_MODULE_CODE_BYTES,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
 
 type LazyLoader = <T>(
   load: (options?: ImportCallOptions) => Promise<T>,
   options?: ImportCallOptions,
 ) => Promise<T>;
 interface Registration {
-  loaders: LazyLoader[];
+  loaders: readonly LazyLoader[];
   references: number;
 }
 
 // Only evaluating parents occupy this bridge. Generated modules capture the
 // callbacks at evaluation, then own their lifetime without a global payload cache.
-const bridgeKey = Symbol.for("veryfront.mdx.lazy-jsx-imports.v1");
-const globals = globalThis as typeof globalThis & {
-  [bridgeKey]?: Map<string, Registration>;
-};
-const registrations = globals[bridgeKey] ??= new Map<string, Registration>();
+const registrations = new Map<string, Registration>();
+const getRegistration = registrations.get.bind(registrations);
+const setRegistration = registrations.set.bind(registrations);
+const deleteRegistration = registrations.delete.bind(registrations);
+const freeze = Object.freeze;
+const keySalt = crypto.randomUUID();
+const bridgeName = `__vf_lazy_jsx_bridge_${crypto.randomUUID()}`;
+Object.defineProperty(globalThis, bridgeName, {
+  configurable: false,
+  writable: false,
+  value: freeze((key: string): readonly LazyLoader[] => {
+    const registration = getRegistration(key);
+    if (!registration) throw new Error("Lazy JSX recovery registration is unavailable");
+    return registration.loaders;
+  }),
+});
 // A tiny shared module has its own lexical scope, so authored bindings named
 // Symbol or globalThis cannot shadow bridge initialization. It contains no
 // project payload and works in disk-loaded and compiled runtimes alike.
-const bridgeModule = "data:text/javascript," + encodeURIComponent(
-  `export default key => globalThis[Symbol.for(${
-    JSON.stringify(Symbol.keyFor(bridgeKey))
-  })].get(key).loaders;`,
+const bridgeModule = "data:text/javascript;base64," + btoa(
+  `export default globalThis[${JSON.stringify(bridgeName)}];`,
 );
+
+/** Read-only observation for lifecycle tests; no registration data is exposed. */
+export const __lazyJsxImportInternals = {
+  registrationCount: (): number => registrations.size,
+};
 
 function createLoader(path: string, source: string, cacheDir: string): LazyLoader {
   return async (load, options) => {
+    const stableOptions = snapshotImportOptions(options);
     const fs = getLocalFs();
+    ensureJsxCacheSweepArmed(cacheDir);
     await withJsxArtifactWriteCapacity(cacheDir, path, async (assertCapacityOwned) => {
       await withJsxArtifactLock(path, async (assertArtifactOwned) => {
         if (!await fs.exists(path)) {
@@ -57,11 +77,32 @@ function createLoader(path: string, source: string, cacheDir: string): LazyLoade
       false,
     );
     try {
-      return await load(options);
+      return await load(stableOptions);
     } finally {
       release();
     }
   };
+}
+
+/** Native import reads attributes before its returned promise can be observed. */
+function snapshotImportOptions(
+  options: ImportCallOptions | undefined,
+): ImportCallOptions | undefined {
+  if (options === undefined) return undefined;
+  if (options === null || (typeof options !== "object" && typeof options !== "function")) {
+    throw new TypeError("Import options must be an object");
+  }
+  const attributes = options.with;
+  if (attributes === undefined) return undefined;
+  if (attributes === null || (typeof attributes !== "object" && typeof attributes !== "function")) {
+    throw new TypeError("Import attributes must be an object");
+  }
+  const snapshot: Record<string, string> = Object.create(null);
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value !== "string") throw new TypeError("Import attribute values must be strings");
+    snapshot[key] = value;
+  }
+  return { with: snapshot };
 }
 
 /** A temporary bridge from the host loader to one evaluated MDX module. */
@@ -97,10 +138,15 @@ export class LazyJsxImportScope {
       }
     }
     if (loaders.length === 0) return code;
-    const key = await computeHash(JSON.stringify(sources));
-    const registration = registrations.get(key) ?? { loaders, references: 0 };
+    // Keys are stable within this host instance but cannot be derived from a
+    // different project's source. The lookup bridge exposes no enumeration.
+    const key = await computeHash(keySalt + JSON.stringify(sources));
+    const registration = getRegistration(key) ?? {
+      loaders: freeze(loaders.map((loader) => freeze(loader))),
+      references: 0,
+    };
     registration.references++;
-    registrations.set(key, registration);
+    setRegistration(key, registration);
     this.#keys.push(key);
     const rewriteRange = (start: number, end: number): string => {
       let result = "";
@@ -133,8 +179,8 @@ export class LazyJsxImportScope {
 
   release(): void {
     for (const key of this.#keys) {
-      const registration = registrations.get(key);
-      if (registration && --registration.references === 0) registrations.delete(key);
+      const registration = getRegistration(key);
+      if (registration && --registration.references === 0) deleteRegistration(key);
     }
     this.#keys = [];
   }
