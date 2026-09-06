@@ -111,6 +111,76 @@ function prepare(memory: Memory<Message>, validate = true) {
 
 describe("custom memory transactions", () => {
   for (const Store of [ConversationMemory, BufferMemory, SummaryMemory]) {
+    it(`keeps ${Store.name} staged writes private until commit`, async () => {
+      const store = new Store<Message>({ type: "conversation", maxMessages: 20 });
+      const history = message("history");
+      const input = message("input");
+      await store.add(history);
+
+      const rejected = await beginMemoryTransaction(store);
+      await rejected.add(input);
+      assertEquals((await rejected.getMessages()).map(({ id }) => id), ["history", "input"]);
+      assertEquals((await store.getMessages()).map(({ id }) => id), ["history"]);
+      await rejected.rollback();
+      assertEquals((await store.getMessages()).map(({ id }) => id), ["history"]);
+
+      const accepted = await beginMemoryTransaction(store);
+      await accepted.add(input);
+      await accepted.commit();
+      assertEquals((await store.getMessages()).map(({ id }) => id), ["history", "input"]);
+    });
+
+    it(`lets only the first competing ${Store.name} transaction commit`, async () => {
+      const store = new Store<Message>({ type: "conversation", maxMessages: 20 });
+      const first = await beginMemoryTransaction(store);
+      const second = await beginMemoryTransaction(store);
+      await first.add(message("first"));
+      await second.add(message("second"));
+
+      await first.commit();
+      await assertRejects(() => second.commit(), Error, "Memory changed");
+      await second.rollback();
+
+      assertEquals((await store.getMessages()).map(({ id }) => id), ["first"]);
+    });
+
+    it(`detects ${Store.name} clear followed by an equivalent add`, async () => {
+      const store = new Store<Message>({ type: "conversation", maxMessages: 20 });
+      const history = message("history");
+      await store.add(history);
+      const transaction = await beginMemoryTransaction(store);
+      await transaction.add(message("input"));
+
+      await store.clear();
+      await store.add(history);
+
+      await assertRejects(() => transaction.commit(), Error, "Memory changed");
+      await transaction.rollback();
+      assertEquals(await store.getMessages(), [history]);
+    });
+  }
+
+  it("applies summary threshold and token compaction only to staged private state", async () => {
+    const store = new SummaryMemory<Message>({ type: "summary", maxMessages: 2, maxTokens: 30 });
+    const first = message("first");
+    const second = message("second");
+    await store.add(first);
+    await store.add(second);
+    const committed = await store.getMessages();
+    const transaction = await beginMemoryTransaction(store);
+
+    await transaction.add(message("x".repeat(80)));
+
+    assertEquals(await store.getMessages(), committed);
+    assertEquals(
+      (await transaction.getMessages()).some(({ id }) => id === "summary"),
+      true,
+    );
+    await transaction.rollback();
+    assertEquals(await store.getMessages(), committed);
+  });
+
+  for (const Store of [ConversationMemory, BufferMemory, SummaryMemory]) {
     for (const operation of ["clear", "add", "duplicate"] as const) {
       it(`rejects ${Store.name} commit after concurrent ${operation}`, async () => {
         const store = new Store<Message>({ type: "conversation", maxMessages: 100 });

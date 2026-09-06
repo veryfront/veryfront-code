@@ -6,6 +6,7 @@ import { agent, resolveSecurityMiddleware } from "#veryfront/agent/factory.ts";
 import { agentAsTool } from "#veryfront/agent/composition/composition.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { ConversationMemory } from "#veryfront/agent/memory/index.ts";
+import type { Memory } from "#veryfront/agent/memory/memory-interface.ts";
 import { cacheMiddleware } from "#veryfront/agent/middleware/cache/cache.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -1100,25 +1101,27 @@ describe("resolveSecurityMiddleware", () => {
   });
 
   it("rolls back every attempted input when a memory write partially fails", async () => {
+    let providerCalls = 0;
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/partial-input-write",
       async doGenerate() {
+        providerCalls += 1;
         throw new Error("Provider must not receive a failed input write");
       },
       async doStream() {
         throw new Error("Expected generate path");
       },
     };
-    const assistant = agent({
-      id: "partial-input-write",
+    const runtime = new AgentRuntime("partial-input-write", {
       model: "hosted/partial-input-write",
       system: "Be helpful.",
       skills: false,
       memory: { type: "conversation" },
+      middleware: resolveSecurityMiddleware({}),
       resolveModelTransport: async () => ({ model }),
     });
-    const memory = assistant.getMemory();
+    const store = new ConversationMemory<Message>({ type: "conversation" });
     const history: Message = {
       id: "history",
       role: "user",
@@ -1129,27 +1132,46 @@ describe("resolveSecurityMiddleware", () => {
       role: "assistant",
       parts: [{ type: "text", text: "concurrent output" }],
     };
-    await memory.add(history);
-    const add = memory.add.bind(memory);
-    let additions = 0;
-    memory.add = async (message) => {
-      await add(message);
-      if (++additions === 2) {
-        await add(later);
-        throw new Error("input write failed");
-      }
+    await store.add(history);
+    let rollbacks = 0;
+    const memory: Memory<Message> = {
+      add: store.add.bind(store),
+      getMessages: store.getMessages.bind(store),
+      clear: store.clear.bind(store),
+      getStats: store.getStats.bind(store),
+      async beginTransaction() {
+        let staged = await store.getMessages();
+        let additions = 0;
+        return {
+          async add(message) {
+            staged.push(message);
+            if (++additions === 2) {
+              await store.add(later);
+              throw new Error("input write failed");
+            }
+          },
+          getMessages: () => Promise.resolve([...staged]),
+          commit: () => Promise.reject(new Error("Failed input must not commit")),
+          rollback: () => {
+            rollbacks += 1;
+            staged = [];
+            return Promise.resolve();
+          },
+        };
+      },
     };
+    Reflect.set(runtime, "memory", memory);
     await assertRejects(
       () =>
-        assistant.generate({
-          input: [
-            { id: "first", role: "user", parts: [{ type: "text", text: "first input" }] },
-            { id: "second", role: "user", parts: [{ type: "text", text: "second input" }] },
-          ],
-        }),
+        runtime.generate([
+          { id: "first", role: "user", parts: [{ type: "text", text: "first input" }] },
+          { id: "second", role: "user", parts: [{ type: "text", text: "second input" }] },
+        ]),
       Error,
       "input write failed",
     );
+    assertEquals(providerCalls, 0);
+    assertEquals(rollbacks, 1);
     assertEquals(await memory.getMessages(), [history, later]);
   });
 
