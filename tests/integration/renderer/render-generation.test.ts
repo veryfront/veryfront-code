@@ -12,8 +12,14 @@ import {
   RenderArtifacts,
 } from "#veryfront/transforms/esm/render-artifacts.ts";
 import { linkRenderModules } from "#veryfront/transforms/esm/link-render-modules.ts";
-import { prepareModuleESM } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
+import {
+  prepareModuleESM,
+  prepareModuleGraphESM,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
 import { build, stop as stopBundler } from "veryfront/extensions/bundler";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
 
 describe("render generation process lifetime", () => {
   afterAll(stopBundler);
@@ -23,6 +29,8 @@ describe("render generation process lifetime", () => {
       ["bundled", "cancel"],
       ["mdx", "drain"],
       ["mdx", "cancel"],
+      ["captured-http", "drain"],
+      ["captured-http", "cancel"],
     ] as const
   ) {
     it(`retains a ${preparation} lazy graph until process exit after ${completion}`, async () => {
@@ -60,7 +68,34 @@ describe("render generation process lifetime", () => {
 }`,
         );
         let graph: RenderArtifactInput;
-        if (preparation === "mdx") {
+        if (preparation === "captured-http") {
+          __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+          try {
+            graph = await runWithCacheDir(cache, () =>
+              withMockFetch(async (input) => {
+                const source = new URL(String(input)).pathname === "/child.mjs"
+                  ? 'export const load = () => import("./leaf.mjs");'
+                  : 'export const value = "original";';
+                return new Response(source);
+              }, () =>
+                prepareModuleGraphESM(
+                  `export async function load() {
+  const child = await import("https://example.invalid/child.mjs");
+  return (await child.load()).value;
+}`,
+                  {
+                    adapter,
+                    projectDir: cache,
+                    projectId: "generation-test",
+                    contentSourceId: "release-test",
+                    dependencyPinningCacheKey: "off",
+                  },
+                  { maxEntries: 8, maxBytes: 4096 },
+                )));
+          } finally {
+            __setDistributedCacheAccessorForTests(null);
+          }
+        } else if (preparation === "mdx") {
           const childUrl = toFileUrl(join(cache, "child.mjs")).href;
           const prepared = await prepareModuleESM(
             `export async function load() {

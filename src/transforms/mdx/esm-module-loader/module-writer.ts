@@ -26,6 +26,9 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
+import { ModuleSourceCapture } from "../../esm/module-source-capture.ts";
+import { linkRenderModules } from "../../esm/link-render-modules.ts";
+import type { RenderArtifactInput, RenderArtifactLimits } from "../../esm/render-artifacts.ts";
 import {
   extractAllHttpBundlePathsRecursive,
   extractHttpBundlePaths,
@@ -137,15 +140,15 @@ export async function buildMdxModuleCacheIdentity(
 async function cacheHttpImports(
   code: string,
   importMap: ImportMapConfig,
-  reactVersion?: string,
-  serverExternalPackages?: readonly string[],
+  context: Pick<MdxPreparationContext, "reactVersion" | "serverExternalPackages">,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<string> {
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
-    reactVersion,
-    serverExternalPackages,
-  });
+    reactVersion: context.reactVersion,
+    serverExternalPackages: context.serverExternalPackages,
+  }, sourceCapture);
   return result.code;
 }
 
@@ -204,6 +207,32 @@ export function prepareModuleESM(
   return writeModuleESM(compiledProgramCode, context);
 }
 
+/**
+ * Prepare a closed, relocatable graph without evaluating tenant code.
+ *
+ * One owner accounts for the final root and captured HTTP dependencies. Every
+ * import must resolve to an observed source or a runtime builtin. Other file
+ * dependencies currently fail closed, including project/framework dependencies
+ * whose source ownership has not been recorded by their producer. This does
+ * not crawl the filesystem or fall back to host loading.
+ */
+export async function prepareModuleGraphESM(
+  compiledProgramCode: string,
+  context: MdxPreparationContext,
+  limits: RenderArtifactLimits,
+): Promise<RenderArtifactInput> {
+  const budget = { maxEntries: limits.maxEntries, maxBytes: limits.maxBytes };
+  const capture = new ModuleSourceCapture(budget);
+  try {
+    const prepared = await writeModuleESM(compiledProgramCode, { ...context }, undefined, capture);
+    const root = toFileUrl(prepared.filePath).href;
+    capture.record(root, prepared.source);
+    return await linkRenderModules({ modules: capture.take(), entrypoints: [root] }, budget);
+  } finally {
+    capture.discard();
+  }
+}
+
 export function doLoadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
@@ -214,6 +243,8 @@ export function doLoadModuleESM(
 function writeModuleESM(
   compiledProgramCode: string,
   context: MdxPreparationContext,
+  moduleCache?: undefined,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<PreparedMdxModule>;
 function writeModuleESM(
   compiledProgramCode: string,
@@ -224,6 +255,7 @@ async function writeModuleESM(
   compiledProgramCode: string,
   context: MdxPreparationContext,
   moduleCache?: ESMLoaderContext["moduleCache"],
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<PreparedMdxModule | MDXModule> {
   const loadStart = performance.now();
   const projectSlug = context.projectSlug || "unknown";
@@ -323,8 +355,8 @@ async function writeModuleESM(
         cacheHttpImports(
           rewritten,
           importMap,
-          effectiveContext.reactVersion,
-          effectiveContext.serverExternalPackages,
+          effectiveContext,
+          sourceCapture,
         ),
       { "mdx.project_slug": projectSlug },
     );
@@ -437,7 +469,7 @@ async function writeModuleESM(
             importMap,
             reactVersion: effectiveContext.reactVersion,
             serverExternalPackages: effectiveContext.serverExternalPackages,
-          });
+          }, sourceCapture);
           rewritten = refreshResult.code;
 
           // Re-write the module file with refreshed HTTP bundle paths

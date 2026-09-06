@@ -61,6 +61,11 @@ export class ModuleSourceCapture {
     this.#sources.clear();
   }
 
+  /** Mark a producer's incomplete result without throwing into shared work. */
+  invalidate(): void {
+    if (!this.#closed && !this.#failure) this.#fail("Module capture is incomplete");
+  }
+
   take(): RenderModuleSnapshot["modules"] {
     if (this.#closed) throw BUILD_FAILED.create({ detail: "Module capture is closed" });
     try {

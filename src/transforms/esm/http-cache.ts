@@ -765,12 +765,31 @@ interface CacheHttpImportsResult {
 /**
  * Rewrite HTTP imports in the provided code to cached local file:// paths.
  * Returns the rewritten code and an optional bundle manifest ID for atomic validation.
+ * An optional capture is borrowed, never closed here. Its owner must call take()
+ * to reject incomplete results, and discard() when the owning operation fails.
  */
 export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<CacheHttpImportsResult> {
-  return cacheHttpImports(code, options, createBundleAccumulator());
+  const accumulator = createBundleAccumulator();
+  accumulator.sourceCapture = sourceCapture;
+  let pending: Promise<CacheHttpImportsResult>;
+  try {
+    pending = cacheHttpImports(code, options, accumulator);
+  } catch (error) {
+    sourceCapture?.invalidate();
+    throw error;
+  }
+  if (!sourceCapture) return pending;
+  return pending.then((result) => {
+    if (!accumulator.complete) sourceCapture.invalidate();
+    return result;
+  }, (error) => {
+    sourceCapture.invalidate();
+    throw error;
+  });
 }
 
 /**
@@ -790,13 +809,9 @@ export async function captureHttpImportsToLocal(
 ): Promise<CacheHttpImportsResult & { modules: RenderModuleSnapshot["modules"] }> {
   const abortSignal = options.abortSignal;
   const sourceCapture = new ModuleSourceCapture(limits);
-  const accumulator = { ...createBundleAccumulator(), sourceCapture };
   try {
-    const result = await cacheHttpImports(code, options, accumulator);
+    const result = await cacheHttpImportsToLocal(code, options, sourceCapture);
     abortSignal?.throwIfAborted();
-    if (!accumulator.complete) {
-      throw BUILD_FAILED.create({ detail: "HTTP module capture is incomplete" });
-    }
     return { ...result, modules: sourceCapture.take() };
   } finally {
     sourceCapture.discard();

@@ -8,6 +8,14 @@ const source = "export const value = '😀';";
 const limits = { maxEntries: 2, maxBytes: 1024 };
 
 describe("ModuleSourceCapture", () => {
+  it("keeps an incomplete borrowed capture unusable without failing other producers", () => {
+    const capture = new ModuleSourceCapture(limits);
+    capture.record(url, source);
+    capture.invalidate();
+    capture.record("file:///later.mjs", "export {};");
+    assertThrows(() => capture.take(), Error, "incomplete");
+  });
+
   it("deduplicates identical sources and transfers a frozen snapshot once", () => {
     const capture = new ModuleSourceCapture(limits);
     capture.record(url, source);

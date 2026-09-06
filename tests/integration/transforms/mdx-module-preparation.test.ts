@@ -12,9 +12,87 @@ import { RenderArtifacts } from "#veryfront/transforms/esm/render-artifacts.ts";
 import {
   doLoadModuleESM,
   prepareModuleESM,
+  prepareModuleGraphESM,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
 
 describe("MDX module preparation", () => {
+  it("prepares a closed graph from the final root and HTTP dependencies on cold and warm caches", async () => {
+    const fs = createFileSystem();
+    const dir = await fs.makeTempDir();
+    const cacheDir = join(dir, "cache");
+    let fetches = 0;
+    let artifacts: RenderArtifacts | undefined;
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    try {
+      await runWithCacheDir(cacheDir, () =>
+        withMockFetch(async (input) => {
+          fetches++;
+          const source = new URL(String(input)).pathname === "/child.mjs"
+            ? 'export const load = () => import("./leaf.mjs");'
+            : "export const value = 42;";
+          return new Response(source);
+        }, async () => {
+          const context = {
+            adapter: await runtime.get(),
+            projectDir: dir,
+            projectId: "graph-test",
+            contentSourceId: "release-test",
+            dependencyPinningCacheKey: "off",
+          };
+          const code = 'export const load = () => import("https://example.invalid/child.mjs");';
+          const limits = { maxEntries: 3, maxBytes: 16_384 };
+          const cold = await prepareModuleGraphESM(code, context, limits);
+          const warm = await prepareModuleGraphESM(code, context, limits);
+          assertEquals(warm, cold, "cache hits must preserve the complete captured graph");
+          assertEquals(cold.files.length, 3);
+          assertEquals(fetches, 2, "warm preparation must not refetch the HTTP graph");
+          await assertRejects(
+            () => prepareModuleGraphESM(code, context, { ...limits, maxEntries: 2 }),
+            Error,
+            "entry budget",
+          );
+          await fs.remove(cacheDir, { recursive: true });
+          artifacts = new RenderArtifacts(cold, limits);
+          assertEquals((await artifacts.prepare()).fileCount, 3);
+        }));
+    } finally {
+      await artifacts?.release();
+      __setDistributedCacheAccessorForTests(null);
+      await fs.remove(dir, { recursive: true });
+    }
+  });
+
+  it("rejects an uncaptured file dependency instead of publishing a partial graph", async () => {
+    const fs = createFileSystem();
+    const dir = await fs.makeTempDir();
+    try {
+      const childPath = join(dir, "child.mjs");
+      await fs.writeTextFile(childPath, "export const value = 42;");
+      await assertRejects(
+        () =>
+          prepareModuleGraphESM(
+            `export * from ${jsonForInlineScript(toFileUrl(childPath).href)};`,
+            {
+              adapter: undefined,
+              projectDir: dir,
+              projectId: "graph-test",
+              contentSourceId: "release-test",
+              esmCacheDir: dir,
+              dependencyPinningCacheKey: "off",
+            },
+            { maxEntries: 3, maxBytes: 16_384 },
+          ),
+        Error,
+        "missing an imported source",
+      );
+    } finally {
+      await fs.remove(dir, { recursive: true });
+    }
+  });
+
   it("retains the final transformed root for publication after its cache file is deleted", async () => {
     const fs = createFileSystem();
     const dir = await fs.makeTempDir();

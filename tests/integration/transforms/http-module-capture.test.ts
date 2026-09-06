@@ -16,6 +16,7 @@ import { RenderArtifacts } from "#veryfront/transforms/esm/render-artifacts.ts";
 import { __getMaxInFlightHttpFetchWaiterCountForTests } from "#veryfront/transforms/esm/in-flight-manager.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { markBundleAccumulatorIncomplete } from "#veryfront/transforms/esm/bundle-accumulator.ts";
+import { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
 
 const limits = { maxEntries: 8, maxBytes: 16_384 };
 const code = 'export const load = () => import("https://example.invalid/entry.mjs");';
@@ -45,6 +46,31 @@ async function withCache(run: (cacheDir: string) => Promise<void>): Promise<void
 }
 
 describe("HTTP module source capture", () => {
+  it("borrows one capture across rewrites and accounts for the root in the same budget", async () => {
+    await withMockFetch(
+      async () => new Response("export const value = 42;"),
+      () =>
+        withCache(async (cacheDir) => {
+          const options = { cacheDir, importMap: { imports: {} } };
+          const capture = new ModuleSourceCapture({ ...limits, maxEntries: 2 });
+          try {
+            const first = await cacheHttpImportsToLocal(code, options, capture);
+            const second = await cacheHttpImportsToLocal(code, options, capture);
+            assertEquals(first.code, second.code);
+            const root = toFileUrl(join(cacheDir, "entry.mjs")).href;
+            capture.record(root, first.code);
+            assertEquals(
+              capture.take().length,
+              2,
+              "rewrites must neither close nor duplicate the borrowed capture",
+            );
+          } finally {
+            capture.discard();
+          }
+        }),
+    );
+  });
+
   it("captures lazy cyclic dependencies on fetch and cache hits without rereading at publication", async () => {
     let fetches = 0;
     await withMockFetch(async (input) => {
