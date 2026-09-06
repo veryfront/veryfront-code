@@ -546,4 +546,14 @@ describe("chat/final-step-fallback", () => {
     );
     assertEquals(accessorCalls, 0);
   });
+
+  it("rejects revoked final-step response bodies without throwing", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    assertEquals(
+      extractFinalStepTerminalError({ response: { body: proxy } }),
+      null,
+    );
+  });
 });

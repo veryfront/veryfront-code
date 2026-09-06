@@ -226,6 +226,13 @@ describe("chat/provider-errors", () => {
     assertEquals(propertyReads, 0);
   });
 
+  it("rejects revoked proxies without throwing from the direct problem parser", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    assertEquals(parseKnownProblemBody(proxy), null);
+  });
+
   it("parses provider overload, rate-limit, context-length, and credit messages", () => {
     assertEquals(parseProviderError({ type: "overloaded_error", message: "Overloaded" }), {
       code: "OVERLOADED_ERROR",

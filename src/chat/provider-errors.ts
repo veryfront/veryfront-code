@@ -55,11 +55,20 @@ const AI_PROVIDER_BILLING_ERROR = {
 const MAX_PROVIDER_ERROR_DEPTH = 64;
 const MAX_PROVIDER_ERROR_TEXT_CHARS = 256 * 1024;
 const MAX_EMBEDDED_JSON_CANDIDATES = 32;
+const arrayIsArray = Array.isArray;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  try {
+    return !arrayIsArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function getOwnDataProperty(
