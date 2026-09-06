@@ -1901,6 +1901,24 @@ describe("chat-stream-handler", () => {
       }
     });
 
+    it("keeps the unknown active lifecycle fallback code-free", () => {
+      const event = resolveRuntimeStreamErrorEvent(
+        new StreamLifecycleFailure({
+          code: "PROVIDER_STREAM_ERROR",
+          providerCode: "PROVIDER_STREAM_ERROR",
+          phase: "streaming",
+          source: "provider",
+          retryable: true,
+          publicMessage: "Provider stream failed",
+        }),
+      );
+
+      assertEquals(event, {
+        type: "error",
+        error: "Provider stream failed",
+      });
+    });
+
     it("forwards non-Error stream errors as string", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

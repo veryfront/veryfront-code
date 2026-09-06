@@ -102,7 +102,10 @@ export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErr
     return {
       type: "error",
       error: error.lifecycleError.publicMessage,
-      ...(error.lifecycleError.providerCode ? { code: error.lifecycleError.providerCode } : {}),
+      ...(error.lifecycleError.code === "PROVIDER_TERMINAL_ERROR" &&
+          error.lifecycleError.providerCode
+        ? { code: error.lifecycleError.providerCode }
+        : {}),
     };
   }
 
