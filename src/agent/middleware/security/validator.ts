@@ -943,7 +943,14 @@ interface ProviderValidationRun {
 function negativeAssertionBody(
   pattern: RegExp,
   start: number,
-): { body: string; end: number; context: boolean; backrefs: boolean; nested: boolean } | undefined {
+): {
+  body: string;
+  end: number;
+  context: boolean;
+  backrefs: boolean;
+  nested: boolean;
+  nestedNegative: boolean;
+} | undefined {
   const source = pattern.source;
   const prefixLength = source.startsWith("(?!", start)
     ? 3
@@ -954,6 +961,7 @@ function negativeAssertionBody(
   let context = false;
   let backrefs = false;
   let nested = false;
+  let nestedNegative = false;
   let groupDepth = 1;
   let classDepth = 0;
   for (let index = start + prefixLength; index < source.length; index++) {
@@ -979,6 +987,9 @@ function negativeAssertionBody(
         source.startsWith("(?=", index) || source.startsWith("(?!", index) ||
         source.startsWith("(?<=", index) || source.startsWith("(?<!", index)
       ) nested = true;
+      if (source.startsWith("(?!", index) || source.startsWith("(?<!", index)) {
+        nestedNegative = true;
+      }
       groupDepth++;
     } else if (character === ")" && --groupDepth === 0) {
       return {
@@ -987,6 +998,7 @@ function negativeAssertionBody(
         context,
         backrefs,
         nested,
+        nestedNegative,
       };
     }
   }
@@ -1060,7 +1072,7 @@ function createTrustedMatchPredicate(
     let result = "";
     let depth = 0;
     let localIgnoreCase = ignoreCase;
-    const cases: boolean[] = [];
+    const cases: Array<{ ignoreCase: boolean; assertion?: "ahead" | "behind" }> = [];
     const word = (character: string | undefined) =>
       character !== undefined &&
       new RegExp(
@@ -1087,7 +1099,15 @@ function createTrustedMatchPredicate(
           continue;
         }
         if (character === "(") {
-          cases.push(localIgnoreCase);
+          const assertion = /^\(\?(<?)=/.exec(body.slice(index));
+          if (assertion) {
+            const direction = assertion[1] ? "behind" : "ahead";
+            cases.push({ ignoreCase: localIgnoreCase, assertion: direction });
+            result += assertion[0] + (direction === "behind" ? lowerGuard : "") + "(?:";
+            index += assertion[0].length - 1;
+            continue;
+          }
+          cases.push({ ignoreCase: localIgnoreCase });
           const named = /^\(\?<[^>]+>/.exec(body.slice(index));
           if (body[index + 1] !== "?" || named) {
             result += "(?:";
@@ -1097,7 +1117,14 @@ function createTrustedMatchPredicate(
           const flags = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(body.slice(index));
           if (flags?.[1]?.includes("i")) localIgnoreCase = true;
           if (flags?.[2]?.includes("i")) localIgnoreCase = false;
-        } else if (character === ")") localIgnoreCase = cases.pop() ?? ignoreCase;
+        } else if (character === ")") {
+          const group = cases.pop();
+          localIgnoreCase = group?.ignoreCase ?? ignoreCase;
+          if (group?.assertion) {
+            result += ")" + (group.assertion === "ahead" ? upperGuard : "") + ")";
+            continue;
+          }
+        }
       }
       result += character;
     }
@@ -1142,10 +1169,15 @@ function createTrustedMatchPredicate(
       const negative = negativeAssertionBody(pattern, index);
       if (negative) {
         const original = pattern.source.slice(index, negative.end + 1);
-        if (negative.nested || (negative.context && negative.backrefs)) {
+        if (
+          negative.nestedNegative || ((negative.nested || negative.context) && negative.backrefs)
+        ) {
+          // Double negation can turn this into a positive assertion whose
+          // alternatives select different trusted and caller-dependent paths.
+          // Keep that unproven case closed rather than comparing truth alone.
           source += "(?:(?!)" + original + ")";
           fastPath = false;
-        } else if (!negative.context) {
+        } else if (!negative.context && !negative.nested) {
           source += original;
         } else {
           const body = localNegativeBody(negative.body);

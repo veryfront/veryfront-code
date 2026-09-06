@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { AGENT_ERROR } from "#veryfront/errors";
-import type { AgentRuntime } from "./index.ts";
+import type { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 
 interface TurnFrame {
   runtime: AgentRuntime;

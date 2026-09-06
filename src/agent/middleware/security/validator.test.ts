@@ -960,6 +960,10 @@ describe("securityMiddleware", () => {
         /safe(?!$hello$)/,
         /(?!(^safehello$))safe/,
         /safe(?!(?<bad>evil)$)\k<bad>/,
+        /safe(?!(?=evil))/,
+        /(?<!(?<=evil))safe/,
+        /safe(?!(?<=evil))/,
+        /safe(?!(?=(?:evil|bad)$))/,
       ]
     ) {
       const middleware = securityMiddleware({ input: { blockedPatterns: [pattern] } });
@@ -981,6 +985,8 @@ describe("securityMiddleware", () => {
         /foo(?!\n\nbar)|foo(?=\n\nbar)/,
         /foo(?!$)|(?:foo$)/,
         /foo(?!\b)|foo\b/,
+        /foo(?!(?=$))|foo(?!(?=\n\nbar))/,
+        /foo(?!(?!$|\n\nbar))/,
       ]
     ) {
       const middleware = securityMiddleware({
