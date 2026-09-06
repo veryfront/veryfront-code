@@ -1867,7 +1867,7 @@ describe("chat-stream-handler", () => {
 
       assertEquals(events, [{
         type: "error",
-        error: "Purchase additional credits or select a lower-cost model.",
+        error: "Insufficient AI credits",
         code: "INSUFFICIENT_CREDITS",
       }]);
       assertEquals(JSON.stringify(events).includes("provider-private-diagnostic"), false);

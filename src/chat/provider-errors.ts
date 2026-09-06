@@ -136,11 +136,12 @@ function parseEmbeddedErrorJson(value: string): unknown | null {
 function formatCreditProblemMessage(
   body: Record<string, unknown>,
   error: string | null,
-  suggestion: string | null,
+  hasSuggestion: boolean,
 ): string {
   const balance = body.balance;
   const required = body.required;
-  const fallback = suggestion ?? error ?? "Insufficient AI credits";
+  const isRunLimit = error?.toLowerCase().includes("agent run credit limit") ?? false;
+  const fallback = isRunLimit ? "Agent run credit limit exceeded" : "Insufficient AI credits";
   if (
     typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
     typeof required !== "number" || !Number.isFinite(required) || required < 0
@@ -148,16 +149,17 @@ function formatCreditProblemMessage(
     return fallback;
   }
 
-  const summary = error ?? "Insufficient AI credits";
-  const availability = error?.toLowerCase().includes("agent run credit limit")
-    ? "remaining"
-    : "available";
+  const summary = error === "AI credit limit exceeded" ? "AI credit limit exceeded" : fallback;
+  const availability = isRunLimit ? "remaining" : "available";
+  const suggestion = isRunLimit
+    ? "Start a new reviewed run or reduce the scope of this run."
+    : "Purchase additional credits or upgrade your subscription plan.";
   return `${summary}: ${required} credits required, ${balance} ${availability}.${
-    suggestion ? ` ${suggestion}` : ""
+    hasSuggestion ? ` ${suggestion}` : ""
   }`;
 }
 
-/** Parses known problem body. */
+/** Parses known problem bodies without exposing provider-controlled text. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
     return null;
@@ -175,7 +177,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: formatCreditProblemMessage(body, error, suggestion),
+      message: formatCreditProblemMessage(body, error, Boolean(suggestion)),
       status: 402,
     };
   }
@@ -183,7 +185,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "resource-limit-exceeded") {
     return {
       code: "RESOURCE_LIMIT_EXCEEDED",
-      message: suggestion ?? error ?? "Resource limit exceeded",
+      message: "Resource limit exceeded",
       status: 402,
     };
   }

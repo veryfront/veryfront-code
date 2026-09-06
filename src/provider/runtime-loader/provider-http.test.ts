@@ -452,7 +452,7 @@ describe("provider-http", () => {
       assertEquals(Object.keys(err).includes("responseBody"), false);
       assertEquals(parseProviderError(err), {
         code: "RESOURCE_LIMIT_EXCEEDED",
-        message: "Reduce the request size and try again.",
+        message: "Resource limit exceeded",
         status: 402,
       });
     });

@@ -516,7 +516,7 @@ describe("chat/final-step-fallback", () => {
           }),
         },
       }),
-      { code: "RESOURCE_LIMIT_EXCEEDED", message: "Reduce request size and try again." },
+      { code: "RESOURCE_LIMIT_EXCEEDED", message: "Resource limit exceeded" },
     );
   });
 });
