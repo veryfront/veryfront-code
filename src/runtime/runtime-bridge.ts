@@ -1295,6 +1295,23 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
   };
 }
 
+function materializeProviderStreamPart(part: unknown): unknown {
+  try {
+    const materializedPart = materializeRuntimeStreamPart(part);
+    if (
+      typeof materializedPart === "object" && materializedPart !== null &&
+      (materializedPart as { type?: unknown }).type === "error"
+    ) {
+      throw createRuntimeProviderStreamFailure(
+        (materializedPart as { error?: unknown }).error,
+      );
+    }
+    return materializedPart;
+  } catch (error) {
+    throw createRuntimeProviderStreamFailure(error);
+  }
+}
+
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
   const reader = stream.getReader();
   let completed = false;
@@ -1309,16 +1326,7 @@ async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterabl
       }
 
       try {
-        const materializedPart = materializeRuntimeStreamPart(part.value);
-        if (
-          typeof materializedPart === "object" && materializedPart !== null &&
-          (materializedPart as { type?: unknown }).type === "error"
-        ) {
-          throw createRuntimeProviderStreamFailure(
-            (materializedPart as { error?: unknown }).error,
-          );
-        }
-        yield materializedPart;
+        yield materializeProviderStreamPart(part.value);
       } catch (error) {
         cleanupContinuesInBackground = true;
         void (async () => {
@@ -1330,7 +1338,7 @@ async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterabl
             reader.releaseLock();
           }
         })();
-        throw createRuntimeProviderStreamFailure(error);
+        throw error;
       }
     }
   } finally {
@@ -1345,22 +1353,13 @@ async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterabl
 }
 
 async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
-  for await (const part of stream) {
-    try {
-      if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text-delta") {
-        continue;
-      }
-
-      if ("text" in part && typeof part.text === "string") {
-        yield part.text;
-        continue;
-      }
-
-      if ("delta" in part && typeof part.delta === "string") {
-        yield part.delta;
-      }
-    } catch (error) {
-      throw createRuntimeProviderStreamFailure(error);
+  for await (const materializedPart of mapReadableStream(stream)) {
+    if (
+      typeof materializedPart === "object" && materializedPart !== null &&
+      (materializedPart as { type?: unknown }).type === "text-delta"
+    ) {
+      const text = (materializedPart as { text?: unknown }).text;
+      if (typeof text === "string") yield text;
     }
   }
 }
