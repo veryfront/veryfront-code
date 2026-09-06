@@ -115,19 +115,24 @@ function appendHeader(target: Headers, name: unknown, value: unknown): void {
 
 function appendHeaderEntry(target: Headers, entry: Iterable<unknown>): void {
   if (NativeArrayIsArray(entry)) {
-    if (
-      entry.length !== 2 || !ObjectHasOwn(entry, 0) ||
-      !ObjectHasOwn(entry, 1)
-    ) {
-      throw new TypeError("Response header entry must contain a name and value");
+    const nameDescriptor = ObjectGetOwnPropertyDescriptor(entry, 0);
+    if (entry.length !== 2 || !nameDescriptor) {
+      throw new TypeError("Header entry must contain a name and value");
     }
-    appendHeader(target, entry[0], entry[1]);
+    const name = readDescriptorValue(entry, nameDescriptor);
+    const valueDescriptor = ObjectGetOwnPropertyDescriptor(entry, 1);
+    if (!valueDescriptor) throw new TypeError("Header entry must contain a name and value");
+    appendHeader(
+      target,
+      name,
+      readDescriptorValue(entry, valueDescriptor),
+    );
     return;
   }
 
   const values = NativeArrayFrom(entry);
   if (values.length !== 2) {
-    throw new TypeError("Response header entry must contain a name and value");
+    throw new TypeError("Header entry must contain a name and value");
   }
   appendHeader(target, values[0], values[1]);
 }
