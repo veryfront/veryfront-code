@@ -1,5 +1,6 @@
 import { SERVICE_OVERLOADED } from "#veryfront/errors";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 
 /** A renderer already bound to one immutable artifact generation. */
 export interface RenderGenerationExecutor {
@@ -61,6 +62,7 @@ export class RenderGeneration {
   }
 
   async render(request: Request): Promise<Response> {
+    request.signal.throwIfAborted();
     if (!this.#accepting) {
       throw SERVICE_OVERLOADED.create({ detail: "Render generation is draining" });
     }
@@ -76,46 +78,11 @@ export class RenderGeneration {
     };
     try {
       const response = await this.#render(request);
-      if (!response.body) {
-        finish();
-        return response;
-      }
-      const reader = response.body.getReader();
-      let cancelling = false;
-      const finishReading = () => {
-        finish();
-        reader.releaseLock();
-      };
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            try {
-              const next = await reader.read();
-              if (cancelling) return;
-              if (next.done) {
-                finishReading();
-                controller.close();
-              } else controller.enqueue(next.value);
-            } catch (error) {
-              if (cancelling) return;
-              finishReading();
-              controller.error(error);
-            }
-          },
-          async cancel(reason) {
-            cancelling = true;
-            try {
-              await reader.cancel(reason);
-            } finally {
-              finishReading();
-            }
-          },
-        }, { highWaterMark: 0 }),
-        {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        },
+      return completeOnResponseBodyConsumption(
+        response,
+        finish,
+        request.signal,
+        { highWaterMark: 0 },
       );
     } catch (error) {
       finish();

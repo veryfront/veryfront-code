@@ -183,6 +183,93 @@ describe("RenderGeneration", () => {
     await generation.close();
   });
 
+  it("rejects an already aborted request without starting execution", async () => {
+    let renders = 0;
+    const generation = new RenderGeneration({
+      maxConcurrentRenders: 1,
+      drainTimeoutMs: 0,
+      executor: {
+        render: async () => {
+          renders++;
+          return new Response(null);
+        },
+        stop: async () => {},
+      },
+      releaseArtifacts: async () => {},
+    });
+    await assertRejects(
+      () =>
+        generation.render(
+          new Request("http://localhost/page", {
+            signal: AbortSignal.abort(new Error("request aborted")),
+          }),
+        ),
+      Error,
+      "request aborted",
+    );
+    assertEquals(renders, 0);
+    await generation.close();
+  });
+
+  it("releases admission when a source errors before its response is consumed", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const generation = new RenderGeneration({
+      maxConcurrentRenders: 1,
+      drainTimeoutMs: 0,
+      executor: {
+        render: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(value) {
+                controller = value;
+              },
+            }, { highWaterMark: 0 }),
+          ),
+        stop: async () => {},
+      },
+      releaseArtifacts: async () => {},
+    });
+    const response = await generation.render(request());
+    controller.error(new Error("source failed"));
+    await Promise.resolve();
+    const next = await generation.render(request());
+    await next.body!.cancel();
+    await assertRejects(() => response.text(), Error, "source failed");
+    await generation.close();
+  });
+
+  it("cancels an unconsumed response when its request aborts", async () => {
+    const aborted = new AbortController();
+    const cancelled = Promise.withResolvers<void>();
+    const generation = new RenderGeneration({
+      maxConcurrentRenders: 1,
+      drainTimeoutMs: 0,
+      executor: {
+        render: async () =>
+          new Response(
+            new ReadableStream({
+              cancel() {
+                cancelled.resolve();
+              },
+            }),
+          ),
+        stop: async () => {},
+      },
+      releaseArtifacts: async () => {},
+    });
+    const response = await generation.render(
+      new Request("http://localhost/page", {
+        signal: aborted.signal,
+      }),
+    );
+    aborted.abort();
+    await cancelled.promise;
+    assertEquals(await response.text(), "");
+    const next = await generation.render(request());
+    await next.body!.cancel();
+    await generation.close();
+  });
+
   it("retains artifacts when stop fails and retries only unfinished cleanup", async () => {
     let stops = 0;
     let releases = 0;
