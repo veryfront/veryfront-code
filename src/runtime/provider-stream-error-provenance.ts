@@ -1,10 +1,14 @@
 const runtimeProviderStreamFailureCauses = new WeakMap<object, unknown>();
+const apply = Reflect.apply;
+const weakMapHas = WeakMap.prototype.has;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
 
 class RuntimeProviderStreamFailure extends Error {
   constructor(cause: unknown) {
     super("Provider stream failed");
     this.name = "RuntimeProviderStreamFailure";
-    runtimeProviderStreamFailureCauses.set(this, cause);
+    apply(weakMapSet, runtimeProviderStreamFailureCauses, [this, cause]);
   }
 }
 
@@ -24,6 +28,6 @@ export function readRuntimeProviderStreamFailureCause(
   ) {
     return { found: false };
   }
-  if (!runtimeProviderStreamFailureCauses.has(error)) return { found: false };
-  return { found: true, cause: runtimeProviderStreamFailureCauses.get(error) };
+  if (!apply(weakMapHas, runtimeProviderStreamFailureCauses, [error])) return { found: false };
+  return { found: true, cause: apply(weakMapGet, runtimeProviderStreamFailureCauses, [error]) };
 }
