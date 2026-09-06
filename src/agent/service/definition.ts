@@ -12,6 +12,14 @@ const NativeHasInstance = Function.prototype[Symbol.hasInstance];
 const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")?.get;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")
+  ?.get;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")?.get;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
+  NativeResponse.prototype,
+  "statusText",
+)?.get;
 const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
 const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
 const HeadersGet = Headers.prototype.get;
@@ -25,7 +33,7 @@ const StringSlice = String.prototype.slice;
 const NativeDecodeURIComponent = decodeURIComponent;
 const StringToUpperCase = String.prototype.toUpperCase;
 
-function readNativeValue<T>(target: Request | URL, getter: (() => T) | undefined): T {
+function readNativeValue<T>(target: object, getter: (() => T) | undefined): T {
   if (!getter) throw new TypeError("Request routing accessor is unavailable");
   return IntrinsicReflectApply(getter, target, []) as T;
 }
@@ -349,13 +357,16 @@ function withCorsHeaders(
 ): Response {
   if (!config) return response;
 
-  const headers = new NativeHeaders(response.headers);
+  const headers = new NativeHeaders(readNativeValue<Headers>(response, ResponseHeadersGet));
   appendCorsHeaders(headers, config, request);
-  return new NativeResponse(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return new NativeResponse(
+    readNativeValue<ReadableStream<Uint8Array> | null>(response, ResponseBodyGet),
+    {
+      status: readNativeValue<number>(response, ResponseStatusGet),
+      statusText: readNativeValue<string>(response, ResponseStatusTextGet),
+      headers,
+    },
+  );
 }
 
 function toRuntimeRequest(input: string | URL | Request, init?: RequestInit): Request {

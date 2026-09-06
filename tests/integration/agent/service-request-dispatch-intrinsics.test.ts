@@ -3,13 +3,17 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineAgentService } from "#veryfront/agent/service/definition.ts";
 
 const NativeRequest = Request;
+const NativeHeaders = Headers;
 const NativeURL = URL;
 const ReflectApply = Reflect.apply;
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(Response.prototype, "headers")!.get!;
 const HeadersGet = Headers.prototype.get;
+const HeadersSet = Headers.prototype.set;
+const StringStartsWith = String.prototype.startsWith;
 const TEST_ORIGIN = "https://studio.example.test";
 
-type InstallProbe = (requests: Request[], leaks: string[]) => () => void;
+type InstallProbe = (requests: Request[], leaks: string[], origins: string[]) => () => void;
 
 function hasCredentials(value: unknown): boolean {
   try {
@@ -27,11 +31,12 @@ function hasCredentialHeaders(value: unknown): boolean {
 
 async function exerciseDispatch(install: InstallProbe): Promise<void> {
   const dispatched: Request[] = [];
+  const origins = [TEST_ORIGIN];
   const runtime = defineAgentService({
     serviceName: "request-boundary-test",
     agents: {},
     defaultAgentId: "test",
-    server: { cors: { origins: [TEST_ORIGIN], credentials: true } },
+    server: { cors: { origins, credentials: true } },
   }).createRuntime({
     routes: [{
       method: "POST",
@@ -50,6 +55,12 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
     { path: "/custom/item", method: "GET", status: 404 },
     { path: "/custom/item", method: "OPTIONS", status: 204 },
     { path: "/missing", method: "GET", status: 404, origin: "https://untrusted.example.test" },
+    {
+      path: "/missing",
+      method: "OPTIONS",
+      status: 204,
+      origin: "https://untrusted.example.test",
+    },
   ];
   const requests = cases.map(({ path, method, origin = TEST_ORIGIN }) =>
     new NativeRequest(`https://agent.example.test${path}`, {
@@ -64,7 +75,7 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
     })
   );
   const leaks: string[] = [];
-  const restore = install(requests, leaks);
+  const restore = install(requests, leaks, origins);
   const responses: Response[] = [];
   try {
     for (const request of requests) responses.push(await runtime.fetch(request));
@@ -120,11 +131,69 @@ describe("agent service request dispatch intrinsics", () => {
   });
 
   it("keeps a replaced membership check from admitting an untrusted CORS origin", async () => {
-    await exerciseDispatch(() => {
+    await exerciseDispatch((_requests, leaks, origins) => {
       const original = Array.prototype.includes;
-      Array.prototype.includes = () => true;
+      Array.prototype.includes = function (searchElement, fromIndex) {
+        if (this === origins) {
+          leaks[leaks.length] = "CORS allowlist includes";
+          return true;
+        }
+        return ReflectApply(original, this, [searchElement, fromIndex]);
+      };
       return () => {
         Array.prototype.includes = original;
+      };
+    });
+  });
+
+  it("keeps a replaced Response headers getter from injecting CORS headers", async () => {
+    await exerciseDispatch((_requests, leaks) => {
+      const original = Object.getOwnPropertyDescriptor(Response.prototype, "headers")!;
+      Object.defineProperty(Response.prototype, "headers", {
+        ...original,
+        get(this: Response) {
+          leaks[leaks.length] = "Response headers";
+          const headers = new NativeHeaders(ReflectApply(ResponseHeadersGet, this, []));
+          ReflectApply(HeadersSet, headers, [
+            "Access-Control-Allow-Origin",
+            "https://untrusted.example.test",
+          ]);
+          ReflectApply(HeadersSet, headers, ["Access-Control-Allow-Credentials", "true"]);
+          return headers;
+        },
+      });
+      return () => Object.defineProperty(Response.prototype, "headers", original);
+    });
+  });
+
+  for (const property of ["startsWith", "indexOf", "slice"] as const) {
+    it(`keeps route matching on the captured String ${property} method`, async () => {
+      await exerciseDispatch((_requests, leaks) => {
+        const original = Object.getOwnPropertyDescriptor(String.prototype, property)!;
+        Object.defineProperty(String.prototype, property, {
+          ...original,
+          value(this: string, ...args: unknown[]) {
+            const value = String(this);
+            if (ReflectApply(StringStartsWith, value, ["/"]) || value === ":id") {
+              leaks[leaks.length] = property;
+            }
+            return ReflectApply(original.value, this, args);
+          },
+        });
+        return () => Object.defineProperty(String.prototype, property, original);
+      });
+    });
+  }
+
+  it("keeps route parameter decoding on the captured decoder", async () => {
+    await exerciseDispatch((_requests, leaks) => {
+      const original = globalThis.decodeURIComponent;
+      globalThis.decodeURIComponent = (value) => {
+        if (value === "item%20one") leaks[leaks.length] = "decodeURIComponent";
+        return original(value);
+      };
+      return () => {
+        globalThis.decodeURIComponent = original;
       };
     });
   });
