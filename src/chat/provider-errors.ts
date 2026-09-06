@@ -1,4 +1,5 @@
 import { safeJsonParse } from "#veryfront/utils/json.ts";
+import { ProviderQuotaError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 export { safeJsonParse };
 export type { SafeJsonParseResult } from "#veryfront/utils/json.ts";
 
@@ -431,6 +432,10 @@ function parseProviderErrorInner(
 ): ParsedProviderError {
   if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
     return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
+
+  if (error instanceof ProviderQuotaError) {
+    return AI_PROVIDER_BILLING_ERROR;
   }
 
   if (isErrorRecord(error)) {

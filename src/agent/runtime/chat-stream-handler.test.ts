@@ -34,6 +34,7 @@ import {
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -1899,6 +1900,24 @@ describe("chat-stream-handler", () => {
         assertEquals(event, testCase.expected);
         assertEquals(JSON.stringify(event).includes("provider-private"), false);
       }
+    });
+
+    it("preserves typed provider quota failures before applying 429 heuristics", () => {
+      const event = resolveRuntimeStreamErrorEvent(
+        new ProviderQuotaError({
+          provider: "openai",
+          status: 429,
+          message: "Provider request failed with status 429",
+          retryable: false,
+        }),
+      );
+
+      assertEquals(event, {
+        type: "error",
+        code: "AI_PROVIDER_BILLING_ERROR",
+        error:
+          "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+      });
     });
 
     it("keeps the unknown active lifecycle fallback code-free", () => {
