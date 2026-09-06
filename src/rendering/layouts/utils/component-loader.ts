@@ -455,7 +455,7 @@ export function loadMDXLayout(
         const mod = await awaitAbortable(
           mdxRenderer.loadModuleESM("", {
             adapter,
-            sourcePath: options.sourcePath,
+            sourcePath: options.sourcePath ?? bundle.sourcePath,
           }),
           signal,
         );
@@ -484,7 +484,7 @@ export function loadMDXLayout(
       const mod = (await awaitAbortable(
         mdxRenderer.loadModuleESM(code, {
           adapter,
-          sourcePath: options.sourcePath,
+          sourcePath: options.sourcePath ?? bundle.sourcePath,
           projectId,
           projectDir,
           projectSlug,

@@ -4,6 +4,7 @@ import type { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { isAbsolute, join } from "#veryfront/compat/path";
 
 export interface MDXCompilerConfig {
   projectDir: string;
@@ -62,6 +63,11 @@ export class MDXCompiler {
         );
       },
       { ...spanAttrs, "mdx.mode": this.config.mode },
+    ).then((bundle) =>
+      filePath === undefined ? bundle : {
+        ...bundle,
+        sourcePath: isAbsolute(filePath) ? filePath : join(this.config.projectDir, filePath),
+      }
     );
   }
 
