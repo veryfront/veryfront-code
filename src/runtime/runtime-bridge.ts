@@ -1146,6 +1146,13 @@ function normalizeStreamPart(part: unknown): unknown {
       };
     }
 
+    if ("text" in part && typeof part.text === "string") {
+      return {
+        type: "text-delta",
+        text: part.text,
+      };
+    }
+
     return part;
   }
 

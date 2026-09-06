@@ -474,6 +474,43 @@ describe("agent runtime stream error provenance", () => {
       });
     });
 
+    it(`redacts ${mode} provider-part decoder failures`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const privateMarker = `private-provider-decoder-${mode}`;
+        const providerPart = Object.defineProperty({ type: "text-delta" }, "text", {
+          enumerable: true,
+          get() {
+            throw new Error(privateMarker);
+          },
+        });
+        const model: ModelRuntime = {
+          provider: "hosted",
+          modelId: `hosted/provider-decoder-private-${mode}`,
+          doGenerate: () => Promise.reject(new Error("generate must not be called")),
+          doStream: () =>
+            Promise.resolve({
+              stream: new ReadableStream({
+                start(controller) {
+                  controller.enqueue(providerPart);
+                  controller.close();
+                },
+              }),
+            }),
+        };
+        const runtimeAgent = agent({
+          model: model.modelId,
+          system: "Provider decoder privacy test",
+          resolveModelTransport: async () => ({ model }),
+        });
+
+        const body = await streamBody(runtimeAgent);
+
+        assertStringIncludes(body, '"error":"Provider stream failed"');
+        assertEquals(body.includes(privateMarker), false);
+        assertEquals(body.includes('"code"'), false);
+      });
+    });
+
     it(`preserves ${mode} provider-stream rejection as a provider failure`, async () => {
       await withLifecycleMode(mode, async () => {
         for (const providerFailure of PROVIDER_FAILURES) {

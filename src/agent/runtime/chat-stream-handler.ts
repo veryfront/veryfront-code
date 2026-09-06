@@ -652,6 +652,13 @@ async function processActiveStream(
   });
   const adapter: typeof baseAdapter = {
     ...baseAdapter,
+    decode(part, snapshot) {
+      try {
+        return baseAdapter.decode(part, snapshot);
+      } catch (error) {
+        throw createRuntimeProviderStreamFailure(error);
+      }
+    },
     classifyError(error, snapshot) {
       const providerFailure = readRuntimeProviderStreamFailureCause(error);
       if (providerFailure.found) {
