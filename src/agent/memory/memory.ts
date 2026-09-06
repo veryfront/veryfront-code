@@ -4,11 +4,44 @@ import {
   type Memory,
   type MemoryConfigBase,
   type MemoryStats,
+  type MemoryTransaction,
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { AGENT_ERROR, CONFIG_INVALID } from "#veryfront/errors";
 
 type BasicMemoryType = "conversation" | "buffer";
+
+/** @internal Open the memory view used for transactional input validation. */
+export async function beginMemoryTransaction<M extends MinimalMessage>(
+  memory: Memory<M>,
+): Promise<MemoryTransaction<M>> {
+  if (typeof memory.beginTransaction !== "function") {
+    throw CONFIG_INVALID.create({
+      detail:
+        "Your custom memory backend must implement beginTransaction() for transactional input validation. Use conversation, buffer, or summary memory, or provide an atomic transaction adapter.",
+    });
+  }
+  const transaction = await memory.beginTransaction();
+  if (
+    !transaction || typeof transaction !== "object" ||
+    ["add", "getMessages", "commit", "rollback"].some(
+      (key) => typeof Reflect.get(transaction, key) !== "function",
+    )
+  ) {
+    throw CONFIG_INVALID.create({
+      detail:
+        "Your memory beginTransaction() must return add(), getMessages(), commit(), and rollback() methods.",
+    });
+  }
+  return transaction;
+}
+
+function memoryConflict(): Error {
+  return AGENT_ERROR.create({
+    detail: "Memory changed concurrently during the transaction. Retry the turn.",
+  });
+}
 
 function getMessagesWithTrace<M extends MinimalMessage>(
   messages: M[],
@@ -58,10 +91,47 @@ function getBasicStatsWithTrace<M extends MinimalMessage>(
 
 abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   protected messages: M[] = [];
+  private version = 0;
   protected abstract readonly memoryType: BasicMemoryType;
   protected abstract readonly spanPrefix: string;
 
   abstract add(message: M): Promise<void>;
+  protected abstract retain(messages: M[]): M[];
+
+  protected store(message: M): void {
+    this.messages.push(message);
+    this.messages = this.retain(this.messages);
+    this.version += 1;
+  }
+
+  beginTransaction(): Promise<MemoryTransaction<M>> {
+    const version = this.version;
+    let staged = [...this.messages];
+    let completed = false;
+    return Promise.resolve({
+      add: (message) => {
+        if (!completed) {
+          staged.push(message);
+          staged = this.retain(staged);
+        }
+        return Promise.resolve();
+      },
+      getMessages: () => Promise.resolve([...staged]),
+      commit: () => {
+        if (completed) return Promise.resolve();
+        if (this.version !== version) return Promise.reject(memoryConflict());
+        this.messages = staged;
+        this.version += 1;
+        completed = true;
+        return Promise.resolve();
+      },
+      rollback: () => {
+        completed = true;
+        staged = [];
+        return Promise.resolve();
+      },
+    });
+  }
 
   getMessages(): Promise<M[]> {
     return getMessagesWithTrace(this.messages, `${this.spanPrefix}.getMessages`, this.memoryType);
@@ -69,7 +139,10 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
 
   clear(): Promise<void> {
     return clearMessagesWithTrace(
-      () => (this.messages = []),
+      () => {
+        this.messages = [];
+        this.version += 1;
+      },
       `${this.spanPrefix}.clear`,
       this.memoryType,
     );
@@ -94,33 +167,28 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
     return withSpan(
       "agent.memory.conversation.add",
       async () => {
-        this.messages.push(message);
-
-        const maxMessages = this.config.maxMessages;
-        if (maxMessages && this.messages.length > maxMessages) {
-          this.messages = this.messages.slice(-maxMessages);
-        }
-
-        if (this.config.maxTokens) {
-          await this.trimToTokenLimit();
-        }
+        this.store(message);
       },
       { "memory.type": "conversation", "memory.message_count": this.messages.length },
     );
   }
 
-  private trimToTokenLimit(): Promise<void> {
-    const maxTokens = this.config.maxTokens;
-    if (!maxTokens) return Promise.resolve();
-
-    let tokenCount = estimateTokens(this.messages);
-
-    while (tokenCount > maxTokens && this.messages.length > 1) {
-      this.messages.shift();
-      tokenCount = estimateTokens(this.messages);
+  protected retain(messages: M[]): M[] {
+    const maxMessages = this.config.maxMessages;
+    if (maxMessages && messages.length > maxMessages) {
+      messages = messages.slice(-maxMessages);
     }
 
-    return Promise.resolve();
+    const maxTokens = this.config.maxTokens;
+    if (!maxTokens) return messages;
+
+    let tokenCount = estimateTokens(messages);
+
+    while (tokenCount > maxTokens && messages.length > 1) {
+      messages.shift();
+      tokenCount = estimateTokens(messages);
+    }
+    return messages;
   }
 }
 
@@ -140,21 +208,35 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends Bas
       withSpanSync(
         "agent.memory.buffer.add",
         () => {
-          this.messages.push(message);
-
-          if (this.messages.length > this.bufferSize) {
-            this.messages = this.messages.slice(-this.bufferSize);
-          }
+          this.store(message);
         },
         { "memory.type": "buffer", "memory.buffer_size": this.bufferSize },
       ),
     );
+  }
+
+  protected retain(messages: M[]): M[] {
+    return messages.length > this.bufferSize ? messages.slice(-this.bufferSize) : messages;
   }
 }
 
 const DEFAULT_SUMMARY_MAX_CHARS = 4_000;
 const SUMMARY_OMISSION_MARKER = "; [...]; ";
 const SUMMARY_MESSAGE_PREFIX = "Previous conversation summary:\n";
+const summaryMemoryProjectionMessages = new WeakSet<object>();
+const summaryProjectionWeakSetAdd = WeakSet.prototype.add;
+const summaryProjectionWeakSetHas = WeakSet.prototype.has;
+const summaryProjectionReflectApply = Reflect.apply;
+
+/** Whether this message is the provider projection synthesized by summary memory. */
+export function isSummaryMemoryProjectionMessage(message: unknown): boolean {
+  return typeof message === "object" && message !== null &&
+    summaryProjectionReflectApply(
+      summaryProjectionWeakSetHas,
+      summaryMemoryProjectionMessages,
+      [message],
+    ) as boolean;
+}
 
 /** Implement summary memory. */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
@@ -163,6 +245,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   private summaryThreshold: number;
   private summaryMaxChars: number;
   private maxTokens?: number;
+  private version = 0;
 
   constructor(private config: MemoryConfigBase) {
     this.summaryThreshold = config.maxMessages || 20;
@@ -173,6 +256,33 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
+  beginTransaction(): Promise<MemoryTransaction<M>> {
+    const version = this.version;
+    const staged = new SummaryMemory<M>(this.config);
+    staged.messages = [...this.messages];
+    staged.summary = this.summary;
+    let completed = false;
+    return Promise.resolve({
+      add: (message) => completed ? Promise.resolve() : staged.add(message),
+      getMessages: () => staged.getMessages(),
+      commit: () => {
+        if (completed) return Promise.resolve();
+        if (this.version !== version) return Promise.reject(memoryConflict());
+        this.messages = staged.messages;
+        this.summary = staged.summary;
+        this.version += 1;
+        completed = true;
+        return Promise.resolve();
+      },
+      rollback: () => {
+        completed = true;
+        staged.messages = [];
+        staged.summary = "";
+        return Promise.resolve();
+      },
+    });
+  }
+
   add(message: M): Promise<void> {
     return withSpan(
       "agent.memory.summary.add",
@@ -180,10 +290,11 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         this.messages.push(message);
 
         if (this.messages.length > this.summaryThreshold) {
-          await this.summarizeOldMessages();
+          this.summarizeOldMessages();
         }
 
         this.enforceTokenLimit();
+        this.version += 1;
       },
       { "memory.type": "summary", "memory.threshold": this.summaryThreshold },
     );
@@ -208,6 +319,11 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
             parts: summaryParts,
             timestamp: Date.now(),
           };
+          summaryProjectionReflectApply(
+            summaryProjectionWeakSetAdd,
+            summaryMemoryProjectionMessages,
+            [summaryMessage],
+          );
 
           return [summaryMessage as M, ...this.messages];
         },
@@ -223,6 +339,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         () => {
           this.messages = [];
           this.summary = "";
+          this.version += 1;
         },
         { "memory.type": "summary" },
       ),
@@ -245,15 +362,13 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
-  private summarizeOldMessages(): Promise<void> {
+  private summarizeOldMessages(): void {
     const halfIndex = Math.floor(this.messages.length / 2);
     const toSummarize = this.messages.slice(0, halfIndex);
     const remaining = this.messages.slice(halfIndex);
 
     this.appendToSummary(toSummarize);
     this.messages = remaining;
-
-    return Promise.resolve();
   }
 
   private appendToSummary(messages: M[]): void {
@@ -334,6 +449,15 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
 export class NoMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   add(_message: M): Promise<void> {
     return Promise.resolve();
+  }
+
+  beginTransaction(): Promise<MemoryTransaction<M>> {
+    return Promise.resolve({
+      add: () => Promise.resolve(),
+      getMessages: () => Promise.resolve([]),
+      commit: () => Promise.resolve(),
+      rollback: () => Promise.resolve(),
+    });
   }
 
   getMessages(): Promise<M[]> {

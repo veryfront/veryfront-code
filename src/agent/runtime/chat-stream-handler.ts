@@ -9,6 +9,11 @@
  */
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { sendSSE } from "./sse-utils.ts";
 import {
   mergeToolCallInput,
@@ -29,7 +34,6 @@ import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { withToolInputStatusTransitions } from "#veryfront/provider/runtime-loader/tool-input-status.ts";
-import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   applyLifecycleSnapshotToChatStreamState,
   createRuntimeStreamProviderAdapter,
@@ -60,7 +64,7 @@ import {
   isIntegrationAuthenticationActionResult,
 } from "#veryfront/tool/result.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
-import { readOwnDataProperty } from "./data-property-descriptor.ts";
+import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -98,24 +102,105 @@ export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
   code?: string;
 }
 
-function hasProviderStreamErrorEvidence(error: unknown): boolean {
-  let current = error;
-  try {
-    for (let depth = 0; depth < 64; depth += 1) {
-      if (current instanceof ProviderError) return true;
-      if (
-        typeof readOwnDataProperty(current, "responseBody", "provider stream error", false) ===
-          "string"
-      ) {
-        return true;
-      }
-      current = readOwnDataProperty(current, "lastError", "provider stream error", false);
-      if (current === undefined) return false;
+function wrapRuntimeProviderReadableStream(
+  stream: ReadableStream<unknown>,
+): ReadableStream<unknown> {
+  const reader = stream.getReader();
+  let released = false;
+  const releaseReader = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+  return new ReadableStream<unknown>(
+    {
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            releaseReader();
+            controller.close();
+          } else controller.enqueue(next.value);
+        } catch (error) {
+          releaseReader();
+          controller.error(createRuntimeProviderStreamFailure(error));
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          releaseReader();
+        }
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+/** Mark failures thrown by a model and its stream as provider-originated. */
+export function withRuntimeProviderStreamErrorProvenance<CallOptions, ContentPart>(
+  model: ModelRuntime<CallOptions, ContentPart>,
+): ModelRuntime<CallOptions, ContentPart> {
+  const doStream = async (options: CallOptions) => {
+    try {
+      const result = await model.doStream(options);
+      return {
+        ...result,
+        stream: wrapRuntimeProviderReadableStream(result.stream),
+      };
+    } catch (error) {
+      if (isStatefulTurnCycleError(error)) throw error;
+      throw createRuntimeProviderStreamFailure(error);
     }
-    return false;
+  };
+  const target = Object.create(model) as ModelRuntime<CallOptions, ContentPart>;
+  return new Proxy(target, {
+    get(_target, property) {
+      if (property === "doStream") return doStream;
+      return Reflect.get(model, property, model);
+    },
+  });
+}
+
+function isStreamLifecycleFailure(error: unknown): error is StreamLifecycleFailure {
+  try {
+    return error instanceof StreamLifecycleFailure;
   } catch {
     return false;
   }
+}
+
+function resolveRuntimeFallbackErrorEvent(error: unknown): RuntimeStreamErrorEvent {
+  try {
+    return {
+      type: "error",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } catch {
+    try {
+      return { type: "error", error: stringifyToolError(error) };
+    } catch {
+      return { type: "error", error: "Unknown error" };
+    }
+  }
+}
+
+/** Serialize an outer runtime failure without inferring provider provenance. */
+export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStreamErrorEvent {
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  if (providerFailure.found) {
+    const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);
+    return knownProviderError
+      ? {
+        type: "error",
+        error: knownProviderError.message,
+        code: knownProviderError.code,
+      }
+      : { type: "error", error: "Provider stream failed" };
+  }
+  if (isStreamLifecycleFailure(error)) return resolveRuntimeStreamErrorEvent(error);
+  return resolveRuntimeFallbackErrorEvent(error);
 }
 
 /** Preserve only curated provider terminal details across the runtime stream boundary. */
@@ -132,9 +217,7 @@ export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErr
       };
     }
 
-    const knownProviderError = hasProviderStreamErrorEvidence(error)
-      ? resolveKnownProviderTerminalError(error)
-      : null;
+    const knownProviderError = resolveKnownProviderTerminalError(error);
     if (knownProviderError) {
       return {
         type: "error",
@@ -143,16 +226,9 @@ export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErr
       };
     }
 
-    return {
-      type: "error",
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return resolveRuntimeFallbackErrorEvent(error);
   } catch {
-    try {
-      return { type: "error", error: stringifyToolError(error) };
-    } catch {
-      return { type: "error", error: "Unknown error" };
-    }
+    return resolveRuntimeFallbackErrorEvent(error);
   }
 }
 
@@ -393,11 +469,15 @@ function shouldIgnoreLateProviderBodyReadError(state: ChatStreamState, error: un
 async function readNextStreamPart(
   iterator: AsyncIterator<unknown>,
   state: ChatStreamState,
+  abortSignal?: AbortSignal,
 ): Promise<IteratorResult<unknown>> {
   try {
     return await iterator.next();
   } catch (error) {
-    if (!shouldIgnoreLateProviderBodyReadError(state, error)) {
+    throwIfAborted(abortSignal);
+    const providerFailure = readRuntimeProviderStreamFailureCause(error);
+    const streamError = providerFailure.found ? providerFailure.cause : error;
+    if (!shouldIgnoreLateProviderBodyReadError(state, streamError)) {
       throw error;
     }
 
@@ -406,7 +486,7 @@ async function readNextStreamPart(
       toolCallCount: state.toolCalls.size,
       toolResultCount: state.toolResults.length,
       textLength: state.accumulatedText.length,
-      error: getStreamErrorMessage(error),
+      error: getStreamErrorMessage(streamError),
     });
 
     return { done: true, value: undefined };
@@ -419,11 +499,12 @@ async function readNextStreamPartWithTimeout(
   timeoutMs: number,
   setTimeoutFn: typeof setTimeout = setTimeout,
   clearTimeoutFn: typeof clearTimeout = clearTimeout,
+  abortSignal?: AbortSignal,
 ): Promise<IteratorResult<unknown> | "timeout"> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      readNextStreamPart(iterator, state),
+      readNextStreamPart(iterator, state, abortSignal),
       new Promise<"timeout">((resolve) => {
         timeoutId = setTimeoutFn(() => resolve("timeout"), timeoutMs);
       }),
@@ -560,7 +641,7 @@ async function processActiveStream(
   callbacks: ChatStreamCallbacks | undefined,
   abortSignal: AbortSignal | undefined,
 ): Promise<void> {
-  const adapter = createRuntimeStreamProviderAdapter({
+  const baseAdapter = createRuntimeStreamProviderAdapter({
     open: (signal) => source.open(signal).fullStream,
     options: {
       availableToolNames: callbacks?.availableToolNames
@@ -571,6 +652,28 @@ async function processActiveStream(
       ),
     },
   });
+  const adapter: typeof baseAdapter = {
+    ...baseAdapter,
+    decode(part, snapshot) {
+      try {
+        return baseAdapter.decode(part, snapshot);
+      } catch (error) {
+        throw createRuntimeProviderStreamFailure(error);
+      }
+    },
+    classifyError(error, snapshot) {
+      const providerFailure = readRuntimeProviderStreamFailureCause(error);
+      if (providerFailure.found) {
+        return baseAdapter.classifyError(providerFailure.cause, snapshot);
+      }
+      return {
+        code: "PROVIDER_STREAM_ERROR",
+        publicMessage: resolveRuntimeFallbackErrorEvent(error).error,
+        retryable: true,
+        terminal: false,
+      };
+    },
+  };
   const run = runStreamLifecycle({
     provider: adapter,
     policy: resolveRuntimeLifecyclePolicy(callbacks),
@@ -1033,6 +1136,7 @@ export function processStreamInternal(
             callbacks?.localToolInputIdleTimeoutMs ?? LOCAL_TOOL_INPUT_IDLE_MS,
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
+            abortSignal,
           )
           : shouldStopForCommittedLocalToolCallNow
           ? await readNextStreamPartWithTimeout(
@@ -1041,6 +1145,7 @@ export function processStreamInternal(
             callbacks?.localToolCommitGraceMs ?? LOCAL_TOOL_COMMIT_GRACE_MS,
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
+            abortSignal,
           )
           : shouldStopForIdleOutput
           ? await readNextStreamPartWithTimeout(
@@ -1049,6 +1154,7 @@ export function processStreamInternal(
             callbacks?.streamIdleTimeoutMs ?? STREAM_OUTPUT_IDLE_MS,
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
+            abortSignal,
           )
           : shouldStopForIdleStart
           ? await readNextStreamPartWithTimeout(
@@ -1057,8 +1163,9 @@ export function processStreamInternal(
             callbacks?.streamIdleTimeoutMs ?? STREAM_START_IDLE_MS,
             callbacks?.setTimeoutFn,
             callbacks?.clearTimeoutFn,
+            abortSignal,
           )
-          : await readNextStreamPart(streamIterator, state);
+          : await readNextStreamPart(streamIterator, state, abortSignal);
         if (next === "timeout") {
           state.finishReason ??= wouldTimeOutIdle ? "stop" : "tool-calls";
           returnStreamIteratorOnce();

@@ -55,9 +55,25 @@ const AI_PROVIDER_BILLING_ERROR = {
 const MAX_PROVIDER_ERROR_DEPTH = 64;
 const MAX_PROVIDER_ERROR_TEXT_CHARS = 256 * 1024;
 const MAX_EMBEDDED_JSON_CANDIDATES = 32;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getOwnDataProperty(
+  value: Record<string, unknown>,
+  key: PropertyKey,
+): unknown {
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && objectHasOwn(descriptor, "value")
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseErrorJson(value: string): unknown | null {
@@ -134,12 +150,11 @@ function parseEmbeddedErrorJson(value: string): unknown | null {
 }
 
 function formatCreditProblemMessage(
-  body: Record<string, unknown>,
+  balance: unknown,
+  required: unknown,
   error: string | null,
   hasSuggestion: boolean,
 ): string {
-  const balance = body.balance;
-  const required = body.required;
   const isRunLimit = error?.toLowerCase().includes("agent run credit limit") ?? false;
   const fallback = isRunLimit ? "Agent run credit limit exceeded" : "Insufficient AI credits";
   const suggestion = isRunLimit
@@ -165,9 +180,12 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
     return null;
   }
 
-  const slug = typeof body.slug === "string" ? body.slug : null;
-  const error = typeof body.error === "string" ? body.error : null;
-  const suggestion = typeof body.suggestion === "string" ? body.suggestion : null;
+  const slugValue = getOwnDataProperty(body, "slug");
+  const errorValue = getOwnDataProperty(body, "error");
+  const suggestionValue = getOwnDataProperty(body, "suggestion");
+  const slug = typeof slugValue === "string" ? slugValue : null;
+  const error = typeof errorValue === "string" ? errorValue : null;
+  const suggestion = typeof suggestionValue === "string" ? suggestionValue : null;
   const normalizedProblemText = `${error ?? ""} ${suggestion ?? ""}`.toLowerCase();
 
   if (normalizedProblemText.includes("ai provider spend limit")) {
@@ -177,7 +195,12 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: formatCreditProblemMessage(body, error, Boolean(suggestion)),
+      message: formatCreditProblemMessage(
+        getOwnDataProperty(body, "balance"),
+        getOwnDataProperty(body, "required"),
+        error,
+        Boolean(suggestion),
+      ),
       status: 402,
     };
   }

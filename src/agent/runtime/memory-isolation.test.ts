@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
+import { AgentRuntime } from "./index.ts";
+import { registerTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import { agent } from "../index.ts";
 import { type ScriptedModel, scriptedModel } from "./model-runtime.test-helpers.ts";
 
@@ -49,6 +51,42 @@ const WORDS = ["APPLE", "BANANA", "CHERRY"];
 const prompt = (word: string) => `The secret word is ${word}.`;
 
 describe("agent memory isolation (issue 2336)", () => {
+  it("keeps rejected input out of public memory while provider validation is pending", async () => {
+    const validationEntered = Promise.withResolvers<void>();
+    const releaseValidation = Promise.withResolvers<void>();
+    const runtime = new AgentRuntime("pending-validation-isolation", {
+      model: "hosted/pending-validation-isolation",
+      system: "Validate before dispatch.",
+      memory: { type: "conversation" },
+      skills: false,
+      maxSteps: 1,
+      middleware: [(context, next) => {
+        registerTurnProviderRequestValidator(context, async () => {
+          validationEntered.resolve();
+          await releaseValidation.promise;
+          throw new Error("rejected pending input");
+        });
+        return next();
+      }],
+      resolveModelTransport: () =>
+        Promise.resolve({
+          model: {
+            provider: "hosted",
+            modelId: "hosted/pending-validation-isolation",
+            doGenerate: () => Promise.reject(new Error("rejected input reached provider")),
+            doStream: () => Promise.reject(new Error("rejected input reached provider")),
+          },
+        }),
+    });
+
+    const pending = runtime.generate("private pending input");
+    await validationEntered.promise;
+    assertEquals(await runtime.getMemory().getMessages(), []);
+    releaseValidation.resolve();
+    await assertRejects(() => pending, Error, "rejected pending input");
+    assertEquals(await runtime.getMemory().getMessages(), []);
+  });
+
   it("isolates concurrent generate() calls on a shared default instance", async () => {
     const shared = agent({
       id: "echo-generate-concurrent",

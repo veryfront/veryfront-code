@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseProviderError } from "./provider-errors.ts";
+import { parseKnownProblemBody, parseProviderError } from "./provider-errors.ts";
 import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
@@ -186,6 +186,44 @@ describe("chat/provider-errors", () => {
       }).message,
       "Agent run credit limit exceeded",
     );
+  });
+
+  it("does not invoke credit detail accessors in direct problem bodies", () => {
+    let accessorCalls = 0;
+    const problem = {
+      slug: "insufficient-credits",
+      suggestion: "private provider guidance",
+      get balance(): number {
+        accessorCalls += 1;
+        throw new Error("balance getter must not run");
+      },
+      get required(): number {
+        accessorCalls += 1;
+        throw new Error("required getter must not run");
+      },
+    };
+
+    assertEquals(parseKnownProblemBody(problem), {
+      code: "INSUFFICIENT_CREDITS",
+      message:
+        "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+      status: 402,
+    });
+    assertEquals(accessorCalls, 0);
+
+    let propertyReads = 0;
+    const unreadableProblem = new Proxy<Record<string, unknown>>({}, {
+      get() {
+        propertyReads += 1;
+        throw new Error("property getter must not run");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("descriptor failure must be contained");
+      },
+    });
+
+    assertEquals(parseKnownProblemBody(unreadableProblem), null);
+    assertEquals(propertyReads, 0);
   });
 
   it("parses provider overload, rate-limit, context-length, and credit messages", () => {

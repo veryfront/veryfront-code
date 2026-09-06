@@ -315,6 +315,7 @@ export {
   type Memory,
   type MemoryPersistence,
   type MemoryStats,
+  type MemoryTransaction,
   type RedisClient,
   RedisMemory,
   type RedisMemoryConfig,

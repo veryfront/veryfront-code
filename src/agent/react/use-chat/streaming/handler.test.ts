@@ -415,17 +415,42 @@ describe("use-chat streaming handler", () => {
       { event: "RunError", data: { message: "Runtime failed" } },
     ]);
 
-    await assertRejects(
+    const error = await assertRejects(
       () => handleAgUiStreamingResponse(body, recorder().callbacks),
       Error,
       "Runtime failed",
       "an AG-UI run error must surface to the caller instead of being swallowed",
     );
+    assert(error instanceof Error);
+    assertEquals(Object.hasOwn(error, "code"), false, "code-free errors stay code-free");
     assertEquals(
       body.locked,
       false,
       "the finally block must release the reader lock when an event handler throws",
     );
+  });
+
+  it("preserves an AG-UI terminal code without changing error registry identity", async () => {
+    const error = await assertRejects(
+      () =>
+        handleAgUiStreamingResponse(
+          agUiSseStream([
+            {
+              event: "RunError",
+              data: { code: "INSUFFICIENT_CREDITS", message: "Purchase additional credits." },
+            },
+          ]),
+          recorder().callbacks,
+        ),
+      Error,
+      "Purchase additional credits.",
+    );
+    assert(error instanceof Error);
+
+    const terminalError = error as Error & { code?: string; slug?: string; status?: number };
+    assertEquals(terminalError.code, "INSUFFICIENT_CREDITS");
+    assertEquals(terminalError.slug, "agent-error");
+    assertEquals(terminalError.status, 500);
   });
 
   it("maps AG-UI tool-call args and results through the default stream handler", async () => {
