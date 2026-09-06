@@ -314,7 +314,10 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     });
 
     assertEquals(durableResult.terminalErrorCode, "INSUFFICIENT_CREDITS");
-    assertEquals(durableResult.terminalErrorMessage, "Insufficient AI credits");
+    assertEquals(
+      durableResult.terminalErrorMessage,
+      "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+    );
   });
 
   it("sanitizes malformed child transcript text in durable invoke success results", () => {

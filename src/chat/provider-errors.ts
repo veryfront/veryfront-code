@@ -142,18 +142,18 @@ function formatCreditProblemMessage(
   const required = body.required;
   const isRunLimit = error?.toLowerCase().includes("agent run credit limit") ?? false;
   const fallback = isRunLimit ? "Agent run credit limit exceeded" : "Insufficient AI credits";
+  const suggestion = isRunLimit
+    ? "Start a new reviewed run or reduce the scope of this run."
+    : "Purchase additional credits or upgrade your subscription plan.";
   if (
     typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
     typeof required !== "number" || !Number.isFinite(required) || required < 0
   ) {
-    return fallback;
+    return hasSuggestion ? `${fallback}. ${suggestion}` : fallback;
   }
 
   const summary = error === "AI credit limit exceeded" ? "AI credit limit exceeded" : fallback;
   const availability = isRunLimit ? "remaining" : "available";
-  const suggestion = isRunLimit
-    ? "Start a new reviewed run or reduce the scope of this run."
-    : "Purchase additional credits or upgrade your subscription plan.";
   return `${summary}: ${required} credits required, ${balance} ${availability}.${
     hasSuggestion ? ` ${suggestion}` : ""
   }`;

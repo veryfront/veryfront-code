@@ -15,7 +15,7 @@ describe("chat/provider-errors", () => {
       const expected = {
         code: slug === "insufficient-credits" ? "INSUFFICIENT_CREDITS" : "RESOURCE_LIMIT_EXCEEDED",
         message: slug === "insufficient-credits"
-          ? "Insufficient AI credits"
+          ? "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan."
           : "Resource limit exceeded",
         status: 402,
       };
@@ -44,7 +44,8 @@ describe("chat/provider-errors", () => {
       })),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Insufficient AI credits",
+        message:
+          "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
         status: 402,
       },
     );
@@ -146,7 +147,8 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Agent run credit limit exceeded",
+        message:
+          "Agent run credit limit exceeded. Start a new reviewed run or reduce the scope of this run.",
         status: 402,
       },
     );
@@ -163,6 +165,26 @@ describe("chat/provider-errors", () => {
         message: "Insufficient AI credits",
         status: 402,
       },
+    );
+  });
+
+  it("preserves guidance presence without requiring usable credit amounts", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "private provider detail",
+        suggestion: "private provider guidance",
+        balance: 12,
+        required: -1,
+      }).message,
+      "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+    );
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded",
+      }).message,
+      "Agent run credit limit exceeded",
     );
   });
 

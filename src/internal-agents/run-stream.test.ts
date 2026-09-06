@@ -963,7 +963,7 @@ describe("internal-agents/run-stream", () => {
         assertEquals(runErrorIndex > stepStartedIndex, true);
         assertEquals(
           runError?.message,
-          "Insufficient AI credits",
+          "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
         );
         assertEquals(runError?.code, "INSUFFICIENT_CREDITS");
         assertEquals(JSON.stringify(runError).includes("provider-private-diagnostic"), false);

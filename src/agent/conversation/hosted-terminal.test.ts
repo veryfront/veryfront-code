@@ -375,7 +375,8 @@ describe("agent/conversation-hosted-terminal", () => {
     assertEquals(resolveConversationHostedStreamErrorState(error), {
       status: "failed",
       terminalErrorCode: "INSUFFICIENT_CREDITS",
-      terminalErrorMessage: "Insufficient AI credits",
+      terminalErrorMessage:
+        "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
     });
   });
 
