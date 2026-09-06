@@ -56,6 +56,8 @@ changes to shared web prototypes cannot inspect the run-event or inference
 credentials on an incoming request. Import the framework service runtime before
 loading project modules. Custom host route handlers still receive the original
 request and remain responsible for authentication and credential handling.
+Dispatch visits the host route table and matched path segments by index so a
+replaced array iterator cannot inject a handler before host authentication.
 
 The service discovers the same project primitives as the app runtime:
 

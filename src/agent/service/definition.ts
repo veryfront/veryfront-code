@@ -225,7 +225,8 @@ function matchRoute(
   }
 
   const params: Record<string, string> = {};
-  for (const [index, routePart] of routeParts.entries()) {
+  for (let index = 0; index < routeParts.length; index++) {
+    const routePart = routeParts[index]!;
     const requestPart = requestParts[index];
     if (requestPart === undefined) {
       return undefined;
@@ -370,7 +371,10 @@ function createAgentServiceRuntime<
         return withCorsHeaders(response, corsConfig, request);
       }
 
-      for (const route of routes) {
+      // Never hand the host route table to project-replaceable iterators:
+      // an injected route would receive the original credentialed request.
+      for (let index = 0; index < routes.length; index++) {
+        const route = routes[index]!;
         const params = matchRoute(route, method, path);
         if (params) {
           response = await route.handler(request, params);

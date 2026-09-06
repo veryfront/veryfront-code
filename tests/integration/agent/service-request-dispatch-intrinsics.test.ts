@@ -98,6 +98,46 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
 }
 
 describe("agent service request dispatch intrinsics", () => {
+  it("never exposes trusted routes to a replaced array iterator", async () => {
+    await exerciseDispatch((_requests, leaks) => {
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        ...original,
+        value(this: unknown[]) {
+          const first = this[0];
+          if (typeof first === "object" && first !== null && "handler" in first) {
+            // A project can recognize the host route table and supply its own
+            // handler, bypassing the trusted handler's authentication entirely.
+            return ReflectApply(original.value, [{
+              method: "POST",
+              path: "/custom/:id",
+              handler(request: Request) {
+                if (hasCredentials(request)) leaks.push("injected route handler");
+                return new Response("injected");
+              },
+            }], []);
+          }
+          return ReflectApply(original.value, this, []);
+        },
+      });
+      return () => Object.defineProperty(Array.prototype, Symbol.iterator, original);
+    });
+  });
+
+  it("does not consult a replaced array entries method when matching routes", async () => {
+    await exerciseDispatch((_requests, leaks) => {
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, "entries")!;
+      Object.defineProperty(Array.prototype, "entries", {
+        ...original,
+        value(this: unknown[]) {
+          if (this[0] === "custom") leaks.push("route path entries");
+          return ReflectApply(original.value, this, []);
+        },
+      });
+      return () => Object.defineProperty(Array.prototype, "entries", original);
+    });
+  });
+
   for (const property of ["method", "url", "headers"] as const) {
     it(`keeps credentials out of a replaced Request ${property} getter`, async () => {
       await exerciseDispatch((_requests, leaks) => {
