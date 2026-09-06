@@ -1826,6 +1826,33 @@ describe("chat-stream-handler", () => {
       assertEquals(events[0], { type: "error", error: "Provider timeout" });
     });
 
+    it("preserves curated terminal details from structured stream error parts", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerError = new Error("Provider request failed with status 402");
+      Object.defineProperty(providerError, "responseBody", {
+        value: JSON.stringify({
+          slug: "insufficient-credits",
+          suggestion: "Purchase additional credits or select a lower-cost model.",
+          privateDetail: "provider-private-diagnostic",
+        }),
+      });
+
+      const result = createMockResult([
+        { type: "error", error: providerError },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [{
+        type: "error",
+        error: "Purchase additional credits or select a lower-cost model.",
+        code: "INSUFFICIENT_CREDITS",
+      }]);
+      assertEquals(JSON.stringify(events).includes("provider-private-diagnostic"), false);
+    });
+
     it("forwards non-Error stream errors as string", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -1838,6 +1865,20 @@ describe("chat-stream-handler", () => {
       await processStream(result, state, controller, encoder, "t", undefined);
 
       assertEquals(events[0], { type: "error", error: "raw string error" });
+    });
+
+    it("preserves the existing string fallback for unknown object errors", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "error", error: { message: "object error" } },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], { type: "error", error: "[object Object]" });
     });
 
     it("forwards reasoning stream parts", async () => {

@@ -789,6 +789,25 @@ describe("agent/ag-ui-encoder", () => {
       }],
     );
   });
+
+  it("preserves a runtime terminal error code in RunError", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "error",
+        error: "Purchase additional credits or select a lower-cost model.",
+        code: "INSUFFICIENT_CREDITS",
+      }),
+      [{
+        event: "RunError",
+        payload: {
+          code: "INSUFFICIENT_CREDITS",
+          message: "Purchase additional credits or select a lower-cost model.",
+        },
+      }],
+    );
+  });
 });
 
 describe("buildAgUiFinalizeResponse", () => {

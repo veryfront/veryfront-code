@@ -57,6 +57,7 @@ import {
   announceStreamedToolCallInput,
   createStreamState,
   processStream,
+  resolveRuntimeStreamErrorEvent,
   type StreamingToolCall,
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
@@ -1791,10 +1792,7 @@ export class AgentRuntime {
 
             this.status = "error";
             logger.error("Agent stream error", { error });
-            sendSSE(controller, encoder, {
-              type: "error",
-              error: error instanceof Error ? error.message : String(error),
-            });
+            sendSSE(controller, encoder, resolveRuntimeStreamErrorEvent(error));
             closeSSEStream(controller);
           } finally {
             abortScope.dispose();

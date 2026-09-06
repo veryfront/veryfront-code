@@ -21,6 +21,7 @@ import {
   getStreamErrorMessage,
   hasCompletedStepSignal,
   isLateProviderBodyReadError,
+  resolveKnownProviderTerminalError,
 } from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -87,6 +88,37 @@ export interface StreamingToolResult {
   providerExecuted?: boolean;
   dynamic?: boolean;
   preliminary?: boolean;
+}
+
+export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
+  type: "error";
+  error: string;
+  code?: string;
+}
+
+/** Preserve only curated provider terminal details across the runtime stream boundary. */
+export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErrorEvent {
+  if (error instanceof StreamLifecycleFailure) {
+    return {
+      type: "error",
+      error: error.lifecycleError.publicMessage,
+      ...(error.lifecycleError.providerCode ? { code: error.lifecycleError.providerCode } : {}),
+    };
+  }
+
+  const knownProviderError = resolveKnownProviderTerminalError(error);
+  if (knownProviderError) {
+    return {
+      type: "error",
+      error: knownProviderError.message,
+      code: knownProviderError.code,
+    };
+  }
+
+  return {
+    type: "error",
+    error: error instanceof Error ? error.message : String(error),
+  };
 }
 
 /**
@@ -1490,12 +1522,7 @@ export function processStreamInternal(
             closeTextSegment();
             closeReasoningSegment();
             logger.warn("Runtime stream error:", typedPart.error);
-            sendSSE(controller, encoder, {
-              type: "error",
-              error: typedPart.error instanceof Error
-                ? typedPart.error.message
-                : String(typedPart.error),
-            });
+            sendSSE(controller, encoder, resolveRuntimeStreamErrorEvent(typedPart.error));
             break;
           }
 
