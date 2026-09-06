@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentContract,
@@ -185,6 +185,114 @@ describe("agent/agent-service", () => {
 
     assertEquals(response.status, 200);
     assertEquals(await response.json(), expected);
+  });
+
+  it("uses only own slots from HeadersInit arrays and tuple entries", async () => {
+    const runtime = defineAgentService({
+      serviceName: "headers-init-own-slots-service",
+      agent: assistant,
+    }).createRuntime({
+      routes: [{
+        method: "GET",
+        path: "/headers",
+        handler: (request) =>
+          Response.json({
+            own: request.headers.get("X-Own"),
+            inherited: request.headers.get("X-Inherited"),
+            mutating: request.headers.get("X-Mutating"),
+          }),
+      }],
+    });
+    let inheritedReads = 0;
+    const outerPrototype = Object.create(Array.prototype);
+    Object.defineProperty(outerPrototype, "1", {
+      configurable: true,
+      get() {
+        inheritedReads += 1;
+        return ["X-Inherited", "outer"];
+      },
+    });
+    const headers: [string, string][] = [["X-Own", "present"]];
+    headers.length = 2;
+    Object.setPrototypeOf(headers, outerPrototype);
+
+    const response = await runtime.request("/headers", { headers });
+    assertEquals(inheritedReads, 0);
+    assertEquals(await response.json(), { own: "present", inherited: null, mutating: null });
+
+    const entryPrototype = Object.create(Array.prototype);
+    Object.defineProperty(entryPrototype, "1", {
+      configurable: true,
+      get() {
+        inheritedReads += 1;
+        return "inherited";
+      },
+    });
+    const sparseEntry = ["X-Sparse"] as unknown as [string, string];
+    sparseEntry.length = 2;
+    Object.setPrototypeOf(sparseEntry, entryPrototype);
+    await assertRejects(
+      async () => await runtime.request("/headers", { headers: [sparseEntry] }),
+      TypeError,
+      "Header entry must contain a name and value",
+    );
+    const incompleteIterable = {
+      *[Symbol.iterator]() {
+        yield ["X-Only-Name"];
+      },
+    } as unknown as HeadersInit;
+    await assertRejects(
+      async () => await runtime.request("/headers", { headers: incompleteIterable }),
+      TypeError,
+      "Header entry must contain a name and value",
+    );
+    assertEquals(inheritedReads, 0);
+
+    const mutatingEntry = ["X-Mutating", "captured"] as [string, string];
+    const mutatingPrototype = Object.create(Array.prototype);
+    Object.defineProperty(mutatingPrototype, "1", {
+      configurable: true,
+      get() {
+        inheritedReads += 1;
+        return "inherited";
+      },
+    });
+    Object.setPrototypeOf(mutatingEntry, mutatingPrototype);
+    Object.defineProperty(mutatingEntry, "0", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        Reflect.deleteProperty(mutatingEntry, "1");
+        return "X-Mutating";
+      },
+    });
+    await assertRejects(
+      async () => await runtime.request("/headers", { headers: [mutatingEntry] }),
+      TypeError,
+      "Header entry must contain a name and value",
+    );
+    assertEquals(inheritedReads, 0);
+
+    const updatingEntry = ["X-Mutating", "original"] as [string, string];
+    Object.defineProperty(updatingEntry, "0", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        Object.defineProperty(updatingEntry, "1", {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: "updated",
+        });
+        return "X-Mutating";
+      },
+    });
+    const updatingResponse = await runtime.request("/headers", { headers: [updatingEntry] });
+    assertEquals(await updatingResponse.json(), {
+      own: null,
+      inherited: null,
+      mutating: "updated",
+    });
   });
 
   it("dispatches host-owned routes without taking over product policy", async () => {

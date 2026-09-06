@@ -114,9 +114,25 @@ function appendHeader(target: Headers, name: unknown, value: unknown): void {
 }
 
 function appendHeaderEntry(target: Headers, entry: Iterable<unknown>): void {
-  const values = NativeArrayIsArray(entry) ? entry : NativeArrayFrom(entry);
+  if (NativeArrayIsArray(entry)) {
+    const nameDescriptor = ObjectGetOwnPropertyDescriptor(entry, 0);
+    if (entry.length !== 2 || !nameDescriptor) {
+      throw new TypeError("Header entry must contain a name and value");
+    }
+    const name = readDescriptorValue(entry, nameDescriptor);
+    const valueDescriptor = ObjectGetOwnPropertyDescriptor(entry, 1);
+    if (!valueDescriptor) throw new TypeError("Header entry must contain a name and value");
+    appendHeader(
+      target,
+      name,
+      readDescriptorValue(entry, valueDescriptor),
+    );
+    return;
+  }
+
+  const values = NativeArrayFrom(entry);
   if (values.length !== 2) {
-    throw new TypeError("Response header entry must contain a name and value");
+    throw new TypeError("Header entry must contain a name and value");
   }
   appendHeader(target, values[0], values[1]);
 }
@@ -154,6 +170,7 @@ function copyHeaders(source: HeadersInit, target: Headers): void {
 
   if (NativeArrayIsArray(source)) {
     for (let index = 0; index < source.length; index++) {
+      if (!ObjectHasOwn(source, index)) continue;
       appendHeaderEntry(target, source[index]!);
     }
     return;
