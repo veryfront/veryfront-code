@@ -196,7 +196,7 @@ async function renderAppRouteToHTMLWithInternals(
   }
 
   // Use the resolved project version so component and renderer modules share one React instance.
-  const React = await getProjectReact(reactVersion);
+  const React = await getProjectReact(reactVersion, adapter);
 
   const pageSource = await adapter.fs.readFile(pageFile);
   const Page = await internals.componentLoader(pageSource, pageFile, projectDir, adapter, {
@@ -286,7 +286,7 @@ async function renderAppRouteToHTMLWithInternals(
   // and without a render context the Head instances never commit, leaving the
   // built page on the framework's placeholder title.
   const { result: htmlInner, head: requestHead } = await runWithHeadCollector(
-    (renderContext) => renderToStringAdapter(element, { reactVersion, renderContext }),
+    (renderContext) => renderToStringAdapter(element, { reactVersion, renderContext }, adapter),
   );
   const committedHead = resolveCommittedHeadFromHTML(htmlInner, requestHead);
   const title = committedHead?.title ?? "Veryfront App";

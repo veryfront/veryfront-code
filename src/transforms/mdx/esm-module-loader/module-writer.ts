@@ -26,13 +26,16 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
+import { ModuleSourceCapture } from "../../esm/module-source-capture.ts";
+import { linkRenderModules } from "../../esm/link-render-modules.ts";
+import type { RenderArtifactInput, RenderArtifactLimits } from "../../esm/render-artifacts.ts";
 import {
   extractAllHttpBundlePathsRecursive,
   extractHttpBundlePaths,
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
-import type { ESMLoaderContext } from "./types.ts";
+import type { ESMLoaderContext, MdxPreparationContext } from "./types.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { LOG_PREFIX_MDX_LOADER, LOG_PREFIX_MDX_RENDERER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
@@ -58,6 +61,7 @@ import {
 import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { assertLogicalCaptureImports } from "./module-fetcher/captured-module.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -137,15 +141,15 @@ export async function buildMdxModuleCacheIdentity(
 async function cacheHttpImports(
   code: string,
   importMap: ImportMapConfig,
-  reactVersion?: string,
-  serverExternalPackages?: readonly string[],
+  context: Pick<MdxPreparationContext, "reactVersion" | "serverExternalPackages">,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<string> {
   const result = await cacheHttpImportsToLocal(code, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,
-    reactVersion,
-    serverExternalPackages,
-  });
+    reactVersion: context.reactVersion,
+    serverExternalPackages: context.serverExternalPackages,
+  }, sourceCapture);
   return result.code;
 }
 
@@ -160,14 +164,14 @@ async function cacheHttpImports(
 async function verifyMdxCacheFile(
   localFs: Parameters<typeof verifyCacheFileExists>[0],
   filePath: string,
-  context: Pick<ESMLoaderContext, "moduleCache">,
+  context: Partial<Pick<ESMLoaderContext, "moduleCache">>,
   compositeKey: string,
 ): Promise<boolean> {
   try {
     return await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
   } catch (error) {
     try {
-      context.moduleCache.delete(compositeKey);
+      context.moduleCache?.delete(compositeKey);
     } catch (invalidationError) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to invalidate module cache entry`, {
         compositeKey,
@@ -184,10 +188,76 @@ async function verifyMdxCacheFile(
 /** Internal test seam for cache verification error handling. */
 export const __moduleWriterInternals = { verifyMdxCacheFile };
 
-export async function doLoadModuleESM(
+/**
+ * Final root source and verified cache location, before tenant code is evaluated.
+ * The source survives root cache eviction; dependencies are not captured or leased.
+ * A generation owner must also capture them before publishing a complete graph.
+ */
+export interface PreparedMdxModule {
+  readonly filePath: string;
+  readonly importUrl: string;
+  /** Final transformed root bytes, including generated exports and rewritten imports. */
+  readonly source: string;
+}
+
+/** Prepare an MDX artifact without importing it or consulting cached exports. */
+export function prepareModuleESM(
+  compiledProgramCode: string,
+  context: MdxPreparationContext,
+): Promise<PreparedMdxModule> {
+  return writeModuleESM(compiledProgramCode, context);
+}
+
+/**
+ * Prepare a closed, relocatable graph without evaluating tenant code.
+ *
+ * One owner accounts for the root and scoped project, framework, and HTTP
+ * dependencies. Compilation caches retain logical references, which resolve
+ * through the scoped source readers on every preparation. Raw file imports
+ * are rejected before resolvers emit owned URLs. This does not crawl cache
+ * files or fall back to host loading.
+ */
+export async function prepareModuleGraphESM(
+  compiledProgramCode: string,
+  context: MdxPreparationContext,
+  limits: RenderArtifactLimits,
+): Promise<RenderArtifactInput> {
+  const budget = { maxEntries: limits.maxEntries, maxBytes: limits.maxBytes };
+  const capture = new ModuleSourceCapture(budget);
+  try {
+    const prepared = await writeModuleESM(compiledProgramCode, { ...context }, undefined, capture);
+    const root = toFileUrl(prepared.filePath).href;
+    capture.record(root, prepared.source);
+    return await linkRenderModules({ modules: capture.take(), entrypoints: [root] }, budget);
+  } finally {
+    capture.discard();
+  }
+}
+
+export function doLoadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
 ): Promise<MDXModule> {
+  return writeModuleESM(compiledProgramCode, context, context.moduleCache);
+}
+
+function writeModuleESM(
+  compiledProgramCode: string,
+  context: MdxPreparationContext,
+  moduleCache?: undefined,
+  sourceCapture?: ModuleSourceCapture,
+): Promise<PreparedMdxModule>;
+function writeModuleESM(
+  compiledProgramCode: string,
+  context: ESMLoaderContext,
+  moduleCache: ESMLoaderContext["moduleCache"],
+): Promise<MDXModule>;
+async function writeModuleESM(
+  compiledProgramCode: string,
+  context: MdxPreparationContext,
+  moduleCache?: ESMLoaderContext["moduleCache"],
+  sourceCapture?: ModuleSourceCapture,
+): Promise<PreparedMdxModule | MDXModule> {
   const loadStart = performance.now();
   const projectSlug = context.projectSlug || "unknown";
 
@@ -215,8 +285,9 @@ export async function doLoadModuleESM(
       context.dependencyPinningCacheKey,
       context.dependencyPinningDependencies,
     );
-    const effectiveContext: ESMLoaderContext = {
+    const effectiveContext = {
       ...context,
+      moduleCache,
       moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
         ? context.moduleServerOrigin
         : undefined,
@@ -248,6 +319,7 @@ export async function doLoadModuleESM(
       dependencySnapshot.cacheKey,
       effectiveContext.moduleServerOrigin,
     );
+    if (sourceCapture) await assertLogicalCaptureImports(rewritten, false);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
     const vfModuleImports = findVfModuleImports(rewritten);
@@ -261,18 +333,23 @@ export async function doLoadModuleESM(
           effectiveContext,
           projectDir,
           strictMissingModules,
+          sourceCapture,
         ),
       { "mdx.vf_module_count": vfModuleImports.length },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
 
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
-    rewritten = await withSpan(
-      SpanNames.MDX_TRANSFORM_JSX,
-      () => transformJsxImports(rewritten, adapter, esmCacheDir),
-      { "mdx.project_slug": projectSlug },
-    );
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
+    // Raw file URLs do not establish source ownership. Capture resolves logical
+    // project/framework references above and never invokes this legacy reader.
+    if (!sourceCapture) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
+      rewritten = await withSpan(
+        SpanNames.MDX_TRANSFORM_JSX,
+        () => transformJsxImports(rewritten, adapter, esmCacheDir),
+        { "mdx.project_slug": projectSlug },
+      );
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
+    }
 
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
@@ -285,8 +362,8 @@ export async function doLoadModuleESM(
         cacheHttpImports(
           rewritten,
           importMap,
-          effectiveContext.reactVersion,
-          effectiveContext.serverExternalPackages,
+          effectiveContext,
+          sourceCapture,
         ),
       { "mdx.project_slug": projectSlug },
     );
@@ -295,7 +372,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths START`, {
       projectSlug,
     });
-    rewritten = await transformReactToLocalPaths(rewritten);
+    if (!sourceCapture) rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
     const effectiveReactVersion = effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION;
@@ -312,7 +389,7 @@ export async function doLoadModuleESM(
     let codeHash = cacheIdentity.codeHash;
     let compositeKey = cacheIdentity.compositeKey;
 
-    const cached = effectiveContext.moduleCache.get(compositeKey);
+    const cached = moduleCache?.get(compositeKey);
     if (cached) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Module cache hit`, { projectSlug, compositeKey });
       return cached as MDXModule;
@@ -354,13 +431,23 @@ export async function doLoadModuleESM(
     });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight DONE`, { projectSlug, filePath });
 
+    if (sourceCapture) {
+      // The linker uses captured bytes, not cache file existence. Legacy host
+      // import recovery scans may read uncaptured files and do not apply here.
+      return Object.freeze({
+        filePath,
+        importUrl: `${toFileUrl(filePath).href}?v=${codeHash}`,
+        source: rewritten,
+      });
+    }
+
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import START`, {
       projectSlug,
       filePath,
       codePreview: rewritten.substring(0, 200),
     });
 
-    setupSSRGlobals();
+    if (moduleCache) setupSSRGlobals();
 
     // Ensure bare specifiers (e.g. 'react') resolve from cache dir on Node.js
     await ensureCacheNodeModules();
@@ -399,7 +486,7 @@ export async function doLoadModuleESM(
             importMap,
             reactVersion: effectiveContext.reactVersion,
             serverExternalPackages: effectiveContext.serverExternalPackages,
-          });
+          }, sourceCapture);
           rewritten = refreshResult.code;
 
           // Re-write the module file with refreshed HTTP bundle paths
@@ -540,9 +627,14 @@ export async function doLoadModuleESM(
       });
     }
 
+    const importUrl = `${toFileUrl(filePath).href}?v=${codeHash}`;
+    if (!moduleCache) {
+      return Object.freeze({ filePath, importUrl, source: rewritten });
+    }
+
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
-      () => import(`${toFileUrl(filePath).href}?v=${codeHash}`),
+      () => import(importUrl),
       { "mdx.file_path": filePath.split("/").pop() || filePath },
     ) as Record<string, unknown> & { __vfLayout?: React.ComponentType };
 
@@ -564,7 +656,7 @@ export async function doLoadModuleESM(
       MainLayout: mod?.MainLayout as React.ComponentType<unknown> | undefined,
     };
 
-    effectiveContext.moduleCache.set(compositeKey, result);
+    moduleCache.set(compositeKey, result);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} loadModuleESM completed`, {
       durationMs: (performance.now() - loadStart).toFixed(1),

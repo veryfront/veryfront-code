@@ -55,6 +55,8 @@ export interface ContentCompileOptions {
   filePath?: string;
   /** Compile target. Defaults to "server". */
   target?: CompilationTarget;
+  /** Leave MDX import specifiers for a later scoped resolver. Defaults to false. */
+  preserveImports?: boolean;
   /** Base URL used when rewriting bare-specifier imports. */
   baseUrl?: string;
   /** When true, preserves node-position metadata for studio overlays. */

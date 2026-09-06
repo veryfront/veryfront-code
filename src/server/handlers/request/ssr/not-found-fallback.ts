@@ -106,7 +106,7 @@ export async function tryNotFoundFallback(
     const { getProjectReact, renderToStringAdapter } = await import(
       "#veryfront/react/compat/ssr-adapter/index.ts"
     );
-    const React = await getProjectReact(reactVersion);
+    const React = await getProjectReact(reactVersion, ctx.adapter);
 
     const element = React.createElement(NotFoundComp, {});
     let inner: string;
@@ -118,7 +118,7 @@ export async function tryNotFoundFallback(
             nonce: builder.nonce,
             renderContext,
             reactVersion,
-          }),
+          }, ctx.adapter),
         { nonce: builder.nonce },
       );
       inner = rendered.result;

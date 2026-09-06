@@ -51,6 +51,7 @@ import {
   resolveCachedModulePath,
 } from "./module-cache-lookup.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -859,6 +860,13 @@ export async function loadModule(
   config: ModuleLoaderConfig,
 ): Promise<Record<string, unknown>> {
   throwIfModuleLoadAborted(config);
+  const prepared = getRuntimeModuleLoader(config.adapter);
+  if (prepared) {
+    markModuleLoadProgress(config, "module:import-start", filePath);
+    const module = await prepared.importModule({ kind: "source", path: filePath });
+    markModuleLoadProgress(config, "module:imported", filePath);
+    return module;
+  }
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
   markModuleLoadProgress(config, "module:cache-ready", filePath);

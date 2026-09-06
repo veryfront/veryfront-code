@@ -3,6 +3,9 @@ import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/test
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
 import * as React from "react";
+import { renderToString } from "react-dom/server";
+import { PageContextProvider, RouterProvider } from "#veryfront/react/runtime/core.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -89,6 +92,45 @@ function createApplicator(
 }
 
 describe("LayoutApplicator helpers", () => {
+  it("loads prepared providers and an MDX app by its original source identity", async () => {
+    const appPath = "/project/components/app.mdx";
+    const adapter = createAdapter({ [appPath]: 'throw new Error("Do not compile this source");' });
+    const App = ({ children }: { children?: React.ReactNode }) =>
+      React.createElement("article", null, children);
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async (reference: RuntimeModuleReference) => {
+          if (reference.kind === "source" && reference.path === appPath) return { default: App };
+          if (reference.kind === "package") {
+            if (reference.specifier === "react") return { default: React };
+            if (reference.specifier === "veryfront/context") return { PageContextProvider };
+            if (reference.specifier === "veryfront/router") return { RouterProvider };
+          }
+          throw new Error("Module was not prepared");
+        },
+      },
+    });
+    const applicator = new LayoutApplicator({
+      projectDir: "/project",
+      projectId: "project",
+      projectSlug: "project",
+      contentSourceId: "release",
+      adapter,
+      config: { app: "components/app.mdx" },
+      layoutCache: createLayoutComponentCache(),
+      mergedComponents: {},
+      mode: "production",
+      environment: "production",
+      reactVersion: React.version,
+    });
+    const element = await applicator.applyLayouts(
+      React.createElement("main", null, "prepared"),
+      createPageInfo("/project/pages/page.mdx", "page"),
+      undefined,
+      [],
+    );
+    assertEquals(renderToString(element), "<article><main>prepared</main></article>");
+  });
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);

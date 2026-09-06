@@ -1,7 +1,8 @@
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getReactVersionInfo } from "../version-detector/index.ts";
-import { getProjectReact, getReactDOMServer } from "./server-loader.ts";
+import { type getReactDOMServer, resolveSSRRuntime } from "./server-loader.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors";
@@ -369,12 +370,10 @@ function renderToPipeableStreamImpl(
 export async function renderToStreamAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
+  adapter?: RuntimeAdapter,
 ): Promise<SSRResult> {
   const debug = isDebugMode();
-  const [server, projectReact] = await Promise.all([
-    getReactDOMServer(options.reactVersion),
-    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
-  ]);
+  const { server, react: projectReact } = await resolveSSRRuntime(options, adapter);
   const renderElement = projectReact
     ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
     : element;
@@ -389,12 +388,14 @@ export async function renderToStreamAdapter(
     return renderToPipeableStreamImpl(renderElement, options, server);
   }
 
-  const version = options.reactVersion ?? getReactVersionInfo().version;
+  const version = options.reactVersion ?? options.reactRuntime?.react.version ??
+    getReactVersionInfo().version;
   if (debug) logger.info("SSR using string rendering", { reactVersion: version });
 
   try {
     const html = await renderToStringAdapter(renderElement, {
       ...options,
+      reactRuntime: projectReact ? { react: projectReact, server } : undefined,
       renderContext: undefined,
     });
     return { html };

@@ -15,11 +15,13 @@ export function isEventStreamResponse(response: Response): boolean {
  * Keep resource ownership until a response body closes, errors, is cancelled,
  * or its inbound request is aborted. Bodyless responses are already settled
  * and are returned unchanged so transport-specific response identity survives.
+ * `strategy` controls wrapper buffering; omitted preserves the stream default.
  */
 export function completeOnResponseBodyConsumption(
   response: Response,
   onComplete: () => void,
   signal?: AbortSignal,
+  strategy?: QueuingStrategy<Uint8Array>,
 ): Response {
   if (!response.body) {
     onComplete();
@@ -98,7 +100,7 @@ export function completeOnResponseBodyConsumption(
       async cancel(reason) {
         await cancelBody(reason);
       },
-    });
+    }, strategy);
 
     return new Response(body, {
       status: response.status,

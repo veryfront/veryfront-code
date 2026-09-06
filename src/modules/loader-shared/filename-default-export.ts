@@ -60,10 +60,18 @@ function appendExportBeforeSourceMap(moduleCode: string, exportStatement: string
   }`;
 }
 
-export function ensureFilenameDefaultExport(normalizedPath: string, moduleCode: string): string {
-  if (DEFAULT_EXPORT_PATTERN.test(moduleCode)) return moduleCode;
-
+/** Named export selected by the logical module name when no default exists. */
+export function inferFilenameDefaultExportName(
+  normalizedPath: string,
+  moduleCode: string,
+): string | null {
+  if (DEFAULT_EXPORT_PATTERN.test(moduleCode)) return null;
   const exportName = getModuleIdentifier(normalizedPath);
+  return exportName && findExportMatch(moduleCode, exportName) ? exportName : null;
+}
+
+export function ensureFilenameDefaultExport(normalizedPath: string, moduleCode: string): string {
+  const exportName = inferFilenameDefaultExportName(normalizedPath, moduleCode);
   if (!exportName) return moduleCode;
 
   const exportMatch = findExportMatch(moduleCode, exportName);

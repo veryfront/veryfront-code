@@ -52,6 +52,10 @@ export async function resolveModuleFile(
   normalizedPath: string,
   adapter: RuntimeAdapter,
   projectDir?: string,
+  readers?: {
+    project(path: string): Promise<string | Uint8Array>;
+    framework(path: string, root: string): Promise<string | Uint8Array>;
+  },
 ): Promise<FileResolutionResult | null> {
   const normalized = canonicalizeContainedModulePath(normalizedPath);
   if (!normalized) {
@@ -75,7 +79,7 @@ export async function resolveModuleFile(
       if (!resolvedPath) continue;
 
       try {
-        const content = await adapter.fs.readFile(resolvedPath);
+        const content = await (readers?.project(resolvedPath) ?? adapter.fs.readFile(resolvedPath));
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file via index`, {
           normalizedPath,
           basePath,
@@ -100,23 +104,24 @@ export async function resolveModuleFile(
   if (!isFramework && projectDir && !adapter.fs.resolveFile) {
     const localFs = getLocalFs();
     const normalizedProjectDir = stripTrailingSlashes(projectDir);
+    const readProjectFile = readers?.project ?? ((path: string) => localFs.readTextFile(path));
 
     for (const prefix of DIRECTORY_PREFIXES) {
       if (hasKnownExt) {
         const absolutePath = join(normalizedProjectDir, prefix + filePathWithoutJs);
-        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
+        const result = await tryReadFile(absolutePath, readProjectFile);
         if (result) return result;
       }
 
       for (const ext of MODULE_EXTENSIONS) {
         const absolutePath = join(normalizedProjectDir, prefix + filePathWithoutExt + ext);
-        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
+        const result = await tryReadFile(absolutePath, readProjectFile);
         if (result) return result;
       }
 
       for (const ext of MODULE_EXTENSIONS) {
         const absolutePath = join(normalizedProjectDir, prefix, filePathWithoutExt, `index${ext}`);
-        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
+        const result = await tryReadFile(absolutePath, readProjectFile);
         if (result) return result;
       }
     }
@@ -148,13 +153,15 @@ export async function resolveModuleFile(
     includeIndexFallback: false,
   });
   if (resolvedFrameworkPath) {
-    const content = await localFs.readTextFile(resolvedFrameworkPath.path);
+    const content =
+      await (readers?.framework(resolvedFrameworkPath.path, resolvedFrameworkPath.lookupDir) ??
+        localFs.readTextFile(resolvedFrameworkPath.path));
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
       basePath: filePathWithoutJs,
       resolvedPath: resolvedFrameworkPath.path,
       lookupDir: resolvedFrameworkPath.lookupDir,
     });
-    return { sourceCode: content, actualFilePath: resolvedFrameworkPath.path };
+    return { sourceCode: decodeContent(content), actualFilePath: resolvedFrameworkPath.path };
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework file not found`, {

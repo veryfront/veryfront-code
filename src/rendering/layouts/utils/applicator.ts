@@ -74,6 +74,7 @@ export function applyLayoutsESM(
                 applyMDXLayout({
                   element,
                   bundle: item.bundle!,
+                  sourcePath: item.path,
                   projectDir,
                   mergedComponents,
                   adapter,

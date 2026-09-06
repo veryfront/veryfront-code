@@ -109,6 +109,17 @@ function blockEventLoopFor(durationMs: number): void {
 }
 
 describe("react/compat/ssr-adapter/stream-renderer", () => {
+  it("keeps the selected runtime when streaming falls back to string rendering", async () => {
+    const options = {
+      reactRuntime: { react: React, server: createMockServer({ renderToString: () => "first" }) },
+    };
+    const pending = renderToStreamAdapter(React.createElement("div"), options);
+    options.reactRuntime = {
+      react: React,
+      server: createMockServer({ renderToString: () => "second" }),
+    };
+    assertEquals((await pending).html, "first", "one render must keep its selected runtime pair");
+  });
   afterEach(() => {
     __injectReactDOMServerForTests(null);
     resetReactCache();

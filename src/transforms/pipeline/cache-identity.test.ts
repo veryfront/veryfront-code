@@ -33,6 +33,15 @@ function identityInput(
 }
 
 describe("transform pipeline cache identity", () => {
+  it("isolates logical SSR references while preserving the default file-backed identity", async () => {
+    const base = await computePipelineConfigIdentity(identityInput());
+    assertEquals(await computePipelineConfigIdentity(identityInput({ ssrImports: "files" })), base);
+    assertNotEquals(
+      await computePipelineConfigIdentity(identityInput({ ssrImports: "references" })),
+      base,
+    );
+  });
+
   it("snapshots import maps without invoking getters", () => {
     let getterCalls = 0;
     const imports = Object.create(null) as Record<string, string>;

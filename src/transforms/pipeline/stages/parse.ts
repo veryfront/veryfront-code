@@ -18,6 +18,8 @@ export const parsePlugin: TransformPlugin = {
       ctx.filePath,
       ssr ? "server" : "browser",
       ssr ? undefined : ctx.moduleServerUrl,
+      undefined,
+      ctx.ssrImports === "references" ? true : undefined,
     );
 
     if (result.frontmatter) {

@@ -347,7 +347,7 @@ async function renderErrorPage(
   const { getProjectReact, renderToStringAdapter } = await import(
     "#veryfront/react/compat/ssr-adapter/index.ts"
   );
-  const React = await getProjectReact(reactVersion);
+  const React = await getProjectReact(reactVersion, ctx.adapter);
 
   const errorProps = { statusCode, err: error, pathname };
 
@@ -363,7 +363,7 @@ async function renderErrorPage(
           nonce: builder.nonce,
           renderContext,
           reactVersion,
-        }),
+        }, ctx.adapter),
       { nonce: builder.nonce },
     );
 

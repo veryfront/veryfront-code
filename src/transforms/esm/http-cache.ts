@@ -69,11 +69,15 @@ import {
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-validator.ts";
 import {
+  type BundleAccumulator,
   bundleAccumulatorStorage,
   createBundleAccumulator,
   trackCachedBundleGraph,
   trackWrittenBundle,
 } from "./bundle-accumulator.ts";
+import { ModuleSourceCapture } from "./module-source-capture.ts";
+import type { RenderArtifactLimits } from "./render-artifacts.ts";
+import type { RenderModuleSnapshot } from "./link-render-modules.ts";
 import {
   isHttpBundleCodeWithinLimit,
   MAX_CACHED_HTTP_BUNDLE_BYTES,
@@ -761,14 +765,66 @@ interface CacheHttpImportsResult {
 /**
  * Rewrite HTTP imports in the provided code to cached local file:// paths.
  * Returns the rewritten code and an optional bundle manifest ID for atomic validation.
+ * An optional capture is borrowed, never closed here. Its owner must call take()
+ * to reject incomplete results, and discard() when the owning operation fails.
  */
 export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<CacheHttpImportsResult> {
-  options.abortSignal?.throwIfAborted();
-  const requestOptions = prepareHttpCacheRequestOptions(options);
   const accumulator = createBundleAccumulator();
+  accumulator.sourceCapture = sourceCapture;
+  let requestOptions: CacheOptions;
+  try {
+    options.abortSignal?.throwIfAborted();
+    requestOptions = prepareHttpCacheRequestOptions(options);
+  } catch (error) {
+    sourceCapture?.invalidate();
+    throw error;
+  }
+  const pending = cacheHttpImports(code, requestOptions, accumulator);
+  if (!sourceCapture) return pending;
+  return pending.then((result) => {
+    if (!accumulator.complete) sourceCapture.invalidate();
+    return result;
+  }, (error) => {
+    sourceCapture.invalidate();
+    throw error;
+  });
+}
+
+/**
+ * Capture HTTP dependency bytes while performing the normal cache rewrite.
+ *
+ * The explicit limits bound captured dependency count and UTF-8 URL/source
+ * bytes, not the root code or heap usage. This retains only modules observed
+ * by existing bundle validation, including cache hits. It does not follow
+ * arbitrary file imports, close the entire MDX graph, or authorize execution.
+ * Use the linker to verify graph closure after collecting the other sources.
+ * Sources contain replica-local URLs and must not enter distributed caches.
+ */
+export async function captureHttpImportsToLocal(
+  code: string,
+  options: CacheOptions,
+  limits: RenderArtifactLimits,
+): Promise<CacheHttpImportsResult & { modules: RenderModuleSnapshot["modules"] }> {
+  const abortSignal = options.abortSignal;
+  const sourceCapture = new ModuleSourceCapture(limits);
+  try {
+    const result = await cacheHttpImportsToLocal(code, options, sourceCapture);
+    abortSignal?.throwIfAborted();
+    return { ...result, modules: sourceCapture.take() };
+  } finally {
+    sourceCapture.discard();
+  }
+}
+
+function cacheHttpImports(
+  code: string,
+  requestOptions: CacheOptions,
+  accumulator: BundleAccumulator,
+): Promise<CacheHttpImportsResult> {
   return bundleAccumulatorStorage.run(accumulator, async () => {
     const { replacements } = await buildReplacements(
       code,
