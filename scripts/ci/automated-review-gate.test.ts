@@ -29,6 +29,8 @@ const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
 const BASE_HEAD = "e724246c0e05c8dcf0db41f024f4592128222937";
 const NEW_HEAD = "b8459394dd5bac3a6736ee4c7723d7f291abb382";
+const LIVE_CODEX_SUMMARY_HEAD =
+  "60c61968ce726689e6ab9e5438d08e8bf8a11ced";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -130,6 +132,61 @@ function codexFindingComment(
   };
 }
 
+function codexReviewSummary(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id: 5559783108,
+    user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
+    body: [
+      "<!-- codex-pull-request-review-summary -->",
+      "",
+      "## Codex Review Summary",
+      "",
+      "This comment shows the latest Codex review activity on this pull request.",
+      "",
+      "| Review | Status | Commit | Review trigger |",
+      "| --- | --- | --- | --- |",
+      `| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-09-06T14:32:42.547857Z">2026-09-06T14:32:42.547857Z</relative-time> | \`${HEAD.slice(0, 7)}\` | Manual request |`,
+      "",
+      "",
+      "",
+      "<details> <summary>ℹ️ About Codex in GitHub</summary>",
+      "<br/>",
+      "",
+      "[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you",
+      "- Open a pull request for review",
+      "- Mark a draft as ready",
+      '- Comment "@codex review" or "@codex security review".',
+      "",
+      "Codex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.",
+      "",
+      "</details>",
+    ].join("\n"),
+    html_url:
+      "https://github.com/veryfront/veryfront-code/pull/4425#issuecomment-5559783108",
+    created_at: "2026-09-06T14:11:44Z",
+    updated_at: "2026-09-06T14:32:43Z",
+    ...overrides,
+  };
+}
+
+function codexCompletionReaction(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id: 491342489,
+    user: {
+      login: "chatgpt-codex-connector[bot]",
+      id: CODEX_ID,
+      type: "User",
+    },
+    content: "+1",
+    created_at: "2026-09-06T14:32:45Z",
+    ...overrides,
+  };
+}
+
 function codexRateLimitComment(
   createdAt = "2026-08-25T08:01:00Z",
 ) {
@@ -195,6 +252,230 @@ function record(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("automated review evidence", () => {
+  it("accepts the live Codex completed-summary proof with its later connector reaction", async () => {
+    const liveSummary = codexReviewSummary({
+      body: (codexReviewSummary().body as string).replace(
+        HEAD.slice(0, 7),
+        LIVE_CODEX_SUMMARY_HEAD.slice(0, 7),
+      ),
+    });
+    const result = await findAutomatedReview(
+      {
+        reviews: [],
+        comments: [liveSummary],
+        reactions: [codexCompletionReaction()],
+      },
+      LIVE_CODEX_SUMMARY_HEAD,
+      (ref) =>
+        Promise.resolve(
+          ref === LIVE_CODEX_SUMMARY_HEAD.slice(0, 7)
+            ? LIVE_CODEX_SUMMARY_HEAD
+            : undefined,
+        ),
+    );
+    assertEquals(result?.source, "codex-summary");
+    assertEquals(result?.reviewer, "chatgpt-codex-connector[bot]");
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [codexComment()] },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+      "legacy immutable no-findings proof remains valid",
+    );
+  });
+
+  it("requires both halves of Codex summary proof from the pinned connector", async () => {
+    const resolveHead = () => Promise.resolve(HEAD);
+    const rejectedEvidence = [
+      { comments: [codexReviewSummary()], reactions: [] },
+      { comments: [], reactions: [codexCompletionReaction()] },
+      {
+        comments: [codexReviewSummary()],
+        reactions: [codexCompletionReaction({
+          user: { login: "other-connector[bot]", id: CODEX_ID, type: "User" },
+        })],
+      },
+      {
+        comments: [codexReviewSummary()],
+        reactions: [codexCompletionReaction({
+          user: {
+            login: "chatgpt-codex-connector[bot]",
+            id: CODEX_ID + 1,
+            type: "User",
+          },
+        })],
+      },
+      {
+        comments: [codexReviewSummary()],
+        reactions: [codexCompletionReaction({ content: "eyes" })],
+      },
+      {
+        comments: [codexReviewSummary({
+          user: bot("other-connector[bot]", CODEX_ID),
+        })],
+        reactions: [codexCompletionReaction()],
+      },
+      {
+        comments: [codexReviewSummary({
+          user: bot("chatgpt-codex-connector[bot]", CODEX_ID + 1),
+        })],
+        reactions: [codexCompletionReaction()],
+      },
+      {
+        comments: [codexReviewSummary()],
+        reactions: [codexCompletionReaction({
+          user: {
+            login: "chatgpt-codex-connector[bot]",
+            id: CODEX_ID,
+            type: "Organization",
+          },
+        })],
+      },
+    ];
+    for (const evidence of rejectedEvidence) {
+      assertEquals(
+        await findAutomatedReview({ reviews: [], ...evidence }, HEAD, resolveHead),
+        undefined,
+      );
+    }
+    for (const type of ["Bot", "User"]) {
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [codexReviewSummary()],
+            reactions: [codexCompletionReaction({
+              user: {
+                login: "chatgpt-codex-connector[bot]",
+                id: CODEX_ID,
+                type,
+              },
+            })],
+          },
+          HEAD,
+          resolveHead,
+        ))?.source,
+        "codex-summary",
+      );
+    }
+  });
+
+  it("rejects stale, ambiguous, and malformed Codex completed summaries", async () => {
+    const body = codexReviewSummary().body as string;
+    const row = body.split("\n")[8];
+    const rejected = [
+      [codexReviewSummary({
+        body: body.replace(`\`${HEAD.slice(0, 7)}\``, "`d258d50`"),
+      }), OTHER_HEAD],
+      [codexReviewSummary(), undefined],
+      [codexReviewSummary({
+        body: body.replace("✅ **Completed**", "🟡 **In progress**"),
+      }), HEAD],
+      [codexReviewSummary({
+        body: body.replace(`${row}\n\n`, `${row}\n\n  ${row}\n`),
+      }), HEAD],
+      [codexReviewSummary({
+        body: body.replace(
+          "| Review | Status | Commit | Review trigger |",
+          "| Status | Review | Commit | Review trigger |",
+        ),
+      }), HEAD],
+      [codexReviewSummary({ updated_at: "2026-09-06T14:32:41Z" }), HEAD],
+      [codexReviewSummary({ created_at: "not-a-date" }), HEAD],
+    ] as const;
+    for (const [summary, resolved] of rejected) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [summary],
+            reactions: [codexCompletionReaction()],
+          },
+          HEAD,
+          () => Promise.resolve(resolved),
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("requires a current completion reaction and preserves epochs and later findings", async () => {
+    const resolveHead = () => Promise.resolve(HEAD);
+    const evidence = {
+      reviews: [],
+      comments: [codexReviewSummary()],
+      reactions: [codexCompletionReaction()],
+    };
+    assertEquals(
+      (await findAutomatedReview(evidence, HEAD, resolveHead))?.source,
+      "codex-summary",
+    );
+    evidence.reactions = [];
+    assertEquals(await findAutomatedReview(evidence, HEAD, resolveHead), undefined);
+    for (const createdAt of ["2026-09-06T14:32:43Z", "not-a-date"]) {
+      assertEquals(
+        await findAutomatedReview(
+          { ...evidence, reactions: [codexCompletionReaction({ created_at: createdAt })] },
+          HEAD,
+          resolveHead,
+        ),
+        undefined,
+      );
+    }
+    const boundary = Date.parse("2026-09-06T14:32:43Z");
+    assertEquals(
+      await findAutomatedReview(
+        { ...evidence, reactions: [codexCompletionReaction()] },
+        HEAD,
+        resolveHead,
+        undefined,
+        boundary,
+      ),
+      undefined,
+      "a stale completed summary cannot be revived by a newer reaction",
+    );
+    const freshSummary = codexReviewSummary({
+      body: (codexReviewSummary().body as string).replaceAll(
+        "2026-09-06T14:32:42.547857Z",
+        "2026-09-06T14:32:44Z",
+      ),
+      updated_at: "2026-09-06T14:32:44Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          ...evidence,
+          comments: [freshSummary],
+          reactions: [codexCompletionReaction()],
+        },
+        HEAD,
+        resolveHead,
+        undefined,
+        boundary,
+      ))?.source,
+      "codex-summary",
+    );
+    assertEquals(
+      await findAutomatedReview(
+        {
+          ...evidence,
+          comments: [
+            codexReviewSummary(),
+            codexFindingComment(HEAD.slice(0, 10), {
+              created_at: "2026-09-06T14:32:46Z",
+              updated_at: "2026-09-06T14:32:46Z",
+            }),
+          ],
+          reactions: [codexCompletionReaction()],
+        },
+        HEAD,
+        resolveHead,
+      ),
+      undefined,
+    );
+  });
   it("accepts the compact Codex no-findings verdict and rejects stale verdicts", async () => {
     const fixtures = [
       {
@@ -1065,6 +1346,7 @@ function githubFixture(options: {
   const endpoints = {
     reviews: () => undefined,
     comments: () => undefined,
+    reactions: () => undefined,
     events: () => undefined,
     statuses: () => undefined,
     refs: () => undefined,
@@ -1142,6 +1424,7 @@ function githubFixture(options: {
           return Promise.resolve();
         },
       },
+      reactions: { listForIssue: endpoints.reactions },
       git: {
         listMatchingRefs: endpoints.refs,
         getRef: (parameters: Record<string, unknown>) => {
@@ -1191,7 +1474,8 @@ describe("automated review publication", () => {
     const fixture = githubFixture({
       pages: {
         reviews: [[], []],
-        comments: [[], [codexComment()]],
+        comments: [[], [codexReviewSummary()]],
+        reactions: [[], [codexCompletionReaction()]],
         events: [[], []],
       },
       headResponses: [HEAD],
@@ -3048,6 +3332,7 @@ describe("automated review publication", () => {
     const partialPages = [
       "reviews",
       "comments",
+      "reactions",
       "events",
       "statuses",
       "timeline",
@@ -4586,6 +4871,30 @@ describe("merge queue review propagation", () => {
     );
   });
 
+  it("revalidates completed-summary proof before reusing it for a merge group", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexReviewSummary()]],
+        reactions: [[codexCompletionReaction()]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      commit: HEAD,
+      headResponses: [HEAD, HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
+    assertEquals(fixture.published[0]?.state, "success");
+  });
+
   it("fails closed when the live merge-queue binding does not match", async () => {
     const staleBindings = [
       ["source", activeQueueBinding({ headRefOid: OTHER_HEAD })],
@@ -5185,6 +5494,7 @@ describe("merge queue review propagation", () => {
 
 function requestFixture(options: {
   comments?: Record<string, unknown>[];
+  reactions?: Record<string, unknown>[];
   events?: Record<string, unknown>[];
   eventResponses?: Record<string, unknown>[][];
   reviews?: Record<string, unknown>[];
@@ -5199,6 +5509,7 @@ function requestFixture(options: {
   const posted: Record<string, unknown>[] = [];
   const state = {
     comments: options.comments ?? [],
+    reactions: options.reactions ?? [],
     events: options.events ?? [],
     reviews: options.reviews ?? [],
     statuses: options.statuses ?? [],
@@ -5208,6 +5519,7 @@ function requestFixture(options: {
     draft: options.draft ?? false,
   };
   const listComments = () => undefined;
+  const listReactions = () => undefined;
   const listEvents = () => undefined;
   const listReviews = () => undefined;
   const listStatuses = () => undefined;
@@ -5219,6 +5531,7 @@ function requestFixture(options: {
     paginate: {
       async *iterator(endpoint: unknown) {
         if (endpoint === listComments) yield { data: state.comments };
+        else if (endpoint === listReactions) yield { data: state.reactions };
         else if (endpoint === listEvents) {
           const events = options.eventResponses?.[
             Math.min(eventRead++, options.eventResponses.length - 1)
@@ -5240,6 +5553,7 @@ function requestFixture(options: {
           return Promise.resolve();
         },
       },
+      reactions: { listForIssue: listReactions },
       pulls: {
         listReviews,
         get: () =>
@@ -5360,6 +5674,22 @@ describe("automated review request", () => {
     assertEquals(result.requested, false);
     assertEquals(result.reason, "reviewed");
     assertEquals(fixture.posted, []);
+
+    const completedSummary = requestFixture({
+      comments: [codexReviewSummary()],
+      reactions: [codexCompletionReaction()],
+    });
+    const completedSummaryResult = await requestAutomatedReview({
+      github: completedSummary.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      revalidateReviewEvidence: true,
+    });
+    assertEquals(completedSummaryResult.requested, false);
+    assertEquals(completedSummaryResult.reason, "reviewed");
+    assertEquals(completedSummary.posted, []);
 
     const changedHead = requestFixture({ headResponses: [HEAD, OTHER_HEAD] });
     const changedHeadResult = await requestAutomatedReview({
@@ -6990,6 +7320,7 @@ describe("automated review workflow", () => {
       record(mergeGroupJob.permissions, "merge group permissions"),
       {
         contents: "read",
+        issues: "read",
         "pull-requests": "read",
         statuses: "write",
       },

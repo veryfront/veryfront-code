@@ -7,6 +7,10 @@ const BOTS = new Map([
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+const CODEX_REVIEW_SUMMARY_MARKER =
+  "<!-- codex-pull-request-review-summary -->";
+const CODEX_REVIEW_SUMMARY_ROW =
+  /^\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
 const CODEX_USAGE_LIMIT =
   /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
@@ -135,6 +139,50 @@ function isPinnedBot(user, login) {
   return user?.login === login &&
     user?.id === BOTS.get(login) &&
     user?.type === "Bot";
+}
+
+function isPinnedCodexReaction(user) {
+  // GitHub reports this app identity as User on issue reactions and Bot on
+  // issue comments. Keep that API-specific variation local to reactions.
+  return user?.login === CODEX_LOGIN &&
+    user?.id === BOTS.get(CODEX_LOGIN) &&
+    (user?.type === "Bot" || user?.type === "User");
+}
+
+function parseCompletedCodexSummary(comment) {
+  if (
+    !isPinnedBot(comment?.user, CODEX_LOGIN) ||
+    typeof comment?.body !== "string"
+  ) return undefined;
+  const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
+  const expectedPrefix = [
+    CODEX_REVIEW_SUMMARY_MARKER,
+    "",
+    "## Codex Review Summary",
+    "",
+    "This comment shows the latest Codex review activity on this pull request.",
+    "",
+    "| Review | Status | Commit | Review trigger |",
+    "| --- | --- | --- | --- |",
+  ];
+  if (
+    expectedPrefix.some((line, index) => lines[index] !== line) ||
+    (lines[9] !== undefined && lines[9] !== "") ||
+    lines.slice(9).some((line) => /^\|.*\|$/.test(line.trim()))
+  ) return undefined;
+  const row = CODEX_REVIEW_SUMMARY_ROW.exec(lines[8] ?? "");
+  if (!row || row[1] !== row[2] || row[4].trim().length === 0) {
+    return undefined;
+  }
+  const completedAt = Date.parse(row[1]);
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  const updatedAt = Date.parse(comment?.updated_at ?? "");
+  if (
+    !Number.isFinite(completedAt) || !Number.isFinite(createdAt) ||
+    !Number.isFinite(updatedAt) || createdAt > updatedAt ||
+    completedAt > updatedAt
+  ) return undefined;
+  return { shortRef: row[3], completedAt, updatedAt };
 }
 
 function isPinnedGraphqlBot(user, login) {
@@ -857,6 +905,7 @@ export async function findAutomatedReview(
   {
     reviews,
     comments,
+    reactions = /** @type {unknown[]} */ ([]),
     events = /** @type {unknown[]} */ ([]),
     timeline = /** @type {unknown[]} */ ([]),
   },
@@ -950,6 +999,43 @@ export async function findAutomatedReview(
         };
       }
     }
+  }
+
+  for (const comment of comments) {
+    const summary = parseCompletedCodexSummary(comment);
+    if (
+      !summary ||
+      (boundary !== undefined &&
+        (summary.completedAt <= boundary.time ||
+          summary.updatedAt <= boundary.time)) ||
+      !headSha.toLowerCase().startsWith(summary.shortRef.toLowerCase())
+    ) continue;
+    const resolved = await resolveCommit(summary.shortRef);
+    if (
+      typeof resolved !== "string" || !FULL_SHA.test(resolved) ||
+      resolved.toLowerCase() !== headSha.toLowerCase()
+    ) continue;
+    const reaction = reactions.find((candidate) => {
+      const createdAt = Date.parse(candidate?.created_at ?? "");
+      return isPinnedCodexReaction(candidate?.user) &&
+        candidate?.content === "+1" &&
+        Number.isFinite(createdAt) && createdAt > summary.updatedAt &&
+        (boundary === undefined || createdAt > boundary.time);
+    });
+    if (!reaction) continue;
+    codexSuccesses.push({
+      evidence: reaction,
+      time: evidenceTime(reaction, "reacted", "created"),
+      timelineEvent: "reacted",
+      proof: {
+        reviewer: CODEX_LOGIN,
+        source: "codex-summary",
+        state: "COMMENTED",
+        url: typeof comment.html_url === "string"
+          ? comment.html_url
+          : undefined,
+      },
+    });
   }
 
   for (const comment of comments) {
@@ -1341,7 +1427,7 @@ export async function publishAutomatedReviewStatus({
   if (!failure) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, events, statuses, timeline] = await Promise.all(
+      const [reviews, comments, reactions, events, statuses, timeline] = await Promise.all(
         [
           collectAll(
             github,
@@ -1354,6 +1440,12 @@ export async function publishAutomatedReviewStatus({
             github.rest.issues.listComments,
             { ...common, issue_number: pullNumber },
             "comments",
+          ),
+          collectAll(
+            github,
+            github.rest.reactions.listForIssue,
+            { ...common, issue_number: pullNumber },
+            "pull request reactions",
           ),
           collectAll(
             github,
@@ -1469,7 +1561,7 @@ export async function publishAutomatedReviewStatus({
             REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind)))
       ) {
         review = await findAutomatedReview(
-          { reviews, comments, events, timeline },
+          { reviews, comments, reactions, events, timeline },
           headSha,
           (ref) => resolveCommitRef(github, common, ref),
           (login) =>
@@ -2732,7 +2824,7 @@ async function readMergeGroupSourceEvidence({
   pullNumber,
   sourceHeadSha,
 }) {
-  const [reviews, comments, events, statuses, timeline] = await Promise.all([
+  const [reviews, comments, reactions, events, statuses, timeline] = await Promise.all([
     collectAll(
       github,
       github.rest.pulls.listReviews,
@@ -2744,6 +2836,12 @@ async function readMergeGroupSourceEvidence({
       github.rest.issues.listComments,
       { ...common, issue_number: pullNumber },
       "source comments",
+    ),
+    collectAll(
+      github,
+      github.rest.reactions.listForIssue,
+      { ...common, issue_number: pullNumber },
+      "source pull request reactions",
     ),
     collectAll(
       github,
@@ -2764,7 +2862,7 @@ async function readMergeGroupSourceEvidence({
       "source review timeline",
     ),
   ]);
-  return { reviews, comments, events, statuses, timeline };
+  return { reviews, comments, reactions, events, statuses, timeline };
 }
 
 async function requireCurrentAutomatedReview({
@@ -3289,7 +3387,7 @@ async function revalidateAutomatedReviewRequest({
   marker,
 }) {
   const common = { owner, repo };
-  const [reviews, comments, events, statuses, timeline] = await Promise.all([
+  const [reviews, comments, reactions, events, statuses, timeline] = await Promise.all([
     collectAll(
       github,
       github.rest.pulls.listReviews,
@@ -3301,6 +3399,12 @@ async function revalidateAutomatedReviewRequest({
       github.rest.issues.listComments,
       { ...common, issue_number: pullNumber },
       "final request comments",
+    ),
+    collectAll(
+      github,
+      github.rest.reactions.listForIssue,
+      { ...common, issue_number: pullNumber },
+      "final request reactions",
     ),
     collectAll(
       github,
@@ -3358,7 +3462,7 @@ async function revalidateAutomatedReviewRequest({
   }
   const baseBinding = pullRequestBaseBinding(refreshed?.data);
   const review = await findAutomatedReview(
-    { reviews, comments, events, timeline },
+    { reviews, comments, reactions, events, timeline },
     headSha,
     (ref) => resolveCommitRef(github, common, ref),
     (login) =>
