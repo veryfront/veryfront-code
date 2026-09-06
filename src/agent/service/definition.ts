@@ -1,5 +1,29 @@
 import type { Agent } from "../types.ts";
 
+// Capture before project modules load: ingress requests still carry host
+// credentials while the service selects a route and applies CORS policy.
+const IntrinsicReflectApply = Reflect.apply;
+const NativeRequest = Request;
+const NativeURL = URL;
+const NativeHasInstance = Function.prototype[Symbol.hasInstance];
+const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
+const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
+const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
+const URLPathnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
+const URLHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+const HeadersGet = Headers.prototype.get;
+const StringToUpperCase = String.prototype.toUpperCase;
+
+function readNativeValue<T>(target: Request | URL, getter: (() => T) | undefined): T {
+  if (!getter) throw new TypeError("Request routing accessor is unavailable");
+  return IntrinsicReflectApply(getter, target, []) as T;
+}
+
+function readRequestHeader(request: Request, name: string): string | null {
+  const headers = readNativeValue<Headers>(request, RequestHeadersGet);
+  return IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
+}
+
 /**
  * Transport-neutral durable run lifecycle sink for agent-service adoption work.
  */
@@ -187,14 +211,15 @@ function splitPath(path: string): string[] {
 
 function matchRoute(
   route: AgentServiceRoute,
-  request: Request,
+  method: string,
+  path: string,
 ): Record<string, string> | undefined {
-  if (request.method.toUpperCase() !== route.method) {
+  if (IntrinsicReflectApply(StringToUpperCase, method, []) !== route.method) {
     return undefined;
   }
 
   const routeParts = splitPath(route.path);
-  const requestParts = splitPath(new URL(request.url).pathname);
+  const requestParts = splitPath(path);
   if (routeParts.length !== requestParts.length) {
     return undefined;
   }
@@ -232,7 +257,7 @@ function getAllowedCorsOrigin(
   config: AgentServiceCorsConfig,
   request: Request,
 ): string | undefined {
-  const origin = request.headers.get("Origin");
+  const origin = readRequestHeader(request, "Origin");
   if (!origin) return undefined;
 
   const origins = config.origins ?? ["*"];
@@ -269,7 +294,7 @@ function createCorsPreflightResponse(
   const allowMethods = config.allowMethods ?? ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
   headers.set("Access-Control-Allow-Methods", allowMethods.join(", "));
 
-  const requestedHeaders = request.headers.get("Access-Control-Request-Headers");
+  const requestedHeaders = readRequestHeader(request, "Access-Control-Request-Headers");
   const allowHeaders = config.allowHeaders?.join(", ") ?? requestedHeaders;
   if (allowHeaders) {
     headers.set("Access-Control-Allow-Headers", allowHeaders);
@@ -299,12 +324,12 @@ function withCorsHeaders(
 }
 
 function toRuntimeRequest(input: string | URL | Request, init?: RequestInit): Request {
-  if (input instanceof Request) {
-    return init === undefined ? input : new Request(input, init);
+  if (IntrinsicReflectApply(NativeHasInstance, NativeRequest, [input])) {
+    return init === undefined ? input as Request : new NativeRequest(input, init);
   }
 
-  const requestUrl = typeof input === "string" ? new URL(input, "http://localhost") : input;
-  return new Request(requestUrl, init);
+  const requestUrl = typeof input === "string" ? new NativeURL(input, "http://localhost") : input;
+  return new NativeRequest(readNativeValue<string>(requestUrl, URLHrefGet), init);
 }
 
 function createAgentServiceRuntime<
@@ -323,28 +348,30 @@ function createAgentServiceRuntime<
   const runtime: AgentServiceRuntime<TStartInput, TRun, TEvent, TTerminalState> = {
     contract,
     async fetch(request) {
+      const method = readNativeValue<string>(request, RequestMethodGet);
       if (
-        corsConfig && request.method === "OPTIONS" &&
-        request.headers.has("Access-Control-Request-Method")
+        corsConfig && method === "OPTIONS" &&
+        readRequestHeader(request, "Access-Control-Request-Method") !== null
       ) {
         return createCorsPreflightResponse(request, corsConfig);
       }
 
-      const path = new URL(request.url).pathname;
+      const url = new NativeURL(readNativeValue<string>(request, RequestUrlGet));
+      const path = readNativeValue<string>(url, URLPathnameGet);
       let response: Response;
-      if (request.method === "GET" && path === "/readiness") {
+      if (method === "GET" && path === "/readiness") {
         response = shuttingDown
           ? new Response("Shutting down", { status: 503 })
           : new Response("OK");
         return withCorsHeaders(response, corsConfig, request);
       }
-      if (request.method === "GET" && path === "/liveness") {
+      if (method === "GET" && path === "/liveness") {
         response = new Response("OK");
         return withCorsHeaders(response, corsConfig, request);
       }
 
       for (const route of routes) {
-        const params = matchRoute(route, request);
+        const params = matchRoute(route, method, path);
         if (params) {
           response = await route.handler(request, params);
           return withCorsHeaders(response, corsConfig, request);

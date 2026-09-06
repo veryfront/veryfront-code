@@ -50,6 +50,13 @@ trace hooks, or application-error reporters. The framework-owned
 `veryfront serve` runtime owns this setup on shared and managed dedicated
 servers.
 
+The service captures request accessors and routing primitives before project
+modules load. Routing and CORS checks use those captured operations so later
+changes to shared web prototypes cannot inspect the run-event or inference
+credentials on an incoming request. Import the framework service runtime before
+loading project modules. Custom host route handlers still receive the original
+request and remain responsible for authentication and credential handling.
+
 The service discovers the same project primitives as the app runtime:
 
 - `agents/`
