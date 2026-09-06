@@ -1031,6 +1031,51 @@ describe("securityMiddleware", () => {
     );
   });
 
+  it("redacts assembled provider content from violation callbacks", async () => {
+    for (const sanitize of [false, true]) {
+      const reported: string[] = [];
+      const middleware = securityMiddleware({
+        input: sanitize ? { sanitize: true } : { blockedPatterns: [/foobar/] },
+        onViolation: (violation) => reported.push(violation.content),
+      });
+      const context = createContext({
+        input: [{
+          id: "caller",
+          role: "system",
+          parts: [{ type: "text", text: sanitize ? '="payload"' : "bar" }],
+        }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      const validateTurn = getTurnMessageValidator(context);
+      const validateProjection = getTurnMessageProjectionValidator(context);
+      if (!validateTurn || !validateProjection) throw new Error("Expected memory validation");
+      const history: Message[] = [{
+        id: "history",
+        role: "system",
+        parts: [{ type: "text", text: `private historical text ${sanitize ? "onclick" : "foo"}` }],
+      }];
+      await assertRejects(
+        () => validate("private runtime text", [...history, ...context.input as Message[]]),
+        Error,
+        "Input validation failed",
+      );
+      await assertRejects(
+        () => validateTurn(history, context.input as Message[]),
+        Error,
+        "Input validation failed",
+      );
+      await assertRejects(
+        () => validateProjection([...history, ...context.input as Message[]]),
+        Error,
+        "Input validation failed",
+      );
+      assertEquals(reported.length > 0, true);
+      assertEquals(reported.every((content) => content === "[REDACTED]"), true);
+    }
+  });
+
   it("does not apply caller input patterns to a trusted runtime prompt alone", async () => {
     const middleware = securityMiddleware({
       input: { blockedPatterns: [/runtime marker/] },

@@ -104,6 +104,10 @@ replay. The input-validation middleware does not authenticate replay provenance.
 Direct writes through `getMemory().add()` also cross this host-owned trust
 boundary; validate untrusted input before adding it.
 
+For violations detected in assembled provider instructions, `onViolation`
+receives `[REDACTED]` as `content`. This keeps trusted system and historical text
+out of callback-based audit logs. The violation type and reason remain available.
+
 ### Custom memory transactions
 
 When transactional input validation is enabled, your custom `Memory` backend

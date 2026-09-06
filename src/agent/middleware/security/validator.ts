@@ -1433,6 +1433,9 @@ export function securityMiddleware(
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
     if (config.input) {
+      const onProviderViolation = (violation: SecurityViolation): void => {
+        config.onViolation?.({ ...violation, content: "[REDACTED]" });
+      };
       // Register the cross-turn check before this turn is committed: merged
       // system runs and adjacent user runs must also be validated across the
       // memory/input boundary, which only the runtime can see. Only runs this
@@ -1500,7 +1503,7 @@ export function securityMiddleware(
         await assertProviderRunsValid(
           inputValidator,
           providerRuns,
-          config.onViolation,
+          onProviderViolation,
         );
       });
       registerTurnMessageValidator(context, async (history, turnInput) => {
@@ -1526,13 +1529,13 @@ export function securityMiddleware(
             texts: individualValues.texts,
             assembled: [...individualValues.assembled, ...runTexts],
           },
-          config.onViolation,
+          onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
           [...individualValues.texts, ...individualValues.assembled, ...runTexts],
           "Provider-visible messages contain content sanitization removes",
-          config.onViolation,
+          onProviderViolation,
         );
       });
       registerTurnMessageProjectionValidator(context, async (messages, previousMessages) => {
@@ -1545,13 +1548,13 @@ export function securityMiddleware(
         await assertInputTextsValid(
           inputValidator,
           { texts: [], assembled: runTexts },
-          config.onViolation,
+          onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
           runTexts,
           "Provider-visible messages contain content sanitization removes",
-          config.onViolation,
+          onProviderViolation,
         );
       });
 
