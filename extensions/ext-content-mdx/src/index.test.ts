@@ -69,6 +69,18 @@ describe("MdxContentProcessor.compileMarkdown", () => {
 });
 
 describe("MdxContentProcessor.compileMdx", () => {
+  it("preserves authored imports for a later scoped resolver", async () => {
+    const result = await new MdxContentProcessor().compileMdx({
+      projectDir: "/project",
+      filePath: "/project/page.mdx",
+      target: "server",
+      content: 'import Widget from "./Widget.tsx"\n\n<Widget />',
+      preserveImports: true,
+    });
+    assertEquals(result.compiledCode.includes("./Widget.tsx"), true);
+    assertEquals(result.compiledCode.includes("file://"), false);
+  });
+
   it("compiles trivial mdx content", async () => {
     const impl = new MdxContentProcessor();
     const result = await impl.compileMdx({

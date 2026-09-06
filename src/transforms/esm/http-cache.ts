@@ -775,13 +775,15 @@ export function cacheHttpImportsToLocal(
 ): Promise<CacheHttpImportsResult> {
   const accumulator = createBundleAccumulator();
   accumulator.sourceCapture = sourceCapture;
-  let pending: Promise<CacheHttpImportsResult>;
+  let requestOptions: CacheOptions;
   try {
-    pending = cacheHttpImports(code, options, accumulator);
+    options.abortSignal?.throwIfAborted();
+    requestOptions = prepareHttpCacheRequestOptions(options);
   } catch (error) {
     sourceCapture?.invalidate();
     throw error;
   }
+  const pending = cacheHttpImports(code, requestOptions, accumulator);
   if (!sourceCapture) return pending;
   return pending.then((result) => {
     if (!accumulator.complete) sourceCapture.invalidate();
@@ -820,11 +822,9 @@ export async function captureHttpImportsToLocal(
 
 function cacheHttpImports(
   code: string,
-  options: CacheOptions,
+  requestOptions: CacheOptions,
   accumulator: BundleAccumulator,
 ): Promise<CacheHttpImportsResult> {
-  options.abortSignal?.throwIfAborted();
-  const requestOptions = prepareHttpCacheRequestOptions(options);
   return bundleAccumulatorStorage.run(accumulator, async () => {
     const { replacements } = await buildReplacements(
       code,

@@ -4,6 +4,7 @@ import type { Logger } from "#veryfront/utils";
 import type { MDXModule } from "../types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DeferredImportErrorDescriptor } from "./utils/stub-module.ts";
+import type { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
 
 export interface ESMLoaderContext {
   esmCacheDir?: string;
@@ -79,6 +80,10 @@ export interface NestedImportResult {
 }
 
 export interface ModuleFetcherContext {
+  /** Borrowed capture for generation preparation; returned paths identify captured sources. */
+  sourceCapture?: ModuleSourceCapture;
+  /** Completed source bindings retained only for this capture's lifetime. */
+  capturedModules?: Map<string, string>;
   esmCacheDir: string;
   adapter: RuntimeAdapter;
   projectDir: string;

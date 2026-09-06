@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -20,9 +20,22 @@ import { build, stop as stopBundler } from "veryfront/extensions/bundler";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
+import { createRequire } from "node:module";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { MdxContentProcessor } from "@veryfront/ext-content-mdx";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 
 describe("render generation process lifetime", () => {
-  afterAll(stopBundler);
+  let previousContentProcessor: unknown;
+  beforeAll(() => {
+    previousContentProcessor = tryResolve("ContentProcessor");
+    register("ContentProcessor", new MdxContentProcessor());
+  });
+  afterAll(async () => {
+    if (previousContentProcessor === undefined) unregister("ContentProcessor");
+    else register("ContentProcessor", previousContentProcessor);
+    await stopBundler();
+  });
   for (
     const [preparation, completion] of [
       ["bundled", "drain"],
@@ -31,12 +44,17 @@ describe("render generation process lifetime", () => {
       ["mdx", "cancel"],
       ["captured-http", "drain"],
       ["captured-http", "cancel"],
+      ["project-ssr", "drain"],
+      ["project-ssr", "cancel"],
     ] as const
   ) {
     it(`retains a ${preparation} lazy graph until process exit after ${completion}`, async () => {
       const fs = createFileSystem();
       const adapter = await runtime.get();
       const cache = await fs.makeTempDir();
+      const limits = preparation === "project-ssr"
+        ? { maxEntries: 32, maxBytes: 2 * 1024 * 1024 }
+        : { maxEntries: 8, maxBytes: 4096 };
       const ready = Promise.withResolvers<number>();
       const continueImport = Promise.withResolvers<void>();
       const stop = new AbortController();
@@ -68,7 +86,83 @@ describe("render generation process lifetime", () => {
 }`,
         );
         let graph: RenderArtifactInput;
-        if (preparation === "captured-http") {
+        if (preparation === "project-ssr") {
+          const require = createRequire(import.meta.url);
+          const reactPath = require.resolve("react");
+          const reactBundle = await build({
+            stdin: {
+              resolveDir: cache,
+              contents: `import * as React from ${jsonForInlineScript(require.resolve("react"))};
+export default React;
+export { lazy, Suspense, useId } from ${jsonForInlineScript(require.resolve("react"))};
+export { jsx, jsxs, Fragment } from ${jsonForInlineScript(require.resolve("react/jsx-runtime"))};
+export { renderToReadableStream } from ${
+                jsonForInlineScript(require.resolve("react-dom/server.browser"))
+              };`,
+              loader: "js",
+            },
+            bundle: true,
+            format: "esm",
+            platform: "browser",
+            write: false,
+            minify: true,
+            define: { "process.env.NODE_ENV": '"production"' },
+            plugins: [{
+              name: "fixture-react-singleton",
+              setup(builder) {
+                builder.onResolve({ filter: /^react$/ }, () => ({ path: reactPath }));
+              },
+            }],
+          });
+          await fs.writeTextFile(
+            join(cache, "page.mdx"),
+            `import Layout from "./layout.tsx"
+import { lazy, Suspense } from "react"
+
+export const Lazy = lazy(() => import("./child.tsx"))
+
+<Layout><Suspense fallback={<span>loading</span>}><Lazy /></Suspense></Layout>`,
+          );
+          await fs.writeTextFile(
+            join(cache, "layout.tsx"),
+            `import { useId } from "react";
+export default function Layout({ children }) { return <article id={useId()}>{children}</article>; }`,
+          );
+          await fs.writeTextFile(
+            join(cache, "child.tsx"),
+            "export default function Child() { return <span>original</span>; }",
+          );
+          __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+          try {
+            graph = await runWithCacheDir(cache, () =>
+              withMockFetch(async (input) => {
+                const source = new URL(String(input)).pathname === "/shared-react.mjs"
+                  ? reactBundle.outputFiles[0]!.text
+                  : 'export * from "https://example.invalid/shared-react.mjs"; export { default } from "https://example.invalid/shared-react.mjs";';
+                return new Response(source);
+              }, () =>
+                prepareModuleGraphESM(
+                  `import { renderToReadableStream } from "react-dom/server";
+import { jsx } from "react/jsx-runtime";
+export async function load() {
+  const { default: Page } = await import("/_vf_modules/page.mdx.js");
+  const stream = await renderToReadableStream(jsx(Page, {}));
+  await stream.allReady;
+  return new Response(stream).text();
+}`,
+                  {
+                    adapter,
+                    projectDir: cache,
+                    projectId: "generation-test",
+                    contentSourceId: "release-test",
+                    dependencyPinningCacheKey: "off",
+                  },
+                  limits,
+                )));
+          } finally {
+            __setDistributedCacheAccessorForTests(null);
+          }
+        } else if (preparation === "captured-http") {
           __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
           try {
             graph = await runWithCacheDir(cache, () =>
@@ -152,8 +246,8 @@ describe("render generation process lifetime", () => {
             entrypoints: ["entry.mjs"],
           };
         }
-        artifacts = new RenderArtifacts(graph, { maxEntries: 8, maxBytes: 4096 });
-        peerArtifacts = new RenderArtifacts(graph, { maxEntries: 8, maxBytes: 4096 });
+        artifacts = new RenderArtifacts(graph, limits);
+        peerArtifacts = new RenderArtifacts(graph, limits);
         const [prepared, peer] = await Promise.all([artifacts.prepare(), peerArtifacts.prepare()]);
         assertEquals(prepared.id, peer.id, "replicas agree on the immutable graph identity");
         assertEquals(
@@ -223,9 +317,16 @@ describe("render generation process lifetime", () => {
         await assertRejects(() => generation!.render(request()), Error, "draining");
         if (completion === "drain") {
           continueImport.resolve();
-          assertEquals(await first.text(), "<main>original</main>");
+          const verifyHtml = (html: string) => {
+            if (preparation === "project-ssr") {
+              assertStringIncludes(html, "<article id=");
+              assertStringIncludes(html, "<span>original</span>");
+              assertEquals(html.includes("loading"), false, "Suspense must finish its lazy child");
+            } else assertEquals(html, "<main>original</main>");
+          };
+          verifyHtml(await first.text());
           assertEquals(artifactsReleased, false, "the second response still owns its admission");
-          assertEquals(await second.text(), "<main>original</main>");
+          verifyHtml(await second.text());
         } else {
           await Promise.all([first.body!.cancel(), second.body!.cancel()]);
         }

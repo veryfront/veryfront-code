@@ -1,4 +1,5 @@
-import { join } from "#veryfront/compat/path";
+import { join, toFileUrl } from "#veryfront/compat/path";
+import type { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getLocalFs } from "../cache/index.ts";
@@ -90,6 +91,8 @@ throw error;
 }
 
 export interface CreateStubModuleOptions {
+  /** Borrowed generation capture; captured stubs are not written to the host cache. */
+  sourceCapture?: ModuleSourceCapture;
   /** Reject a dynamic import when it executes instead of exporting fallback values. */
   failOnImport?: boolean;
   /** Sanitized typed error to throw when a strict dynamic import executes. */
@@ -115,6 +118,11 @@ export async function createStubModule(
   const stubCode = options.failOnImport
     ? generateDeferredImportFailureCode(modulePath, options.deferredError)
     : generateStubCode(modulePath, namedImports);
+
+  if (options.sourceCapture) {
+    options.sourceCapture.record(toFileUrl(stubPath).href, stubCode);
+    return stubPath;
+  }
 
   try {
     await getLocalFs().writeTextFile(stubPath, stubCode);

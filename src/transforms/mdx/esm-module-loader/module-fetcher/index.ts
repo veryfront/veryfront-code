@@ -36,6 +36,8 @@ import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
+import { captureResolvedModule } from "./captured-module.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
   MAX_MDX_MODULE_CODE_BYTES,
@@ -199,8 +201,11 @@ export async function fetchAndCacheModule(
 ): Promise<string | null> {
   const log = getLog(context);
   const expectedCacheKey = context.dependencyPinningCacheKey;
+  const reference = context.sourceCapture
+    ? splitSpecifierSuffix(modulePath)
+    : { path: modulePath, suffix: "" };
   const normalizedPath = normalizePath(
-    unwrapDependencyPinningPath(modulePath, expectedCacheKey),
+    unwrapDependencyPinningPath(reference.path, expectedCacheKey),
     parentModulePath ? unwrapDependencyPinningPath(parentModulePath, expectedCacheKey) : undefined,
   );
   const projectSlug = context.projectSlug || "unknown";
@@ -215,6 +220,9 @@ export async function fetchAndCacheModule(
   }
 
   const moduleGraph = context.moduleGraph ??= new Set<string>();
+  const bindingKey = normalizedPath + reference.suffix;
+  const captured = context.sourceCapture ? context.capturedModules?.get(bindingKey) : undefined;
+  if (captured) return captured;
   if (!moduleGraph.has(normalizedPath)) {
     if (moduleGraph.size >= MAX_MDX_MODULE_GRAPH_ENTRIES) {
       throw new ModuleGraphLimitError(normalizedPath);
@@ -238,7 +246,7 @@ export async function fetchAndCacheModule(
   }
 
   const inFlight = context.inFlightModules;
-  const existingPromise = inFlight?.get(normalizedPath);
+  const existingPromise = inFlight?.get(bindingKey);
   if (existingPromise) {
     if (lineage.has(normalizedPath)) {
       const cycleChain = [...lineage, normalizedPath].join(" -> ");
@@ -284,18 +292,29 @@ export async function fetchAndCacheModule(
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> =>
     fetchAndCacheModule(path, context, parent, nextLineage);
 
-  const fetchPromise = doFetchAndCacheModule(
-    normalizedPath,
-    context,
-    fetchAndCacheModuleFn,
-    projectSlug,
-    parentModulePath,
-  );
+  const fetchPromise = context.sourceCapture
+    ? captureResolvedModule(
+      normalizedPath,
+      context,
+      fetchAndCacheModuleFn,
+      context.sourceCapture,
+      reference.suffix,
+    )
+    : doFetchAndCacheModule(
+      normalizedPath,
+      context,
+      fetchAndCacheModuleFn,
+      projectSlug,
+      parentModulePath,
+    );
 
-  inFlight?.set(normalizedPath, fetchPromise);
+  inFlight?.set(bindingKey, fetchPromise);
 
   try {
     const result = await fetchPromise;
+    if (context.sourceCapture && result) {
+      (context.capturedModules ??= new Map()).set(bindingKey, result);
+    }
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
       projectSlug,
       normalizedPath,
@@ -303,7 +322,7 @@ export async function fetchAndCacheModule(
     });
     return result;
   } finally {
-    inFlight?.delete(normalizedPath);
+    inFlight?.delete(bindingKey);
   }
 }
 
@@ -496,6 +515,7 @@ export function createModuleFetcherContext(
   projectDir: string,
   projectId: string,
   options?: {
+    sourceCapture?: ModuleFetcherContext["sourceCapture"];
     contentSourceId?: string;
     isLocalProject?: boolean;
     projectSlug?: string;

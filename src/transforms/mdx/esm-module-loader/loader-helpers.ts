@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/loader-helpers
  */
 
-import { join } from "#veryfront/compat/path";
+import { join, toFileUrl } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
@@ -31,6 +31,7 @@ import {
   toImportStringLiteral,
 } from "./module-fetcher/nested-imports.ts";
 import type { MdxPreparationContext } from "./types.ts";
+import type { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import {
   assertMdxModuleImportCount,
@@ -161,6 +162,7 @@ export async function processVfModuleImports(
   context: MdxPreparationContext,
   projectDir: string,
   strictMissingModules: boolean,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<string> {
   const projectSlug = context.projectSlug || "unknown";
   const adapter = context.adapter;
@@ -196,6 +198,7 @@ export async function processVfModuleImports(
     projectDir,
     context.projectId,
     {
+      sourceCapture,
       contentSourceId: context.contentSourceId,
       isLocalProject: context.isLocalProject,
       // The render mode decides the compile mode for every `/_vf_modules/*`
@@ -235,7 +238,10 @@ export async function processVfModuleImports(
           let filePath: string | null;
           let deferredError: DeferredImportErrorDescriptor | undefined;
           try {
-            filePath = await fetchAndCacheModule(path, fetcherContext);
+            filePath = await fetchAndCacheModule(
+              sourceCapture ? path + suffix : path,
+              fetcherContext,
+            );
           } catch (error) {
             if (!isDynamic) throw error;
             deferredError = dynamicDependencyFailure(path, error) ?? undefined;
@@ -271,7 +277,7 @@ export async function processVfModuleImports(
     const { original, start, end, filePath, path, suffix, isDynamic, deferredError } of results
   ) {
     if (filePath) {
-      const importTarget = toImportStringLiteral(`file://${filePath}${suffix ?? ""}`);
+      const importTarget = toImportStringLiteral(`${toFileUrl(filePath).href}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
@@ -287,14 +293,14 @@ export async function processVfModuleImports(
         code,
         original,
         context.esmCacheDir!,
-        { failOnImport: strictMissingModules, deferredError },
+        { failOnImport: strictMissingModules, deferredError, sourceCapture },
       );
       if (deferredPath) {
         replacements.push({
           start,
           end,
           expected: original,
-          replacement: toImportStringLiteral(`file://${deferredPath}${suffix ?? ""}`),
+          replacement: toImportStringLiteral(`${toFileUrl(deferredPath).href}${suffix ?? ""}`),
         });
         continue;
       }
@@ -310,9 +316,11 @@ export async function processVfModuleImports(
       });
     }
 
-    const stubPath = await createStubModule(path, code, original, context.esmCacheDir!);
+    const stubPath = await createStubModule(path, code, original, context.esmCacheDir!, {
+      sourceCapture,
+    });
     if (stubPath) {
-      const importTarget = toImportStringLiteral(`file://${stubPath}${suffix ?? ""}`);
+      const importTarget = toImportStringLiteral(`${toFileUrl(stubPath).href}${suffix ?? ""}`);
       replacements.push({
         start,
         end,

@@ -61,6 +61,7 @@ import {
 import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { assertLogicalCaptureImports } from "./module-fetcher/captured-module.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -210,11 +211,11 @@ export function prepareModuleESM(
 /**
  * Prepare a closed, relocatable graph without evaluating tenant code.
  *
- * One owner accounts for the final root and captured HTTP dependencies. Every
- * import must resolve to an observed source or a runtime builtin. Other file
- * dependencies currently fail closed, including project/framework dependencies
- * whose source ownership has not been recorded by their producer. This does
- * not crawl the filesystem or fall back to host loading.
+ * One owner accounts for the root and scoped project, framework, and HTTP
+ * dependencies. Compilation caches retain logical references, which resolve
+ * through the scoped source readers on every preparation. Raw file imports
+ * are rejected before resolvers emit owned URLs. This does not crawl cache
+ * files or fall back to host loading.
  */
 export async function prepareModuleGraphESM(
   compiledProgramCode: string,
@@ -318,27 +319,29 @@ async function writeModuleESM(
       dependencySnapshot.cacheKey,
       effectiveContext.moduleServerOrigin,
     );
+    if (sourceCapture) await assertLogicalCaptureImports(rewritten, false);
 
-    // These legacy transforms read file URLs without recording source ownership.
-    // Captured preparation leaves them unresolved so graph closure rejects them.
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
+    const vfModuleImports = findVfModuleImports(rewritten);
+    const strictMissingModules = effectiveContext.strictMissingModules ?? true;
+    rewritten = await withSpan(
+      SpanNames.MDX_PROCESS_VF_MODULES,
+      () =>
+        processVfModuleImports(
+          rewritten,
+          vfModuleImports,
+          effectiveContext,
+          projectDir,
+          strictMissingModules,
+          sourceCapture,
+        ),
+      { "mdx.vf_module_count": vfModuleImports.length },
+    );
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
+
+    // Raw file URLs do not establish source ownership. Capture resolves logical
+    // project/framework references above and never invokes this legacy reader.
     if (!sourceCapture) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
-      const vfModuleImports = findVfModuleImports(rewritten);
-      const strictMissingModules = effectiveContext.strictMissingModules ?? true;
-      rewritten = await withSpan(
-        SpanNames.MDX_PROCESS_VF_MODULES,
-        () =>
-          processVfModuleImports(
-            rewritten,
-            vfModuleImports,
-            effectiveContext,
-            projectDir,
-            strictMissingModules,
-          ),
-        { "mdx.vf_module_count": vfModuleImports.length },
-      );
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
-
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
       rewritten = await withSpan(
         SpanNames.MDX_TRANSFORM_JSX,

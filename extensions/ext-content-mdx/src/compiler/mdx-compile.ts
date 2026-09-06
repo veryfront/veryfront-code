@@ -41,7 +41,7 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
     providedFrontmatter,
   );
 
-  const shouldRewriteImports = Boolean(filePath) &&
+  const shouldRewriteImports = !options.preserveImports && Boolean(filePath) &&
     (target === "browser" || target === "server");
   const body = shouldRewriteImports
     ? rewriteBodyImports(extractedBody, { filePath: filePath!, target, baseUrl, projectDir })
