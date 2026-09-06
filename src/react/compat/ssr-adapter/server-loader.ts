@@ -29,14 +29,16 @@ export interface ReactServerRuntime {
 }
 
 function isReactDOMServer(
-  module: Record<string, unknown>,
-): module is Record<string, unknown> & ReactDOMServer {
-  return typeof module.renderToString === "function" &&
-    typeof module.renderToStaticMarkup === "function" &&
-    (module.renderToReadableStream === undefined ||
-      typeof module.renderToReadableStream === "function") &&
-    (module.renderToPipeableStream === undefined ||
-      typeof module.renderToPipeableStream === "function");
+  module: unknown,
+): module is ReactDOMServer {
+  if (module === null || typeof module !== "object") return false;
+  const server = module as Record<string, unknown>;
+  return typeof server.renderToString === "function" &&
+    typeof server.renderToStaticMarkup === "function" &&
+    (server.renderToReadableStream === undefined ||
+      typeof server.renderToReadableStream === "function") &&
+    (server.renderToPipeableStream === undefined ||
+      typeof server.renderToPipeableStream === "function");
 }
 
 /** Select an explicit runtime without reading or modifying the legacy module caches. */
@@ -48,6 +50,11 @@ export async function resolveSSRRuntime(
   if (supplied !== undefined) {
     const { react, server } = supplied;
     validateReactRuntimeVersion(react, options.reactVersion);
+    if (!isReactDOMServer(server)) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "Explicit React server runtime has invalid render exports",
+      });
+    }
     return { react, server };
   }
   const [server, react] = await Promise.all([

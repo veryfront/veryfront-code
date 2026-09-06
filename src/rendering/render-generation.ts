@@ -63,7 +63,7 @@ export class RenderGeneration {
     this.#drainTimeoutMs = drainTimeoutMs;
   }
 
-  /** onComplete shares settlement with aggregate admission and must not throw. */
+  /** Completion callback errors do not change rendering or admission settlement. */
   async render(request: Request, onComplete?: () => void): Promise<Response> {
     request.signal.throwIfAborted();
     if (!this.#accepting) {
@@ -78,7 +78,11 @@ export class RenderGeneration {
       if (finished) return;
       finished = true;
       if (--this.#active === 0) this.#drained?.();
-      onComplete?.();
+      try {
+        onComplete?.();
+      } catch {
+        // A completion observer must not replace the render result or stream error.
+      }
     };
     try {
       const response = await this.#render(request);

@@ -6,6 +6,57 @@ import { RenderGeneration } from "./render-generation.ts";
 const request = () => new Request("http://localhost/page");
 
 describe("RenderGeneration", () => {
+  it("keeps completion callback failures separate from rendering and admission", async () => {
+    let completions = 0;
+    let stops = 0;
+    let releases = 0;
+    let render = async () => new Response(null, { status: 204 });
+    const generation = new RenderGeneration({
+      maxConcurrentRenders: 1,
+      drainTimeoutMs: 10_000,
+      executor: {
+        render: () => render(),
+        stop: async () => {
+          stops++;
+        },
+      },
+      releaseArtifacts: async () => {
+        releases++;
+      },
+    });
+    const complete = () => {
+      completions++;
+      throw new Error("completion failed");
+    };
+    try {
+      assertEquals((await generation.render(request(), complete)).status, 204);
+      render = async () => {
+        throw new Error("render failed");
+      };
+      await assertRejects(() => generation.render(request(), complete), Error, "render failed");
+      render = async () => new Response("page");
+      assertEquals(await (await generation.render(request(), complete)).text(), "page");
+      render = async () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new Error("stream failed"));
+            },
+          }),
+        );
+      const failed = await generation.render(request(), complete);
+      await assertRejects(() => failed.text(), Error, "stream failed");
+      render = async () => new Response(new ReadableStream());
+      const cancelled = await generation.render(request(), complete);
+      const closing = generation.close();
+      await cancelled.body!.cancel();
+      await closing;
+      assertEquals([completions, stops, releases], [5, 1, 1]);
+    } finally {
+      await generation.close();
+    }
+  });
+
   it("rejects invalid limits before inspecting an executor", () => {
     assertThrows(() =>
       new RenderGeneration({

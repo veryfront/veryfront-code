@@ -175,6 +175,7 @@ describe("suite planning parity", () => {
           "tests/integration/transforms/mdx-module-preparation.test.ts",
           "tests/integration/transforms/http-module-capture.test.ts",
           "tests/integration/renderer/render-generation.test.ts",
+          "tests/integration/renderer/render-generation-pool.test.ts",
         ]
       ) {
         assert(plan.files.includes(file), `${suite} must select ${file}`);
@@ -758,6 +759,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
       "tests/integration/renderer/render-generation.test.ts",
+      "tests/integration/renderer/render-generation-pool.test.ts",
       "tests/integration/transforms/mdx-module-preparation.test.ts",
       "tests/integration/transforms/http-module-capture.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
@@ -771,6 +773,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
       "tests/integration/renderer/render-generation.test.ts",
+      "tests/integration/renderer/render-generation-pool.test.ts",
       "tests/integration/transforms/mdx-module-preparation.test.ts",
       "tests/integration/transforms/http-module-capture.test.ts",
       "tests/integration/runtime/compat/abort-signal-reason.test.ts",

@@ -1,12 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertInstanceOf,
   assertNotStrictEquals,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
+import { VeryfrontError } from "#veryfront/errors";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 import {
@@ -42,6 +44,38 @@ function createServerMarker(version: string): ReactDOMServer & { version: string
 }
 
 describe("react/compat/ssr-adapter/server-loader", () => {
+  it("rejects invalid explicit server exports with an initialization error", async () => {
+    const valid = createServerMarker(React.version);
+    for (
+      const server of [
+        null,
+        undefined,
+        {},
+        { ...valid, renderToString: undefined },
+        { ...valid, renderToStaticMarkup: "invalid" },
+        { ...valid, renderToReadableStream: true },
+        { ...valid, renderToPipeableStream: true },
+      ]
+    ) {
+      const error = await assertRejects(
+        () =>
+          resolveSSRRuntime({ reactRuntime: { react: React, server: server as ReactDOMServer } }),
+        VeryfrontError,
+        "invalid render exports",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "initialization-error");
+    }
+    const server = {
+      renderToString: valid.renderToString,
+      renderToStaticMarkup: valid.renderToStaticMarkup,
+    };
+    assertStrictEquals(
+      (await resolveSSRRuntime({ reactRuntime: { react: React, server } })).server,
+      server,
+    );
+  });
+
   it("rejects incomplete prepared server modules before rendering", async () => {
     const adapter = createMockAdapter();
     Object.defineProperty(adapter, "moduleLoader", {
