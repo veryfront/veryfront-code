@@ -2,15 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertNotStrictEquals,
+  assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import * as React from "react";
 import {
   __setServerModuleLoaderForTests,
   getProjectReact,
   getReactDOMServer,
   type ReactDOMServer,
   resetReactCache,
+  resolveSSRRuntime,
 } from "./server-loader.ts";
 
 interface ReactMarker {
@@ -37,6 +40,41 @@ function createServerMarker(version: string): ReactDOMServer & { version: string
 }
 
 describe("react/compat/ssr-adapter/server-loader", () => {
+  it("accepts equivalent version prefixes without accepting another release", async () => {
+    const reactRuntime = { react: React, server: createServerMarker(React.version) };
+    for (const prefix of ["v", "^v", "~v"]) {
+      const selected = await resolveSSRRuntime({
+        reactRuntime,
+        reactVersion: prefix + React.version,
+      });
+      assertStrictEquals(selected.react, React);
+      assertStrictEquals(selected.server, reactRuntime.server);
+    }
+    await assertRejects(
+      () =>
+        resolveSSRRuntime({
+          reactRuntime,
+          reactVersion: `v${React.version}-canary`,
+        }),
+      Error,
+      "React runtime version",
+    );
+  });
+  it("rejects missing or non-exact versions on an explicit runtime without guessing a default", async () => {
+    for (const version of ["", "latest", undefined]) {
+      await assertRejects(
+        () =>
+          resolveSSRRuntime({
+            reactRuntime: {
+              react: { ...React, version } as typeof React,
+              server: createServerMarker("19.2.4"),
+            },
+          }),
+        Error,
+        "React runtime version",
+      );
+    }
+  });
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);

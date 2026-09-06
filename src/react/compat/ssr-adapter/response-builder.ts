@@ -160,7 +160,8 @@ export async function createSSRResponse(
   element: React.ReactNode,
   options: SSRResponseOptions = {},
 ): Promise<Response> {
-  const version = options.reactVersion ?? getReactVersionInfo().version;
+  const version = options.reactVersion ?? options.reactRuntime?.react.version ??
+    getReactVersionInfo().version;
   const result = await renderToStreamAdapter(element, createComponentRenderOptions(options));
   return createSSRResponseFromResult(result, options, version);
 }

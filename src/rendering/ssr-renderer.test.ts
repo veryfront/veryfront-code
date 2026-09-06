@@ -74,6 +74,62 @@ describe("rendering/ssr-renderer", () => {
     resetReactCache();
   });
 
+  it("renders with each supplied React runtime without populating the shared version cache", async () => {
+    const server = (html: string): ReactDOMServer => ({
+      renderToString: () => html,
+      renderToStaticMarkup: () => html,
+    });
+    __injectReactDOMServerForTests(server("legacy"), React.version);
+    const renderer = new SSRRenderer("development", undefined, undefined, undefined, {
+      react: { version: React.version },
+    } as VeryfrontConfig);
+    const element = React.createElement("div");
+    const results = await Promise.all(
+      ["first", "second"].map((html) =>
+        renderer.renderToHTML(element, {
+          mode: "development",
+          wantsStream: false,
+          reactRuntime: { react: React, server: server(html) },
+        })
+      ),
+    );
+    assertEquals(results.map((result) => result.html), ["first", "second"]);
+    assertEquals(
+      (await renderer.renderToHTML(element, {
+        mode: "development",
+        wantsStream: false,
+      })).html,
+      "legacy",
+      "explicit runtimes must not replace the legacy cache entry",
+    );
+  });
+
+  it("rejects a supplied React runtime that differs from the selected project version", async () => {
+    let rendered = false;
+    const server: ReactDOMServer = {
+      renderToString: () => {
+        rendered = true;
+        return "unexpected";
+      },
+      renderToStaticMarkup: () => "unexpected",
+    };
+    __injectReactDOMServerForTests(server, "18.3.1");
+    const renderer = new SSRRenderer("development", undefined, undefined, undefined, {
+      react: { version: "18.3.1" },
+    } as VeryfrontConfig);
+    await assertRejects(
+      () =>
+        renderer.renderToHTML(React.createElement("div"), {
+          mode: "development",
+          wantsStream: false,
+          reactRuntime: { react: React, server },
+        }),
+      Error,
+      "React runtime version",
+    );
+    assertEquals(rendered, false, "a mismatched runtime must fail before component rendering");
+  });
+
   it("propagates stream cancellation to the pipeable render abort function", async () => {
     let abortCount = 0;
 

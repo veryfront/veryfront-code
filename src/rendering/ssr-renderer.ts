@@ -20,6 +20,7 @@ import {
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
+import type { ReactServerRuntime } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 function supportsStreamingReactVersion(version: string): boolean {
   return Number(version.split(".")[0]) >= 18;
@@ -109,6 +110,8 @@ function attachAllReady<T extends ReadableStream<Uint8Array>>(
 export interface SSRRenderOptions {
   mode: string;
   wantsStream: boolean;
+  /** Realm-local renderer modules owned by the selected artifact generation. */
+  reactRuntime?: ReactServerRuntime;
   /** Response-scoped CSP nonce for React-owned bootstrap scripts. */
   nonce?: string;
   /** Request capabilities that must survive async React retries. */
@@ -220,6 +223,7 @@ export class SSRRenderer {
             nonce: options.nonce,
             renderContext: options.renderContext,
             reactVersion,
+            reactRuntime: options.reactRuntime,
           }),
         {
           "ssr.method": "string",
@@ -244,6 +248,7 @@ export class SSRRenderer {
           nonce: options.nonce,
           renderContext: options.renderContext,
           reactVersion,
+          reactRuntime: options.reactRuntime,
         }),
       {
         "ssr.method": "streaming",

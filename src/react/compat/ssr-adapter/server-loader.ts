@@ -2,12 +2,14 @@ import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import {
+  isValidReactVersion,
   normalizeReactVersion,
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
+import type { SSROptions } from "./types.ts";
 
 const logger = rendererLogger.component("server-loader");
 
@@ -16,6 +18,42 @@ export interface ReactDOMServer {
   renderToStaticMarkup: typeof import("react-dom/server").renderToStaticMarkup;
   renderToPipeableStream?: typeof import("react-dom/server").renderToPipeableStream;
   renderToReadableStream?: typeof import("react-dom/server").renderToReadableStream;
+}
+
+/** Realm-local React modules loaded from the same prepared dependency graph. */
+export interface ReactServerRuntime {
+  readonly react: typeof import("react");
+  readonly server: ReactDOMServer;
+}
+
+/** Select an explicit runtime without reading or modifying the legacy module caches. */
+export async function resolveSSRRuntime(
+  options: Pick<SSROptions, "reactVersion" | "reactRuntime" | "renderContext">,
+): Promise<{ server: ReactDOMServer; react: typeof import("react") | null }> {
+  const supplied = options.reactRuntime;
+  if (supplied !== undefined) {
+    const { react, server } = supplied;
+    const version = react.version;
+    if (typeof version !== "string" || !isValidReactVersion(version)) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "React runtime version must be an exact semantic version",
+      });
+    }
+    if (
+      options.reactVersion !== undefined &&
+      version.replace(/^v/, "") !== resolveReactVersion(options.reactVersion).replace(/^v/, "")
+    ) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "React runtime version does not match the selected project version",
+      });
+    }
+    return { react, server };
+  }
+  const [server, react] = await Promise.all([
+    getReactDOMServer(options.reactVersion),
+    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
+  ]);
+  return { react, server };
 }
 
 type ServerModuleLoader = (url: string, label: string, reactVersion: string) => Promise<unknown>;

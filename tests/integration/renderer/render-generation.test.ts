@@ -4,8 +4,8 @@ import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderGeneration } from "#veryfront/rendering/render-generation.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { execPath, runCommand } from "#veryfront/platform/compat/process.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { execPath, getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
+import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl, join, relative, toFileUrl } from "#veryfront/compat/path";
 import {
   type RenderArtifactInput,
@@ -94,9 +94,11 @@ describe("render generation process lifetime", () => {
               resolveDir: cache,
               contents: `import * as React from ${jsonForInlineScript(require.resolve("react"))};
 export default React;
-export { lazy, Suspense, useId } from ${jsonForInlineScript(require.resolve("react"))};
+export { createContext, createElement, useContext, useEffect, lazy, Suspense, useId, version } from ${
+                jsonForInlineScript(require.resolve("react"))
+              };
 export { jsx, jsxs, Fragment } from ${jsonForInlineScript(require.resolve("react/jsx-runtime"))};
-export { renderToReadableStream } from ${
+export { renderToReadableStream, renderToString, renderToStaticMarkup } from ${
                 jsonForInlineScript(require.resolve("react-dom/server.browser"))
               };`,
               loader: "js",
@@ -130,7 +132,7 @@ export default function Layout({ children }) { return <article id={useId()}>{chi
           );
           await fs.writeTextFile(
             join(cache, "child.tsx"),
-            "export default function Child() { return <span>original</span>; }",
+            'import { Head } from "veryfront/head"; export default function Child() { return <><Head><title>Captured head</title><script>{"globalThis.fixture = true;"}</script></Head><span>original</span></>; }',
           );
           __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
           try {
@@ -142,13 +144,12 @@ export default function Layout({ children }) { return <article id={useId()}>{chi
                 return new Response(source);
               }, () =>
                 prepareModuleGraphESM(
-                  `import { renderToReadableStream } from "react-dom/server";
+                  `export * as server from "react-dom/server";
+export { default as react } from "react";
 import { jsx } from "react/jsx-runtime";
-export async function load() {
+export async function createPage() {
   const { default: Page } = await import("/_vf_modules/page.mdx.js");
-  const stream = await renderToReadableStream(jsx(Page, {}));
-  await stream.allReady;
-  return new Response(stream).text();
+  return jsx(Page, {});
 }`,
                   {
                     adapter,
@@ -261,18 +262,50 @@ export async function load() {
           "the fixture must contain separate lazy chunks",
         );
         await fs.writeTextFile(join(cache, "leaf.mjs"), 'export const value = "changed";');
-        const fixture = fromFileUrl(new URL("./fixtures/generation-executor.mjs", import.meta.url));
+        const frameworkSSR = preparation === "project-ssr";
+        const root = fromFileUrl(new URL("../../../", import.meta.url));
+        const fixture = fromFileUrl(
+          new URL(
+            frameworkSSR
+              ? "./fixtures/generation-ssr-executor.ts"
+              : "./fixtures/generation-executor.mjs",
+            import.meta.url,
+          ),
+        );
+        const runtimeArgs = frameworkSSR
+          ? isDeno
+            ? [
+              "run",
+              "--cached-only",
+              `--config=${join(root, "deno.json")}`,
+              "--allow-read",
+              "--allow-env",
+              "--allow-net=127.0.0.1",
+            ]
+            : isBun
+            ? ["--preload", join(root, "tests/bun/preload.ts")]
+            : ["--import", join(root, "tests/node/register-hooks.mjs")]
+          : isDeno
+          ? ["run", "--no-config", "--allow-read", "--allow-net=127.0.0.1"]
+          : [];
+        const denoDir = isDeno ? getEnv("DENO_DIR") : undefined;
         processResult = runCommand(execPath(), {
           args: [
-            ...(isDeno ? ["run", "--no-config", "--allow-read", "--allow-net=127.0.0.1"] : []),
+            ...runtimeArgs,
             fixture,
             prepared.entrypointUrls[0]!,
             `http://127.0.0.1:${coordinator.addr.port}`,
           ],
           clearEnv: true,
+          env: {
+            DENO_TESTING: "1",
+            VF_DISABLE_LRU_INTERVAL: "1",
+            NODE_ENV: "production",
+            ...(denoDir === undefined ? {} : { DENO_DIR: denoDir }),
+          },
           capture: true,
           signal: stop.signal,
-          timeoutMs: 15_000,
+          timeoutMs: frameworkSSR ? 30_000 : 15_000,
           maxOutputBytes: 16_384,
           terminateProcessTreeOnExit: true,
         });
@@ -290,7 +323,8 @@ export async function load() {
           maxConcurrentRenders: 2,
           drainTimeoutMs: completion === "drain" ? 10_000 : 0,
           executor: {
-            render: () => fetch(`http://127.0.0.1:${port}/page`),
+            render: (request) =>
+              fetch(`http://127.0.0.1:${port}/page`, { headers: request.headers }),
             stop: async () => {
               stop.abort();
               await terminated;
@@ -302,10 +336,11 @@ export async function load() {
             artifactsReleased = true;
           },
         });
-        const request = () => new Request("http://localhost/page");
+        const request = (nonce = "first-nonce") =>
+          new Request("http://localhost/page", { headers: { "x-fixture-nonce": nonce } });
         const [first, second] = await Promise.all([
           generation.render(request()),
-          generation.render(request()),
+          generation.render(request("second-nonce")),
         ]);
         await fs.remove(cache, { recursive: true });
         // Another replica can discard its unexecuted copy without touching
@@ -317,16 +352,23 @@ export async function load() {
         await assertRejects(() => generation!.render(request()), Error, "draining");
         if (completion === "drain") {
           continueImport.resolve();
-          const verifyHtml = (html: string) => {
+          const verifyHtml = (html: string, nonce: string) => {
             if (preparation === "project-ssr") {
               assertStringIncludes(html, "<article id=");
               assertStringIncludes(html, "<span>original</span>");
-              assertEquals(html.includes("loading"), false, "Suspense must finish its lazy child");
+              assertStringIncludes(html, `nonce="${nonce}"`);
+              assertEquals(
+                html.includes(
+                  `nonce="${nonce === "first-nonce" ? "second-nonce" : "first-nonce"}"`,
+                ),
+                false,
+                "concurrent renders must retain their own nonce",
+              );
             } else assertEquals(html, "<main>original</main>");
           };
-          verifyHtml(await first.text());
+          verifyHtml(await first.text(), "first-nonce");
           assertEquals(artifactsReleased, false, "the second response still owns its admission");
-          verifyHtml(await second.text());
+          verifyHtml(await second.text(), "second-nonce");
         } else {
           await Promise.all([first.body!.cancel(), second.body!.cancel()]);
         }

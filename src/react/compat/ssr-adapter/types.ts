@@ -1,6 +1,12 @@
 export interface SSROptions {
   /** React version used to select an isolated server renderer module. */
   reactVersion?: string;
+  /**
+   * Realm-local React and ReactDOM modules from one prepared graph. An explicit
+   * pair bypasses the version cache and must match reactVersion when provided.
+   * The version cache remains the default when this field is omitted.
+   */
+  reactRuntime?: import("./server-loader.ts").ReactServerRuntime;
   onError?: (error: Error) => void;
   bootstrapScripts?: string[];
   bootstrapModules?: string[];
