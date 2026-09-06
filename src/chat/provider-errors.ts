@@ -355,29 +355,20 @@ function parseKnownProviderBody(
   if (body.type === "overloaded_error") {
     return {
       code: "OVERLOADED_ERROR",
-      message: typeof body.message === "string"
-        ? body.message
-        : "The LLM provider is currently overloaded",
+      message: "The LLM provider is currently overloaded",
     };
   }
 
   if (body.type === "rate_limit_error") {
     return {
       code: "RATE_LIMITED",
-      message: typeof body.message === "string"
-        ? body.message
-        : "Too many requests. Please wait a moment and try again.",
+      message: "Too many requests. Please wait a moment and try again.",
       status: 429,
     };
   }
 
   if (body.type === "api_error") {
-    return {
-      code: "EXTERNAL_SERVICE_ERROR",
-      message: typeof body.message === "string"
-        ? body.message
-        : DEFAULT_EXTERNAL_SERVICE_ERROR.message,
-    };
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
   }
 
   if (typeof body.message === "string" && isInvalidRequestEnvelope(body)) {

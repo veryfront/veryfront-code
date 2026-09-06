@@ -105,7 +105,7 @@ describe("chat/provider-errors", () => {
   it("parses provider overload, rate-limit, context-length, and credit messages", () => {
     assertEquals(parseProviderError({ type: "overloaded_error", message: "Overloaded" }), {
       code: "OVERLOADED_ERROR",
-      message: "Overloaded",
+      message: "The LLM provider is currently overloaded",
     });
     assertEquals(parseProviderError({ type: "rate_limit_error" }), {
       code: "RATE_LIMITED",
@@ -331,7 +331,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "OVERLOADED_ERROR",
-        message: "Overloaded",
+        message: "The LLM provider is currently overloaded",
       },
     );
   });

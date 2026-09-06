@@ -1934,6 +1934,48 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("keeps structured provider diagnostics out of public runtime errors", () => {
+      const cases = [
+        {
+          type: "overloaded_error",
+          expected: {
+            type: "error",
+            code: "OVERLOADED_ERROR",
+            error: "The LLM provider is currently overloaded",
+          },
+        },
+        {
+          type: "rate_limit_error",
+          expected: {
+            type: "error",
+            code: "RATE_LIMITED",
+            error: "Too many requests. Please wait a moment and try again.",
+          },
+        },
+        {
+          type: "api_error",
+          expected: {
+            type: "error",
+            error: "Provider request failed",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const providerError = new Error("Provider request failed");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify({
+            type: testCase.type,
+            message: `private ${testCase.type} diagnostic`,
+          }),
+        });
+
+        const event = resolveRuntimeStreamErrorEvent(providerError);
+        assertEquals(event, testCase.expected);
+        assertEquals(JSON.stringify(event).includes("private"), false);
+      }
+    });
+
     it("keeps the unknown active lifecycle fallback code-free", () => {
       const event = resolveRuntimeStreamErrorEvent(
         new StreamLifecycleFailure({
