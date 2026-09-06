@@ -15,6 +15,7 @@ import {
 import type { ChildRunExecutionSnapshot } from "../child-run/execution-snapshot.ts";
 import { buildChildRunExhaustedStepBudgetErrorMessage } from "../child-run/final-step-support.ts";
 import type { ForkPart, ForkRuntimeStep } from "../streaming/fork-runtime-stream.ts";
+import { ForkRuntimeStreamError } from "../streaming/fork-runtime-types.ts";
 
 function createPendingToolLifecycle(chunks: unknown[]): HostedChildForkPendingToolLifecycle {
   const pendingToolCallIds = new Set<string>();
@@ -54,6 +55,60 @@ function createStep(input: { text: string; finishReason?: string | null }): Fork
 }
 
 describe("hosted child fork stream execution", () => {
+  it("forwards coded child errors through the durable mirror handleChunk boundary", async () => {
+    const chunks: unknown[] = [];
+    const mirror = {
+      handleChunk(chunk: unknown) {
+        chunks.push(chunk);
+      },
+    };
+
+    await executeHostedChildForkStream({
+      streamResult: {
+        fullStream: partsStream([{
+          type: "error",
+          error: new ForkRuntimeStreamError(
+            "Purchase additional credits.",
+            "INSUFFICIENT_CREDITS",
+          ),
+        }]),
+        steps: Promise.resolve([createStep({ text: "" })]),
+        totalUsage: Promise.resolve(undefined),
+      },
+      abortForkStream: () => undefined,
+      description: "Inspect repo",
+      kind: "invoke_agent",
+      durableRunMirror: true,
+      durableMessageId: "msg-1",
+      durableReasoningMessageId: "reasoning-1",
+      durableMirrorState: { reasoningStarted: false, textStarted: false },
+      appendDurableMirrorChunk: (chunk) => Promise.resolve(mirror.handleChunk(chunk)),
+      closeDurableMirrorReasoning: () => Promise.resolve(),
+      closeDurableMirrorText: () => Promise.resolve(),
+      markDurableStepStarted: () => undefined,
+      durableMirrorHasEmittedProgress: () => true,
+      pendingToolLifecycle: createPendingToolLifecycle([]),
+      toolCalls: [],
+      toolResults: [],
+      streamState: { finalText: "" },
+      maxSteps: 10,
+      startTime: Date.now(),
+      finalizationTimeoutMs: 100,
+      idleTimeoutMs: 1_000,
+      activeToolTimeoutMs: 1_000,
+      postToolIdleTimeoutMs: 1_000,
+    });
+
+    assertEquals(chunks, [
+      { type: "start-step" },
+      {
+        type: "error",
+        errorText: "Purchase additional credits.",
+        code: "INSUFFICIENT_CREDITS",
+      },
+    ]);
+  });
+
   it("streams text and tool lifecycle chunks through injected host hooks", async () => {
     const chunks: unknown[] = [];
     const writeLogs: unknown[] = [];
