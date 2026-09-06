@@ -67,10 +67,13 @@ import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts
 
 import {
   announceStreamedToolCallInput,
+  createRuntimeStreamSource,
   createStreamState,
   processStream,
+  resolveRuntimeExecutionErrorEvent,
   type StreamingToolCall,
   type StreamingToolResult,
+  withRuntimeProviderStreamErrorProvenance,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
@@ -239,7 +242,6 @@ export {
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
 import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
-import { createRuntimeStreamSource } from "./chat-stream-handler.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -2572,10 +2574,7 @@ export class AgentRuntime {
 
             this.status = "error";
             logger.error("Agent stream error", { error });
-            sendSSE(controller, encoder, {
-              type: "error",
-              error: error instanceof Error ? error.message : String(error),
-            });
+            sendSSE(controller, encoder, resolveRuntimeExecutionErrorEvent(error));
             closeSSEStream(controller);
           } finally {
             abortScope.dispose();
@@ -3451,17 +3450,20 @@ export class AgentRuntime {
         providerSystemPrompt,
         currentMessages,
       );
+      const streamLifecycleMode = resolveStreamLifecycleModeFromEnv();
+      const streamModel = withRuntimeProviderStreamErrorProvenance(languageModel);
+      const providerMessages = convertToTextGenerationRuntimeRequestMessages(
+        currentMessages,
+        // A server-local runtime fetches attachments from this machine,
+        // where a loopback or private-network URL resolves; only a remote
+        // provider needs the URL to be reachable from the internet.
+        { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
+      );
       const streamSource = createRuntimeStreamSource((streamSignal) =>
         streamText({
-          model: languageModel,
+          model: streamModel,
           system: providerSystemPrompt,
-          messages: convertToTextGenerationRuntimeRequestMessages(
-            currentMessages,
-            // A server-local runtime fetches attachments from this machine,
-            // where a loopback or private-network URL resolves; only a remote
-            // provider needs the URL to be reachable from the internet.
-            { requireInternetReachableAttachments: !isLocalModelRuntime(languageModel) },
-          ),
+          messages: providerMessages,
           tools: runtimeTools,
           experimental_repairToolCall: repairToolCall,
           maxOutputTokens,
@@ -3666,7 +3668,7 @@ export class AgentRuntime {
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
-        streamLifecycleMode: resolveStreamLifecycleModeFromEnv(),
+        streamLifecycleMode,
         traceSpanName: `chat ${effectiveModel}`,
         traceAttributes: {
           ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),

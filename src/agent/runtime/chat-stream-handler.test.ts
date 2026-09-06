@@ -15,6 +15,7 @@ import {
   createStreamState,
   processStream,
   processStreamInternal,
+  resolveRuntimeStreamErrorEvent,
   summarizeProviderToolDebugValue,
 } from "./chat-stream-handler.ts";
 import {
@@ -33,6 +34,7 @@ import {
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { ProviderOverloadedError, ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -1826,6 +1828,263 @@ describe("chat-stream-handler", () => {
       assertEquals(events[0], { type: "error", error: "Provider timeout" });
     });
 
+    it("contains hostile Proxy errors as one in-band fallback event", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const hostileError = new Proxy(new Error("original fallback"), {
+        getPrototypeOf() {
+          throw new Error("hostile getPrototypeOf");
+        },
+      });
+      const result = createMockResult([
+        { type: "error", error: hostileError },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [{ type: "error", error: "Unknown error" }]);
+    });
+
+    it("preserves curated terminal details from structured stream error parts", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerError = new Error("Provider request failed with status 402");
+      Object.defineProperty(providerError, "responseBody", {
+        value: JSON.stringify({
+          slug: "insufficient-credits",
+          suggestion: "Purchase additional credits or select a lower-cost model.",
+          privateDetail: "provider-private-diagnostic",
+        }),
+      });
+
+      const result = createMockResult([
+        { type: "error", error: providerError },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [{
+        type: "error",
+        error:
+          "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+        code: "INSUFFICIENT_CREDITS",
+      }]);
+      assertEquals(JSON.stringify(events).includes("provider-private-diagnostic"), false);
+    });
+
+    it("preserves provider account and spend-limit classifications at the runtime boundary", () => {
+      const cases = [
+        {
+          body: {
+            slug: "insufficient-credits",
+            error: "AI provider spend limit exceeded for the daily window.",
+            suggestion: "provider-private-suggestion",
+          },
+          expected: {
+            type: "error",
+            code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+            error:
+              "The AI provider spend limit has been reached. Try again later or ask an administrator to raise the AI provider spend limit.",
+          },
+        },
+        {
+          body: {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+            },
+            privateDetail: "provider-private-diagnostic",
+          },
+          expected: {
+            type: "error",
+            code: "AI_PROVIDER_BILLING_ERROR",
+            error:
+              "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const providerError = new Error("Provider request failed");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify(testCase.body),
+        });
+
+        const event = resolveRuntimeStreamErrorEvent(providerError);
+
+        assertEquals(event, testCase.expected);
+        assertEquals(JSON.stringify(event).includes("provider-private"), false);
+      }
+    });
+
+    it("preserves typed provider quota failures before applying 429 heuristics", () => {
+      const event = resolveRuntimeStreamErrorEvent(
+        new ProviderQuotaError({
+          provider: "openai",
+          status: 429,
+          message: "Provider request failed with status 429",
+          retryable: false,
+        }),
+      );
+
+      assertEquals(event, {
+        type: "error",
+        code: "AI_PROVIDER_BILLING_ERROR",
+        error:
+          "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+      });
+    });
+
+    it("preserves typed provider overload failures before applying message heuristics", () => {
+      const event = resolveRuntimeStreamErrorEvent(
+        new ProviderOverloadedError({
+          provider: "anthropic",
+          status: 529,
+          message: "Provider request failed with status 529",
+          retryable: true,
+        }),
+      );
+
+      assertEquals(event, {
+        type: "error",
+        code: "OVERLOADED_ERROR",
+        error: "The LLM provider is currently overloaded",
+      });
+    });
+
+    it("falls back to the original stream error when provider inspection throws", () => {
+      const providerError = new Error("Provider stream failed");
+      Object.defineProperty(providerError, "responseBody", {
+        get() {
+          throw new Error("hostile provider accessor");
+        },
+      });
+
+      assertEquals(resolveRuntimeStreamErrorEvent(providerError), {
+        type: "error",
+        error: "Provider stream failed",
+      });
+    });
+
+    it("does not invoke hostile lastError accessors while checking provider evidence", () => {
+      const providerError = new Error("safe fallback");
+      Object.defineProperty(providerError, "lastError", {
+        get() {
+          throw new Error("hostile lastError accessor");
+        },
+      });
+
+      assertEquals(resolveRuntimeStreamErrorEvent(providerError), {
+        type: "error",
+        error: "safe fallback",
+      });
+    });
+
+    it("keeps structured provider diagnostics out of public runtime errors", () => {
+      const cases = [
+        {
+          type: "overloaded_error",
+          expected: {
+            type: "error",
+            code: "OVERLOADED_ERROR",
+            error: "The LLM provider is currently overloaded",
+          },
+        },
+        {
+          type: "rate_limit_error",
+          expected: {
+            type: "error",
+            code: "RATE_LIMITED",
+            error: "Too many requests. Please wait a moment and try again.",
+          },
+        },
+        {
+          type: "api_error",
+          expected: {
+            type: "error",
+            error: "Provider request failed",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const providerError = new Error("Provider request failed");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify({
+            type: testCase.type,
+            message: `private ${testCase.type} diagnostic`,
+          }),
+        });
+
+        const event = resolveRuntimeStreamErrorEvent(providerError);
+        assertEquals(event, testCase.expected);
+        assertEquals(JSON.stringify(event).includes("private"), false);
+      }
+    });
+
+    it("keeps problem-body diagnostics out of public runtime errors", () => {
+      const cases = [
+        {
+          body: {
+            slug: "insufficient-credits",
+            error: "private credit diagnostic",
+            suggestion: "private credit suggestion",
+          },
+          expected: {
+            type: "error",
+            code: "INSUFFICIENT_CREDITS",
+            error:
+              "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+          },
+        },
+        {
+          body: {
+            slug: "resource-limit-exceeded",
+            error: "private resource diagnostic",
+            suggestion: "private resource suggestion",
+          },
+          expected: {
+            type: "error",
+            code: "RESOURCE_LIMIT_EXCEEDED",
+            error: "Resource limit exceeded",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const providerError = new Error("Provider request failed with status 402");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify(testCase.body),
+        });
+
+        const event = resolveRuntimeStreamErrorEvent(providerError);
+        assertEquals(event, testCase.expected);
+        assertEquals(JSON.stringify(event).includes("private"), false);
+      }
+    });
+
+    it("keeps the unknown active lifecycle fallback code-free", () => {
+      const event = resolveRuntimeStreamErrorEvent(
+        new StreamLifecycleFailure({
+          code: "PROVIDER_STREAM_ERROR",
+          providerCode: "PROVIDER_STREAM_ERROR",
+          phase: "streaming",
+          source: "provider",
+          retryable: true,
+          publicMessage: "Provider stream failed",
+        }),
+      );
+
+      assertEquals(event, {
+        type: "error",
+        error: "Provider stream failed",
+      });
+    });
+
     it("forwards non-Error stream errors as string", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -1838,6 +2097,20 @@ describe("chat-stream-handler", () => {
       await processStream(result, state, controller, encoder, "t", undefined);
 
       assertEquals(events[0], { type: "error", error: "raw string error" });
+    });
+
+    it("preserves the existing string fallback for unknown object errors", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "error", error: { message: "object error" } },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events[0], { type: "error", error: "[object Object]" });
     });
 
     it("forwards reasoning stream parts", async () => {

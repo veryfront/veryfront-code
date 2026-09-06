@@ -1,4 +1,8 @@
 import { safeJsonParse } from "#veryfront/utils/json.ts";
+import {
+  ProviderOverloadedError,
+  ProviderQuotaError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 export { safeJsonParse };
 export type { SafeJsonParseResult } from "#veryfront/utils/json.ts";
 
@@ -51,9 +55,34 @@ const AI_PROVIDER_BILLING_ERROR = {
 const MAX_PROVIDER_ERROR_DEPTH = 64;
 const MAX_PROVIDER_ERROR_TEXT_CHARS = 256 * 1024;
 const MAX_EMBEDDED_JSON_CANDIDATES = 32;
+const arrayIsArray = Array.isArray;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  try {
+    return !arrayIsArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function getOwnDataProperty(
+  value: Record<string, unknown>,
+  key: PropertyKey,
+): unknown {
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && objectHasOwn(descriptor, "value")
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseErrorJson(value: string): unknown | null {
@@ -130,38 +159,42 @@ function parseEmbeddedErrorJson(value: string): unknown | null {
 }
 
 function formatCreditProblemMessage(
-  body: Record<string, unknown>,
+  balance: unknown,
+  required: unknown,
   error: string | null,
-  suggestion: string | null,
+  hasSuggestion: boolean,
 ): string {
-  const balance = body.balance;
-  const required = body.required;
-  const fallback = suggestion ?? error ?? "Insufficient AI credits";
+  const isRunLimit = error?.toLowerCase().includes("agent run credit limit") ?? false;
+  const fallback = isRunLimit ? "Agent run credit limit exceeded" : "Insufficient AI credits";
+  const suggestion = isRunLimit
+    ? "Start a new reviewed run or reduce the scope of this run."
+    : "Purchase additional credits or upgrade your subscription plan.";
   if (
     typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
     typeof required !== "number" || !Number.isFinite(required) || required < 0
   ) {
-    return fallback;
+    return hasSuggestion ? `${fallback}. ${suggestion}` : fallback;
   }
 
-  const summary = error ?? "Insufficient AI credits";
-  const availability = error?.toLowerCase().includes("agent run credit limit")
-    ? "remaining"
-    : "available";
+  const summary = error === "AI credit limit exceeded" ? "AI credit limit exceeded" : fallback;
+  const availability = isRunLimit ? "remaining" : "available";
   return `${summary}: ${required} credits required, ${balance} ${availability}.${
-    suggestion ? ` ${suggestion}` : ""
+    hasSuggestion ? ` ${suggestion}` : ""
   }`;
 }
 
-/** Parses known problem body. */
+/** Parses known problem bodies without exposing provider-controlled text. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
     return null;
   }
 
-  const slug = typeof body.slug === "string" ? body.slug : null;
-  const error = typeof body.error === "string" ? body.error : null;
-  const suggestion = typeof body.suggestion === "string" ? body.suggestion : null;
+  const slugValue = getOwnDataProperty(body, "slug");
+  const errorValue = getOwnDataProperty(body, "error");
+  const suggestionValue = getOwnDataProperty(body, "suggestion");
+  const slug = typeof slugValue === "string" ? slugValue : null;
+  const error = typeof errorValue === "string" ? errorValue : null;
+  const suggestion = typeof suggestionValue === "string" ? suggestionValue : null;
   const normalizedProblemText = `${error ?? ""} ${suggestion ?? ""}`.toLowerCase();
 
   if (normalizedProblemText.includes("ai provider spend limit")) {
@@ -171,7 +204,12 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: formatCreditProblemMessage(body, error, suggestion),
+      message: formatCreditProblemMessage(
+        getOwnDataProperty(body, "balance"),
+        getOwnDataProperty(body, "required"),
+        error,
+        Boolean(suggestion),
+      ),
       status: 402,
     };
   }
@@ -179,7 +217,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "resource-limit-exceeded") {
     return {
       code: "RESOURCE_LIMIT_EXCEEDED",
-      message: suggestion ?? error ?? "Resource limit exceeded",
+      message: "Resource limit exceeded",
       status: 402,
     };
   }
@@ -354,29 +392,20 @@ function parseKnownProviderBody(
   if (body.type === "overloaded_error") {
     return {
       code: "OVERLOADED_ERROR",
-      message: typeof body.message === "string"
-        ? body.message
-        : "The LLM provider is currently overloaded",
+      message: "The LLM provider is currently overloaded",
     };
   }
 
   if (body.type === "rate_limit_error") {
     return {
       code: "RATE_LIMITED",
-      message: typeof body.message === "string"
-        ? body.message
-        : "Too many requests. Please wait a moment and try again.",
+      message: "Too many requests. Please wait a moment and try again.",
       status: 429,
     };
   }
 
   if (body.type === "api_error") {
-    return {
-      code: "EXTERNAL_SERVICE_ERROR",
-      message: typeof body.message === "string"
-        ? body.message
-        : DEFAULT_EXTERNAL_SERVICE_ERROR.message,
-    };
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
   }
 
   if (typeof body.message === "string" && isInvalidRequestEnvelope(body)) {
@@ -421,7 +450,11 @@ function extractResponseBody(error: unknown): string | undefined {
 
 /** Error shape for parse provider. */
 export function parseProviderError(error: unknown): ParsedProviderError {
-  return parseProviderErrorInner(error, new WeakSet(), 0);
+  try {
+    return parseProviderErrorInner(error, new WeakSet(), 0);
+  } catch {
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
 }
 
 function parseProviderErrorInner(
@@ -431,6 +464,16 @@ function parseProviderErrorInner(
 ): ParsedProviderError {
   if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
     return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
+
+  if (error instanceof ProviderQuotaError) {
+    return AI_PROVIDER_BILLING_ERROR;
+  }
+  if (error instanceof ProviderOverloadedError) {
+    return {
+      code: "OVERLOADED_ERROR",
+      message: "The LLM provider is currently overloaded",
+    };
   }
 
   if (isErrorRecord(error)) {

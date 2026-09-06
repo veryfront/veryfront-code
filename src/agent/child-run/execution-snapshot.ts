@@ -28,6 +28,7 @@ export interface ChildRunExecutionSnapshot {
   description: string;
   fullResultText: string | null;
   error: string | null;
+  terminalErrorCode?: string;
   steps: number;
   toolCalls: ChildRunToolCallSnapshot[];
   toolResults: ChildRunToolResultSnapshot[];
@@ -51,6 +52,7 @@ export type ChildRunExecutionResult =
     success: false;
     description: string;
     error: string;
+    terminalErrorCode?: string;
     steps: number;
     toolCalls: ChildRunToolCallSnapshot[];
     toolResults: ChildRunToolResultSnapshot[];
@@ -90,6 +92,9 @@ export function buildChildRunExecutionSnapshot(
     description: result.description,
     fullResultText: result.success ? result.summary.text : null,
     error: result.success ? null : result.error,
+    ...(!result.success && result.terminalErrorCode
+      ? { terminalErrorCode: result.terminalErrorCode }
+      : {}),
     steps: result.steps,
     toolCalls: result.toolCalls ?? [],
     toolResults: result.toolResults ?? [],
@@ -124,11 +129,13 @@ export function buildChildRunSuccessResult(
 export function buildChildRunFailureResult(
   common: ChildRunResultCommon,
   error: string,
+  terminalErrorCode?: string,
 ): ChildRunExecutionResult & { success: false } {
   return {
     success: false,
     description: common.description,
     error,
+    ...(terminalErrorCode ? { terminalErrorCode } : {}),
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
@@ -142,12 +149,14 @@ export function buildChildRunFailureSnapshot(
   common: ChildRunResultCommon,
   error: string,
   fullResultText: string | null,
+  terminalErrorCode?: string,
 ): ChildRunExecutionSnapshot {
   return {
     success: false,
     description: common.description,
     fullResultText,
     error,
+    ...(terminalErrorCode ? { terminalErrorCode } : {}),
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,

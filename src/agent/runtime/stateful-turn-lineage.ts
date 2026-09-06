@@ -15,7 +15,25 @@ const storage = new AsyncLocalStorage<TurnFrame>();
 const run = AsyncLocalStorage.prototype.run;
 const getStore = AsyncLocalStorage.prototype.getStore;
 const apply = Reflect.apply;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const queueTails = new WeakMap<AgentRuntime, TurnFrame>();
+const statefulTurnCycleErrors = new WeakSet<object>();
+
+/** Identify the private framework error emitted for a cyclic stateful turn. */
+export function isStatefulTurnCycleError(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    apply(weakSetHas, statefulTurnCycleErrors, [error]) === true;
+}
+
+function createStatefulTurnCycleError(): Error {
+  const error = AGENT_ERROR.create({
+    detail:
+      "Stateful delegation cannot wait on an active ancestor or cyclic queue. Use an acyclic delegate graph.",
+  });
+  apply(weakSetAdd, statefulTurnCycleErrors, [error]);
+  return error;
+}
 
 /** Preserve call ancestry across delegated generate and stream operations. */
 export function withRuntimeTurnLineage<T>(runtime: AgentRuntime, operation: () => T): T {
@@ -50,10 +68,7 @@ export function enterSerializedTurn(runtime: AgentRuntime): () => void {
   // Also follow existing queue dependencies: independently started roots can
   // deadlock when each delegates to the other's occupied runtime.
   if (parent && previous && reaches(previous, parent)) {
-    throw AGENT_ERROR.create({
-      detail:
-        "Stateful delegation cannot wait on an active ancestor or cyclic queue. Use an acyclic delegate graph.",
-    });
+    throw createStatefulTurnCycleError();
   }
   frame.active = true;
   frame.waitingOn = previous;

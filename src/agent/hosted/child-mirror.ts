@@ -78,7 +78,7 @@ type HostedMirrorBasePart =
   | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
   | { type: "tool-result"; toolCallId: string; toolName: string; input: unknown; output: unknown }
   | { type: "tool-error"; toolCallId: string; toolName: string; input: unknown; error: Error }
-  | { type: "error"; error: Error };
+  | { type: "error"; error: Error & { readonly code?: string } };
 
 type ExtraMirroredHostedStreamPart = Extract<HostedStreamPartForUiChunkMapping, { type: "source" }>;
 
@@ -172,6 +172,9 @@ export function toMirroredHostedStreamPart(
       return {
         type: "error",
         error: part.error,
+        ...(typeof part.error.code === "string" && part.error.code.length > 0
+          ? { code: part.error.code }
+          : {}),
       };
   }
 }

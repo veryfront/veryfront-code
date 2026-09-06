@@ -10,6 +10,8 @@ import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
+import { resolveRuntimeExecutionErrorEvent } from "#veryfront/agent/runtime/chat-stream-handler.ts";
+import { ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -1452,6 +1454,82 @@ describe("runtime-bridge", () => {
         },
       },
     ]);
+  });
+
+  it("terminates a sole text stream consumer on an unknown provider error part", async () => {
+    const privateMarker = "private-text-stream-provider-error";
+    const model = createStreamModel("test", "test/text-stream-provider-error", async () => ({
+      stream: readableStreamFrom([
+        { type: "error", error: new Error(privateMarker) },
+      ]),
+    }));
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    const error = await assertRejects(
+      () => collectAsync(result.textStream),
+      Error,
+      "Provider stream failed",
+    );
+
+    assertInstanceOf(error, Error);
+    assertEquals(error.message.includes(privateMarker), false);
+    assertEquals(resolveRuntimeExecutionErrorEvent(error), {
+      type: "error",
+      error: "Provider stream failed",
+    });
+  });
+
+  it("terminates concurrent stream consumers with the same curated provider code", async () => {
+    const privateMarker = "private-dual-stream-provider-error";
+    const providerError = new ProviderQuotaError({
+      provider: "openai",
+      status: 429,
+      message: privateMarker,
+      retryable: false,
+    });
+    const model = createStreamModel("test", "test/dual-stream-provider-error", async () => ({
+      stream: readableStreamFrom([
+        { type: "error", error: providerError },
+      ]),
+    }));
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+    const timeout = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () => timeout.reject(new Error("stream consumers did not settle")),
+      1000,
+    );
+
+    try {
+      const settled = await Promise.race([
+        Promise.allSettled([
+          collectAsync(result.textStream),
+          collectAsync(result.fullStream),
+        ]),
+        timeout.promise,
+      ]);
+
+      assertEquals(settled.length, 2);
+      for (const outcome of settled) {
+        assertEquals(outcome.status, "rejected");
+        if (outcome.status !== "rejected") continue;
+        assertEquals(outcome.reason instanceof Error, true);
+        assertEquals(String(outcome.reason).includes(privateMarker), false);
+        assertEquals(resolveRuntimeExecutionErrorEvent(outcome.reason), {
+          type: "error",
+          error:
+            "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+          code: "AI_PROVIDER_BILLING_ERROR",
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   it("rejects a second stream view started after direct consumption", async () => {

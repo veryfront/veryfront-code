@@ -69,7 +69,7 @@ export type ChatUiMessageStreamFinish<TMessageMetadata = MessageMetadata> = {
 export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
   generateMessageId?: () => string;
   sendReasoning?: boolean;
-  onError?: (error: unknown) => string;
+  onError?: (error: unknown, context?: { code?: string }) => string;
   messageMetadata?: (
     input: { part: ChatUiMessageStreamFinishPart },
   ) => TMessageMetadata | undefined;

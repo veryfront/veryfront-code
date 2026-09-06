@@ -908,6 +908,76 @@ describe("internal-agents/run-stream", () => {
     assertEquals(body.includes("event: RunFinished"), false);
   });
 
+  for (const lifecycleMode of ["legacy", "active"] as const) {
+    it(`preserves a structured provider error through the ${lifecycleMode} runtime and hosted AG-UI boundary`, async () => {
+      const sessionManager = new AgentRunSessionManager();
+      const previousLifecycleMode = Deno.env.get("VF_STREAM_LIFECYCLE_MODE");
+      Deno.env.set("VF_STREAM_LIFECYCLE_MODE", lifecycleMode);
+      const providerError = new Error("Provider request failed with status 402");
+      Object.defineProperty(providerError, "responseBody", {
+        value: JSON.stringify({
+          slug: "insufficient-credits",
+          error: "AI credit limit exceeded",
+          suggestion: "Purchase additional credits or select a lower-cost model.",
+          privateDetail: "provider-private-diagnostic",
+        }),
+      });
+      const unregister = registerModelProvider(`issue-192-${lifecycleMode}`, () => ({
+        provider: `issue-192-${lifecycleMode}`,
+        modelId: `issue-192-${lifecycleMode}/terminal-error`,
+        doGenerate: () => Promise.reject(new Error("generate must not be called")),
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream<unknown>({
+              start(controller) {
+                controller.error(
+                  lifecycleMode === "legacy" ? { lastError: providerError } : providerError,
+                );
+              },
+            }),
+          }),
+      }));
+
+      try {
+        const runtimeAgent = createAgent({
+          id: `issue-192-${lifecycleMode}-runtime-error`,
+          model: `issue-192-${lifecycleMode}/terminal-error`,
+          system: "Reply to the user.",
+          skills: false,
+        });
+        const response = await createRuntimeAgentStreamResponse(
+          {
+            threadId: crypto.randomUUID(),
+            runId: `run_issue_192_${lifecycleMode}`,
+            messages: [{ id: "message-1", role: "user", content: "Hello" }],
+            tools: [],
+            context: [],
+          },
+          runtimeAgent,
+          { sessionManager },
+        );
+        const frames = parseSseFrames(await response.text());
+        const stepStartedIndex = frames.findIndex((frame) => frame.event === "StepStarted");
+        const runErrorIndex = frames.findIndex((frame) => frame.event === "RunError");
+        const runError = frames[runErrorIndex]?.data as Record<string, unknown> | undefined;
+
+        assertEquals(stepStartedIndex >= 0, true);
+        assertEquals(runErrorIndex > stepStartedIndex, true);
+        assertEquals(
+          runError?.message,
+          "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+        );
+        assertEquals(runError?.code, "INSUFFICIENT_CREDITS");
+        assertEquals(JSON.stringify(runError).includes("provider-private-diagnostic"), false);
+        assertEquals(frames.some((frame) => frame.event === "RunFinished"), false);
+      } finally {
+        unregister();
+        if (previousLifecycleMode === undefined) Deno.env.delete("VF_STREAM_LIFECYCLE_MODE");
+        else Deno.env.set("VF_STREAM_LIFECYCLE_MODE", previousLifecycleMode);
+      }
+    });
+  }
+
   it("releases a pending tool boundary when the runtime turn fails", async () => {
     const sessionManager = new AgentRunSessionManager();
     let failProviderReplayTurn: (() => void | Promise<void>) | undefined;

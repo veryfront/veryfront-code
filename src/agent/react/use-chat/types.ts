@@ -54,6 +54,12 @@ export interface OnToolCallArg {
   };
 }
 
+/** Error exposed by useChat state and callbacks. */
+export interface UseChatError extends Error {
+  /** Machine-readable terminal error code supplied by the agent runtime, when available. */
+  readonly code?: string;
+}
+
 /** Options accepted by use chat. */
 export interface UseChatOptions {
   /** AG-UI endpoint. Defaults to "/api/ag-ui". */
@@ -68,7 +74,7 @@ export interface UseChatOptions {
   model?: string;
   onResponse?: (response: Response) => void;
   onFinish?: (message: ChatMessage) => void;
-  onError?: (error: Error) => void;
+  onError?: (error: UseChatError) => void;
   onToolCall?: (arg: OnToolCallArg) => void | Promise<void>;
 }
 
@@ -100,7 +106,7 @@ export interface UseChatResult {
   status: ChatStatus;
   /** Id of the assistant message currently streaming, or `null` when idle. */
   streamingMessageId: string | null;
-  error: Error | null;
+  error: UseChatError | null;
   /** Current model override (undefined = use agent default) */
   model: string | undefined;
   /** The actual model being used after auto-upgrade (e.g. "Anthropic/claude-sonnet-4-20250514") */
