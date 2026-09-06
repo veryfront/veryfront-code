@@ -1,14 +1,110 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Message } from "#veryfront/agent/types.ts";
+import type { AgentMiddleware, Message } from "#veryfront/agent/types.ts";
 import type { Memory } from "#veryfront/agent/memory/memory-interface.ts";
 import { beginMemoryTransaction, ConversationMemory } from "#veryfront/agent/memory/memory.ts";
 import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import {
+  registerTurnMessageProjectionValidator,
+  registerTurnMessageValidator,
+} from "#veryfront/agent/middleware/turn-validation.ts";
 
 describe("custom memory transaction boundary", () => {
+  it("validates a reordered replacement as a projection and rolls it back", async () => {
+    const retained: Message = {
+      id: "retained",
+      role: "system",
+      parts: [{ type: "text", text: "den" }],
+    };
+    const store = new ConversationMemory<Message>({ type: "conversation" });
+    await store.add(retained);
+    let commits = 0;
+    let rollbacks = 0;
+    let providerCalls = 0;
+    let turnValidatorCalls = 0;
+    let projectionValidatorCalls = 0;
+    const recorder: AgentMiddleware = (context, next) => {
+      registerTurnMessageValidator(context, () => {
+        turnValidatorCalls += 1;
+        return Promise.resolve();
+      });
+      registerTurnMessageProjectionValidator(context, (messages, previousMessages) => {
+        projectionValidatorCalls += 1;
+        assertEquals(messages.map(({ id }) => id), ["current", "retained"]);
+        assertEquals(previousMessages?.map(({ id }) => id), ["retained", "current"]);
+        return Promise.resolve();
+      });
+      return next();
+    };
+    const model: ModelRuntime = {
+      provider: "openai",
+      modelId: "veryfront-cloud/openai/reordered-projection",
+      doGenerate() {
+        providerCalls += 1;
+        return Promise.reject(new Error("Unsafe projection reached provider"));
+      },
+      doStream: () => Promise.reject(new Error("Expected generate")),
+    };
+    const runtime = new AgentRuntime("reordered-projection", {
+      model: model.modelId,
+      system: "Helpful",
+      maxSteps: 1,
+      security: false,
+      middleware: [
+        recorder,
+        securityMiddleware({ input: { blockedPatterns: [/forbidden/] } }),
+      ],
+    }, { resolveModelRuntime: () => model });
+    const memory: Memory<Message> = {
+      add: store.add.bind(store),
+      getMessages: store.getMessages.bind(store),
+      clear: store.clear.bind(store),
+      getStats: store.getStats.bind(store),
+      async beginTransaction() {
+        const staged = structuredClone(await store.getMessages());
+        return {
+          add(message) {
+            staged.push(message);
+            return Promise.resolve();
+          },
+          getMessages() {
+            return Promise.resolve(structuredClone(staged).reverse());
+          },
+          commit() {
+            commits += 1;
+            return Promise.resolve();
+          },
+          rollback() {
+            rollbacks += 1;
+            return Promise.resolve();
+          },
+        };
+      },
+    };
+    Reflect.set(runtime, "memory", memory);
+
+    await assertRejects(
+      () =>
+        runtime.generate([{
+          id: "current",
+          role: "system",
+          parts: [{ type: "text", text: "forbid" }],
+        }]),
+      Error,
+      "Input validation failed",
+    );
+
+    assertEquals(turnValidatorCalls, 1);
+    assertEquals(projectionValidatorCalls, 1);
+    assertEquals(providerCalls, 0);
+    assertEquals(commits, 0);
+    assertEquals(rollbacks, 1);
+    assertEquals(await store.getMessages(), [retained]);
+  });
+
   it("preserves unchanged historical runs when a retaining adapter deserializes every read", async () => {
     const store = new ConversationMemory<Message>({ type: "conversation", maxMessages: 3 });
     for (

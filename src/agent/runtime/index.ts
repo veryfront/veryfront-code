@@ -1950,9 +1950,11 @@ export class AgentRuntime {
       for (const msg of committedInputMessages) await turnMemory.add(msg);
       persisted = await turnMemory.getMessages();
       if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
-        if (providerTranscriptIsOrderedSubset(persisted, validated)) {
-          await validateProjectedMessages?.(persisted, validated);
-        } else {
+        if (validateProjectedMessages) {
+          await validateProjectedMessages(persisted, validated);
+        } else if (!providerTranscriptIsOrderedSubset(persisted, validated)) {
+          // A turn-only validator has no projection provenance contract. Keep
+          // its historical fail-closed behavior for replacement projections.
           await validateTurnMessages?.([], persisted);
         }
       }

@@ -1806,8 +1806,9 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(validatorCalls[0]?.turnInput, 1, "the hook receives only this turn's input");
   });
 
-  it("does not revalidate an unchanged synthesized summary projection", async () => {
+  it("routes synthesized summary changes through projection validation once", async () => {
     const validatorCalls: Array<{ history: number; turnInput: number }> = [];
+    const projectionCalls: Array<{ messages: number; previousMessages: number }> = [];
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/summary-validator-calls",
@@ -1821,6 +1822,13 @@ describe("resolveSecurityMiddleware", () => {
     const recorder: AgentMiddleware = (context, next) => {
       registerTurnMessageValidator(context, (history, turnInput) => {
         validatorCalls.push({ history: history.length, turnInput: turnInput.length });
+        return Promise.resolve();
+      });
+      registerTurnMessageProjectionValidator(context, (messages, previousMessages) => {
+        projectionCalls.push({
+          messages: messages.length,
+          previousMessages: previousMessages?.length ?? 0,
+        });
         return Promise.resolve();
       });
       return next();
@@ -1841,17 +1849,19 @@ describe("resolveSecurityMiddleware", () => {
     }
     assertEquals(
       validatorCalls.length,
-      5,
-      "the fifth write validates once before and once after summary compaction",
+      4,
+      "each turn with history must run the cross-turn validator once",
     );
+    assertEquals(projectionCalls, [{ messages: 4, previousMessages: 5 }]);
 
     await assistant.generate({ input: "sixth" }).catch(() => undefined);
 
     assertEquals(
       validatorCalls.length,
-      6,
+      5,
       "a fresh object for unchanged summary content must not trigger another validation",
     );
+    assertEquals(projectionCalls.length, 1);
   });
 
   it("does not revalidate retained messages after bounded-memory trimming", async () => {
