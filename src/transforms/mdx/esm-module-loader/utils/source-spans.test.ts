@@ -11,78 +11,6 @@ import {
 // Cases about which specifiers a scanner recognises, rather than about how many
 // it collects, opt out of the bound explicitly.
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
-type SourceSpansModule = typeof import("./source-spans.ts");
-interface CallCount {
-  calls: number;
-  freshModule: boolean;
-}
-
-async function importFreshSourceSpans(label: string): Promise<SourceSpansModule> {
-  const url = new URL("./source-spans.ts", import.meta.url);
-  const identity = `${label}-${crypto.randomUUID()}`;
-  url.searchParams.set("instrument", identity);
-  url.hash = identity;
-  return await import(url.href);
-}
-
-async function countStartsWithCalls(
-  callback: (module: SourceSpansModule) => void,
-): Promise<CallCount> {
-  const original = String.prototype.startsWith;
-  let calls = 0;
-  Object.defineProperty(String.prototype, "startsWith", {
-    configurable: true,
-    writable: true,
-    value(this: string, searchString: string, position?: number) {
-      calls++;
-      return original.call(this, searchString, position);
-    },
-  });
-  let freshModule = false;
-  try {
-    const module = await importFreshSourceSpans("starts-with");
-    freshModule = module.findDynamicImportSpans !== findDynamicImportSpans;
-    calls = 0;
-    callback(module);
-  } finally {
-    Object.defineProperty(String.prototype, "startsWith", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-  return { calls, freshModule };
-}
-
-async function countIndexOfCalls(
-  callback: (module: SourceSpansModule) => void,
-): Promise<CallCount> {
-  const original = String.prototype.indexOf;
-  let calls = 0;
-  Object.defineProperty(String.prototype, "indexOf", {
-    configurable: true,
-    writable: true,
-    value(this: string, searchString: string, position?: number) {
-      calls++;
-      return original.call(this, searchString, position);
-    },
-  });
-  let freshModule = false;
-  try {
-    const module = await importFreshSourceSpans("index-of");
-    freshModule = module.findDynamicImportSpans !== findDynamicImportSpans;
-    calls = 0;
-    callback(module);
-  } finally {
-    Object.defineProperty(String.prototype, "indexOf", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-  return { calls, freshModule };
-}
-
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   it("keeps static imports inside regexes hidden after local type export lists", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
@@ -379,60 +307,6 @@ import real from "./real.js";`,
           UNBOUNDED,
         ).map((span) => span.path),
         ["./real.js"],
-      );
-    });
-
-    it("keeps JSX closing-tag checks linear for repeated angle assertions", async () => {
-      const repeatedAssertions = Array.from(
-        { length: 3_000 },
-        (_, index) => `const value${index} = <Type${index}>input${index};`,
-      ).join("\n");
-      const source = `${repeatedAssertions}\nimport real from "./real.js";`;
-      let paths: string[] = [];
-
-      const startsWithCount = await countStartsWithCalls((module) => {
-        paths = module.findStaticImportFromSpans(source, matchRelative, UNBOUNDED)
-          .map((span) => span.path);
-      });
-      const startsWithCalls = startsWithCount.calls;
-
-      assertEquals(paths, ["./real.js"]);
-      assert(startsWithCount.freshModule || "Bun" in globalThis);
-      assert(
-        !startsWithCount.freshModule || startsWithCalls > 0,
-        "Expected the instrumented fresh scanner to call startsWith",
-      );
-      assert(
-        startsWithCalls < source.length * 3,
-        `Expected a linear static import scan, got ${startsWithCalls} startsWith calls ` +
-          `for ${source.length} source characters`,
-      );
-    });
-
-    it("keeps side-effect JSX closing-tag checks linear for repeated angle assertions", async () => {
-      const repeatedAssertions = Array.from(
-        { length: 3_000 },
-        (_, index) => `const value${index} = <Type${index}>input${index};`,
-      ).join("\n");
-      const source = `${repeatedAssertions}\nimport "./real.js";`;
-      let paths: string[] = [];
-
-      const startsWithCount = await countStartsWithCalls((module) => {
-        paths = module.findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED)
-          .map((span) => span.path);
-      });
-      const startsWithCalls = startsWithCount.calls;
-
-      assertEquals(paths, ["./real.js"]);
-      assert(startsWithCount.freshModule || "Bun" in globalThis);
-      assert(
-        !startsWithCount.freshModule || startsWithCalls > 0,
-        "Expected the instrumented fresh scanner to call startsWith",
-      );
-      assert(
-        startsWithCalls < source.length * 3,
-        `Expected a linear side-effect import scan, got ${startsWithCalls} startsWith calls ` +
-          `for ${source.length} source characters`,
       );
     });
 
@@ -1821,31 +1695,6 @@ import real from "./real.js";`,
     // the `indexOf` calls that build the index states that invariant directly:
     // the cached scan makes one call per assertion, an uncached one makes a call
     // per assertion per source character.
-    it("keeps distinct TypeScript assertion lookahead linear", async () => {
-      const source = "type Value = unknown;\nconst values = [" +
-        Array.from({ length: 8_000 }, (_, index) => `<T${index}>value`).join(",") +
-        "];";
-      let paths: string[] = [];
-
-      const indexOfCount = await countIndexOfCalls((module) => {
-        paths = module.findDynamicImportSpans(source, matchRelative, UNBOUNDED)
-          .map((span) => span.path);
-      });
-      const indexOfCalls = indexOfCount.calls;
-
-      assertEquals(paths, []);
-      assert(indexOfCount.freshModule || "Bun" in globalThis);
-      assert(
-        !indexOfCount.freshModule || indexOfCalls > 0,
-        "Expected the instrumented fresh scanner to call indexOf",
-      );
-      assert(
-        indexOfCalls < source.length,
-        `Expected a linear distinct TypeScript assertion scan, got ${indexOfCalls} indexOf ` +
-          `calls for ${source.length} source characters`,
-      );
-    });
-
     it("keeps per-statement TypeScript assertion lookahead within a bounded runtime", () => {
       const source = "<T>value;\n".repeat(16_000);
       const startedAt = performance.now();

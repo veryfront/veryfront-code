@@ -7124,17 +7124,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-writer.test.ts",
       "removalPr": "PR 4n",
     }),
-    entry("src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts", [
-      "process",
-    ], {
-      "disposition": "replaceable-fake",
-      "owner": "core-runtime",
-      "rationale":
-        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-      "replacement":
-        "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
-      "removalPr": "PR 4n",
-    }),
     entry("src/transforms/mdx/index.test.ts", ["filesystem-write"], {
       "disposition": "integration-relocation",
       "owner": "core-runtime",

@@ -1,6 +1,8 @@
 import { makeTempDir, mkdir, remove, stat, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { utimes as utime } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+import process from "node:process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -39,9 +41,86 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { utf8ByteLength } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
 
+type SourceSpanCounterOperation = "dynamic" | "side-effect" | "static";
+
+function measureSourceSpanCalls(operation: SourceSpanCounterOperation): {
+  calls: number;
+  mode: SourceSpanCounterOperation;
+  paths: string[];
+  sourceLength: number;
+} {
+  const fixture = fileURLToPath(
+    new URL("./fixtures/source-spans-complexity.mjs", import.meta.url),
+  );
+  const moduleUrl = new URL(
+    "../../../../src/transforms/mdx/esm-module-loader/utils/source-spans.ts",
+    import.meta.url,
+  ).href;
+  const runtimeArgs = "Deno" in globalThis
+    ? ["run", "--config=deno.json", "-A", fixture]
+    : "Bun" in globalThis
+    ? ["--preload", "./tests/bun/preload.ts", fixture]
+    : ["--import", "./tests/node/resolver.mjs", fixture];
+  const result = spawnSync(process.execPath, runtimeArgs, {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+      VERYFRONT_TEST_SOURCE_SPANS_MODE: operation,
+      VERYFRONT_TEST_SOURCE_SPANS_URL: moduleUrl,
+    },
+  });
+  if (result.status !== 0) {
+    throw new Error(`Source-span counter failed: ${result.stderr || result.stdout}`);
+  }
+  const match = /{"mode":[^\n]+}/.exec(result.stdout);
+  if (!match) throw new Error("Source-span counter produced no result");
+  return JSON.parse(match[0]);
+}
+
 // Real filesystem, native module loading, and process-wide prototype mutation
 // require the integration lane under the semantic unit-boundary audit.
 describe("MDX cache shared-realm lifecycle", () => {
+  it("measures bounded static JSX lookahead in a fresh runtime", () => {
+    const repeated = Array.from(
+      { length: 3_000 },
+      (_, index) => `const value${index} = <Type${index}>input${index};`,
+    ).join("\n");
+    const source = `${repeated}\nimport real from "./real.js";`;
+    const measured = measureSourceSpanCalls("static");
+    assertEquals(measured.mode, "static");
+    assertEquals(measured.paths, ["./real.js"]);
+    assertEquals(measured.calls > 0, true);
+    assertEquals(measured.calls < source.length * 3, true);
+    assertEquals(measured.sourceLength, source.length);
+  });
+
+  it("measures bounded side-effect JSX lookahead in a fresh runtime", () => {
+    const repeated = Array.from(
+      { length: 3_000 },
+      (_, index) => `const value${index} = <Type${index}>input${index};`,
+    ).join("\n");
+    const source = `${repeated}\nimport "./real.js";`;
+    const measured = measureSourceSpanCalls("side-effect");
+    assertEquals(measured.mode, "side-effect");
+    assertEquals(measured.paths, ["./real.js"]);
+    assertEquals(measured.calls > 0, true);
+    assertEquals(measured.calls < source.length * 3, true);
+    assertEquals(measured.sourceLength, source.length);
+  });
+
+  it("measures bounded TypeScript assertion lookahead in a fresh runtime", () => {
+    const source = "type Value = unknown;\nconst values = [" +
+      Array.from({ length: 8_000 }, (_, index) => `<T${index}>value`).join(",") + "];";
+    const measured = measureSourceSpanCalls("dynamic");
+    assertEquals(measured.mode, "dynamic");
+    assertEquals(measured.paths, []);
+    assertEquals(measured.calls > 0, true);
+    assertEquals(measured.calls < source.length, true);
+    assertEquals(measured.sourceLength, source.length);
+  });
+
   it("classifies private framework roots without live array or string predicates", () => {
     const some = Array.prototype.some;
     const startsWith = String.prototype.startsWith;
