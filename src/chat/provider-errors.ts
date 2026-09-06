@@ -1,5 +1,8 @@
 import { safeJsonParse } from "#veryfront/utils/json.ts";
-import { ProviderQuotaError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  ProviderOverloadedError,
+  ProviderQuotaError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 export { safeJsonParse };
 export type { SafeJsonParseResult } from "#veryfront/utils/json.ts";
 
@@ -431,6 +434,12 @@ function parseProviderErrorInner(
 
   if (error instanceof ProviderQuotaError) {
     return AI_PROVIDER_BILLING_ERROR;
+  }
+  if (error instanceof ProviderOverloadedError) {
+    return {
+      code: "OVERLOADED_ERROR",
+      message: "The LLM provider is currently overloaded",
+    };
   }
 
   if (isErrorRecord(error)) {

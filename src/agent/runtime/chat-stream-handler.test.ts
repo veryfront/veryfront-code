@@ -34,7 +34,7 @@ import {
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
-import { ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
+import { ProviderOverloadedError, ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -1935,6 +1935,23 @@ describe("chat-stream-handler", () => {
         code: "AI_PROVIDER_BILLING_ERROR",
         error:
           "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+      });
+    });
+
+    it("preserves typed provider overload failures before applying message heuristics", () => {
+      const event = resolveRuntimeStreamErrorEvent(
+        new ProviderOverloadedError({
+          provider: "anthropic",
+          status: 529,
+          message: "Provider request failed with status 529",
+          retryable: true,
+        }),
+      );
+
+      assertEquals(event, {
+        type: "error",
+        code: "OVERLOADED_ERROR",
+        error: "The LLM provider is currently overloaded",
       });
     });
 
