@@ -12,13 +12,13 @@ import {
   registerTurnMessageValidator,
   registerTurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
-import type { Memory, MemoryTransaction } from "./memory-interface.ts";
+import type { Memory, MemoryTransaction } from "#veryfront/agent/memory/memory-interface.ts";
 import {
   beginMemoryTransaction,
   BufferMemory,
   ConversationMemory,
   SummaryMemory,
-} from "./memory.ts";
+} from "#veryfront/agent/memory/memory.ts";
 
 const message = (id: string): Message => ({
   id,

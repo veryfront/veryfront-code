@@ -11,7 +11,10 @@
  * @module ai/agent/runtime
  */
 
-import { enterSerializedTurn, withRuntimeTurnLineage } from "./stateful-turn-lineage.ts";
+import {
+  enterSerializedTurn,
+  withRuntimeTurnLineage,
+} from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
 import {
   type AgentConfig,
   type AgentContext,
