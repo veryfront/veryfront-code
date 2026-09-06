@@ -1,18 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { agent, runWithRunEventSink } from "../index.ts";
-import type { Agent } from "../types.ts";
+import { agent, runWithRunEventSink } from "#veryfront/agent/index.ts";
+import type { Agent } from "#veryfront/agent/types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
-import { scriptedModel } from "./model-runtime.test-helpers.ts";
-import { createSSECollector } from "./chat-stream-handler.test-helpers.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+import { createSSECollector } from "#veryfront/agent/runtime/chat-stream-handler.test-helpers.ts";
 import {
   createRuntimeStreamSource,
   createStreamState,
   processStream,
   resolveRuntimeExecutionErrorEvent,
   withRuntimeProviderStreamErrorProvenance,
-} from "./chat-stream-handler.ts";
+} from "#veryfront/agent/runtime/chat-stream-handler.ts";
 
 const PROVIDER_FAILURES = [
   {
