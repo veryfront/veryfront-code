@@ -5,7 +5,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BundleEntry } from "./bundle-manifest-types.ts";
 import { extractBundleDeps } from "./bundle-deps-validator.ts";
@@ -16,10 +16,13 @@ import {
   readCachedHttpBundleFile,
 } from "./http-bundle-file.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
+import type { ModuleSourceCapture } from "./module-source-capture.ts";
 
 export interface BundleAccumulator {
   readonly bundles: Map<string, BundleEntry>;
   complete: boolean;
+  /** Optional caller-owned capture; never stored in a distributed manifest. */
+  sourceCapture?: ModuleSourceCapture;
 }
 
 /** Per-request accumulator used by cacheHttpImportsToLocal. */
@@ -82,6 +85,7 @@ export async function trackWrittenBundle(
     url: normalizedUrl,
     sizeBytes: bundle.sizeBytes,
   });
+  accumulator.sourceCapture?.record(toFileUrl(cachePath).href, bundle.code);
   return true;
 }
 
@@ -126,6 +130,7 @@ export async function trackCachedBundleGraph(
       url: extractSourceUrl(bundle.code) ?? current.fallbackUrl,
       sizeBytes: bundle.sizeBytes,
     });
+    accumulator.sourceCapture?.record(toFileUrl(current.path).href, bundle.code);
 
     const deps = extractBundleDeps(bundle.code);
     if (seen.size + deps.length > MAX_HTTP_BUNDLE_GRAPH_ENTRIES) {

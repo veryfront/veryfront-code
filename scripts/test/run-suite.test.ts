@@ -173,6 +173,7 @@ describe("suite planning parity", () => {
       for (
         const file of [
           "tests/integration/transforms/mdx-module-preparation.test.ts",
+          "tests/integration/transforms/http-module-capture.test.ts",
           "tests/integration/renderer/render-generation.test.ts",
         ]
       ) {
@@ -758,6 +759,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/test-file-utils.test.mjs",
       "tests/integration/renderer/render-generation.test.ts",
       "tests/integration/transforms/mdx-module-preparation.test.ts",
+      "tests/integration/transforms/http-module-capture.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
@@ -770,6 +772,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/bun/workspace-resolution.test.ts",
       "tests/integration/renderer/render-generation.test.ts",
       "tests/integration/transforms/mdx-module-preparation.test.ts",
+      "tests/integration/transforms/http-module-capture.test.ts",
       "tests/integration/runtime/compat/abort-signal-reason.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",

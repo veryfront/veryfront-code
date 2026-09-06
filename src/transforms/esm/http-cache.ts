@@ -69,11 +69,15 @@ import {
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-validator.ts";
 import {
+  type BundleAccumulator,
   bundleAccumulatorStorage,
   createBundleAccumulator,
   trackCachedBundleGraph,
   trackWrittenBundle,
 } from "./bundle-accumulator.ts";
+import { ModuleSourceCapture } from "./module-source-capture.ts";
+import type { RenderArtifactLimits } from "./render-artifacts.ts";
+import type { RenderModuleSnapshot } from "./link-render-modules.ts";
 import {
   isHttpBundleCodeWithinLimit,
   MAX_CACHED_HTTP_BUNDLE_BYTES,
@@ -766,9 +770,46 @@ export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<CacheHttpImportsResult> {
+  return cacheHttpImports(code, options, createBundleAccumulator());
+}
+
+/**
+ * Capture HTTP dependency bytes while performing the normal cache rewrite.
+ *
+ * The explicit limits bound captured dependency count and UTF-8 URL/source
+ * bytes, not the root code or heap usage. This retains only modules observed
+ * by existing bundle validation, including cache hits. It does not follow
+ * arbitrary file imports, close the entire MDX graph, or authorize execution.
+ * Use the linker to verify graph closure after collecting the other sources.
+ * Sources contain replica-local URLs and must not enter distributed caches.
+ */
+export async function captureHttpImportsToLocal(
+  code: string,
+  options: CacheOptions,
+  limits: RenderArtifactLimits,
+): Promise<CacheHttpImportsResult & { modules: RenderModuleSnapshot["modules"] }> {
+  const abortSignal = options.abortSignal;
+  const sourceCapture = new ModuleSourceCapture(limits);
+  const accumulator = { ...createBundleAccumulator(), sourceCapture };
+  try {
+    const result = await cacheHttpImports(code, options, accumulator);
+    abortSignal?.throwIfAborted();
+    if (!accumulator.complete) {
+      throw BUILD_FAILED.create({ detail: "HTTP module capture is incomplete" });
+    }
+    return { ...result, modules: sourceCapture.take() };
+  } finally {
+    sourceCapture.discard();
+  }
+}
+
+function cacheHttpImports(
+  code: string,
+  options: CacheOptions,
+  accumulator: BundleAccumulator,
+): Promise<CacheHttpImportsResult> {
   options.abortSignal?.throwIfAborted();
   const requestOptions = prepareHttpCacheRequestOptions(options);
-  const accumulator = createBundleAccumulator();
   return bundleAccumulatorStorage.run(accumulator, async () => {
     const { replacements } = await buildReplacements(
       code,
