@@ -32,10 +32,110 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 /** Bound on the cached-module paths this process remembers as normalized. */
 const MAX_NORMALIZED_MODULE_MEMO_ENTRIES = 4096;
+const IntrinsicMap = Map;
+const IntrinsicSet = Set;
+const IntrinsicReflectApply = Reflect.apply;
+const MapPrototypeClear = Map.prototype.clear;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeHas = Map.prototype.has;
+const MapPrototypeSet = Map.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const SetPrototypeAdd = Set.prototype.add;
+const SetPrototypeClear = Set.prototype.clear;
+const SetPrototypeDelete = Set.prototype.delete;
+const SetPrototypeForEach = Set.prototype.forEach;
+const SetPrototypeHas = Set.prototype.has;
+const SetSizeGetter = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const hostClearInterval = globalThis.clearInterval.bind(globalThis);
+const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+const hostSetInterval = globalThis.setInterval.bind(globalThis);
+const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
 const cryptoRandomUUID = crypto.randomUUID.bind(crypto);
 const IntrinsicJSONParse = JSON.parse;
 const IntrinsicJSONStringify = JSON.stringify;
 const IntrinsicObjectCreate = Object.create;
+
+function mapClear<K, V>(map: Map<K, V>): void {
+  IntrinsicReflectApply(MapPrototypeClear, map, []);
+}
+
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function mapEntries<K, V>(map: ReadonlyMap<K, V>): Array<[K, V]> {
+  const entries: Array<[K, V]> = [];
+  IntrinsicReflectApply(MapPrototypeForEach, map, [
+    (value: V, key: K) => entries.push([key, value]),
+  ]);
+  return entries;
+}
+
+function mapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K, V>(map: ReadonlyMap<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapSize<K, V>(map: ReadonlyMap<K, V>): number {
+  return IntrinsicReflectApply(MapSizeGetter, map, []) as number;
+}
+
+function firstMapKey<K, V>(map: ReadonlyMap<K, V>): K | undefined {
+  let first: K | undefined;
+  let found = false;
+  IntrinsicReflectApply(MapPrototypeForEach, map, [(_value: V, key: K) => {
+    if (found) return;
+    first = key;
+    found = true;
+  }]);
+  return first;
+}
+
+function mapValues<K, V>(map: ReadonlyMap<K, V>): V[] {
+  const values: V[] = [];
+  IntrinsicReflectApply(MapPrototypeForEach, map, [(value: V) => values.push(value)]);
+  return values;
+}
+
+function setAdd<T>(set: Set<T>, value: T): void {
+  IntrinsicReflectApply(SetPrototypeAdd, set, [value]);
+}
+
+function setClear<T>(set: Set<T>): void {
+  IntrinsicReflectApply(SetPrototypeClear, set, []);
+}
+
+function setDelete<T>(set: Set<T>, value: T): boolean {
+  return IntrinsicReflectApply(SetPrototypeDelete, set, [value]) as boolean;
+}
+
+function setHas<T>(set: Set<T>, value: T): boolean {
+  return IntrinsicReflectApply(SetPrototypeHas, set, [value]) as boolean;
+}
+
+function setSize<T>(set: Set<T>): number {
+  return IntrinsicReflectApply(SetSizeGetter, set, []) as number;
+}
+
+function firstSetValue<T>(set: Set<T>): T | undefined {
+  let first: T | undefined;
+  let found = false;
+  IntrinsicReflectApply(SetPrototypeForEach, set, [(value: T) => {
+    if (found) return;
+    first = value;
+    found = true;
+  }]);
+  return first;
+}
 
 function cacheFilesystemErrorCode(error: unknown): string {
   if (isNotFoundError(error)) return "NOT_FOUND";
@@ -51,18 +151,18 @@ function cacheFilesystemErrorCode(error: unknown): string {
  * cache hit re-read and re-scanned the whole cached module, which let repeated
  * public requests for the same page pay that cost again on each render.
  */
-const normalizedModulePaths = new Set<string>();
+const normalizedModulePaths = new IntrinsicSet<string>();
 
 function rememberNormalizedModule(transformedPath: string): void {
   // Delete-before-add keeps the set in recency order, so reaching capacity
   // evicts the path normalized longest ago instead of wiping the whole memo
   // and re-charging every hot page a read and a scan at once.
-  normalizedModulePaths.delete(transformedPath);
-  if (normalizedModulePaths.size >= MAX_NORMALIZED_MODULE_MEMO_ENTRIES) {
-    const oldest = normalizedModulePaths.values().next().value;
-    if (oldest !== undefined) normalizedModulePaths.delete(oldest);
+  setDelete(normalizedModulePaths, transformedPath);
+  if (setSize(normalizedModulePaths) >= MAX_NORMALIZED_MODULE_MEMO_ENTRIES) {
+    const oldest = firstSetValue(normalizedModulePaths);
+    if (oldest !== undefined) setDelete(normalizedModulePaths, oldest);
   }
-  normalizedModulePaths.add(transformedPath);
+  setAdd(normalizedModulePaths, transformedPath);
 }
 
 /**
@@ -77,13 +177,13 @@ export async function ensureCachedJsxModulePatched(
 ): Promise<boolean> {
   const fs = getLocalFs();
 
-  if (normalizedModulePaths.has(transformedPath)) {
+  if (setHas(normalizedModulePaths, transformedPath)) {
     // The memo skips the read and the dnt scan, not the existence check: a
     // prune or an invalidation can remove the artifact between the caller's
     // stat and this call, and reporting it usable would hand the rewritten
     // parent a `file://` import for a module that is no longer there.
     if (await fs.exists(transformedPath)) return true;
-    normalizedModulePaths.delete(transformedPath);
+    setDelete(normalizedModulePaths, transformedPath);
     return false;
   }
 
@@ -202,7 +302,7 @@ const MAX_SERVED_ARTIFACT_MEMO_ENTRIES = 2 * SUPPORTED_CONCURRENT_RENDERS_PER_PR
  * and the moment `doLoadModuleESM` imports the rewritten parent. Recording the
  * hit keeps the artifact out of pruning for one further grace period.
  */
-const servedArtifactTimestamps = new Map<string, number>();
+const servedArtifactTimestamps = new IntrinsicMap<string, number>();
 
 export function markJsxArtifactServed(
   transformedPath: string,
@@ -211,16 +311,16 @@ export function markJsxArtifactServed(
   // Delete-before-set keeps the map in recency order, so reaching capacity
   // evicts the artifact served longest ago instead of wiping the whole memo
   // and momentarily dropping the protection every in-flight hit relies on.
-  servedArtifactTimestamps.delete(transformedPath);
-  if (servedArtifactTimestamps.size >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
-    const oldest = servedArtifactTimestamps.keys().next().value;
-    if (oldest !== undefined) servedArtifactTimestamps.delete(oldest);
+  mapDelete(servedArtifactTimestamps, transformedPath);
+  if (mapSize(servedArtifactTimestamps) >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
+    const oldest = firstMapKey(servedArtifactTimestamps);
+    if (oldest !== undefined) mapDelete(servedArtifactTimestamps, oldest);
   }
-  servedArtifactTimestamps.set(transformedPath, servedAtMs);
+  mapSet(servedArtifactTimestamps, transformedPath, servedAtMs);
 }
 
 function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): boolean {
-  const servedAtMs = servedArtifactTimestamps.get(transformedPath);
+  const servedAtMs = mapGet(servedArtifactTimestamps, transformedPath);
   return servedAtMs !== undefined && nowMs - servedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS;
 }
 
@@ -233,13 +333,16 @@ function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): b
  * a reference is unconditional: no prune pass removes a referenced artifact,
  * however long the render's HTTP-caching and bundle-recovery phases run.
  */
-const jsxArtifactActiveRefs = new Map<string, number>();
+const jsxArtifactActiveRefs = new IntrinsicMap<string, number>();
 const LAZY_JSX_ARTIFACT_RETENTION_MS = 10 * 60_000;
 const LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY = 8;
 const JSX_ARTIFACT_REFRESH_CONCURRENCY = 8;
 const SCHEDULED_JSX_CACHE_PRUNE_CONCURRENCY = 8;
 const MAX_LAZY_JSX_ARTIFACTS = MAX_SERVED_ARTIFACT_MEMO_ENTRIES;
-const lazyJsxArtifactExpirations = new Map<string, { expiresAtMs: number; reservations: number }>();
+const lazyJsxArtifactExpirations = new IntrinsicMap<
+  string,
+  { expiresAtMs: number; reservations: number }
+>();
 let lazyJsxArtifactHeartbeat: ReturnType<typeof setInterval> | undefined;
 let lazyJsxArtifactHeartbeatInFlight: Promise<void> | undefined;
 const jsxArtifactMetadataSemaphore = new Semaphore(JSX_ARTIFACT_REFRESH_CONCURRENCY, {
@@ -279,14 +382,18 @@ export function refreshJsxArtifactsBounded(
 }
 
 function retainJsxArtifact(artifactPath: string): void {
-  jsxArtifactActiveRefs.set(artifactPath, (jsxArtifactActiveRefs.get(artifactPath) ?? 0) + 1);
+  mapSet(
+    jsxArtifactActiveRefs,
+    artifactPath,
+    (mapGet(jsxArtifactActiveRefs, artifactPath) ?? 0) + 1,
+  );
 }
 
 function releaseJsxArtifact(artifactPath: string): void {
-  const count = jsxArtifactActiveRefs.get(artifactPath);
+  const count = mapGet(jsxArtifactActiveRefs, artifactPath);
   if (count === undefined) return;
-  if (count <= 1) jsxArtifactActiveRefs.delete(artifactPath);
-  else jsxArtifactActiveRefs.set(artifactPath, count - 1);
+  if (count <= 1) mapDelete(jsxArtifactActiveRefs, artifactPath);
+  else mapSet(jsxArtifactActiveRefs, artifactPath, count - 1);
 }
 
 function runLazyJsxArtifactHeartbeat(): Promise<void> {
@@ -294,9 +401,9 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
   const run = (async () => {
     const nowMs = Date.now();
     const artifactPaths: string[] = [];
-    for (const [artifactPath, retention] of lazyJsxArtifactExpirations) {
+    for (const [artifactPath, retention] of mapEntries(lazyJsxArtifactExpirations)) {
       if (retention.reservations === 0 && retention.expiresAtMs <= nowMs) {
-        lazyJsxArtifactExpirations.delete(artifactPath);
+        mapDelete(lazyJsxArtifactExpirations, artifactPath);
         continue;
       }
       artifactPaths[artifactPaths.length] = artifactPath;
@@ -325,8 +432,8 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
   })();
   lazyJsxArtifactHeartbeatInFlight = run.finally(() => {
     lazyJsxArtifactHeartbeatInFlight = undefined;
-    if (lazyJsxArtifactExpirations.size === 0 && lazyJsxArtifactHeartbeat !== undefined) {
-      clearInterval(lazyJsxArtifactHeartbeat);
+    if (mapSize(lazyJsxArtifactExpirations) === 0 && lazyJsxArtifactHeartbeat !== undefined) {
+      hostClearInterval(lazyJsxArtifactHeartbeat);
       lazyJsxArtifactHeartbeat = undefined;
     }
   });
@@ -335,31 +442,34 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
 
 function ensureLazyJsxArtifactHeartbeat(): void {
   if (lazyJsxArtifactHeartbeat !== undefined) return;
-  lazyJsxArtifactHeartbeat = setInterval(() => {
+  lazyJsxArtifactHeartbeat = hostSetInterval(() => {
     void runLazyJsxArtifactHeartbeat();
   }, JSX_CACHE_MTIME_REFRESH_INTERVAL_MS);
   unrefTimer(lazyJsxArtifactHeartbeat);
 }
 
 function reserveLazyJsxArtifacts(paths: readonly string[]): (retain: boolean) => void {
-  const unique = [...new Set(paths)];
+  const unique = [...new IntrinsicSet(paths)];
   const additionalCount = () =>
-    unique.filter((path) => !lazyJsxArtifactExpirations.has(path)).length;
-  if (lazyJsxArtifactExpirations.size + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
+    unique.filter((path) => !mapHas(lazyJsxArtifactExpirations, path)).length;
+  if (mapSize(lazyJsxArtifactExpirations) + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
     const now = Date.now();
-    for (const [path, record] of lazyJsxArtifactExpirations) {
+    for (const [path, record] of mapEntries(lazyJsxArtifactExpirations)) {
       if (record.reservations === 0 && record.expiresAtMs <= now) {
-        lazyJsxArtifactExpirations.delete(path);
+        mapDelete(lazyJsxArtifactExpirations, path);
       }
     }
   }
-  if (lazyJsxArtifactExpirations.size + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
+  if (mapSize(lazyJsxArtifactExpirations) + additionalCount() > MAX_LAZY_JSX_ARTIFACTS) {
     throw new JsxCacheCapacityError("JSX lazy artifact retention capacity is exhausted");
   }
   const reservations = unique.map((path) => {
-    const record = lazyJsxArtifactExpirations.get(path) ?? { expiresAtMs: 0, reservations: 0 };
+    const record = mapGet(lazyJsxArtifactExpirations, path) ?? {
+      expiresAtMs: 0,
+      reservations: 0,
+    };
     record.reservations++;
-    lazyJsxArtifactExpirations.set(path, record);
+    mapSet(lazyJsxArtifactExpirations, path, record);
     return { path, record };
   });
   if (reservations.length > 0) ensureLazyJsxArtifactHeartbeat();
@@ -369,13 +479,13 @@ function reserveLazyJsxArtifacts(paths: readonly string[]): (retain: boolean) =>
     released = true;
     const now = Date.now();
     for (const { path, record } of reservations) {
-      if (lazyJsxArtifactExpirations.get(path) !== record) continue;
+      if (mapGet(lazyJsxArtifactExpirations, path) !== record) continue;
       record.reservations--;
       if (retain) {
         record.expiresAtMs = Math.max(record.expiresAtMs, now + LAZY_JSX_ARTIFACT_RETENTION_MS);
       }
       if (record.reservations === 0 && record.expiresAtMs <= now) {
-        lazyJsxArtifactExpirations.delete(path);
+        mapDelete(lazyJsxArtifactExpirations, path);
       }
     }
   };
@@ -386,10 +496,10 @@ function retainLazyJsxArtifact(artifactPath: string): void {
 }
 
 function isLazyJsxArtifactRetained(artifactPath: string, nowMs: number = Date.now()): boolean {
-  const retention = lazyJsxArtifactExpirations.get(artifactPath);
+  const retention = mapGet(lazyJsxArtifactExpirations, artifactPath);
   if (retention === undefined) return false;
   if (retention.reservations > 0 || retention.expiresAtMs > nowMs) return true;
-  lazyJsxArtifactExpirations.delete(artifactPath);
+  mapDelete(lazyJsxArtifactExpirations, artifactPath);
   return false;
 }
 
@@ -404,15 +514,15 @@ function isLazyJsxArtifactRetained(artifactPath: string, nowMs: number = Date.no
  * whatever mtime the caller happens to know. Bounded and evicted in recency
  * order like the served memo; an evicted entry only costs one extra `utime`.
  */
-const mtimeRefreshTimestamps = new Map<string, number>();
+const mtimeRefreshTimestamps = new IntrinsicMap<string, number>();
 
 function recordJsxArtifactMtimeRefresh(artifactPath: string, refreshedAtMs: number): void {
-  mtimeRefreshTimestamps.delete(artifactPath);
-  if (mtimeRefreshTimestamps.size >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
-    const oldest = mtimeRefreshTimestamps.keys().next().value;
-    if (oldest !== undefined) mtimeRefreshTimestamps.delete(oldest);
+  mapDelete(mtimeRefreshTimestamps, artifactPath);
+  if (mapSize(mtimeRefreshTimestamps) >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
+    const oldest = firstMapKey(mtimeRefreshTimestamps);
+    if (oldest !== undefined) mapDelete(mtimeRefreshTimestamps, oldest);
   }
-  mtimeRefreshTimestamps.set(artifactPath, refreshedAtMs);
+  mapSet(mtimeRefreshTimestamps, artifactPath, refreshedAtMs);
 }
 
 /**
@@ -430,7 +540,7 @@ export async function refreshJsxArtifactMtime(
 ): Promise<void> {
   const lastRefreshedMs = Math.max(
     modifiedAtMs,
-    mtimeRefreshTimestamps.get(artifactPath) ?? 0,
+    mapGet(mtimeRefreshTimestamps, artifactPath) ?? 0,
   );
   if (nowMs - lastRefreshedMs < JSX_CACHE_MTIME_REFRESH_INTERVAL_MS) return;
   const localFs = getLocalFs();
@@ -508,7 +618,7 @@ export async function retainJsxArtifactsReferencedIn(
   // A module may import the same artifact under several specifiers; one
   // refresh per artifact is what "last use" needs, so the duplicates stay
   // only in the reference counts, which release symmetrically below.
-  const uniqueArtifactPaths = [...new Set(artifactPaths)];
+  const uniqueArtifactPaths = [...new IntrinsicSet(artifactPaths)];
   let refreshInFlight: Promise<void> | undefined;
   const refreshAll = (): Promise<void> => {
     if (refreshInFlight) return refreshInFlight;
@@ -525,7 +635,7 @@ export async function retainJsxArtifactsReferencedIn(
     releaseLazyReservation(false);
     throw error;
   }
-  const heartbeat = setInterval(
+  const heartbeat = hostSetInterval(
     () => void refreshAll().catch(() => undefined),
     JSX_CACHE_MTIME_REFRESH_INTERVAL_MS,
   );
@@ -535,7 +645,7 @@ export async function retainJsxArtifactsReferencedIn(
   return () => {
     if (released) return;
     released = true;
-    clearInterval(heartbeat);
+    hostClearInterval(heartbeat);
     const nowMs = Date.now();
     for (const artifactPath of artifactPaths) {
       // The import just completed, so the module is as recently used as a
@@ -552,7 +662,7 @@ export async function retainJsxArtifactsReferencedIn(
  * Per-artifact operation queues, dropped once the last queued operation
  * settles, so the map holds only paths with an operation in flight.
  */
-const jsxArtifactLocks = new Map<string, Promise<void>>();
+const jsxArtifactLocks = new IntrinsicMap<string, Promise<void>>();
 const JSX_ARTIFACT_LEASE_RETRY_MS = 10;
 const JSX_ARTIFACT_LEASE_ATTEMPTS = 500;
 const JSX_ARTIFACT_LEASE_STALE_MS = 60_000;
@@ -714,7 +824,7 @@ async function acquireFilesystemLeaseTransition(
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
       if (!(await hasLiveFilesystemLeaseTransition(lockPath))) continue;
-      await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+      await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   throw new Error(`Timed out waiting for JSX cache lease transition ${basename(lockPath)}`);
@@ -843,7 +953,7 @@ async function restoreDisplacedFilesystemLease(
       return;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
-      await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+      await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   throw new Error(
@@ -874,7 +984,7 @@ async function withFilesystemLease<T>(
       try {
         if (await hasLiveFilesystemLeaseTransition(lockPath)) {
           await removeFilesystemLeaseIfOwned(lockPath, leaseOwner);
-          await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+          await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
           continue;
         }
       } catch (error) {
@@ -886,13 +996,13 @@ async function withFilesystemLease<T>(
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
       if (await recoverStaleFilesystemLease(lockPath, Date.now(), createExclusive)) continue;
-      await new Promise((resolve) => setTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+      await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   if (!acquired) throw new Error("Timed out waiting for a JSX cache lease");
 
   const heartbeat = localFs.utime
-    ? setInterval(() => {
+    ? hostSetInterval(() => {
       const now = new Date();
       void localFs.utime?.(lockPath, now, now).catch(() => undefined);
     }, JSX_ARTIFACT_LEASE_HEARTBEAT_MS)
@@ -920,7 +1030,7 @@ async function withFilesystemLease<T>(
     await assertLeaseOwned();
     return await operation(assertLeaseOwned);
   } finally {
-    if (heartbeat !== undefined) clearInterval(heartbeat);
+    if (heartbeat !== undefined) hostClearInterval(heartbeat);
     const releasePath = `${lockPath}.release-${cryptoRandomUUID()}`;
     try {
       await assertLeaseOwned();
@@ -964,7 +1074,7 @@ export async function withJsxArtifactLock<T>(
   operation: (assertLeaseOwned: () => Promise<void>) => Promise<T>,
   options: { waitForLiveLease?: boolean } = {},
 ): Promise<T> {
-  const previous = jsxArtifactLocks.get(artifactPath) ?? Promise.resolve();
+  const previous = mapGet(jsxArtifactLocks, artifactPath) ?? Promise.resolve();
   const run = previous.then(() =>
     withFilesystemLease(
       `${artifactPath}.lock`,
@@ -976,10 +1086,10 @@ export async function withJsxArtifactLock<T>(
     () => undefined,
     () => undefined,
   );
-  jsxArtifactLocks.set(artifactPath, settled);
+  mapSet(jsxArtifactLocks, artifactPath, settled);
   void settled.then(() => {
-    if (jsxArtifactLocks.get(artifactPath) === settled) {
-      jsxArtifactLocks.delete(artifactPath);
+    if (mapGet(jsxArtifactLocks, artifactPath) === settled) {
+      mapDelete(jsxArtifactLocks, artifactPath);
     }
   });
   return await run;
@@ -1021,39 +1131,50 @@ interface PersistedJsxCachePruneRequest {
 }
 
 interface ScheduledJsxCachePrune {
+  esmCacheDir: string;
   timer: ReturnType<typeof setTimeout> | undefined;
   fireAtMs: number;
+  requestDirectory: string;
   persistedGeneration?: string;
 }
 
 interface QueuedJsxCachePrune {
+  esmCacheDir: string;
   fireAtMs: number;
+  requestDirectory: string;
   persistedGeneration?: string;
 }
 
 /** At most one pending follow-up prune per cache directory. */
-const scheduledJsxCachePrunes = new Map<string, ScheduledJsxCachePrune>();
-const queuedJsxCachePrunes = new Map<string, QueuedJsxCachePrune>();
-const pendingJsxCachePersistence = new Map<
+const scheduledJsxCachePrunes = new IntrinsicMap<string, ScheduledJsxCachePrune>();
+const queuedJsxCachePrunes = new IntrinsicMap<string, QueuedJsxCachePrune>();
+const pendingJsxCachePersistence = new IntrinsicMap<
   string,
-  { fireAtMs: number; requestDirectory: string }
+  {
+    esmCacheDir: string;
+    fireAtMs: number;
+    requestDirectory: string;
+    persistedGeneration?: string;
+  }
 >();
 let jsxCachePersistencePump: Promise<void> | undefined;
 let jsxCachePersistenceRetry: ReturnType<typeof setTimeout> | undefined;
-const inFlightJsxCachePrunes = new Set<string>();
+const inFlightJsxCachePrunes = new IntrinsicSet<string>();
 let persistedJsxCachePrunePromotion: Promise<void> | undefined;
-let persistedJsxCachePrunePromotionRequested = false;
 let persistedJsxCachePrunePromotionRetry: ReturnType<typeof setTimeout> | undefined;
-
-// Select the configured cache root on first use, not during module evaluation.
-// The process-wide pump then keeps that journal regardless of later contexts.
-let persistedJsxCachePruneRequestDirectory: string | undefined;
+const pendingJsxCachePrunePromotionDirectories = new IntrinsicSet<string>();
+let activeJsxCachePrunePromotionDirectory: string | undefined;
+let activeJsxCachePrunePromotionRequestedAgain = false;
 
 function getPersistedJsxCachePruneRequestDirectory(): string {
-  return persistedJsxCachePruneRequestDirectory ??= join(
+  return join(
     getMdxEsmCacheDir(),
     JSX_CACHE_PRUNE_REQUEST_DIRECTORY,
   );
+}
+
+function getJsxCachePruneKey(esmCacheDir: string, requestDirectory: string): string {
+  return `${requestDirectory}\0${esmCacheDir}`;
 }
 
 async function getPersistedJsxCachePruneRequestPath(
@@ -1173,8 +1294,9 @@ async function readPersistedJsxCachePruneRequest(
 async function retirePersistedJsxCachePruneRequest(
   esmCacheDir: string,
   expectedGeneration: string,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<void> {
-  const path = await getPersistedJsxCachePruneRequestPath(esmCacheDir);
+  const path = await getPersistedJsxCachePruneRequestPath(esmCacheDir, requestDirectory);
   try {
     await withJsxArtifactLock(path, async (assertLeaseOwned) => {
       const current = IntrinsicJSONParse(await getLocalFs().readTextFile(path));
@@ -1195,12 +1317,13 @@ async function retirePersistedJsxCachePruneRequest(
   }
 }
 
-async function promotePersistedJsxCachePruneRequest(): Promise<void> {
-  const queuedCandidates = [...queuedJsxCachePrunes].sort(
+async function promotePersistedJsxCachePruneRequest(
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+): Promise<void> {
+  const queuedCandidates = mapEntries(queuedJsxCachePrunes).sort(
     (left, right) => left[1].fireAtMs - right[1].fireAtMs,
   );
   const persistedCandidates: PersistedJsxCachePruneRequest[] = [];
-  const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   let requestTombstoneRetryAtMs: number | undefined;
   const noteRequestMaintenanceRetry = (readyAtMs: number) => {
     requestTombstoneRetryAtMs = requestTombstoneRetryAtMs === undefined
@@ -1262,9 +1385,11 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
       const request = await readPersistedJsxCachePruneRequest(requestPath);
       if (request === undefined) continue;
       const { esmCacheDir, fireAtMs, generation } = request;
+      const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
       if (
-        scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir) ||
-        inFlightJsxCachePrunes.has(esmCacheDir)
+        mapHas(scheduledJsxCachePrunes, pruneKey) ||
+        mapHas(queuedJsxCachePrunes, pruneKey) ||
+        setHas(inFlightJsxCachePrunes, pruneKey)
       ) {
         continue;
       }
@@ -1280,7 +1405,7 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
   }
   let queuedIndex = 0;
   let persistedIndex = 0;
-  if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+  if (mapSize(scheduledJsxCachePrunes) >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
     const queued = queuedCandidates[queuedIndex];
     const persisted = persistedCandidates[persistedIndex];
     if (
@@ -1291,18 +1416,20 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
         persisted.esmCacheDir,
         Math.max(persisted.fireAtMs - Date.now(), 0),
         persisted.generation,
+        requestDirectory,
       );
     } else if (queued !== undefined) {
       queuedIndex++;
-      queuedJsxCachePrunes.delete(queued[0]);
+      mapDelete(queuedJsxCachePrunes, queued[0]);
       scheduleJsxCachePruneRetry(
-        queued[0],
+        queued[1].esmCacheDir,
         Math.max(queued[1].fireAtMs - Date.now(), 0),
         queued[1].persistedGeneration,
+        queued[1].requestDirectory,
       );
     }
   }
-  while (scheduledJsxCachePrunes.size < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+  while (mapSize(scheduledJsxCachePrunes) < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
     const queued = queuedCandidates[queuedIndex];
     const persisted = persistedCandidates[persistedIndex];
     if (queued === undefined && persisted === undefined) break;
@@ -1315,16 +1442,18 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
         persisted.esmCacheDir,
         Math.max(persisted.fireAtMs - Date.now(), 0),
         persisted.generation,
+        requestDirectory,
       );
       continue;
     }
     if (queued !== undefined) {
       queuedIndex++;
-      queuedJsxCachePrunes.delete(queued[0]);
+      mapDelete(queuedJsxCachePrunes, queued[0]);
       scheduleJsxCachePruneRetry(
-        queued[0],
+        queued[1].esmCacheDir,
         Math.max(queued[1].fireAtMs - Date.now(), 0),
         queued[1].persistedGeneration,
+        queued[1].requestDirectory,
       );
     }
   }
@@ -1334,58 +1463,90 @@ async function promotePersistedJsxCachePruneRequest(): Promise<void> {
     scheduleJsxCachePruneRetry(
       requestDirectory,
       Math.max(requestTombstoneRetryAtMs - Date.now(), 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      undefined,
+      requestDirectory,
     );
   }
 }
 
-function requestPersistedJsxCachePrunePromotion(): void {
-  if (persistedJsxCachePrunePromotionRetry !== undefined) return;
-  if (persistedJsxCachePrunePromotion !== undefined) {
-    persistedJsxCachePrunePromotionRequested = true;
-    return;
-  }
-  persistedJsxCachePrunePromotionRequested = false;
-  const promotion = promotePersistedJsxCachePruneRequest().catch(() => {
-    // A full persistence tier must defer background promotion, not reject an
-    // unobserved promise. Admission keeps the old timer until queueing succeeds.
-    persistedJsxCachePrunePromotionRetry = setTimeout(() => {
-      persistedJsxCachePrunePromotionRetry = undefined;
-      requestPersistedJsxCachePrunePromotion();
-    }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
-    unrefTimer(persistedJsxCachePrunePromotionRetry);
-  });
+function pumpPersistedJsxCachePrunePromotions(): void {
+  if (
+    persistedJsxCachePrunePromotion !== undefined ||
+    persistedJsxCachePrunePromotionRetry !== undefined
+  ) return;
+  const requestDirectory = firstSetValue(pendingJsxCachePrunePromotionDirectories);
+  if (requestDirectory === undefined) return;
+  setDelete(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+  activeJsxCachePrunePromotionDirectory = requestDirectory;
+  activeJsxCachePrunePromotionRequestedAgain = false;
+  const promotion = promotePersistedJsxCachePruneRequest(requestDirectory);
   persistedJsxCachePrunePromotion = promotion;
-  void promotion.finally(() => {
-    if (persistedJsxCachePrunePromotion === promotion) {
-      persistedJsxCachePrunePromotion = undefined;
-      if (persistedJsxCachePrunePromotionRequested) {
-        requestPersistedJsxCachePrunePromotion();
+  void promotion.then(
+    () => {
+      if (activeJsxCachePrunePromotionRequestedAgain) {
+        setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
       }
-    }
-  });
+      activeJsxCachePrunePromotionDirectory = undefined;
+      activeJsxCachePrunePromotionRequestedAgain = false;
+      persistedJsxCachePrunePromotion = undefined;
+      pumpPersistedJsxCachePrunePromotions();
+    },
+    () => {
+      setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+      activeJsxCachePrunePromotionDirectory = undefined;
+      activeJsxCachePrunePromotionRequestedAgain = false;
+      persistedJsxCachePrunePromotion = undefined;
+      persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
+        persistedJsxCachePrunePromotionRetry = undefined;
+        pumpPersistedJsxCachePrunePromotions();
+      }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      unrefTimer(persistedJsxCachePrunePromotionRetry);
+    },
+  );
+}
+
+function requestPersistedJsxCachePrunePromotion(
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+): boolean {
+  if (activeJsxCachePrunePromotionDirectory === requestDirectory) {
+    activeJsxCachePrunePromotionRequestedAgain = true;
+    return true;
+  }
+  if (setHas(pendingJsxCachePrunePromotionDirectories, requestDirectory)) return true;
+  const retainedRoots = setSize(pendingJsxCachePrunePromotionDirectories) +
+    (activeJsxCachePrunePromotionDirectory === undefined ? 0 : 1);
+  if (retainedRoots >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) return false;
+  setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+  pumpPersistedJsxCachePrunePromotions();
+  return true;
 }
 
 function pumpJsxCachePersistence(): void {
   if (jsxCachePersistencePump !== undefined || jsxCachePersistenceRetry !== undefined) return;
   const pump = (async () => {
-    for (const [directory, request] of [...pendingJsxCachePersistence]) {
-      if (pendingJsxCachePersistence.get(directory) !== request) continue;
-      const generation = await persistJsxCachePruneRequest(
-        directory,
-        request.fireAtMs,
-        request.requestDirectory,
-      );
-      if (generation !== undefined && pendingJsxCachePersistence.get(directory) === request) {
-        pendingJsxCachePersistence.delete(directory);
-        requestPersistedJsxCachePrunePromotion();
+    for (const [pruneKey, request] of mapEntries(pendingJsxCachePersistence)) {
+      if (mapGet(pendingJsxCachePersistence, pruneKey) !== request) continue;
+      const generation = request.persistedGeneration ??
+        await persistJsxCachePruneRequest(
+          request.esmCacheDir,
+          request.fireAtMs,
+          request.requestDirectory,
+        );
+      if (generation !== undefined) request.persistedGeneration = generation;
+      if (
+        generation !== undefined &&
+        mapGet(pendingJsxCachePersistence, pruneKey) === request &&
+        requestPersistedJsxCachePrunePromotion(request.requestDirectory)
+      ) {
+        mapDelete(pendingJsxCachePersistence, pruneKey);
       }
     }
   })();
   jsxCachePersistencePump = pump;
   void pump.finally(() => {
     jsxCachePersistencePump = undefined;
-    if (pendingJsxCachePersistence.size === 0) return;
-    jsxCachePersistenceRetry = setTimeout(() => {
+    if (mapSize(pendingJsxCachePersistence) === 0) return;
+    jsxCachePersistenceRetry = hostSetTimeout(() => {
       jsxCachePersistenceRetry = undefined;
       pumpJsxCachePersistence();
     }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
@@ -1397,39 +1558,60 @@ function queueJsxCachePrune(
   esmCacheDir: string,
   fireAtMs: number,
   persistedGeneration?: string,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): void {
-  const queued = queuedJsxCachePrunes.get(esmCacheDir);
+  const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
+  const queued = mapGet(queuedJsxCachePrunes, pruneKey);
   if (queued !== undefined) {
     if (fireAtMs < queued.fireAtMs || queued.persistedGeneration === undefined) {
-      queuedJsxCachePrunes.set(esmCacheDir, {
+      mapSet(queuedJsxCachePrunes, pruneKey, {
+        esmCacheDir,
         fireAtMs: Math.min(fireAtMs, queued.fireAtMs),
+        requestDirectory,
         persistedGeneration: queued.persistedGeneration ?? persistedGeneration,
       });
     }
     return;
   }
-  if (queuedJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
-    const pending = pendingJsxCachePersistence.get(esmCacheDir);
+  if (mapSize(queuedJsxCachePrunes) >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+    const pending = mapGet(pendingJsxCachePersistence, pruneKey);
     if (
       pending === undefined &&
-      pendingJsxCachePersistence.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES
+      mapSize(pendingJsxCachePersistence) >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES
     ) {
       throw new JsxCacheCapacityError("JSX cache maintenance backlog is exhausted");
     }
-    pendingJsxCachePersistence.set(esmCacheDir, {
+    // Omitting the prior durable generation forces every new obligation to
+    // renew it, so an older in-flight sweep cannot retire work queued behind it.
+    mapSet(pendingJsxCachePersistence, pruneKey, {
+      esmCacheDir,
       fireAtMs: Math.min(fireAtMs, pending?.fireAtMs ?? fireAtMs),
-      requestDirectory: pending?.requestDirectory ?? getPersistedJsxCachePruneRequestDirectory(),
+      requestDirectory,
     });
     pumpJsxCachePersistence();
     return;
   }
-  queuedJsxCachePrunes.set(esmCacheDir, { fireAtMs, persistedGeneration });
+  mapSet(queuedJsxCachePrunes, pruneKey, {
+    esmCacheDir,
+    fireAtMs,
+    requestDirectory,
+    persistedGeneration,
+  });
 }
 
-async function revisitJsxCacheDirectory(esmCacheDir: string): Promise<void> {
+async function revisitJsxCacheDirectory(
+  esmCacheDir: string,
+  requestDirectory: string,
+): Promise<void> {
   try {
     await scheduledJsxCachePruneSemaphore.acquire(() =>
-      collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now()).then(() => undefined)
+      collectExcessJsxArtifacts(
+        esmCacheDir,
+        new IntrinsicMap(),
+        Date.now(),
+        0,
+        requestDirectory,
+      ).then(() => undefined)
     );
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
@@ -1441,6 +1623,8 @@ async function revisitJsxCacheDirectory(esmCacheDir: string): Promise<void> {
     scheduleJsxCachePruneRetry(
       esmCacheDir,
       JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      undefined,
+      requestDirectory,
     );
   }
 }
@@ -1460,67 +1644,73 @@ function scheduleJsxCachePruneRetry(
   esmCacheDir: string,
   delayMs: number,
   persistedGeneration?: string,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): void {
+  const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
   const fireAtMs = Date.now() + delayMs;
-  const pending = scheduledJsxCachePrunes.get(esmCacheDir);
+  const pending = mapGet(scheduledJsxCachePrunes, pruneKey);
   if (pending) {
     if (pending.timer !== undefined && pending.fireAtMs <= fireAtMs) return;
-    if (pending.timer !== undefined) clearTimeout(pending.timer);
-  } else if (scheduledJsxCachePrunes.size >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+    if (pending.timer !== undefined) hostClearTimeout(pending.timer);
+  } else if (mapSize(scheduledJsxCachePrunes) >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
     let latest: [string, ScheduledJsxCachePrune] | undefined;
-    for (const candidate of scheduledJsxCachePrunes) {
+    for (const candidate of mapEntries(scheduledJsxCachePrunes)) {
       if (
         candidate[1].timer !== undefined && candidate[1].fireAtMs > fireAtMs &&
         (latest === undefined || candidate[1].fireAtMs > latest[1].fireAtMs)
       ) latest = candidate;
     }
     if (latest === undefined) {
-      queueJsxCachePrune(esmCacheDir, fireAtMs, persistedGeneration);
+      queueJsxCachePrune(esmCacheDir, fireAtMs, persistedGeneration, requestDirectory);
       return;
     }
     queueJsxCachePrune(
-      latest[0],
+      latest[1].esmCacheDir,
       latest[1].fireAtMs,
       latest[1].persistedGeneration,
+      latest[1].requestDirectory,
     );
-    clearTimeout(latest[1].timer!);
-    scheduledJsxCachePrunes.delete(latest[0]);
+    hostClearTimeout(latest[1].timer!);
+    mapDelete(scheduledJsxCachePrunes, latest[0]);
   }
-  const timer = setTimeout(() => {
-    const fired = scheduledJsxCachePrunes.get(esmCacheDir);
+  const timer = hostSetTimeout(() => {
+    const fired = mapGet(scheduledJsxCachePrunes, pruneKey);
     if (fired?.timer !== timer) return;
     // Keep the map entry as this pass's reserved timer slot. A follow-up that
     // the pass schedules can then replace it even when every other slot is
     // occupied, without overflowing to persistence and racing completion.
     fired.timer = undefined;
     void (async () => {
-      inFlightJsxCachePrunes.add(esmCacheDir);
+      setAdd(inFlightJsxCachePrunes, pruneKey);
       try {
-        await revisitJsxCacheDirectory(esmCacheDir);
-        const followUp = scheduledJsxCachePrunes.get(esmCacheDir);
+        await revisitJsxCacheDirectory(esmCacheDir, requestDirectory);
+        const followUp = mapGet(scheduledJsxCachePrunes, pruneKey);
         if (
           followUp?.timer === undefined &&
-          !queuedJsxCachePrunes.has(esmCacheDir) &&
+          !mapHas(queuedJsxCachePrunes, pruneKey) &&
           fired.persistedGeneration !== undefined
         ) {
           await retirePersistedJsxCachePruneRequest(
             esmCacheDir,
             fired.persistedGeneration,
+            requestDirectory,
           );
         }
       } finally {
-        inFlightJsxCachePrunes.delete(esmCacheDir);
-        if (scheduledJsxCachePrunes.get(esmCacheDir)?.timer === undefined) {
-          scheduledJsxCachePrunes.delete(esmCacheDir);
+        setDelete(inFlightJsxCachePrunes, pruneKey);
+        if (mapGet(scheduledJsxCachePrunes, pruneKey)?.timer === undefined) {
+          mapDelete(scheduledJsxCachePrunes, pruneKey);
         }
-        requestPersistedJsxCachePrunePromotion();
+        requestPersistedJsxCachePrunePromotion(requestDirectory);
       }
     })();
   }, delayMs);
   unrefTimer(timer);
-  scheduledJsxCachePrunes.set(esmCacheDir, {
+  mapSet(scheduledJsxCachePrunes, pruneKey, {
+    esmCacheDir,
     timer,
     fireAtMs,
+    requestDirectory,
     persistedGeneration: pending?.persistedGeneration ?? persistedGeneration,
   });
 }
@@ -1538,35 +1728,41 @@ function scheduleJsxCachePruneRetry(
  * and deferring it keeps a process's startup burst free of an extra scan.
  */
 export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
-  if (scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir)) return;
+  const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
+  const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
+  if (mapHas(scheduledJsxCachePrunes, pruneKey) || mapHas(queuedJsxCachePrunes, pruneKey)) return;
   scheduleJsxCachePruneRetry(
     esmCacheDir,
     JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+    undefined,
+    requestDirectory,
   );
-  requestPersistedJsxCachePrunePromotion();
+  requestPersistedJsxCachePrunePromotion(requestDirectory);
 }
 
 /** Drop every pending follow-up prune (test isolation only). */
 function cancelScheduledJsxCachePrunes(): void {
-  for (const pending of scheduledJsxCachePrunes.values()) {
-    if (pending.timer !== undefined) clearTimeout(pending.timer);
+  for (const pending of mapValues(scheduledJsxCachePrunes)) {
+    if (pending.timer !== undefined) hostClearTimeout(pending.timer);
   }
-  scheduledJsxCachePrunes.clear();
-  queuedJsxCachePrunes.clear();
-  pendingJsxCachePersistence.clear();
+  mapClear(scheduledJsxCachePrunes);
+  mapClear(queuedJsxCachePrunes);
+  mapClear(pendingJsxCachePersistence);
+  setClear(pendingJsxCachePrunePromotionDirectories);
+  activeJsxCachePrunePromotionRequestedAgain = false;
   if (persistedJsxCachePrunePromotionRetry !== undefined) {
-    clearTimeout(persistedJsxCachePrunePromotionRetry);
+    hostClearTimeout(persistedJsxCachePrunePromotionRetry);
     persistedJsxCachePrunePromotionRetry = undefined;
   }
   if (jsxCachePersistenceRetry !== undefined) {
-    clearTimeout(jsxCachePersistenceRetry);
+    hostClearTimeout(jsxCachePersistenceRetry);
     jsxCachePersistenceRetry = undefined;
   }
   if (lazyJsxArtifactHeartbeat !== undefined) {
-    clearInterval(lazyJsxArtifactHeartbeat);
+    hostClearInterval(lazyJsxArtifactHeartbeat);
     lazyJsxArtifactHeartbeat = undefined;
   }
-  lazyJsxArtifactExpirations.clear();
+  mapClear(lazyJsxArtifactExpirations);
 }
 
 async function waitForJsxCacheMaintenanceForTests(): Promise<void> {
@@ -1582,13 +1778,14 @@ async function waitForJsxCacheMaintenanceForTests(): Promise<void> {
 }
 
 async function hasPersistedJsxCachePrune(esmCacheDir: string): Promise<boolean> {
+  const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
   try {
-    for await (const entry of getLocalFs().readDir(getPersistedJsxCachePruneRequestDirectory())) {
+    for await (const entry of getLocalFs().readDir(requestDirectory)) {
       if (!entry.isFile || !entry.name.startsWith(JSX_CACHE_PRUNE_REQUEST_PREFIX)) continue;
       try {
         const request = IntrinsicJSONParse(
           await getLocalFs().readTextFile(
-            join(getPersistedJsxCachePruneRequestDirectory(), entry.name),
+            join(requestDirectory, entry.name),
           ),
         );
         if (
@@ -1663,7 +1860,7 @@ export function withJsxArtifactWriteCapacity<T>(
         await assertLeaseOwned();
         remainingArtifacts = await collectExcessJsxArtifacts(
           esmCacheDir,
-          new Map(),
+          new IntrinsicMap(),
           Date.now(),
           1,
         ) ?? await countCurrentNamespaceJsxArtifacts(esmCacheDir);
@@ -1699,14 +1896,14 @@ async function removeJsxArtifactUnlessServed(
   return await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
     const checkedAtMs = Math.max(nowMs, Date.now());
     if (
-      jsxArtifactActiveRefs.has(artifactPath) ||
+      mapHas(jsxArtifactActiveRefs, artifactPath) ||
       isLazyJsxArtifactRetained(artifactPath, checkedAtMs)
     ) {
       // Release time is the parent import settling, which has no schedule of
       // its own; poll again one grace period out.
       return { removed: false, retryAtMs: checkedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
     }
-    const servedAtMs = servedArtifactTimestamps.get(artifactPath);
+    const servedAtMs = mapGet(servedArtifactTimestamps, artifactPath);
     if (servedAtMs !== undefined && checkedAtMs - servedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) {
       return { removed: false, retryAtMs: servedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
     }
@@ -1736,7 +1933,7 @@ async function removeJsxArtifactUnlessServed(
       }
       // A concurrent transform already removed the artifact.
     }
-    mtimeRefreshTimestamps.delete(artifactPath);
+    mapDelete(mtimeRefreshTimestamps, artifactPath);
     return { removed: true };
   });
 }
@@ -1764,11 +1961,11 @@ export async function pruneSupersededJsxArtifacts(
   writtenArtifacts: ReadonlyMap<string, string>,
   nowMs: number = Date.now(),
 ): Promise<void> {
-  if (writtenArtifacts.size === 0) return;
+  if (mapSize(writtenArtifacts) === 0) return;
 
-  const currentByPrefix = new Map<string, string>();
-  for (const [filePath, currentFileName] of writtenArtifacts) {
-    currentByPrefix.set(buildMdxJsxCacheFileNamePrefix(filePath), currentFileName);
+  const currentByPrefix = new IntrinsicMap<string, string>();
+  for (const [filePath, currentFileName] of mapEntries(writtenArtifacts)) {
+    mapSet(currentByPrefix, buildMdxJsxCacheFileNamePrefix(filePath), currentFileName);
   }
   await collectExcessJsxArtifacts(esmCacheDir, currentByPrefix, nowMs);
 }
@@ -1811,10 +2008,11 @@ async function collectExcessJsxArtifacts(
   currentByPrefix: ReadonlyMap<string, string>,
   nowMs: number,
   reservedSlots = 0,
+  requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<number | undefined> {
   const localFs = getLocalFs();
 
-  const variantsByPrefix = new Map<string, string[]>();
+  const variantsByPrefix = new IntrinsicMap<string, string[]>();
   const strandedNamespaceArtifacts: string[] = [];
   const leaseTombstones: string[] = [];
   const leaseTransitions: string[] = [];
@@ -1852,11 +2050,11 @@ async function collectExcessJsxArtifacts(
       if (entry.name.length <= MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH) continue;
 
       const prefix = entry.name.slice(0, MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH);
-      if (entry.name === currentByPrefix.get(prefix)) continue;
+      if (entry.name === mapGet(currentByPrefix, prefix)) continue;
 
-      const variants = variantsByPrefix.get(prefix);
+      const variants = mapGet(variantsByPrefix, prefix);
       if (variants) variants.push(entry.name);
-      else variantsByPrefix.set(prefix, [entry.name]);
+      else mapSet(variantsByPrefix, prefix, [entry.name]);
     }
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
@@ -1866,6 +2064,8 @@ async function collectExcessJsxArtifacts(
       scheduleJsxCachePruneRetry(
         esmCacheDir,
         JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+        undefined,
+        requestDirectory,
       );
     }
     return undefined;
@@ -1873,6 +2073,7 @@ async function collectExcessJsxArtifacts(
 
   let remainingCurrentNamespaceArtifacts =
     allArtifactNames.filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)).length;
+  const artifactNames = new IntrinsicSet(allArtifactNames);
   const noteArtifactRemoval = (name: string, removal: JsxArtifactRemoval): void => {
     if (removal.removed && name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
       remainingCurrentNamespaceArtifacts--;
@@ -1884,6 +2085,9 @@ async function collectExcessJsxArtifacts(
   const noteRetry = (readyAtMs: number) => {
     retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
   };
+  if (mapSize(currentByPrefix) > 0) {
+    noteRetry(nowMs + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS);
+  }
 
   const tombstoneRetryAtMs = await sweepJsxLeaseTombstones(
     esmCacheDir,
@@ -1898,9 +2102,8 @@ async function collectExcessJsxArtifacts(
   );
   if (transitionRetryAtMs !== undefined) noteRetry(transitionRetryAtMs);
 
-  const artifactNames = new Set(allArtifactNames);
   for (const { artifactName, lockName } of possibleOrphanLeaseArtifacts) {
-    if (artifactNames.has(artifactName)) continue;
+    if (setHas(artifactNames, artifactName)) continue;
     const lockPath = join(esmCacheDir, lockName);
     const modifiedAtMs = await readArtifactModifiedAtMs(lockPath);
     if (modifiedAtMs === 0) continue;
@@ -1912,8 +2115,8 @@ async function collectExcessJsxArtifacts(
     await withJsxArtifactLock(join(esmCacheDir, artifactName), async () => undefined);
   }
 
-  const quotaHandled = new Set<string>();
-  const strandedNamespaceNames = new Set(strandedNamespaceArtifacts);
+  const quotaHandled = new IntrinsicSet<string>();
+  const strandedNamespaceNames = new IntrinsicSet(strandedNamespaceArtifacts);
   let directoryExcess = Math.max(
     0,
     allArtifactNames.filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)).length +
@@ -1921,18 +2124,20 @@ async function collectExcessJsxArtifacts(
       MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
   );
   if (directoryExcess > 0) {
-    const protectedNames = new Set(currentByPrefix.values());
+    const protectedNames = new IntrinsicSet(
+      mapValues(currentByPrefix),
+    );
     const datedArtifacts = await readJsxArtifactDates(
       esmCacheDir,
       allArtifactNames
         .filter((name) => name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX))
-        .filter((name) => !protectedNames.has(name)),
+        .filter((name) => !setHas(protectedNames, name)),
     );
     datedArtifacts.sort((left, right) => left.modifiedAtMs - right.modifiedAtMs);
     for (const { name, modifiedAtMs } of datedArtifacts) {
       if (directoryExcess === 0) break;
       const collectableAtMs = modifiedAtMs +
-        (strandedNamespaceNames.has(name)
+        (setHas(strandedNamespaceNames, name)
           ? JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS
           : JSX_CACHE_VARIANT_MIN_AGE_MS);
       if (collectableAtMs > nowMs) {
@@ -1940,7 +2145,7 @@ async function collectExcessJsxArtifacts(
         continue;
       }
       const removal = await removeJsxArtifactUnlessServed(join(esmCacheDir, name), nowMs);
-      quotaHandled.add(name);
+      setAdd(quotaHandled, name);
       if (removal.removed) {
         directoryExcess--;
         noteArtifactRemoval(name, removal);
@@ -1949,7 +2154,7 @@ async function collectExcessJsxArtifacts(
   }
 
   for (const name of strandedNamespaceArtifacts) {
-    if (quotaHandled.has(name)) continue;
+    if (setHas(quotaHandled, name)) continue;
     const artifactPath = join(esmCacheDir, name);
     // Older runtimes do not refresh cache-hit mtimes. Keep prior-namespace
     // artifacts for the full idle horizon so a rolling deploy cannot retire a
@@ -1963,17 +2168,18 @@ async function collectExcessJsxArtifacts(
     if (!removal.removed) noteRetry(removal.retryAtMs);
   }
 
-  for (const [prefix, variants] of variantsByPrefix) {
+  for (const [prefix, variants] of mapEntries(variantsByPrefix)) {
     // The artifact just written, when there is one, counts against the window.
-    const retained = MAX_JSX_CACHE_VARIANTS_PER_PATH - (currentByPrefix.has(prefix) ? 1 : 0);
+    const retained = MAX_JSX_CACHE_VARIANTS_PER_PATH -
+      (mapHas(currentByPrefix, prefix) ? 1 : 0);
 
     const dated = await readJsxArtifactDates(esmCacheDir, variants);
     dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
 
     for (const [index, { name, modifiedAtMs }] of dated.entries()) {
-      if (quotaHandled.has(name)) continue;
+      if (setHas(quotaHandled, name)) continue;
       const artifactPath = join(esmCacheDir, name);
-      const servedAtMs = servedArtifactTimestamps.get(artifactPath) ?? 0;
+      const servedAtMs = mapGet(servedArtifactTimestamps, artifactPath) ?? 0;
       const lastUsedMs = Math.max(modifiedAtMs, servedAtMs);
       // A variant over the per-path window goes as soon as its grace period
       // ends. A variant inside the window is bounded by idle age instead:
@@ -1997,6 +2203,8 @@ async function collectExcessJsxArtifacts(
     scheduleJsxCachePruneRetry(
       esmCacheDir,
       Math.max(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+      undefined,
+      requestDirectory,
     );
   }
   return remainingCurrentNamespaceArtifacts;
@@ -2015,26 +2223,29 @@ export const __jsxCacheInternals = {
   clearPersistedJsxCachePruneRequestsForTests,
   collectExcessJsxArtifacts,
   getPersistedJsxCachePruneRequestPath,
-  hasScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
-    scheduledJsxCachePrunes.has(esmCacheDir) || queuedJsxCachePrunes.has(esmCacheDir),
+  hasScheduledJsxCachePrune: (esmCacheDir: string): boolean => {
+    const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
+    const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
+    return mapHas(scheduledJsxCachePrunes, pruneKey) || mapHas(queuedJsxCachePrunes, pruneKey);
+  },
   hasPersistedJsxCachePrune,
   isModuleRemembered: (transformedPath: string): boolean =>
-    normalizedModulePaths.has(transformedPath),
+    setHas(normalizedModulePaths, transformedPath),
   isLazyArtifactRetained: isLazyJsxArtifactRetained,
   JSX_ARTIFACT_LEASE_STALE_MS,
   JSX_ARTIFACT_REFRESH_CONCURRENCY,
   LAZY_JSX_ARTIFACT_RETENTION_MS,
   LAZY_JSX_ARTIFACT_HEARTBEAT_CONCURRENCY,
   jsxArtifactActiveRefCount: (artifactPath: string): number =>
-    jsxArtifactActiveRefs.get(artifactPath) ?? 0,
+    mapGet(jsxArtifactActiveRefs, artifactPath) ?? 0,
   MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
   MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
   MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
-  normalizedModuleMemoSize: (): number => normalizedModulePaths.size,
+  normalizedModuleMemoSize: (): number => setSize(normalizedModulePaths),
   persistJsxCachePruneRequest,
   promotePersistedJsxCachePruneRequest,
   queueJsxCachePrune,
-  queuedJsxCachePruneCount: (): number => queuedJsxCachePrunes.size,
+  queuedJsxCachePruneCount: (): number => mapSize(queuedJsxCachePrunes),
   readArtifactModifiedAtMs,
   retirePersistedJsxCachePruneRequest,
   retainLazyJsxArtifact,
@@ -2044,11 +2255,16 @@ export const __jsxCacheInternals = {
   retainJsxArtifact,
   scheduleJsxCachePruneRetry,
   SCHEDULED_JSX_CACHE_PRUNE_CONCURRENCY,
-  scheduledJsxCachePruneCount: (): number => scheduledJsxCachePrunes.size,
-  hasActiveScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
-    scheduledJsxCachePrunes.get(esmCacheDir)?.timer !== undefined,
+  scheduledJsxCachePruneCount: (): number => mapSize(scheduledJsxCachePrunes),
+  hasActiveScheduledJsxCachePrune: (esmCacheDir: string): boolean => {
+    const requestDirectory = getPersistedJsxCachePruneRequestDirectory();
+    return mapGet(
+      scheduledJsxCachePrunes,
+      getJsxCachePruneKey(esmCacheDir, requestDirectory),
+    )?.timer !== undefined;
+  },
   runLazyJsxArtifactHeartbeat,
-  servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
+  servedArtifactMemoSize: (): number => mapSize(servedArtifactTimestamps),
   withJsxArtifactRefreshSlot,
   waitForJsxCacheMaintenanceForTests,
   wasJsxArtifactRecentlyServed,

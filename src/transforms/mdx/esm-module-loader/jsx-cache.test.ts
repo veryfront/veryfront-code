@@ -290,6 +290,44 @@ describe("transformJsxImports", () => {
     }
   });
 
+  it("re-arms idle cleanup when the previous sweep finishes during a source read", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-sweep-write-race-" });
+    const sourcePath = "/tmp/source/SweepRace.tsx";
+    const source = "export const SweepRace = () => <b />;";
+    const adapter = {
+      fs: {
+        readFile: async (path: string) => {
+          if (path !== sourcePath) throw new Error(`unexpected read: ${path}`);
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          assertEquals(
+            __jsxCacheInternals.hasScheduledJsxCachePrune(tempDir),
+            false,
+            "the earlier empty sweep must finish before the artifact is written",
+          );
+          return source;
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      __jsxCacheInternals.scheduleJsxCachePruneRetry(tempDir, 20);
+      await transformJsxImports(
+        `import SweepRace from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+      );
+
+      assertEquals(
+        __jsxCacheInternals.hasScheduledJsxCachePrune(tempDir),
+        true,
+        "the newly written artifact must retain an idle-horizon cleanup pass",
+      );
+    } finally {
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("rejects a project JSX source larger than the module source limit", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-oversized-source-test-" });
     const projectDir = "/srv/deployments/tenant-42/project";
@@ -2813,7 +2851,7 @@ describe("scheduled prune bound", () => {
     assertEquals(queuedJsxCachePruneCount(), 1);
   });
 
-  it("promotes persisted work outside the originating cache context", async () => {
+  it("discovers each cache root's persisted work after in-memory state is lost", async () => {
     const firstRoot = await makeTempDir({ prefix: "vf-jsx-context-first-" });
     const secondRoot = await makeTempDir({ prefix: "vf-jsx-context-second-" });
     const target = `${persistedTestPrefix}cross-context`;
@@ -2823,12 +2861,23 @@ describe("scheduled prune bound", () => {
           target,
           Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
         ));
-      await runWithCacheDir(
-        secondRoot,
-        () => __jsxCacheInternals.promotePersistedJsxCachePruneRequest(),
-      );
-      assertEquals(__jsxCacheInternals.hasScheduledJsxCachePrune(target), true);
+      await runWithCacheDir(secondRoot, () =>
+        __jsxCacheInternals.persistJsxCachePruneRequest(
+          target,
+          Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
+        ));
+
+      cancelScheduledJsxCachePrunes();
+      await runWithCacheDir(secondRoot, () => promotePersistedJsxCachePruneRequest());
+      assertEquals(runWithCacheDir(firstRoot, () => hasScheduledJsxCachePrune(target)), false);
+      assertEquals(runWithCacheDir(secondRoot, () => hasScheduledJsxCachePrune(target)), true);
+
+      cancelScheduledJsxCachePrunes();
+      await runWithCacheDir(firstRoot, () => promotePersistedJsxCachePruneRequest());
+      assertEquals(runWithCacheDir(firstRoot, () => hasScheduledJsxCachePrune(target)), true);
+      assertEquals(runWithCacheDir(secondRoot, () => hasScheduledJsxCachePrune(target)), false);
     } finally {
+      cancelScheduledJsxCachePrunes();
       await remove(firstRoot, { recursive: true });
       await remove(secondRoot, { recursive: true });
     }

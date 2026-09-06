@@ -71,6 +71,43 @@ import {
 import type { ESMLoaderContext } from "./types.ts";
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
+const IntrinsicMap = Map;
+const IntrinsicSet = Set;
+const IntrinsicReflectApply = Reflect.apply;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const SetPrototypeAdd = Set.prototype.add;
+const SetPrototypeDelete = Set.prototype.delete;
+const SetPrototypeForEach = Set.prototype.forEach;
+const hostClearInterval = globalThis.clearInterval.bind(globalThis);
+const hostSetInterval = globalThis.setInterval.bind(globalThis);
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapSize<K, V>(map: Map<K, V>): number {
+  return IntrinsicReflectApply(MapSizeGetter, map, []) as number;
+}
+
+function setAdd<T>(set: Set<T>, value: T): void {
+  IntrinsicReflectApply(SetPrototypeAdd, set, [value]);
+}
+
+function setDelete<T>(set: Set<T>, value: T): boolean {
+  return IntrinsicReflectApply(SetPrototypeDelete, set, [value]) as boolean;
+}
+
+function setValues<T>(set: Set<T>): T[] {
+  const values: T[] = [];
+  IntrinsicReflectApply(SetPrototypeForEach, set, [(value: T) => values.push(value)]);
+  return values;
+}
 
 const mdxRootBareDependencyStrategy: ImportRewriteStrategy = {
   name: "mdx-root-bare-dependency",
@@ -392,7 +429,7 @@ async function mapJsxTransformsWithCleanup<T, R>(
   cleanup: () => Promise<void>,
   options: { semaphore: Semaphore; timeoutMs?: number },
 ): Promise<Array<R | null>> {
-  const inFlightTransforms = new Set<Promise<void>>();
+  const inFlightTransforms = new IntrinsicSet<Promise<void>>();
   let mapFailed = false;
 
   try {
@@ -405,15 +442,15 @@ async function mapJsxTransformsWithCleanup<T, R>(
           () => undefined,
           () => undefined,
         );
-        inFlightTransforms.add(settled);
-        void settled.then(() => inFlightTransforms.delete(settled));
+        setAdd(inFlightTransforms, settled);
+        void settled.then(() => setDelete(inFlightTransforms, settled));
         return run;
       },
       options,
     );
   } catch (error) {
     mapFailed = true;
-    await Promise.all(inFlightTransforms);
+    await Promise.all(setValues(inFlightTransforms));
     await cleanup();
     throw error;
   }
@@ -474,18 +511,18 @@ export async function transformJsxImports(
   );
 
   /** Source path to the artifact name this pass wrote, for one prune pass. */
-  const writtenArtifacts = new Map<string, string>();
-  const selectedArtifacts = new Set<string>();
+  const writtenArtifacts = new IntrinsicMap<string, string>();
+  const selectedArtifacts = new IntrinsicSet<string>();
   let selectedArtifactRefreshInFlight: Promise<void> | undefined;
   const refreshSelectedArtifacts = (): Promise<void> => {
     if (selectedArtifactRefreshInFlight) return selectedArtifactRefreshInFlight;
-    const run = refreshJsxArtifactsBounded([...selectedArtifacts], true);
+    const run = refreshJsxArtifactsBounded(setValues(selectedArtifacts), true);
     selectedArtifactRefreshInFlight = run.finally(() => {
       selectedArtifactRefreshInFlight = undefined;
     });
     return selectedArtifactRefreshInFlight;
   };
-  const selectedArtifactHeartbeat = setInterval(
+  const selectedArtifactHeartbeat = hostSetInterval(
     () => void refreshSelectedArtifacts().catch(() => undefined),
     JSX_CACHE_VARIANT_MIN_AGE_MS / 4,
   );
@@ -565,7 +602,7 @@ export async function transformJsxImports(
         }
       });
       if (serveCached) {
-        selectedArtifacts.add(transformedPath);
+        setAdd(selectedArtifacts, transformedPath);
         return {
           specifier,
           replacement: `file://${transformedPath}`,
@@ -610,8 +647,8 @@ export async function transformJsxImports(
             markJsxArtifactServed(transformedPath);
           }),
       );
-      writtenArtifacts.set(filePath, transformedFileName);
-      selectedArtifacts.add(transformedPath);
+      mapSet(writtenArtifacts, filePath, transformedFileName);
+      setAdd(selectedArtifacts, transformedPath);
 
       return {
         specifier,
@@ -656,7 +693,7 @@ export async function transformJsxImports(
     await refreshSelectedArtifacts();
     if (admissionFailure) throw admissionFailure;
   } finally {
-    clearInterval(selectedArtifactHeartbeat);
+    hostClearInterval(selectedArtifactHeartbeat);
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
@@ -666,11 +703,11 @@ export async function transformJsxImports(
     durationMs: (performance.now() - transformStart).toFixed(1),
   });
 
-  const replacements = new Map<string, string>();
+  const replacements = new IntrinsicMap<string, string>();
   for (const t of transformResults) {
-    if (t) replacements.set(t.specifier, t.replacement);
+    if (t) mapSet(replacements, t.specifier, t.replacement);
   }
 
-  if (replacements.size === 0) return code;
-  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+  if (mapSize(replacements) === 0) return code;
+  return await replaceSpecifiers(code, (specifier) => mapGet(replacements, specifier) ?? null);
 }

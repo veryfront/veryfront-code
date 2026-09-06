@@ -63,15 +63,44 @@ import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-ex
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeHas = Map.prototype.has;
+const MapPrototypeSet = Map.prototype.set;
 
-const temporaryParentReferences = new Map<string, {
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapValues<K, V>(map: Map<K, V>): V[] {
+  const values: V[] = [];
+  IntrinsicReflectApply(MapPrototypeForEach, map, [(value: V) => values.push(value)]);
+  return values;
+}
+
+const temporaryParentReferences = new IntrinsicMap<string, {
   count: number;
   cleanup?: Promise<void>;
 }>();
 
 async function retainTemporaryParent(path: string): Promise<() => Promise<void>> {
-  const entry = temporaryParentReferences.get(path) ?? { count: 0 };
-  temporaryParentReferences.set(path, entry);
+  const entry = mapGet(temporaryParentReferences, path) ?? { count: 0 };
+  mapSet(temporaryParentReferences, path, entry);
   entry.count++;
   // A new evaluation must wait for an already-started removal before writing.
   await entry.cleanup;
@@ -79,7 +108,7 @@ async function retainTemporaryParent(path: string): Promise<() => Promise<void>>
     if (--entry.count !== 0) return;
     entry.cleanup = getLocalFs().remove(path).catch(() => undefined);
     await entry.cleanup;
-    if (entry.count === 0) temporaryParentReferences.delete(path);
+    if (entry.count === 0) mapDelete(temporaryParentReferences, path);
   };
 }
 
@@ -217,7 +246,7 @@ export async function doLoadModuleESM(
   /** Releases the JSX artifacts this render pins once its import settles. */
   let releaseJsxArtifacts: (() => void) | undefined;
   const lazyJsxImports = new LazyJsxImportScope();
-  const temporaryParentFiles = new Map<string, () => Promise<void>>();
+  const temporaryParentFiles = new IntrinsicMap<string, () => Promise<void>>();
 
   try {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter START`, { projectSlug });
@@ -370,8 +399,8 @@ export async function doLoadModuleESM(
       const path = join(nsDir, `${hash}.mjs`);
       // Bridge identities are host-private, but unchanged modules must reuse
       // their native URL within the host. Retire files after all evaluations.
-      if (lazyJsxImports.hasRegistrations && !temporaryParentFiles.has(path)) {
-        temporaryParentFiles.set(path, await retainTemporaryParent(path));
+      if (lazyJsxImports.hasRegistrations && !mapHas(temporaryParentFiles, path)) {
+        mapSet(temporaryParentFiles, path, await retainTemporaryParent(path));
       }
       return path;
     };
@@ -466,7 +495,9 @@ export async function doLoadModuleESM(
           compositeKey = `${namespaceKey}:${codeHash}`;
 
           // Clean up orphaned module file if path changed
-          if (refreshedPath !== originalFilePath && !temporaryParentFiles.has(originalFilePath)) {
+          if (
+            refreshedPath !== originalFilePath && !mapHas(temporaryParentFiles, originalFilePath)
+          ) {
             getLocalFs().remove(originalFilePath).catch((error) =>
               logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
                 originalFilePath,
@@ -546,7 +577,7 @@ export async function doLoadModuleESM(
         compositeKey = `${namespaceKey}:${codeHash}`;
 
         // Clean up orphaned module file if path changed
-        if (refreshedPath !== originalFilePath && !temporaryParentFiles.has(originalFilePath)) {
+        if (refreshedPath !== originalFilePath && !mapHas(temporaryParentFiles, originalFilePath)) {
           getLocalFs().remove(originalFilePath).catch((error) =>
             logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
               originalFilePath,
@@ -624,7 +655,7 @@ export async function doLoadModuleESM(
   } finally {
     releaseJsxArtifacts?.();
     lazyJsxImports.release();
-    for (const release of temporaryParentFiles.values()) {
+    for (const release of mapValues(temporaryParentFiles)) {
       await release();
     }
   }

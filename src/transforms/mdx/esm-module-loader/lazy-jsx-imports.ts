@@ -25,9 +25,23 @@ interface Registration {
   references: number;
 }
 
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
 // Only evaluating parents occupy this bridge. Generated modules capture the
 // callbacks at evaluation, then own their lifetime without a global payload cache.
-const registrations = new Map<string, Registration>();
+const registrations = new IntrinsicMap<string, Registration>();
 const getRegistration = registrations.get.bind(registrations);
 const setRegistration = registrations.set.bind(registrations);
 const deleteRegistration = registrations.delete.bind(registrations);
@@ -52,7 +66,8 @@ const bridgeModule = "data:text/javascript;base64," + btoa(
 
 /** Read-only observation for lifecycle tests; no registration data is exposed. */
 export const __lazyJsxImportInternals = {
-  registrationCount: (): number => registrations.size,
+  registrationCount: (): number =>
+    IntrinsicReflectApply(MapSizeGetter, registrations, []) as number,
 };
 
 function createLoader(path: string, source: string, cacheDir: string): LazyLoader {
@@ -125,7 +140,7 @@ export class LazyJsxImportScope {
 
   async rewrite(code: string, cacheDir: string): Promise<string> {
     const parsed = await parseMaskedImports(code);
-    const paths = new Map<string, number>();
+    const paths = new IntrinsicMap<string, number>();
     const loaders: LazyLoader[] = [];
     const sources: string[] = [];
     let payloadBytes = 0;
@@ -136,7 +151,7 @@ export class LazyJsxImportScope {
       if (imported.d < 0) continue;
       const path = resolveOwnedJsxArtifactPath(imported.n, cacheDir);
       if (path === undefined) continue;
-      let index = paths.get(path);
+      let index = mapGet(paths, path);
       if (index === undefined) {
         const reader = captureBoundedTextReader(getLocalFs());
         const snapshot = await withJsxArtifactLock(
@@ -146,7 +161,7 @@ export class LazyJsxImportScope {
         payloadBytes += snapshot.byteLength;
         assertMdxModuleSourceSize("Lazy JSX recovery payload", payloadBytes);
         index = loaders.length;
-        paths.set(path, index);
+        mapSet(paths, path, index);
         sources.push(path, snapshot.content);
         loaders.push(createLoader(path, snapshot.content, cacheDir));
       }
@@ -168,7 +183,7 @@ export class LazyJsxImportScope {
       for (const imported of parsed.imports) {
         if (imported.ss < cursor || imported.se > end || imported.d < 0) continue;
         const path = resolveOwnedJsxArtifactPath(imported.n, cacheDir);
-        const index = path === undefined ? undefined : paths.get(path);
+        const index = path === undefined ? undefined : mapGet(paths, path);
         if (index === undefined) continue;
         result += parsed.masked.slice(cursor, imported.ss);
         if (imported.a >= 0) {

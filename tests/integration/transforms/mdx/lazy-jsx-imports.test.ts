@@ -16,6 +16,7 @@ import { join } from "#veryfront/compat/path";
 import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   __jsxCacheInternals,
+  JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
   withJsxArtifactWriteCapacity,
 } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import {
@@ -34,6 +35,51 @@ function bridgeSize(): number {
 
 describe("lazy JSX regeneration", () => {
   afterEach(() => __jsxCacheInternals.cancelScheduledJsxCachePrunes());
+
+  it("uses captured collection and timer intrinsics after tenant prototype poisoning", () => {
+    const artifactPath = "/tmp/vf-jsx-poisoned-intrinsics.mjs";
+    const normalizedPath = "/tmp/vf-jsx-poisoned-normalized.mjs";
+    const originalMapGet = Map.prototype.get;
+    const originalMapDelete = Map.prototype.delete;
+    const originalSetAdd = Set.prototype.add;
+    const originalSetDelete = Set.prototype.delete;
+    const originalSetTimeout = globalThis.setTimeout;
+
+    __jsxCacheInternals.retainJsxArtifact(artifactPath);
+    try {
+      Map.prototype.get = () => {
+        throw new Error("tenant poisoned Map.prototype.get");
+      };
+      Map.prototype.delete = () => {
+        throw new Error("tenant poisoned Map.prototype.delete");
+      };
+      Set.prototype.add = () => {
+        throw new Error("tenant poisoned Set.prototype.add");
+      };
+      Set.prototype.delete = () => {
+        throw new Error("tenant poisoned Set.prototype.delete");
+      };
+      globalThis.setTimeout = (() => {
+        throw new Error("tenant poisoned globalThis.setTimeout");
+      }) as typeof setTimeout;
+
+      __jsxCacheInternals.releaseJsxArtifact(artifactPath);
+      __jsxCacheInternals.rememberNormalizedModule(normalizedPath);
+      __jsxCacheInternals.scheduleJsxCachePruneRetry(
+        artifactPath,
+        JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
+      );
+    } finally {
+      Map.prototype.get = originalMapGet;
+      Map.prototype.delete = originalMapDelete;
+      Set.prototype.add = originalSetAdd;
+      Set.prototype.delete = originalSetDelete;
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    assertEquals(__jsxCacheInternals.jsxArtifactActiveRefCount(artifactPath), 0);
+    assertEquals(__jsxCacheInternals.isModuleRemembered(normalizedPath), true);
+  });
 
   it("restores the original artifact after eviction and parent-scope release", async () => {
     const dir = await makeTempDir({ prefix: "vf-lazy-regeneration-" });
