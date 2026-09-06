@@ -8,6 +8,7 @@ import {
   primordialArrayPop,
   primordialArrayPush,
   primordialArraySort,
+  primordialArrayValues,
 } from "./array.ts";
 
 describe("platform/compat/primordials/array", () => {
@@ -20,6 +21,7 @@ describe("platform/compat/primordials/array", () => {
       pop: Array.prototype.pop,
       push: Array.prototype.push,
       sort: Array.prototype.sort,
+      iterator: Array.prototype[Symbol.iterator],
     };
     const poisoned = () => {
       throw new Error("poisoned array primordial");
@@ -32,6 +34,7 @@ describe("platform/compat/primordials/array", () => {
     let popped: number | undefined;
     let sorted: number[] | undefined;
     const values = [3, 1, 2];
+    const iterated: number[] = [];
 
     try {
       Array.prototype.at = poisoned;
@@ -41,6 +44,7 @@ describe("platform/compat/primordials/array", () => {
       Array.prototype.pop = poisoned;
       Array.prototype.push = poisoned;
       Array.prototype.sort = poisoned;
+      Array.prototype[Symbol.iterator] = poisoned;
 
       first = primordialArrayAt(values, 0);
       filtered = primordialArrayFilter(values, (value) => value > 1);
@@ -49,6 +53,7 @@ describe("platform/compat/primordials/array", () => {
       primordialArrayPush(values, 4);
       popped = primordialArrayPop(values);
       sorted = primordialArraySort(values, (left, right) => left - right);
+      for (const value of primordialArrayValues(values)) iterated[iterated.length] = value;
     } finally {
       Array.prototype.at = originals.at;
       Array.prototype.filter = originals.filter;
@@ -57,6 +62,7 @@ describe("platform/compat/primordials/array", () => {
       Array.prototype.pop = originals.pop;
       Array.prototype.push = originals.push;
       Array.prototype.sort = originals.sort;
+      Array.prototype[Symbol.iterator] = originals.iterator;
     }
 
     assertEquals(first, 3);
@@ -65,5 +71,6 @@ describe("platform/compat/primordials/array", () => {
     assertEquals(mapped, [6, 2, 4]);
     assertEquals(popped, 4);
     assertEquals(sorted, [1, 2, 3]);
+    assertEquals(iterated, [1, 2, 3]);
   });
 });

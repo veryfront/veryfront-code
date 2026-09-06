@@ -290,7 +290,8 @@ class NodeFileSystem implements FileSystem {
   }> {
     await this.ensureInitialized();
     const entries = await this.getFs().readdir(path, { withFileTypes: true });
-    for (const entry of entries) {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index]!;
       yield {
         name: entry.name,
         isFile: entry.isFile(),

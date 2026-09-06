@@ -10,6 +10,23 @@ const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSort = Array.prototype.sort;
 const ReflectApply = Reflect.apply;
+const iteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
+
+/** Iterate a trusted array without consulting mutable array iterator hooks. */
+export function primordialArrayValues<T>(values: readonly T[]): Iterable<T> {
+  return {
+    [iteratorSymbol](): Iterator<T> {
+      let index = 0;
+      return {
+        next(): IteratorResult<T> {
+          return index < values.length
+            ? { value: values[index++]!, done: false }
+            : { value: undefined, done: true };
+        },
+      };
+    },
+  };
+}
 
 export function primordialArrayAt<T>(
   values: readonly T[],

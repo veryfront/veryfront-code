@@ -1,5 +1,7 @@
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { CACHE_ERROR } from "#veryfront/errors";
+import { primordialArrayPush } from "#veryfront/platform/compat/primordials/array.ts";
 import { parseMaskedImports } from "#veryfront/transforms/esm/lexer.ts";
 import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
@@ -29,6 +31,9 @@ const IntrinsicMap = Map;
 const IntrinsicReflectApply = Reflect.apply;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeKeys = Map.prototype.keys;
+const MapIteratorNext: MapIterator<string>["next"] = Object.getPrototypeOf(new Map().keys()).next;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 
 function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -39,14 +44,47 @@ function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
   IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
 }
 
-// Only evaluating parents occupy this bridge. Generated modules capture the
-// callbacks at evaluation, then own their lifetime without a global payload cache.
+// Only evaluating parents occupy this bridge. Their callbacks retain lookup
+// keys, while source text stays in the bounded shared recovery cache.
 const registrations = new IntrinsicMap<string, Registration>();
 const getRegistration = registrations.get.bind(registrations);
 const setRegistration = registrations.set.bind(registrations);
 const deleteRegistration = registrations.delete.bind(registrations);
 const freeze = Object.freeze;
+const stringify = JSON.stringify;
 const keySalt = crypto.randomUUID();
+const MAX_RECOVERY_SNAPSHOT_BYTES = 16 * 1024 * 1024;
+const MAX_RECOVERY_SNAPSHOTS = 256;
+const recoverySnapshots = new IntrinsicMap<string, { source: string; bytes: number }>();
+let recoverySnapshotBytes = 0;
+
+function readRecoverySnapshot(key: string): string | undefined {
+  const snapshot = mapGet(recoverySnapshots, key);
+  if (!snapshot) return undefined;
+  IntrinsicReflectApply(MapPrototypeDelete, recoverySnapshots, [key]);
+  mapSet(recoverySnapshots, key, snapshot);
+  return snapshot.source;
+}
+
+async function rememberRecoverySnapshot(source: string): Promise<string> {
+  const key = await computeHash(keySalt + source);
+  if (readRecoverySnapshot(key) !== undefined) return key;
+  // Charge UTF-16 source storage plus the fixed hash and entry bookkeeping.
+  const bytes = source.length * 2 + 256;
+  while (
+    recoverySnapshotBytes + bytes > MAX_RECOVERY_SNAPSHOT_BYTES ||
+    IntrinsicReflectApply(MapSizeGetter, recoverySnapshots, []) >= MAX_RECOVERY_SNAPSHOTS
+  ) {
+    const iterator = IntrinsicReflectApply(MapPrototypeKeys, recoverySnapshots, []);
+    const oldest = IntrinsicReflectApply(MapIteratorNext, iterator, []).value as string;
+    const snapshot = mapGet(recoverySnapshots, oldest)!;
+    recoverySnapshotBytes -= snapshot.bytes;
+    IntrinsicReflectApply(MapPrototypeDelete, recoverySnapshots, [oldest]);
+  }
+  mapSet(recoverySnapshots, key, { source, bytes });
+  recoverySnapshotBytes += bytes;
+  return key;
+}
 const bridgeName = `__vf_lazy_jsx_bridge_${crypto.randomUUID()}`;
 Object.defineProperty(globalThis, bridgeName, {
   configurable: false,
@@ -61,16 +99,27 @@ Object.defineProperty(globalThis, bridgeName, {
 // Symbol or globalThis cannot shadow bridge initialization. It contains no
 // project payload and works in disk-loaded and compiled runtimes alike.
 const bridgeModule = "data:text/javascript;base64," + btoa(
-  `export default globalThis[${JSON.stringify(bridgeName)}];`,
+  `export default globalThis[${stringify(bridgeName)}];`,
 );
 
 /** Read-only observation for lifecycle tests; no registration data is exposed. */
 export const __lazyJsxImportInternals = {
   registrationCount: (): number =>
     IntrinsicReflectApply(MapSizeGetter, registrations, []) as number,
+  snapshotCount: (): number =>
+    IntrinsicReflectApply(MapSizeGetter, recoverySnapshots, []) as number,
+  snapshotBytes: (): number => recoverySnapshotBytes,
+  clearSnapshotsForTests: () => {
+    while (recoverySnapshotBytes > 0) {
+      const iterator = IntrinsicReflectApply(MapPrototypeKeys, recoverySnapshots, []);
+      const key = IntrinsicReflectApply(MapIteratorNext, iterator, []).value as string;
+      recoverySnapshotBytes -= mapGet(recoverySnapshots, key)!.bytes;
+      IntrinsicReflectApply(MapPrototypeDelete, recoverySnapshots, [key]);
+    }
+  },
 };
 
-function createLoader(path: string, source: string, cacheDir: string): LazyLoader {
+function createLoader(path: string, snapshotKey: string, cacheDir: string): LazyLoader {
   return async (load, options) => {
     const stableOptions = snapshotImportOptions(options);
     const fs = getLocalFs();
@@ -87,6 +136,12 @@ function createLoader(path: string, source: string, cacheDir: string): LazyLoade
       await withJsxArtifactWriteCapacity(cacheDir, path, async (assertCapacityOwned) => {
         await withJsxArtifactLock(path, async (assertArtifactOwned) => {
           if (!await fs.exists(path)) {
+            const source = readRecoverySnapshot(snapshotKey);
+            if (source === undefined) {
+              throw CACHE_ERROR.create({
+                detail: "Lazy JSX recovery snapshot was evicted. Reload the MDX module.",
+              });
+            }
             await assertCapacityOwned();
             await assertArtifactOwned();
             await fs.writeTextFile(path, source);
@@ -97,7 +152,7 @@ function createLoader(path: string, source: string, cacheDir: string): LazyLoade
       });
     }
     const release = await retainJsxArtifactsReferencedIn(
-      `import ${JSON.stringify(`file://${path}`)};`,
+      `import ${stringify(`file://${path}`)};`,
       cacheDir,
       false,
     );
@@ -142,7 +197,7 @@ export class LazyJsxImportScope {
     const parsed = await parseMaskedImports(code);
     const paths = new IntrinsicMap<string, number>();
     const loaders: LazyLoader[] = [];
-    const sources: string[] = [];
+    let sourceIdentity = keySalt;
     let payloadBytes = 0;
     // Content-derived bindings keep module identity stable and avoid collisions
     // with authored identifiers, including escaped identifier spellings.
@@ -162,21 +217,22 @@ export class LazyJsxImportScope {
         assertMdxModuleSourceSize("Lazy JSX recovery payload", payloadBytes);
         index = loaders.length;
         mapSet(paths, path, index);
-        sources.push(path, snapshot.content);
-        loaders.push(createLoader(path, snapshot.content, cacheDir));
+        const snapshotKey = await rememberRecoverySnapshot(snapshot.content);
+        sourceIdentity += `${path.length}:${path}${snapshotKey}`;
+        primordialArrayPush(loaders, freeze(createLoader(path, snapshotKey, cacheDir)));
       }
     }
     if (loaders.length === 0) return code;
     // Keys are stable within this host instance but cannot be derived from a
     // different project's source. The lookup bridge exposes no enumeration.
-    const key = await computeHash(keySalt + JSON.stringify(sources));
+    const key = await computeHash(sourceIdentity);
     const registration = getRegistration(key) ?? {
-      loaders: freeze(loaders.map((loader) => freeze(loader))),
+      loaders: freeze(loaders),
       references: 0,
     };
     registration.references++;
     setRegistration(key, registration);
-    this.#keys.push(key);
+    primordialArrayPush(this.#keys, key);
     const rewriteRange = (start: number, end: number): string => {
       let result = "";
       let cursor = start;
@@ -201,13 +257,14 @@ export class LazyJsxImportScope {
       return result + parsed.masked.slice(cursor, end);
     };
     const rewritten = rewriteRange(0, parsed.masked.length);
-    const declaration = `import ${binding}_bridge from ${JSON.stringify(bridgeModule)};\n` +
-      `const ${binding} = ${binding}_bridge(${JSON.stringify(key)});\n`;
+    const declaration = `import ${binding}_bridge from ${stringify(bridgeModule)};\n` +
+      `const ${binding} = ${binding}_bridge(${stringify(key)});\n`;
     return declaration + parsed.unmask(rewritten);
   }
 
   release(): void {
-    for (const key of this.#keys) {
+    for (let index = 0; index < this.#keys.length; index++) {
+      const key = this.#keys[index]!;
       const registration = getRegistration(key);
       if (registration && --registration.references === 0) deleteRegistration(key);
     }

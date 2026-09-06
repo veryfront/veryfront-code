@@ -36,6 +36,112 @@ function bridgeSize(): number {
 describe("lazy JSX regeneration", () => {
   afterEach(() => __jsxCacheInternals.cancelScheduledJsxCachePrunes());
 
+  it("deduplicates recovery sources across distinct evaluated parents", async () => {
+    const dir = await makeTempDir({ prefix: "vf-lazy-deduplicate-" });
+    const source = "export const value = 42;";
+    const artifact = join(dir, buildMdxJsxCacheFileName("/project/Shared.tsx", source));
+    __lazyJsxImportInternals.clearSnapshotsForTests();
+    try {
+      await writeTextFile(artifact, source);
+      for (let index = 0; index < 3; index++) {
+        const scope = new LazyJsxImportScope();
+        try {
+          const code = await scope.rewrite(
+            `export const parent = ${index}; export const load = () => import(${
+              JSON.stringify(`file://${artifact}`)
+            });`,
+            dir,
+          );
+          const parent = join(dir, `parent-${index}.mjs`);
+          await writeTextFile(parent, code);
+          await import(`file://${parent}`);
+        } finally {
+          scope.release();
+        }
+      }
+      assertEquals(__lazyJsxImportInternals.snapshotCount(), 1);
+      assertEquals(__lazyJsxImportInternals.snapshotBytes() <= source.length * 2 + 256, true);
+    } finally {
+      __lazyJsxImportInternals.clearSnapshotsForTests();
+      await remove(dir, { recursive: true });
+    }
+  });
+
+  it("bounds recovery memory and fails closed until an evicted snapshot is recaptured", async () => {
+    const dir = await makeTempDir({ prefix: "vf-lazy-eviction-" });
+    const source = "export const value = 42;";
+    const artifact = join(dir, buildMdxJsxCacheFileName("/project/Original.tsx", source));
+    const originalCode = `export const load = () => import(${
+      JSON.stringify(`file://${artifact}`)
+    });`;
+    __lazyJsxImportInternals.clearSnapshotsForTests();
+    const scope = new LazyJsxImportScope();
+    try {
+      await writeTextFile(artifact, source);
+      const parent = join(dir, "parent.mjs");
+      await writeTextFile(parent, await scope.rewrite(originalCode, dir));
+      const module = await import(`file://${parent}`);
+      scope.release();
+      const largeSource = "//" + "x".repeat(MAX_MDX_MODULE_CODE_BYTES - 32) +
+        "\nexport const value = 1;";
+      for (let index = 0; index < 6; index++) {
+        const next = new LazyJsxImportScope();
+        const text = largeSource + `//${index}`;
+        const path = join(dir, buildMdxJsxCacheFileName(`/project/Other${index}.tsx`, text));
+        await writeTextFile(path, text);
+        try {
+          await next.rewrite(
+            `export const load = () => import(${JSON.stringify(`file://${path}`)});`,
+            dir,
+          );
+        } finally {
+          next.release();
+          await remove(path);
+        }
+      }
+      assertEquals(__lazyJsxImportInternals.snapshotBytes() <= 16 * 1024 * 1024, true);
+      // A disk hit does not require its evicted recovery copy.
+      assertEquals((await module.load()).value, 42);
+      await remove(artifact);
+      await assertRejects(() => module.load(), Error, "Reload the MDX module");
+      await writeTextFile(artifact, source);
+      await scope.rewrite(originalCode, dir);
+      scope.release();
+      await remove(artifact);
+      assertEquals((await module.load()).value, 42);
+    } finally {
+      scope.release();
+      __lazyJsxImportInternals.clearSnapshotsForTests();
+      await remove(dir, { recursive: true });
+    }
+  });
+
+  it("bounds the number of small recovery snapshots", async () => {
+    const dir = await makeTempDir({ prefix: "vf-lazy-entry-bound-" });
+    __lazyJsxImportInternals.clearSnapshotsForTests();
+    try {
+      for (let index = 0; index < 257; index++) {
+        const source = `export const value = ${index};`;
+        const artifact = join(dir, buildMdxJsxCacheFileName("/project/Value.tsx", source));
+        const scope = new LazyJsxImportScope();
+        await writeTextFile(artifact, source);
+        try {
+          await scope.rewrite(
+            `export const load = () => import(${JSON.stringify(`file://${artifact}`)});`,
+            dir,
+          );
+        } finally {
+          scope.release();
+          await remove(artifact);
+        }
+      }
+      assertEquals(__lazyJsxImportInternals.snapshotCount(), 256);
+    } finally {
+      __lazyJsxImportInternals.clearSnapshotsForTests();
+      await remove(dir, { recursive: true });
+    }
+  });
+
   it("uses captured collection and timer intrinsics after tenant prototype poisoning", () => {
     const artifactPath = "/tmp/vf-jsx-poisoned-intrinsics.mjs";
     const normalizedPath = "/tmp/vf-jsx-poisoned-normalized.mjs";

@@ -21,7 +21,47 @@ import type { MDXModule } from "#veryfront/transforms/mdx/types.ts";
 import { loadModuleESM } from "#veryfront/transforms/mdx/esm-module-loader/loader.ts";
 import type { ESMLoaderContext } from "#veryfront/transforms/mdx/esm-module-loader/types.ts";
 import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { __jsxCacheInternals } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import {
+  __jsxCacheInternals,
+  JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { transformJsxImports } from "#veryfront/transforms/mdx/esm-module-loader/import-transformer.ts";
+
+it("rearms idle cleanup when the initial sweep finishes before a transform writes", async () => {
+  const cacheDir = await makeTempDir({ prefix: "vf-mdx-idle-sweep-" });
+  const adapter = await getLocalAdapter();
+  const read = adapter.fs.readFileBytesWithinLimit;
+  try {
+    adapter.fs.readFileBytesWithinLimit = async () => {
+      __jsxCacheInternals.scheduleJsxCachePruneRetry(cacheDir, 0);
+      for (
+        let attempt = 0;
+        attempt < 100 && __jsxCacheInternals.hasScheduledJsxCachePrune(cacheDir);
+        attempt++
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assertEquals(__jsxCacheInternals.hasScheduledJsxCachePrune(cacheDir), false);
+      return new TextEncoder().encode("export const value = 1;");
+    };
+    const result = await transformJsxImports(
+      'import { value } from "file:///project/Value.ts";',
+      adapter,
+      cacheDir,
+      "/project",
+    );
+    assertEquals(result.includes("jsx-"), true);
+    assertEquals(__jsxCacheInternals.hasScheduledJsxCachePrune(cacheDir), true);
+  } finally {
+    adapter.fs.readFileBytesWithinLimit = read;
+    __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+    await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+    await remove(cacheDir, { recursive: true });
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  }
+});
 
 /** Load a compiled program through the real loader entry point. */
 async function loadCompiledModule(code: string): Promise<MDXModule> {
@@ -109,6 +149,102 @@ export const load = () => import(${JSON.stringify(`file://${artifact}`)});`;
       const load = (module as { load: () => Promise<{ value: number }> }).load;
       assertEquals((await load()).value, 17);
       assertEquals(await readTextFile(artifact), source);
+    } finally {
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("rediscovers temporary parents after failed cleanup without an in-memory retry", async () => {
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-parent-cleanup-" });
+    const source = "export const value = 23;";
+    const artifact = join(cacheDir, buildMdxJsxCacheFileName("/project/Lazy.tsx", source));
+    const fs = getLocalFs();
+    const removeFile = fs.remove;
+    let orphan: string | undefined;
+    try {
+      await writeTextFile(artifact, source);
+      fs.remove = (path, options) => {
+        if (path.endsWith(".mjs") && path !== artifact) {
+          orphan = path;
+          return Promise.reject(new Error("EBUSY"));
+        }
+        return removeFile.call(fs, path, options);
+      };
+      await runWithCacheDir(cacheDir, () =>
+        loadModuleESM(
+          `export const load = () => import(${JSON.stringify(`file://${artifact}`)});`,
+          {
+            moduleCache: new LRUCache({ maxEntries: 10 }),
+            adapter: undefined,
+            projectId: "parent-cleanup",
+            projectDir: cacheDir,
+            projectSlug: "parent-cleanup",
+            contentSourceId: "release-1",
+            reactVersion: "19.1.1",
+            esmCacheDir: cacheDir,
+            isLocalProject: true,
+          } as ESMLoaderContext,
+        ));
+      assertExists(orphan);
+      assertEquals(await fs.exists(orphan), true);
+      fs.remove = removeFile;
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await __jsxCacheInternals.collectExcessJsxArtifacts(
+        cacheDir,
+        new Map(),
+        Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS + 60_000,
+      );
+      assertEquals(await fs.exists(orphan), false);
+    } finally {
+      fs.remove = removeFile;
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("cleans temporary parents after the evaluated project replaces array intrinsics", async () => {
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-parent-array-" });
+    const source = "export const value = 37;";
+    const artifact = join(cacheDir, buildMdxJsxCacheFileName("/project/Arrays.tsx", source));
+    const push = Array.prototype.push;
+    const sort = Array.prototype.sort;
+    const iterator = Array.prototype[Symbol.iterator];
+    let evaluated = false;
+    try {
+      await writeTextFile(artifact, source);
+      try {
+        await runWithCacheDir(cacheDir, () =>
+          loadModuleESM(
+            `export const load = () => import(${JSON.stringify(`file://${artifact}`)});
+const poison = () => { throw new Error("tenant replaced an array intrinsic"); };
+Array.prototype.push = poison;
+Array.prototype.sort = poison;
+Array.prototype[Symbol.iterator] = poison;`,
+            {
+              moduleCache: new LRUCache({ maxEntries: 10 }),
+              adapter: undefined,
+              projectId: "parent-array",
+              projectDir: cacheDir,
+              projectSlug: "parent-array",
+              contentSourceId: "release-1",
+              reactVersion: "19.1.1",
+              esmCacheDir: cacheDir,
+              isLocalProject: true,
+            } as ESMLoaderContext,
+          )).catch(() => undefined);
+      } finally {
+        evaluated = Array.prototype.push !== push;
+        Array.prototype.push = push;
+        Array.prototype.sort = sort;
+        Array.prototype[Symbol.iterator] = iterator;
+      }
+      assertEquals(evaluated, true, "the project must reach evaluation before cleanup is checked");
+      for await (const entry of readDir(cacheDir)) {
+        if (entry.isFile && entry.name.endsWith(".mjs")) {
+          assertEquals(join(cacheDir, entry.name), artifact);
+        }
+      }
     } finally {
       __jsxCacheInternals.cancelScheduledJsxCachePrunes();
       await remove(cacheDir, { recursive: true });

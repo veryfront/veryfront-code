@@ -1437,7 +1437,7 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
-  it("reclaims artifacts stranded by a cache namespace roll once they age out", async () => {
+  it("preserves prior namespaces until operators verify old readers have drained", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-stranded-test-" });
     const sourcePath = "/tmp/source/AfterRoll.tsx";
     const strandedName = "jsx-superseded-namespace-deadbeef.mjs";
@@ -1456,8 +1456,8 @@ describe("pruneSupersededJsxArtifacts", () => {
       for await (const entry of readDir(tempDir)) remaining.push(entry.name);
       assertEquals(
         remaining.includes(strandedName),
-        false,
-        "an artifact no current key shape can reach is dead weight to reclaim",
+        true,
+        "age does not prove a pre-heartbeat reader has drained",
       );
       assertEquals(remaining.includes(written[0] ?? ""), true);
     } finally {
@@ -1467,7 +1467,7 @@ describe("pruneSupersededJsxArtifacts", () => {
 
   it("re-arms a scheduled sweep that a lease failure aborted partway", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-abort-test-" });
-    const strandedName = "jsx-superseded-namespace-aborted.mjs";
+    const strandedName = buildMdxJsxCacheFileName("/project/Aborted.tsx", "export const old = 1;");
     const localFs = getLocalFs();
     const originalReadTextFile = localFs.readTextFile.bind(localFs);
     const utime = localFs.utime?.bind(localFs);

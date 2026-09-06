@@ -49,7 +49,14 @@ import {
   transformJsxImports,
   transformReactToLocalPaths,
 } from "./import-transformer.ts";
-import { retainJsxArtifactsReferencedIn } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import {
+  ensureJsxCacheSweepArmed,
+  retainJsxArtifactForWrite,
+  retainJsxArtifactsReferencedIn,
+  withJsxArtifactLock,
+  withJsxArtifactWriteCapacity,
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   findMissingFrameworkBundles,
   findVfModuleImports,
@@ -89,26 +96,45 @@ function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
 
 function mapValues<K, V>(map: Map<K, V>): V[] {
   const values: V[] = [];
-  IntrinsicReflectApply(MapPrototypeForEach, map, [(value: V) => values.push(value)]);
+  IntrinsicReflectApply(MapPrototypeForEach, map, [(value: V) => {
+    values[values.length] = value;
+  }]);
   return values;
 }
 
 const temporaryParentReferences = new IntrinsicMap<string, {
   count: number;
   cleanup?: Promise<void>;
+  retention: Promise<() => void>;
 }>();
 
-async function retainTemporaryParent(path: string): Promise<() => Promise<void>> {
-  const entry = mapGet(temporaryParentReferences, path) ?? { count: 0 };
+async function retainTemporaryParent(path: string, cacheDir: string): Promise<() => Promise<void>> {
+  const entry = mapGet(temporaryParentReferences, path) ?? {
+    count: 0,
+    retention: retainJsxArtifactForWrite(path),
+  };
   mapSet(temporaryParentReferences, path, entry);
   entry.count++;
   // A new evaluation must wait for an already-started removal before writing.
-  await entry.cleanup;
+  let releasePin: () => void;
+  try {
+    await entry.cleanup;
+    releasePin = await entry.retention;
+  } catch (error) {
+    if (--entry.count === 0) mapDelete(temporaryParentReferences, path);
+    throw error;
+  }
   return async () => {
     if (--entry.count !== 0) return;
     entry.cleanup = getLocalFs().remove(path).catch(() => undefined);
     await entry.cleanup;
-    if (entry.count === 0) mapDelete(temporaryParentReferences, path);
+    if (entry.count === 0) {
+      releasePin();
+      mapDelete(temporaryParentReferences, path);
+    }
+    // Parent files share the durable JSX scan and quota. A transient removal
+    // failure or process exit leaves a discoverable, age-bounded artifact.
+    ensureJsxCacheSweepArmed(cacheDir);
   };
 }
 
@@ -396,13 +422,30 @@ export async function doLoadModuleESM(
     const localFs = getLocalFs();
 
     const parentFilePath = async (hash: string): Promise<string> => {
-      const path = join(nsDir, `${hash}.mjs`);
+      const path = lazyJsxImports.hasRegistrations
+        ? join(esmCacheDir, buildMdxJsxCacheFileName(join(nsDir, hash), hash))
+        : join(nsDir, `${hash}.mjs`);
       // Bridge identities are host-private, but unchanged modules must reuse
       // their native URL within the host. Retire files after all evaluations.
       if (lazyJsxImports.hasRegistrations && !mapHas(temporaryParentFiles, path)) {
-        mapSet(temporaryParentFiles, path, await retainTemporaryParent(path));
+        mapSet(temporaryParentFiles, path, await retainTemporaryParent(path, esmCacheDir));
       }
       return path;
+    };
+    const writeParentFile = (path: string, code: string): Promise<boolean> => {
+      if (!lazyJsxImports.hasRegistrations) {
+        return writeCacheFile(localFs, path, code, "MDX-ESM-LOADER");
+      }
+      return withJsxArtifactWriteCapacity(
+        esmCacheDir,
+        path,
+        (assertQuotaOwned) =>
+          withJsxArtifactLock(path, async (assertArtifactOwned) => {
+            await assertQuotaOwned();
+            await assertArtifactOwned();
+            return await writeCacheFile(localFs, path, code, "MDX-ESM-LOADER");
+          }),
+      );
     };
     let filePath = await parentFilePath(codeHash);
 
@@ -418,7 +461,7 @@ export async function doLoadModuleESM(
       }
 
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Writing module file`, { projectSlug, filePath });
-      const written = await writeCacheFile(localFs, filePath, rewritten, "MDX-ESM-LOADER");
+      const written = await writeParentFile(filePath, rewritten);
       if (!written) {
         throw BUILD_FAILED.create({ detail: `Failed to write MDX module cache file: ${filePath}` });
       }
@@ -477,12 +520,7 @@ export async function doLoadModuleESM(
           const refreshedHash = hashString(rewritten);
           const refreshedPath = await parentFilePath(refreshedHash);
           await mdxWriteFlight.do(refreshedPath, async () => {
-            const written = await writeCacheFile(
-              getLocalFs(),
-              refreshedPath,
-              rewritten,
-              "MDX-ESM-LOADER",
-            );
+            const written = await writeParentFile(refreshedPath, rewritten);
             if (!written) {
               throw BUILD_FAILED.create({
                 detail: `Failed to write refreshed MDX module cache file: ${refreshedPath}`,
@@ -559,12 +597,7 @@ export async function doLoadModuleESM(
         const refreshedHash = hashString(rewritten);
         const refreshedPath = await parentFilePath(refreshedHash);
         await mdxWriteFlight.do(refreshedPath, async () => {
-          const written = await writeCacheFile(
-            getLocalFs(),
-            refreshedPath,
-            rewritten,
-            "MDX-ESM-LOADER",
-          );
+          const written = await writeParentFile(refreshedPath, rewritten);
           if (!written) {
             throw BUILD_FAILED.create({
               detail: `Failed to write regenerated MDX module cache file: ${refreshedPath}`,
@@ -655,8 +688,9 @@ export async function doLoadModuleESM(
   } finally {
     releaseJsxArtifacts?.();
     lazyJsxImports.release();
-    for (const release of mapValues(temporaryParentFiles)) {
-      await release();
+    const releases = mapValues(temporaryParentFiles);
+    for (let index = 0; index < releases.length; index++) {
+      await releases[index]!();
     }
   }
 }

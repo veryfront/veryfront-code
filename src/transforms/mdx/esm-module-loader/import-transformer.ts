@@ -694,6 +694,8 @@ export async function transformJsxImports(
     if (admissionFailure) throw admissionFailure;
   } finally {
     hostClearInterval(selectedArtifactHeartbeat);
+    // The initial sweep can finish while source reads or transforms are pending.
+    ensureJsxCacheSweepArmed(esmCacheDir);
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {

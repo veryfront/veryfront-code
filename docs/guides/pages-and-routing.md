@@ -212,6 +212,23 @@ Recovery snapshots have a combined limit of 2 MiB per MDX module. Recovery follo
 the same cache capacity limits as initial compilation and can fail when active
 artifacts occupy the available capacity.
 
+Recovery snapshots share a process-wide cache with a 16 MiB storage budget and a
+256-entry limit. Identical transformed sources share one snapshot. Least-recently
+used snapshots are evicted when either limit is reached. Existing on-disk
+artifacts remain usable. If both an artifact and its snapshot are evicted, the
+delayed import fails. Reload the MDX module to capture its recovery data again.
+
+Temporary parent modules use the same disk quota and maintenance sweeps as JSX
+artifacts. If immediate cleanup fails, a later sweep retires the file, including
+after a process restart. Active evaluations keep their parent artifacts pinned.
+
+During a rolling upgrade, automatic cleanup preserves prior-version JSX artifacts.
+Their timestamps cannot prove that older runtimes have stopped using them. Before
+you remove legacy artifacts, you must ensure all runtimes using those versions have
+drained and cannot resume. Legacy files remain outside the current version's quota
+and require operator-managed cleanup; total disk usage across versions is not bounded
+by the current version's quota.
+
 ### Override rendered MDX elements
 
 Wrap an MDX page or layout with `MDXProvider` to replace generated elements:
