@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { agent, runWithRunEventSink } from "#veryfront/agent/index.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -46,13 +47,13 @@ async function withLifecycleMode<T>(
   mode: "legacy" | "active",
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = Deno.env.get("VF_STREAM_LIFECYCLE_MODE");
-  Deno.env.set("VF_STREAM_LIFECYCLE_MODE", mode);
+  const previous = getEnv("VF_STREAM_LIFECYCLE_MODE");
+  setEnv("VF_STREAM_LIFECYCLE_MODE", mode);
   try {
     return await run();
   } finally {
-    if (previous === undefined) Deno.env.delete("VF_STREAM_LIFECYCLE_MODE");
-    else Deno.env.set("VF_STREAM_LIFECYCLE_MODE", previous);
+    if (previous === undefined) deleteEnv("VF_STREAM_LIFECYCLE_MODE");
+    else setEnv("VF_STREAM_LIFECYCLE_MODE", previous);
   }
 }
 

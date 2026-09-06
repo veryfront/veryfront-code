@@ -1141,6 +1141,14 @@ function materializeProviderJsonField(value: unknown): unknown {
   }));
 }
 
+function generateUsageToStreamUsage(usage: DirectGenerateUsage) {
+  const { totalTokens, ...totalUsage } = usage;
+  const recomputedTotal = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  return totalTokens !== undefined && totalTokens !== recomputedTotal
+    ? { ...totalUsage, totalTokens }
+    : totalUsage;
+}
+
 function materializeRuntimeStreamPart(part: unknown): unknown {
   if (!part || typeof part !== "object") return part;
   const label = "Provider stream part";
@@ -1229,69 +1237,11 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
   const usage = normalizeUsage(materializeProviderJsonField(read("usage"))) ??
     normalizeUsage(materializeProviderJsonField(read("totalUsage")));
   const providerMetadata = materializeProviderJsonField(read("providerMetadata"));
-  const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
-
   return {
     type: "finish",
     finishReason: normalizeFinishReason(read("finishReason")),
     ...(providerMetadata === undefined ? {} : { providerMetadata }),
-    ...(usage
-      ? {
-        totalUsage: {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          ...(usage.totalTokens !== undefined && usage.totalTokens !== recomputedTotal
-            ? { totalTokens: usage.totalTokens }
-            : {}),
-          ...(usage.cacheCreationInputTokens !== undefined
-            ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
-            : {}),
-          ...(usage.cacheReadInputTokens !== undefined
-            ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-            : {}),
-          ...(usage.cachedInputTokens !== undefined
-            ? { cachedInputTokens: usage.cachedInputTokens }
-            : {}),
-          ...(usage.reasoningTokens !== undefined
-            ? { reasoningTokens: usage.reasoningTokens }
-            : {}),
-          ...(usage.billableInputTokens !== undefined
-            ? { billableInputTokens: usage.billableInputTokens }
-            : {}),
-          ...(usage.billableOutputTokens !== undefined
-            ? { billableOutputTokens: usage.billableOutputTokens }
-            : {}),
-          ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-          ...(usage.providerInputCostUsd !== undefined
-            ? { providerInputCostUsd: usage.providerInputCostUsd }
-            : {}),
-          ...(usage.providerOutputCostUsd !== undefined
-            ? { providerOutputCostUsd: usage.providerOutputCostUsd }
-            : {}),
-          ...(usage.providerCostUsd !== undefined
-            ? { providerCostUsd: usage.providerCostUsd }
-            : {}),
-          ...(usage.veryfrontInputChargeUsd !== undefined
-            ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
-            : {}),
-          ...(usage.veryfrontOutputChargeUsd !== undefined
-            ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
-            : {}),
-          ...(usage.veryfrontChargeUsd !== undefined
-            ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
-            : {}),
-          ...(usage.veryfrontBilledUsd !== undefined
-            ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
-            : {}),
-          ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
-          ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
-          ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
-          ...(usage.usageCaptureStatus !== undefined
-            ? { usageCaptureStatus: usage.usageCaptureStatus }
-            : {}),
-        },
-      }
-      : {}),
+    ...(usage ? { totalUsage: generateUsageToStreamUsage(usage) } : {}),
   };
 }
 

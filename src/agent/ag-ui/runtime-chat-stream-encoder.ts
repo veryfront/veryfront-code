@@ -144,11 +144,8 @@ function formatErrorText(
   onError?: (error: unknown, context?: { code?: string }) => string,
   code?: string,
 ): string {
-  return onError
-    ? code ? onError(error, { code }) : onError(error)
-    : error instanceof Error
-    ? error.message
-    : String(error);
+  if (onError) return code ? onError(error, { code }) : onError(error);
+  return error instanceof Error ? error.message : String(error);
 }
 
 function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsage | null {
