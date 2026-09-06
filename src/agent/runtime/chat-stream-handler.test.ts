@@ -1920,6 +1920,20 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("falls back to the original stream error when provider inspection throws", () => {
+      const providerError = new Error("Provider stream failed");
+      Object.defineProperty(providerError, "responseBody", {
+        get() {
+          throw new Error("hostile provider accessor");
+        },
+      });
+
+      assertEquals(resolveRuntimeStreamErrorEvent(providerError), {
+        type: "error",
+        error: "Provider stream failed",
+      });
+    });
+
     it("keeps the unknown active lifecycle fallback code-free", () => {
       const event = resolveRuntimeStreamErrorEvent(
         new StreamLifecycleFailure({

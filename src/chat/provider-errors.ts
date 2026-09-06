@@ -422,7 +422,11 @@ function extractResponseBody(error: unknown): string | undefined {
 
 /** Error shape for parse provider. */
 export function parseProviderError(error: unknown): ParsedProviderError {
-  return parseProviderErrorInner(error, new WeakSet(), 0);
+  try {
+    return parseProviderErrorInner(error, new WeakSet(), 0);
+  } catch {
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
 }
 
 function parseProviderErrorInner(
