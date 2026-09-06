@@ -1441,16 +1441,31 @@ export function securityMiddleware(
       // would brick the conversation on every later turn (`extractMergedRunTexts`).
       registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
         const systemMessages = providerSystemMessages(providerSystem);
-        const currentSystemIds = new Set(
-          typeof context.input === "string" ? [] : context.input
-            .filter((message) => message.role === "system")
-            .map((message) => message.id),
+        const pendingCurrent = typeof context.input === "string" ? [] : context.input
+          .filter((message) => message.role === "system");
+        // Separate occurrences even when a memory adapter returns the same
+        // object twice. Current inputs are appended after historical messages.
+        const callerMessages = messages.map((message) =>
+          message.role === "system"
+            ? { id: message.id, role: message.role, parts: message.parts }
+            : message
         );
-        const callerSystemMessages = messages.filter((message) => message.role === "system");
+        const currentSystemMessages = new Set<Message>();
+        for (let index = messages.length - 1; index >= 0; index--) {
+          const message = messages[index]!;
+          if (message.role !== "system") continue;
+          const current = pendingCurrent.findLastIndex((input) =>
+            input === message || input.id === message.id && isDeepStrictEqual(input, message)
+          );
+          if (current < 0) continue;
+          pendingCurrent.splice(current, 1);
+          currentSystemMessages.add(callerMessages[index]!);
+        }
+        const callerSystemMessages = callerMessages.filter((message) => message.role === "system");
         const trusted = new Set(systemMessages);
         const callers = new Set(callerSystemMessages);
         const providerRuns: ProviderValidationRun[] = [];
-        for (const run of extractMergedSystemRuns([...systemMessages, ...messages])) {
+        for (const run of extractMergedSystemRuns([...systemMessages, ...callerMessages])) {
           if (
             !run.some((message) => trusted.has(message)) ||
             !run.some((message) => callers.has(message))
@@ -1468,7 +1483,7 @@ export function securityMiddleware(
                 assembled.text += text;
                 const kind = trusted.has(message)
                   ? "runtime"
-                  : currentSystemIds.has(message.id)
+                  : currentSystemMessages.has(message)
                   ? "current"
                   : "history";
                 if (kind !== "current") {

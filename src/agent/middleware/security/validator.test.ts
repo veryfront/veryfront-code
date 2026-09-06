@@ -15,6 +15,7 @@ import {
   getTurnProviderRequestValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 import { SummaryMemory } from "#veryfront/agent/memory/memory.ts";
+import { attachProviderMetadata } from "#veryfront/agent/runtime/provider-metadata.ts";
 import {
   COMMON_BLOCKED_PATTERNS,
   InputValidator,
@@ -1066,6 +1067,61 @@ describe("securityMiddleware", () => {
         ...context.input as Message[],
       ]);
     }
+  });
+
+  it("does not classify historical system occurrences as current by a reused ID", async () => {
+    for (const clone of [false, true]) {
+      const middleware = securityMiddleware({ input: { blockedPatterns: [/forbidden/] } });
+      const context = createContext({
+        input: [{ id: "reused", role: "system", parts: [{ type: "text", text: "hello" }] }],
+      });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validate = getTurnProviderRequestValidator(context);
+      if (!validate) throw new Error("Expected provider-request validation");
+      const messages: Message[] = [
+        {
+          id: "reused",
+          role: "system",
+          parts: [{ type: "text", text: "forbidden" }],
+        },
+        { id: "boundary", role: "assistant", parts: [{ type: "text", text: "ok" }] },
+        ...context.input as Message[],
+      ];
+      await validate("runtime", clone ? structuredClone(messages) : messages);
+    }
+  });
+
+  it("keeps a deserialized current occurrence untrusted when memory adds metadata", async () => {
+    const middleware = securityMiddleware({ input: { blockedPatterns: [/foobar/] } });
+    const context = createContext({
+      input: [{ id: "current", role: "system", parts: [{ type: "text", text: "bar" }] }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    const messages = structuredClone(context.input as Message[]);
+    Object.assign(messages[0]!, { metadata: { stored: true } });
+    await assertRejects(() => validate("foo", messages), Error, "Input validation failed");
+  });
+
+  it("preserves metadata-only assistant boundaries while tracking system occurrences", async () => {
+    const middleware = securityMiddleware({ input: { blockedPatterns: [/^foo\n\nbar$/] } });
+    const context = createContext({
+      input: [
+        { id: "first", role: "system", parts: [{ type: "text", text: "bar" }] },
+        { id: "user", role: "user", parts: [{ type: "text", text: "hello" }] },
+        { id: "second", role: "system", parts: [{ type: "text", text: "baz" }] },
+      ],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validate = getTurnProviderRequestValidator(context);
+    if (!validate) throw new Error("Expected provider-request validation");
+    const replay = attachProviderMetadata({ id: "replay", role: "assistant", parts: [] }, {
+      anthropic: {
+        rawAssistantMessages: [[{ type: "thinking", thinking: "", signature: "test" }]],
+      },
+    });
+    await validate("foo", [replay, ...context.input as Message[]]);
   });
 
   it("checks a changed runtime prompt against historical caller system text", async () => {
