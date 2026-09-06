@@ -193,6 +193,54 @@ describe("custom memory transactions", () => {
   });
 
   for (const mode of ["generate", "stream"] as const) {
+    it(`rejects ${mode} finalization after a public memory clear`, async () => {
+      const runtime = new AgentRuntime("transaction-clear", {
+        model: "hosted/transaction-clear",
+        system: "You are helpful.",
+        memory: { type: "conversation" },
+        skills: false,
+        maxSteps: 1,
+        middleware: [(context, next) => {
+          registerTurnMessageValidator(context, () => Promise.resolve());
+          return next();
+        }],
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: {
+              provider: "hosted",
+              modelId: "hosted/transaction-clear",
+              async doGenerate() {
+                await runtime.getMemory().clear();
+                return {
+                  content: [{ type: "text" as const, text: "ok" }],
+                  finishReason: "stop" as const,
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                };
+              },
+              async doStream() {
+                await runtime.getMemory().clear();
+                return {
+                  stream: new ReadableStream({
+                    start(controller) {
+                      controller.enqueue({ type: "text-delta", text: "ok" });
+                      controller.enqueue({ type: "finish" });
+                      controller.close();
+                    },
+                  }),
+                };
+              },
+            },
+          }),
+      });
+      if (mode === "generate") {
+        await assertRejects(() => runtime.generate("input"), Error, "Memory changed");
+      } else {
+        const output = await new Response(await runtime.stream([message("input")])).text();
+        assertStringIncludes(output, "Memory changed");
+      }
+      assertEquals(await runtime.getMemory().getMessages(), []);
+    });
+
     it(`rejects cyclic stateful ${mode} calls without poisoning later turns`, async () => {
       let delegate = true;
       const runtimes: AgentRuntime[] = [];

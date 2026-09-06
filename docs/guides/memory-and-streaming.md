@@ -126,6 +126,10 @@ turn. A later validation failure rolls back the staged turn. Commit runs after
 the turn finishes validation, so concurrent storage changes can reject commit
 even after the provider has produced output.
 
+For built-in stateful memory, a direct `getMemory().add()` or
+`getMemory().clear()` during an active validated turn also rejects commit.
+Rollback removes the rejected turn and preserves your concurrent memory changes.
+
 Validated turns on one stateful agent runtime run sequentially until commit or
 rollback finishes. Your delegation graph must not call back into an ancestor
 runtime with an active validated turn. Veryfront rejects that cycle before it

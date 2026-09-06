@@ -92,9 +92,8 @@ export async function beginMemoryTransaction<M extends MinimalMessage>(
       );
     },
     getMessages: () => memory.getMessages(),
-    commit: () => {
+    commit: async () => {
       rollback.commit();
-      return Promise.resolve();
     },
     rollback: () => rollback.rollback(attempted),
   };
@@ -173,15 +172,19 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
       };
       return {
         commit: () => {
+          if (!active) return;
           if (
             owner &&
             (this.clearVersion !== clearVersion || additions.some((entry) => entry.owner !== owner))
           ) {
-            throw new Error("Memory changed concurrently during the transaction. Retry the turn.");
+            throw CONFIG_INVALID.create({
+              detail: "Memory changed concurrently during the transaction. Retry the turn.",
+            });
           }
           close();
         },
         rollback: async (rejectedMessages) => {
+          if (!active) return;
           close();
           if (this.clearVersion !== clearVersion) {
             const replayVersion = this.clearVersion;
@@ -367,15 +370,19 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       };
       return {
         commit: () => {
+          if (!active) return;
           if (
             owner &&
             (this.clearVersion !== clearVersion || additions.some((entry) => entry.owner !== owner))
           ) {
-            throw new Error("Memory changed concurrently during the transaction. Retry the turn.");
+            throw CONFIG_INVALID.create({
+              detail: "Memory changed concurrently during the transaction. Retry the turn.",
+            });
           }
           close();
         },
         rollback: async (rejectedMessages) => {
+          if (!active) return;
           close();
           if (this.clearVersion !== clearVersion) {
             const replayVersion = this.clearVersion;
