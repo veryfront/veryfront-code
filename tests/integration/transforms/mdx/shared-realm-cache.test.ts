@@ -110,6 +110,7 @@ it("lazy heartbeat and release tolerate replaced array methods and iteration", a
   const push = Array.prototype.push;
   const sort = Array.prototype.sort;
   const iterator = Array.prototype[Symbol.iterator];
+  const from = Array.from;
   let poisonedCall = "";
   let release: (() => void) | undefined;
   try {
@@ -125,6 +126,7 @@ it("lazy heartbeat and release tolerate replaced array methods and iteration", a
       poisonedCall ||= new Error("array dispatch").stack ?? "array dispatch";
       throw new Error("tenant replaced an array intrinsic");
     };
+    Array.from = () => [];
     const isCacheValue = (first: unknown) =>
       first === path || first === stalePath || Array.isArray(first) ||
       first instanceof Promise || typeof first === "function" ||
@@ -160,6 +162,7 @@ it("lazy heartbeat and release tolerate replaced array methods and iteration", a
     Array.prototype.push = push;
     Array.prototype.sort = sort;
     Array.prototype[Symbol.iterator] = iterator;
+    Array.from = from;
     release?.();
     __jsxCacheInternals.cancelScheduledJsxCachePrunes();
     try {

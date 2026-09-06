@@ -2047,17 +2047,18 @@ async function readJsxArtifactDates(
 ): Promise<Array<{ name: string; modifiedAtMs: number }>> {
   const dated: Array<{ name: string; modifiedAtMs: number }> = [];
   let next = 0;
-  const workers = Array.from(
-    { length: Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, names.length) },
-    async () => {
+  const workers: Array<Promise<void>> = [];
+  const workerCount = Math.min(JSX_ARTIFACT_REFRESH_CONCURRENCY, names.length);
+  for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+    workers[workerIndex] = (async () => {
       while (next < names.length) {
         const index = next++;
         const name = names[index]!;
         const modifiedAtMs = await readArtifactModifiedAtMs(join(directory, name));
         dated[index] = { name, modifiedAtMs };
       }
-    },
-  );
+    })();
+  }
   await Promise.all(primordialArrayValues(workers));
   return dated;
 }
