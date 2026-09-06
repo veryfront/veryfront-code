@@ -155,6 +155,38 @@ describe("agent/agent-service", () => {
     assertEquals(await echo.json(), { method: "POST", body: "hello" });
   });
 
+  it("preserves a native Request body when it is used as RequestInit", async () => {
+    const runtime = defineAgentService({
+      serviceName: "request-init-service",
+      agent: assistant,
+    }).createRuntime({
+      routes: [{
+        method: "POST",
+        path: "/echo",
+        handler: async (request) =>
+          Response.json({
+            body: await request.text(),
+            contentType: request.headers.get("Content-Type"),
+          }),
+      }],
+    });
+    const createInit = () =>
+      new Request("https://source.example.test", {
+        method: "POST",
+        body: "hello",
+      });
+    const expectedRequest = new Request("http://localhost/echo", createInit());
+    const expected = {
+      body: await expectedRequest.text(),
+      contentType: expectedRequest.headers.get("Content-Type"),
+    };
+
+    const response = await runtime.request("/echo", createInit());
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), expected);
+  });
+
   it("dispatches host-owned routes without taking over product policy", async () => {
     const runtime = defineAgentService({
       serviceName: "veryfront-agent",
