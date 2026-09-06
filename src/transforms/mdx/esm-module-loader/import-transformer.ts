@@ -82,11 +82,18 @@ import {
 import type { ESMLoaderContext } from "./types.ts";
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
+const JSX_SOURCE_EXTENSION_PATTERN = /\.(tsx?|jsx?)$/;
 const IntrinsicMap = Map;
 const IntrinsicSet = Set;
 const hostNow = Date.now;
 const dateGetTime = Function.prototype.call.bind(Date.prototype.getTime);
 const IntrinsicReflectApply = Reflect.apply;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const IntrinsicObjectCreate = Object.create;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectEntries = Object.entries;
@@ -125,6 +132,28 @@ function defineOwnDataProperty<T extends object>(
   IntrinsicObjectDefineProperty(target, key, descriptor);
 }
 
+function stringStartsWith(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return IntrinsicReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function pathBaseName(value: string): string {
+  const slash = IntrinsicReflectApply(StringPrototypeLastIndexOf, value, ["/"]) as number;
+  const backslash = IntrinsicReflectApply(StringPrototypeLastIndexOf, value, ["\\"]) as number;
+  return stringSlice(value, (slash > backslash ? slash : backslash) + 1);
+}
+
 function setAdd<T>(set: Set<T>, value: T): void {
   IntrinsicReflectApply(SetPrototypeAdd, set, [value]);
 }
@@ -145,8 +174,12 @@ const mdxRootBareDependencyStrategy: ImportRewriteStrategy = {
   name: "mdx-root-bare-dependency",
   priority: bareStrategy.priority,
   matches(specifier, ctx) {
-    const hasNonNpmScheme = URI_SCHEME_PATTERN.test(specifier) &&
-      !specifier.startsWith("npm:");
+    const hasNonNpmScheme = IntrinsicReflectApply(
+          RegExpPrototypeExec,
+          URI_SCHEME_PATTERN,
+          [specifier],
+        ) !== null &&
+      !stringStartsWith(specifier, "npm:");
     return !hasNonNpmScheme &&
       !isNodeBuiltinSpecifier(specifier) &&
       bareStrategy.matches(specifier, ctx);
@@ -165,9 +198,9 @@ const mdxRootDependencyRewriter = new UnifiedImportRewriter({
  */
 export async function rewriteProjectAliasImports(code: string): Promise<string> {
   return await replaceSpecifiers(code, (specifier) => {
-    if (!specifier.startsWith("@/")) return null;
-    const path = specifier.slice(2);
-    const jsPath = path.endsWith(".js") ? path : `${path}.js`;
+    if (!stringStartsWith(specifier, "@/")) return null;
+    const path = stringSlice(specifier, 2);
+    const jsPath = stringEndsWith(path, ".js") ? path : `${path}.js`;
     return `/_vf_modules/${jsPath}`;
   });
 }
@@ -281,7 +314,10 @@ export async function rewriteMdxRootDependencyImports(
     projectDir: options.projectDir,
     serverExternalPackages: options.serverExternalPackages,
   });
-  if (!options.dependencyPinningCacheKey?.startsWith("on:")) return importMapped;
+  if (
+    options.dependencyPinningCacheKey === undefined ||
+    !stringStartsWith(options.dependencyPinningCacheKey, "on:")
+  ) return importMapped;
 
   return await mdxRootDependencyRewriter.rewrite(importMapped, {
     filePath: `${options.projectDir}/__veryfront_mdx_root__.mjs`,
@@ -303,7 +339,11 @@ export async function pinSameOriginSSRModuleImports(
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
 ): Promise<string> {
-  if (!dependencyPinningCacheKey?.startsWith("on:") || !moduleServerOrigin) return code;
+  if (
+    dependencyPinningCacheKey === undefined ||
+    !stringStartsWith(dependencyPinningCacheKey, "on:") ||
+    !moduleServerOrigin
+  ) return code;
 
   return await replaceSpecifiers(code, (specifier) => {
     const pinned = appendSameOriginSSRDependencyPinningPathKey(
@@ -334,7 +374,7 @@ async function hasReactImport(code: string): Promise<boolean> {
 function describeProjectSource(filePath: string, projectDir?: string): string {
   const relative = projectDir ? sanitizePathForDisplay(filePath, projectDir) : "";
   if (relative) return relative;
-  return filePath.split(/[\\/]/).at(-1) || "project source";
+  return pathBaseName(filePath) || "project source";
 }
 
 /**
@@ -522,10 +562,14 @@ export async function transformJsxImports(
   const imports = await parseImports(code);
   for (const importSpecifier of primordialArrayValues(imports)) {
     const specifier = importSpecifier.n;
-    if (!specifier?.startsWith("file://")) continue;
+    if (!specifier || !stringStartsWith(specifier, "file://")) continue;
 
-    const filePath = specifier.slice("file://".length);
-    const ext = filePath.match(/\.(tsx?|jsx?)$/)?.[1];
+    const filePath = stringSlice(specifier, "file://".length);
+    const ext = (IntrinsicReflectApply(
+      RegExpPrototypeExec,
+      JSX_SOURCE_EXTENSION_PATTERN,
+      [filePath],
+    ) as RegExpExecArray | null)?.[1];
     if (!ext) continue;
 
     primordialArrayPush(importsToProcess, { specifier, filePath, ext });
@@ -585,7 +629,8 @@ export async function transformJsxImports(
       // controlled, so it has to go through the adapter that bounds the read.
       const isFrameworkFile = !isProjectSourceFile(filePath, projectDir) &&
         (isFrameworkSourceFile(filePath) ||
-          (filePath.startsWith(FRAMEWORK_ROOT) && filePath.includes("/node_modules/")));
+          (stringStartsWith(filePath, FRAMEWORK_ROOT) &&
+            stringIncludes(filePath, "/node_modules/")));
       let sourceCode: string;
       if (isFrameworkFile) {
         sourceCode = await getLocalFs().readTextFile(filePath);

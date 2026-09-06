@@ -1,5 +1,6 @@
 import { makeTempDir, mkdir, remove, stat, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { utimes as utime } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -362,6 +363,7 @@ describe("MDX cache shared-realm lifecycle", () => {
     const dir = await makeTempDir();
     const source = "export const value = 61;";
     const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/Subsequent.tsx", source);
+    const artifactUrl = pathToFileURL(artifact).href;
     const scope = new LazyJsxImportScope();
     const iterator = Array.prototype[Symbol.iterator];
     let rewritten = "";
@@ -378,7 +380,7 @@ describe("MDX cache shared-realm lifecycle", () => {
         return Reflect.apply(iterator, this, []);
       };
       rewritten = await scope.rewrite(
-        `export const load = () => import(${JSON.stringify("file://" + artifact)});`,
+        `export const load = () => import("${artifactUrl}");`,
         dir,
       );
     } finally {
@@ -388,6 +390,61 @@ describe("MDX cache shared-realm lifecycle", () => {
       await remove(dir, { recursive: true });
     }
     assertEquals(rewritten.includes("_bridge"), true);
+  });
+
+  it("subsequent lazy rewrites preserve source ranges after String.slice is replaced", async () => {
+    const dir = await makeTempDir();
+    const source = "export const value = 62;";
+    const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/StringRange.tsx", source);
+    const artifactUrl = pathToFileURL(artifact).href;
+    const scope = new LazyJsxImportScope();
+    const slice = String.prototype.slice;
+    const replace = String.prototype.replace;
+    const replaceAll = String.prototype.replaceAll;
+    const substring = String.prototype.substring;
+    const regexpExec = RegExp.prototype.exec;
+    const regexpReplace = RegExp.prototype[Symbol.replace];
+    let rewritten = "";
+    try {
+      await writeTextFile(artifact, source);
+      String.prototype.slice = function (...args) {
+        if (new Error().stack?.split("\n")[2]?.includes("/lazy-jsx-imports.ts")) {
+          throw new Error("fixture replaced String.slice");
+        }
+        return Reflect.apply(slice, this, args);
+      };
+      String.prototype.replace = () => {
+        throw new Error("fixture replaced String.replace");
+      };
+      String.prototype.replaceAll = () => {
+        throw new Error("fixture replaced String.replaceAll");
+      };
+      String.prototype.substring = () => {
+        throw new Error("fixture replaced String.substring");
+      };
+      RegExp.prototype[Symbol.replace] = () => {
+        throw new Error("fixture replaced RegExp Symbol.replace");
+      };
+      RegExp.prototype.exec = () => {
+        throw new Error("fixture replaced RegExp exec");
+      };
+      rewritten = await scope.rewrite(
+        `export const before = "https://example.com/a.js"; export const load = () => import("${artifactUrl}"); export const after = 2;`,
+        dir,
+      );
+    } finally {
+      String.prototype.slice = slice;
+      String.prototype.replace = replace;
+      String.prototype.replaceAll = replaceAll;
+      String.prototype.substring = substring;
+      RegExp.prototype.exec = regexpExec;
+      RegExp.prototype[Symbol.replace] = regexpReplace;
+      scope.release();
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(dir, { recursive: true });
+    }
+    assertEquals(rewritten.includes('export const before = "https://example.com/a.js"'), true);
+    assertEquals(rewritten.includes("export const after = 2"), true);
   });
 
   it("lazy retention and pruning do not consult Array species", async () => {

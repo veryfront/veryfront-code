@@ -33,6 +33,7 @@ interface Registration {
 const IntrinsicMap = Map;
 const hostNow = Date.now;
 const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeSlice = String.prototype.slice;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 const MapPrototypeDelete = Map.prototype.delete;
@@ -46,6 +47,10 @@ function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
 
 function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
   IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return IntrinsicReflectApply(StringPrototypeSlice, value, [start, end]) as string;
 }
 
 // Only evaluating parents occupy this bridge. Their callbacks retain lookup
@@ -245,20 +250,23 @@ export class LazyJsxImportScope {
         const path = resolveOwnedJsxArtifactPath(imported.n, cacheDir);
         const index = path === undefined ? undefined : mapGet(paths, path);
         if (index === undefined) continue;
-        result += parsed.masked.slice(cursor, imported.ss);
+        result += stringSlice(parsed.masked, cursor, imported.ss);
         if (imported.a >= 0) {
           // Options remain at the call site: await/yield, this, and arguments
           // belong to the authored scope, not to the recovery callback.
           const optionBinding = `${binding}_options`;
-          const invocation = parsed.masked.slice(imported.ss, imported.a) + optionBinding + ")";
+          const invocation = stringSlice(parsed.masked, imported.ss, imported.a) + optionBinding +
+            ")";
           const options = rewriteRange(imported.a, imported.se - 1);
           result += `${binding}[${index}]((${optionBinding}) => ${invocation}, ${options})`;
         } else {
-          result += `${binding}[${index}](() => ${parsed.masked.slice(imported.ss, imported.se)})`;
+          result += `${binding}[${index}](() => ${
+            stringSlice(parsed.masked, imported.ss, imported.se)
+          })`;
         }
         cursor = imported.se;
       }
-      return result + parsed.masked.slice(cursor, end);
+      return result + stringSlice(parsed.masked, cursor, end);
     };
     const rewritten = rewriteRange(0, parsed.masked.length);
     const declaration = `import ${binding}_bridge from ${stringify(bridgeModule)};\n` +

@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-writer
  */
 
-import { basename, join, toFileUrl } from "#veryfront/compat/path";
+import { join, toFileUrl } from "#veryfront/compat/path";
 import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -77,6 +77,13 @@ import {
 const mdxWriteFlight = new Singleflight<void>();
 const IntrinsicMap = Map;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicString = String;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const MDX_LAYOUT_DECLARATION_PATTERN = /\bconst\s+MDXLayout\b/;
+const MDX_LAYOUT_EXPORT_PATTERN = /export\s+\{[^}]*MDXLayout/;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeGet = Map.prototype.get;
@@ -85,6 +92,24 @@ const MapPrototypeSet = Map.prototype.set;
 
 function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
   return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return IntrinsicReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function pathBaseName(value: string): string {
+  const slash = IntrinsicReflectApply(StringPrototypeLastIndexOf, value, ["/"]) as number;
+  const backslash = IntrinsicReflectApply(StringPrototypeLastIndexOf, value, ["\\"]) as number;
+  return stringSlice(value, (slash > backslash ? slash : backslash) + 1);
+}
+
+function regexpMatches(pattern: RegExp, value: string): boolean {
+  return IntrinsicReflectApply(RegExpPrototypeExec, pattern, [value]) !== null;
 }
 
 function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -174,10 +199,12 @@ export function buildMdxModuleNamespaceKey(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
 ): Promise<string> {
-  const pinIdentity = dependencyPinningCacheKey?.startsWith("on:")
+  const pinIdentity = dependencyPinningCacheKey !== undefined &&
+      stringStartsWith(dependencyPinningCacheKey, "on:")
     ? `:pins-${dependencyPinningCacheKey}`
     : "";
-  const originIdentity = dependencyPinningCacheKey?.startsWith("on:") && moduleServerOrigin
+  const originIdentity = dependencyPinningCacheKey !== undefined &&
+      stringStartsWith(dependencyPinningCacheKey, "on:") && moduleServerOrigin
     ? `:origin-${moduleServerOrigin}`
     : "";
   const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
@@ -331,7 +358,7 @@ export async function doLoadModuleESM(
     );
     const effectiveContext: ESMLoaderContext = {
       ...context,
-      moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+      moduleServerOrigin: stringStartsWith(dependencySnapshot.cacheKey, "on:")
         ? context.moduleServerOrigin
         : undefined,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
@@ -395,7 +422,10 @@ export async function doLoadModuleESM(
     releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten, esmCacheDir, false);
     rewritten = await lazyJsxImports.rewrite(rewritten, esmCacheDir);
 
-    if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
+    if (
+      regexpMatches(MDX_LAYOUT_DECLARATION_PATTERN, rewritten) &&
+      !regexpMatches(MDX_LAYOUT_EXPORT_PATTERN, rewritten)
+    ) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
     }
 
@@ -502,7 +532,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import START`, {
       projectSlug,
       filePath,
-      codePreview: rewritten.substring(0, 200),
+      codePreview: stringSlice(rewritten, 0, 200),
     });
 
     setupSSRGlobals();
@@ -684,7 +714,7 @@ export async function doLoadModuleESM(
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
       () => import(`${toFileUrl(filePath).href}?v=${codeHash}`),
-      { "mdx.file_path": basename(filePath) || filePath },
+      { "mdx.file_path": pathBaseName(filePath) || filePath },
     ) as Record<string, unknown> & { __vfLayout?: React.ComponentType };
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
@@ -716,7 +746,7 @@ export async function doLoadModuleESM(
     logger.error(`${LOG_PREFIX_MDX_RENDERER} MDX ESM load failed:`, error);
 
     // Capture compile error for MCP flywheel
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = error instanceof Error ? error.message : IntrinsicString(error);
     getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
 
     throw error;
