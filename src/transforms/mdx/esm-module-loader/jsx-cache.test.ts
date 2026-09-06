@@ -21,6 +21,7 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { dirname, join } from "#veryfront/compat/path";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
@@ -1921,6 +1922,36 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("keeps the recovery fence when the renamed owner cannot be read", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-recovery-read-test-" });
+    const leasePath = join(tempDir, "jsx-read.mjs.lock");
+    const localFs = getLocalFs();
+    const originalRead = localFs.readTextFile.bind(localFs);
+    const createExclusive = localFs.createFileBytesExclusive;
+    if (!createExclusive || !localFs.utime) throw new Error("Expected atomic filesystem support");
+    try {
+      await writeTextFile(leasePath, "owner");
+      const staleAt = new Date(Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1000);
+      await localFs.utime(leasePath, staleAt, staleAt);
+      localFs.readTextFile = (path) =>
+        path.includes(".stale-")
+          ? Promise.reject(Object.assign(new Error("read unavailable"), { code: "EIO" }))
+          : originalRead(path);
+      assertEquals(
+        await __jsxCacheInternals.recoverStaleFilesystemLease(
+          leasePath,
+          Date.now(),
+          createExclusive,
+        ),
+        false,
+      );
+      assertEquals(await localFs.exists(`${leasePath}.transition`), true);
+    } finally {
+      localFs.readTextFile = originalRead;
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("recovers a stale lease behind an abandoned transition fence", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-stale-transition-test-" });
     const artifactPath = join(tempDir, "jsx-stale-transition.mjs");
@@ -2777,6 +2808,27 @@ describe("scheduled prune bound", () => {
     assertEquals(hasActiveScheduledJsxCachePrune(urgent), true);
     assertEquals(scheduledJsxCachePruneCount(), MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES);
     assertEquals(queuedJsxCachePruneCount(), 1);
+  });
+
+  it("promotes persisted work outside the originating cache context", async () => {
+    const firstRoot = await makeTempDir({ prefix: "vf-jsx-context-first-" });
+    const secondRoot = await makeTempDir({ prefix: "vf-jsx-context-second-" });
+    const target = `${persistedTestPrefix}cross-context`;
+    try {
+      await runWithCacheDir(firstRoot, () =>
+        __jsxCacheInternals.persistJsxCachePruneRequest(
+          target,
+          Date.now() + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
+        ));
+      await runWithCacheDir(
+        secondRoot,
+        () => __jsxCacheInternals.promotePersistedJsxCachePruneRequest(),
+      );
+      assertEquals(__jsxCacheInternals.hasScheduledJsxCachePrune(target), true);
+    } finally {
+      await remove(firstRoot, { recursive: true });
+      await remove(secondRoot, { recursive: true });
+    }
   });
 
   it("persists directories beyond the bounded in-memory backlog", async () => {

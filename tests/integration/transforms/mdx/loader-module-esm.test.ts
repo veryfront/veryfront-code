@@ -9,6 +9,7 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   makeTempDir,
+  readDir,
   readTextFile,
   remove,
   writeTextFile,
@@ -86,6 +87,23 @@ describe("esm-module-loader/loader loadModuleESM", () => {
       const code = `export const Symbol = "authored";
 export const load = () => import(${JSON.stringify(`file://${artifact}`)});`;
       const module = await runWithCacheDir(cacheDir, () => loadModuleESM(code, context));
+      context.moduleCache.clear();
+      const reloaded = await runWithCacheDir(cacheDir, () => loadModuleESM(code, context));
+      assertEquals(
+        (reloaded as { load: unknown }).load === (module as { load: unknown }).load,
+        true,
+        "unchanged parents must reuse their native module after an application cache eviction",
+      );
+      for await (const entry of readDir(cacheDir)) {
+        if (!entry.isDirectory) continue;
+        for await (const child of readDir(join(cacheDir, entry.name))) {
+          assertEquals(
+            child.name.endsWith(".mjs"),
+            false,
+            "process-specific lazy parent modules must be retired after evaluation",
+          );
+        }
+      }
       assertEquals(__jsxCacheInternals.isLazyArtifactRetained(artifact), false);
       await remove(artifact);
       const load = (module as { load: () => Promise<{ value: number }> }).load;

@@ -60,17 +60,27 @@ function createLoader(path: string, source: string, cacheDir: string): LazyLoade
     const stableOptions = snapshotImportOptions(options);
     const fs = getLocalFs();
     ensureJsxCacheSweepArmed(cacheDir);
-    await withJsxArtifactWriteCapacity(cacheDir, path, async (assertCapacityOwned) => {
-      await withJsxArtifactLock(path, async (assertArtifactOwned) => {
-        if (!await fs.exists(path)) {
-          await assertCapacityOwned();
-          await assertArtifactOwned();
-          await fs.writeTextFile(path, source);
-        }
-        await refreshJsxArtifactMtime(path, 0, Date.now(), true);
-        markJsxArtifactServed(path);
-      });
+    const hit = await withJsxArtifactLock(path, async () => {
+      if (!await fs.exists(path)) return false;
+      await refreshJsxArtifactMtime(path, 0, Date.now(), true);
+      markJsxArtifactServed(path);
+      return true;
     });
+    if (!hit) {
+      // Release the hit-check lease before acquiring quota. Writers and quota
+      // pruning consistently take the directory lease before artifact leases.
+      await withJsxArtifactWriteCapacity(cacheDir, path, async (assertCapacityOwned) => {
+        await withJsxArtifactLock(path, async (assertArtifactOwned) => {
+          if (!await fs.exists(path)) {
+            await assertCapacityOwned();
+            await assertArtifactOwned();
+            await fs.writeTextFile(path, source);
+          }
+          await refreshJsxArtifactMtime(path, 0, Date.now(), true);
+          markJsxArtifactServed(path);
+        });
+      });
+    }
     const release = await retainJsxArtifactsReferencedIn(
       `import ${JSON.stringify(`file://${path}`)};`,
       cacheDir,
@@ -108,6 +118,10 @@ function snapshotImportOptions(
 /** A temporary bridge from the host loader to one evaluated MDX module. */
 export class LazyJsxImportScope {
   #keys: string[] = [];
+
+  get hasRegistrations(): boolean {
+    return this.#keys.length > 0;
+  }
 
   async rewrite(code: string, cacheDir: string): Promise<string> {
     const parsed = await parseMaskedImports(code);

@@ -754,12 +754,14 @@ async function recoverStaleFilesystemLease(
     ) return false;
   }
   const stalePath = `${lockPath}.stale-${cryptoRandomUUID()}`;
+  let releaseTransition = true;
   try {
     try {
       modifiedAtMs = (await localFs.stat(lockPath)).mtime?.getTime() ?? nowMs;
       observedOwner = await localFs.readTextFile(lockPath);
       if (nowMs - modifiedAtMs < JSX_ARTIFACT_LEASE_STALE_MS) return false;
       await localFs.rename(lockPath, stalePath);
+      releaseTransition = false;
     } catch (error) {
       if (isNotFoundError(error)) return true;
       return false;
@@ -776,6 +778,7 @@ async function recoverStaleFilesystemLease(
       // is still empty. The fresh operation's ownership fence then either keeps
       // working or observes the newer waiter that won this restoration race.
       await restoreDisplacedFilesystemLease(lockPath, stalePath, renamedOwner, createExclusive);
+      releaseTransition = true;
       try {
         await localFs.remove(stalePath);
       } catch (_) {
@@ -784,6 +787,7 @@ async function recoverStaleFilesystemLease(
       }
       return false;
     }
+    releaseTransition = true;
     try {
       await localFs.remove(stalePath);
     } catch (_) {
@@ -794,8 +798,12 @@ async function recoverStaleFilesystemLease(
     }
     return true;
   } finally {
-    if (transitionOwner !== undefined) {
+    if (transitionOwner !== undefined && releaseTransition) {
       await removeFilesystemLeaseTransitionIfOwned(lockPath, transitionOwner);
+    } else if (!releaseTransition) {
+      // An unreadable or unrestored tombstone may belong to a displaced fresh
+      // owner. Preserve the fence until abandoned-lease recovery can run.
+      scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
     }
   }
 }
@@ -1037,8 +1045,15 @@ let persistedJsxCachePrunePromotion: Promise<void> | undefined;
 let persistedJsxCachePrunePromotionRequested = false;
 let persistedJsxCachePrunePromotionRetry: ReturnType<typeof setTimeout> | undefined;
 
+// Select the configured cache root on first use, not during module evaluation.
+// The process-wide pump then keeps that journal regardless of later contexts.
+let persistedJsxCachePruneRequestDirectory: string | undefined;
+
 function getPersistedJsxCachePruneRequestDirectory(): string {
-  return join(getMdxEsmCacheDir(), JSX_CACHE_PRUNE_REQUEST_DIRECTORY);
+  return persistedJsxCachePruneRequestDirectory ??= join(
+    getMdxEsmCacheDir(),
+    JSX_CACHE_PRUNE_REQUEST_DIRECTORY,
+  );
 }
 
 async function getPersistedJsxCachePruneRequestPath(
@@ -1995,6 +2010,7 @@ async function collectExcessJsxArtifacts(
  * render that cannot age its own artifacts.
  */
 export const __jsxCacheInternals = {
+  recoverStaleFilesystemLease,
   cancelScheduledJsxCachePrunes,
   clearPersistedJsxCachePruneRequestsForTests,
   collectExcessJsxArtifacts,

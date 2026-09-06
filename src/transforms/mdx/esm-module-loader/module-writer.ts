@@ -64,6 +64,25 @@ import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-ex
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
 
+const temporaryParentReferences = new Map<string, {
+  count: number;
+  cleanup?: Promise<void>;
+}>();
+
+async function retainTemporaryParent(path: string): Promise<() => Promise<void>> {
+  const entry = temporaryParentReferences.get(path) ?? { count: 0 };
+  temporaryParentReferences.set(path, entry);
+  entry.count++;
+  // A new evaluation must wait for an already-started removal before writing.
+  await entry.cleanup;
+  return async () => {
+    if (--entry.count !== 0) return;
+    entry.cleanup = getLocalFs().remove(path).catch(() => undefined);
+    await entry.cleanup;
+    if (entry.count === 0) temporaryParentReferences.delete(path);
+  };
+}
+
 export function buildMdxModuleNamespaceKey(
   projectId: string,
   reactVersion: string,
@@ -198,6 +217,7 @@ export async function doLoadModuleESM(
   /** Releases the JSX artifacts this render pins once its import settles. */
   let releaseJsxArtifacts: (() => void) | undefined;
   const lazyJsxImports = new LazyJsxImportScope();
+  const temporaryParentFiles = new Map<string, () => Promise<void>>();
 
   try {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter START`, { projectSlug });
@@ -346,7 +366,16 @@ export async function doLoadModuleESM(
     const nsDir = cacheIdentity.namespaceDir;
     const localFs = getLocalFs();
 
-    let filePath = cacheIdentity.filePath;
+    const parentFilePath = async (hash: string): Promise<string> => {
+      const path = join(nsDir, `${hash}.mjs`);
+      // Bridge identities are host-private, but unchanged modules must reuse
+      // their native URL within the host. Retire files after all evaluations.
+      if (lazyJsxImports.hasRegistrations && !temporaryParentFiles.has(path)) {
+        temporaryParentFiles.set(path, await retainTemporaryParent(path));
+      }
+      return path;
+    };
+    let filePath = await parentFilePath(codeHash);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
@@ -417,7 +446,7 @@ export async function doLoadModuleESM(
 
           // Re-write the module file with refreshed HTTP bundle paths
           const refreshedHash = hashString(rewritten);
-          const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+          const refreshedPath = await parentFilePath(refreshedHash);
           await mdxWriteFlight.do(refreshedPath, async () => {
             const written = await writeCacheFile(
               getLocalFs(),
@@ -437,7 +466,7 @@ export async function doLoadModuleESM(
           compositeKey = `${namespaceKey}:${codeHash}`;
 
           // Clean up orphaned module file if path changed
-          if (refreshedPath !== originalFilePath) {
+          if (refreshedPath !== originalFilePath && !temporaryParentFiles.has(originalFilePath)) {
             getLocalFs().remove(originalFilePath).catch((error) =>
               logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
                 originalFilePath,
@@ -497,7 +526,7 @@ export async function doLoadModuleESM(
 
         // Re-write the module file with regenerated framework bundle paths
         const refreshedHash = hashString(rewritten);
-        const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+        const refreshedPath = await parentFilePath(refreshedHash);
         await mdxWriteFlight.do(refreshedPath, async () => {
           const written = await writeCacheFile(
             getLocalFs(),
@@ -517,7 +546,7 @@ export async function doLoadModuleESM(
         compositeKey = `${namespaceKey}:${codeHash}`;
 
         // Clean up orphaned module file if path changed
-        if (refreshedPath !== originalFilePath) {
+        if (refreshedPath !== originalFilePath && !temporaryParentFiles.has(originalFilePath)) {
           getLocalFs().remove(originalFilePath).catch((error) =>
             logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
               originalFilePath,
@@ -595,5 +624,8 @@ export async function doLoadModuleESM(
   } finally {
     releaseJsxArtifacts?.();
     lazyJsxImports.release();
+    for (const release of temporaryParentFiles.values()) {
+      await release();
+    }
   }
 }

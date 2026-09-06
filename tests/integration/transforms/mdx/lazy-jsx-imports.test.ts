@@ -14,7 +14,10 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { __jsxCacheInternals } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import {
+  __jsxCacheInternals,
+  withJsxArtifactWriteCapacity,
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import {
   __lazyJsxImportInternals,
   LazyJsxImportScope,
@@ -161,6 +164,55 @@ export function* generate() { return import(${specifier}, yield "options"); }`;
       await assertRejects(() => import("file:///missing/module.mjs"));
     } finally {
       scope.release();
+    }
+  });
+
+  it("loads an existing artifact without waiting for the directory write quota", async () => {
+    const dir = await makeTempDir({ prefix: "vf-lazy-hit-" });
+    const source = "export const value = 29;";
+    const artifact = join(dir, buildMdxJsxCacheFileName("/project/Lazy.tsx", source));
+    const scope = new LazyJsxImportScope();
+    const quotaEntered = Promise.withResolvers<void>();
+    const releaseQuota = Promise.withResolvers<void>();
+    let quota: Promise<void> | undefined;
+    let pending: Promise<{ value: number }> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await writeTextFile(artifact, source);
+      const parent = join(dir, "parent.mjs");
+      await writeTextFile(
+        parent,
+        await scope.rewrite(
+          `export const load = () => import(${JSON.stringify(`file://${artifact}`)});`,
+          dir,
+        ),
+      );
+      const module = await import(`file://${parent}`);
+      scope.release();
+      quota = withJsxArtifactWriteCapacity(dir, artifact, async () => {
+        quotaEntered.resolve();
+        await releaseQuota.promise;
+      });
+      await quotaEntered.promise;
+      pending = module.load();
+      assertExists(pending);
+      const completedBeforeRelease = await Promise.race([
+        pending.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 500);
+        }),
+      ]);
+      releaseQuota.resolve();
+      await quota;
+      assertEquals((await pending).value, 29);
+      assertEquals(completedBeforeRelease, true);
+    } finally {
+      clearTimeout(timer);
+      releaseQuota.resolve();
+      await quota;
+      await pending;
+      scope.release();
+      await remove(dir, { recursive: true });
     }
   });
 
