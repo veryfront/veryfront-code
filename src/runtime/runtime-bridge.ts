@@ -1298,7 +1298,16 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
   for await (const part of stream) {
     try {
-      yield materializeRuntimeStreamPart(part);
+      const materializedPart = materializeRuntimeStreamPart(part);
+      if (
+        typeof materializedPart === "object" && materializedPart !== null &&
+        (materializedPart as { type?: unknown }).type === "error"
+      ) {
+        throw createRuntimeProviderStreamFailure(
+          (materializedPart as { error?: unknown }).error,
+        );
+      }
+      yield materializedPart;
     } catch (error) {
       throw createRuntimeProviderStreamFailure(error);
     }

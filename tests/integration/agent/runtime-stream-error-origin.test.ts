@@ -5,6 +5,7 @@ import { agent, runWithRunEventSink } from "#veryfront/agent/index.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { defineError } from "#veryfront/errors";
+import { ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { createSSECollector } from "#veryfront/agent/runtime/chat-stream-handler.test-helpers.ts";
 import {
@@ -80,6 +81,14 @@ async function streamProviderPartBody(
   providerPart: unknown,
   suffix: string,
 ): Promise<string> {
+  return await streamProviderPartsBody(mode, [providerPart], suffix);
+}
+
+async function streamProviderPartsBody(
+  mode: "legacy" | "active",
+  providerParts: readonly unknown[],
+  suffix: string,
+): Promise<string> {
   const model: ModelRuntime = {
     provider: "hosted",
     modelId: `hosted/provider-part-${suffix}-${mode}`,
@@ -88,7 +97,7 @@ async function streamProviderPartBody(
       Promise.resolve({
         stream: new ReadableStream({
           start(controller) {
-            controller.enqueue(providerPart);
+            for (const providerPart of providerParts) controller.enqueue(providerPart);
             controller.close();
           },
         }),
@@ -461,6 +470,60 @@ describe("agent runtime stream error provenance", () => {
         assertStringIncludes(body, '"error":"Provider stream failed"');
         assertEquals(body.includes(privateMarker), false);
         assertEquals(body.includes('"code"'), false);
+      });
+    });
+
+    it(`redacts and terminates unknown ${mode} provider error parts`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const privateMarker = `private-provider-error-part-${mode}`;
+        const body = await streamProviderPartsBody(mode, [
+          { type: "error", error: new Error(privateMarker) },
+          { type: "finish", finishReason: "stop", totalUsage: null },
+        ], "unknown-error");
+
+        assertStringIncludes(body, '"error":"Provider stream failed"');
+        assertEquals(body.includes(privateMarker), false);
+        assertEquals(body.includes('"type":"message-finish"'), false);
+      });
+    });
+
+    it(`preserves curated quota and credit codes and terminates ${mode} provider error parts`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const creditError = new Error("Provider request failed with status 402");
+        Object.defineProperty(creditError, "responseBody", {
+          value: JSON.stringify({
+            slug: "insufficient-credits",
+            detail: `private-provider-credit-part-${mode}`,
+          }),
+        });
+        const failures = [
+          {
+            error: new ProviderQuotaError({
+              provider: "openai",
+              status: 429,
+              message: `private-provider-quota-part-${mode}`,
+              retryable: false,
+            }),
+            code: "AI_PROVIDER_BILLING_ERROR",
+            privateMarker: `private-provider-quota-part-${mode}`,
+          },
+          {
+            error: creditError,
+            code: "INSUFFICIENT_CREDITS",
+            privateMarker: `private-provider-credit-part-${mode}`,
+          },
+        ] as const;
+
+        for (const [index, failure] of failures.entries()) {
+          const body = await streamProviderPartsBody(mode, [
+            { type: "error", error: failure.error },
+            { type: "finish", finishReason: "stop", totalUsage: null },
+          ], `known-error-${index}`);
+
+          assertStringIncludes(body, `"code":"${failure.code}"`);
+          assertEquals(body.includes(failure.privateMarker), false);
+          assertEquals(body.includes('"type":"message-finish"'), false);
+        }
       });
     });
 
