@@ -758,8 +758,17 @@ describe("securityMiddleware", () => {
     ];
 
     await validateProjection(history.slice(0, 2), history);
+    await validateProjection(structuredClone(history.slice(0, 2)), structuredClone(history));
     await assertRejects(
       () => validateProjection([history[3]!, history[5]!], history),
+      Error,
+      "Input validation failed",
+    );
+    const duplicateIds = structuredClone(history);
+    duplicateIds[3]!.id = "old-first";
+    duplicateIds[5]!.id = "old-second";
+    await assertRejects(
+      () => validateProjection(structuredClone([duplicateIds[3]!, duplicateIds[5]!]), duplicateIds),
       Error,
       "Input validation failed",
     );
@@ -2131,6 +2140,22 @@ describe("securityMiddleware", () => {
     const text = textPartValue(context.input[0]?.parts[0]) ?? "";
     assertEquals(text.includes("<script"), false);
     assertEquals(text.includes("alert(1)"), false);
+  });
+
+  it("preserves an inherited text discriminator when sanitizing", async () => {
+    const middleware = securityMiddleware({ input: { sanitize: true } });
+    const context = createContext({
+      input: [{
+        id: "user-1",
+        role: "user",
+        parts: [Object.assign(Object.create({ type: "text" }), {
+          text: "<script>x</script>Hello",
+        })],
+      }],
+    });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    if (typeof context.input === "string") throw new Error("Expected structured input");
+    assertEquals(context.input[0]?.parts[0], { type: "text", text: "Hello" });
   });
 
   it("sanitizes every caller-authored message rather than only a lone text value", async () => {

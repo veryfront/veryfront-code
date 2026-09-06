@@ -3,12 +3,59 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import type { Memory } from "#veryfront/agent/memory/memory-interface.ts";
-import { ConversationMemory } from "#veryfront/agent/memory/memory.ts";
+import { beginMemoryTransaction, ConversationMemory } from "#veryfront/agent/memory/memory.ts";
 import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import type { ModelRuntime } from "#veryfront/provider";
-import { AgentRuntime } from "./index.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 
 describe("custom memory transaction boundary", () => {
+  it("preserves unchanged historical runs when a retaining adapter deserializes every read", async () => {
+    const store = new ConversationMemory<Message>({ type: "conversation", maxMessages: 3 });
+    for (
+      const [id, role, text] of [
+        ["older", "user", "older"],
+        ["first", "system", "forbid"],
+        ["second", "system", "den"],
+      ] as const
+    ) {
+      await store.add({ id, role, parts: [{ type: "text", text }] });
+    }
+    const model: ModelRuntime = {
+      provider: "openai",
+      modelId: "veryfront-cloud/openai/deserialized-memory",
+      doGenerate: () =>
+        Promise.resolve({
+          content: [{ type: "text" as const, text: "answer" }],
+          finishReason: "stop" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        }),
+      doStream: () => Promise.reject(new Error("Expected generate")),
+    };
+    const runtime = new AgentRuntime("deserialized-memory", {
+      model: model.modelId,
+      system: "Helpful",
+      maxSteps: 1,
+      middleware: [securityMiddleware({ input: { blockedPatterns: [/forbidden/] } })],
+    }, { resolveModelRuntime: () => model });
+    const memory: Memory<Message> = {
+      add: store.add.bind(store),
+      getMessages: async () => structuredClone(await store.getMessages()),
+      clear: store.clear.bind(store),
+      getStats: store.getStats.bind(store),
+      async beginTransaction() {
+        const transaction = await beginMemoryTransaction(store);
+        return {
+          add: transaction.add.bind(transaction),
+          getMessages: async () => structuredClone(await transaction.getMessages()),
+          commit: transaction.commit.bind(transaction),
+          rollback: transaction.rollback.bind(transaction),
+        };
+      },
+    };
+    Reflect.set(runtime, "memory", memory);
+    assertEquals((await runtime.generate("benign")).text, "answer");
+  });
+
   it("rolls back output staged before an adapter add failure", async () => {
     const store = new ConversationMemory<Message>({ type: "conversation" });
     let commits = 0;

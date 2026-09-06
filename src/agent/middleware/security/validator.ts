@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   AgentContext,
   AgentResponse,
@@ -674,8 +675,27 @@ function extractMergedRunTexts(
   messages: Message[],
   mustInclude?: ReadonlySet<Message>,
   mustAlsoInclude?: ReadonlySet<Message>,
-  previousRuns?: readonly Message[][],
+  previousMessages?: Message[],
 ): string[] {
+  const previousRuns = previousMessages && extractMergedRuns(previousMessages);
+  const uniqueById = (values: Message[]): Map<string, Message | undefined> => {
+    const unique = new Map<string, Message | undefined>();
+    for (const message of values) {
+      unique.set(message.id, unique.has(message.id) ? undefined : message);
+    }
+    return unique;
+  };
+  const previousById = previousMessages && uniqueById(previousMessages);
+  const projectedById = previousMessages && uniqueById(messages);
+  const sameOccurrence = (previous: Message, projected: Message | undefined): boolean => {
+    if (previous === projected) return true;
+    if (!projected || !previous.id || previous.id !== projected.id) return false;
+    // Custom transactional memory can deserialize each read. Stable IDs plus
+    // complete snapshot equality recover provenance only when neither snapshot
+    // contains an ambiguous duplicate occurrence.
+    return previousById?.get(previous.id) === previous &&
+      projectedById?.get(projected.id) === projected && isDeepStrictEqual(previous, projected);
+  };
   const runTexts = new Set<string>();
   for (const run of extractMergedRuns(messages)) {
     // Only an identical grouping keeps its provenance. Comparing text alone
@@ -683,7 +703,8 @@ function extractMergedRunTexts(
     // different historical run, or a run shortened by trimming.
     if (
       previousRuns?.some((previous) =>
-        previous.length === run.length && previous.every((message, index) => message === run[index])
+        previous.length === run.length &&
+        previous.every((message, index) => sameOccurrence(message, run[index]))
       )
     ) continue;
     if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
@@ -770,6 +791,7 @@ function collapseTextParts(parts: Message["parts"], text: string | undefined): M
 function copySanitizedTextPart(part: MessagePart, text: string): MessagePart {
   try {
     const descriptors = Object.getOwnPropertyDescriptors(part);
+    descriptors.type = { value: "text", enumerable: true, configurable: true, writable: true };
     descriptors.text = { value: text, enumerable: true, configurable: true, writable: true };
     return Object.create(Object.prototype, descriptors);
   } catch {
@@ -1503,7 +1525,7 @@ export function securityMiddleware(
           messages,
           undefined,
           undefined,
-          previousMessages && extractMergedRuns(previousMessages),
+          previousMessages,
         );
         await assertInputTextsValid(
           inputValidator,
