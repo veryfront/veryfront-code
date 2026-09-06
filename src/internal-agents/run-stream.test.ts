@@ -930,7 +930,9 @@ describe("internal-agents/run-stream", () => {
           Promise.resolve({
             stream: new ReadableStream<unknown>({
               start(controller) {
-                controller.error(providerError);
+                controller.error(
+                  lifecycleMode === "legacy" ? { lastError: providerError } : providerError,
+                );
               },
             }),
           }),

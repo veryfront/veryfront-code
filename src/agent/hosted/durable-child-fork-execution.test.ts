@@ -32,6 +32,7 @@ import {
   getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import type { AgentTraceAttributes } from "./trace-attributes.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -499,7 +500,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
   });
 
   it("records standard hosted invoke trace attributes while building results", () => {
-    const recordedAttributes: unknown[] = [];
+    const recordedAttributes: AgentTraceAttributes[] = [];
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,
       childRunId: "run_child_1",
@@ -569,6 +570,21 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "gen_ai.usage.output_tokens": 4,
       "gen_ai.usage.total_tokens": 7,
     });
+
+    const codedLocalFailure: ChildRunExecutionResult = {
+      ...localFailure,
+      terminalErrorCode: "RESOURCE_LIMIT_EXCEEDED",
+    };
+    recorder.recordLocalResult(codedLocalFailure);
+    assertEquals(recordedAttributes.at(-1)?.["error.type"], "RESOURCE_LIMIT_EXCEEDED");
+
+    recorder.recordSuccess({
+      result: codedLocalFailure,
+      snapshot: buildChildRunExecutionSnapshot(codedLocalFailure),
+      identifiers,
+      targets,
+    });
+    assertEquals(recordedAttributes.at(-1)?.["error.type"], "RESOURCE_LIMIT_EXCEEDED");
 
     assertEquals(
       recorder.recordSetupFailure({

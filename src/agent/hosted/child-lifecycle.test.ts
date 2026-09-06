@@ -16,6 +16,7 @@ import {
 import { handleHostedChildForkFailure } from "./child-fork-stream-execution.ts";
 import { HostedChildTerminalStateError } from "./child-status.ts";
 import { getHostedStreamErrorText } from "./stream-terminal-error.ts";
+import { ForkRuntimeStreamError } from "../streaming/fork-runtime-types.ts";
 
 describe("agent/hosted-child-lifecycle", () => {
   it("identifies externally persisted terminal states", () => {
@@ -811,5 +812,34 @@ describe("agent/hosted-child-lifecycle", () => {
       "OUTPUT_SCHEMA_NOT_CLOSED",
       "a child run's schema rejection stays classified after crossing the boundary",
     );
+  });
+
+  it("preserves a fork runtime terminal code across the hosted child boundary", async () => {
+    const snapshots: ChildRunExecutionSnapshot[] = [];
+    const childResult = await handleHostedChildForkFailure({
+      error: new ForkRuntimeStreamError(
+        "Resource limit exceeded",
+        "RESOURCE_LIMIT_EXCEEDED",
+      ),
+      description: "Summarize the repo",
+      kind: "invoke_agent",
+      finalText: "",
+      toolCalls: [],
+      toolResults: [],
+      startTime: Date.now(),
+      onSettled: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => Promise.resolve(childResult),
+      getExecutionSnapshot: () => snapshots[0] ?? null,
+    });
+
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.terminalErrorCode, "RESOURCE_LIMIT_EXCEEDED");
+    assertEquals(result.terminalState.terminalErrorMessage, "Resource limit exceeded");
   });
 });

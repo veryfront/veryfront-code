@@ -301,7 +301,9 @@ export function buildHostedDurableChildInvokeSuccessResult<
     childMessageId: input.identifiers.childMessageId,
     sourceTargetKind: input.targets.sourceTargetKind,
     runtimeTargetKind: input.targets.runtimeTargetKind,
-    terminalErrorCode: input.snapshot.success ? null : terminalError?.code ?? "INVOKE_AGENT_FAILED",
+    terminalErrorCode: input.snapshot.success
+      ? null
+      : input.snapshot.terminalErrorCode ?? terminalError?.code ?? "INVOKE_AGENT_FAILED",
     terminalErrorMessage: input.snapshot.success
       ? null
       : terminalError?.message ?? input.snapshot.error,
@@ -331,7 +333,9 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
       annotate({
         status: result.success ? "completed" : "failed",
         usage: result.usage,
-        terminalErrorCode: result.success ? null : input.executionFailedCode,
+        terminalErrorCode: result.success
+          ? null
+          : result.terminalErrorCode ?? input.executionFailedCode,
         terminalErrorMessage: result.success ? null : result.error,
       });
 
@@ -401,7 +405,9 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
         targetBranchId: success.targets.targetBranchId,
         status: success.snapshot.success ? "completed" : "failed",
         usage: success.snapshot.usage,
-        terminalErrorCode: success.snapshot.success ? null : input.executionFailedCode,
+        terminalErrorCode: success.snapshot.success
+          ? null
+          : success.snapshot.terminalErrorCode ?? input.executionFailedCode,
         terminalErrorMessage: success.snapshot.success ? null : success.snapshot.error,
       });
 

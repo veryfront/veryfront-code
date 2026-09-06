@@ -99,10 +99,20 @@ export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
 }
 
 function hasProviderStreamErrorEvidence(error: unknown): boolean {
+  let current = error;
   try {
-    if (error instanceof ProviderError) return true;
-    return typeof readOwnDataProperty(error, "responseBody", "provider stream error", false) ===
-      "string";
+    for (let depth = 0; depth < 64; depth += 1) {
+      if (current instanceof ProviderError) return true;
+      if (
+        typeof readOwnDataProperty(current, "responseBody", "provider stream error", false) ===
+          "string"
+      ) {
+        return true;
+      }
+      current = readOwnDataProperty(current, "lastError", "provider stream error", false);
+      if (current === undefined) return false;
+    }
+    return false;
   } catch {
     return false;
   }
