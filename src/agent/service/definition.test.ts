@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentContract,
@@ -185,6 +185,57 @@ describe("agent/agent-service", () => {
 
     assertEquals(response.status, 200);
     assertEquals(await response.json(), expected);
+  });
+
+  it("uses only own slots from HeadersInit arrays and tuple entries", async () => {
+    const runtime = defineAgentService({
+      serviceName: "headers-init-own-slots-service",
+      agent: assistant,
+    }).createRuntime({
+      routes: [{
+        method: "GET",
+        path: "/headers",
+        handler: (request) =>
+          Response.json({
+            own: request.headers.get("X-Own"),
+            inherited: request.headers.get("X-Inherited"),
+          }),
+      }],
+    });
+    let inheritedReads = 0;
+    const outerPrototype = Object.create(Array.prototype);
+    Object.defineProperty(outerPrototype, "1", {
+      configurable: true,
+      get() {
+        inheritedReads += 1;
+        return ["X-Inherited", "outer"];
+      },
+    });
+    const headers: [string, string][] = [["X-Own", "present"]];
+    headers.length = 2;
+    Object.setPrototypeOf(headers, outerPrototype);
+
+    const response = await runtime.request("/headers", { headers });
+    assertEquals(inheritedReads, 0);
+    assertEquals(await response.json(), { own: "present", inherited: null });
+
+    const entryPrototype = Object.create(Array.prototype);
+    Object.defineProperty(entryPrototype, "1", {
+      configurable: true,
+      get() {
+        inheritedReads += 1;
+        return "inherited";
+      },
+    });
+    const sparseEntry = ["X-Sparse"] as unknown as [string, string];
+    sparseEntry.length = 2;
+    Object.setPrototypeOf(sparseEntry, entryPrototype);
+    await assertRejects(
+      async () => await runtime.request("/headers", { headers: [sparseEntry] }),
+      TypeError,
+      "Response header entry must contain a name and value",
+    );
+    assertEquals(inheritedReads, 0);
   });
 
   it("dispatches host-owned routes without taking over product policy", async () => {
