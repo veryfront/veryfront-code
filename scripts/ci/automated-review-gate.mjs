@@ -1144,6 +1144,56 @@ async function collectAll(github, endpoint, parameters, source) {
   return items;
 }
 
+async function collectAutomatedReviewEvidence(
+  github,
+  common,
+  pullNumber,
+  headSha,
+  sourcePrefix = "",
+) {
+  const source = (name) => `${sourcePrefix}${name}`;
+  const [reviews, comments, reactions, events, statuses, timeline] =
+    await Promise.all([
+      collectAll(
+        github,
+        github.rest.pulls.listReviews,
+        { ...common, pull_number: pullNumber },
+        source("reviews"),
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listComments,
+        { ...common, issue_number: pullNumber },
+        source("comments"),
+      ),
+      collectAll(
+        github,
+        github.rest.reactions.listForIssue,
+        { ...common, issue_number: pullNumber },
+        source("pull request reactions"),
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { ...common, issue_number: pullNumber },
+        source("pull request events"),
+      ),
+      collectAll(
+        github,
+        github.rest.repos.listCommitStatusesForRef,
+        { ...common, ref: headSha },
+        source("review statuses"),
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEventsForTimeline,
+        { ...common, issue_number: pullNumber },
+        source("pull request timeline"),
+      ),
+    ]);
+  return { reviews, comments, reactions, events, statuses, timeline };
+}
+
 async function resolveCommitRef(github, common, ref) {
   try {
     const response = await github.rest.repos.getCommit({ ...common, ref });
@@ -1462,46 +1512,13 @@ export async function publishAutomatedReviewStatus({
   if (!failure) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, reactions, events, statuses, timeline] = await Promise.all(
-        [
-          collectAll(
-            github,
-            github.rest.pulls.listReviews,
-            { ...common, pull_number: pullNumber },
-            "reviews",
-          ),
-          collectAll(
-            github,
-            github.rest.issues.listComments,
-            { ...common, issue_number: pullNumber },
-            "comments",
-          ),
-          collectAll(
-            github,
-            github.rest.reactions.listForIssue,
-            { ...common, issue_number: pullNumber },
-            "pull request reactions",
-          ),
-          collectAll(
-            github,
-            github.rest.issues.listEvents,
-            { ...common, issue_number: pullNumber },
-            "pull request events",
-          ),
-          collectAll(
-            github,
-            github.rest.repos.listCommitStatusesForRef,
-            { ...common, ref: headSha },
-            "review statuses",
-          ),
-          collectAll(
-            github,
-            github.rest.issues.listEventsForTimeline,
-            { ...common, issue_number: pullNumber },
-            "pull request timeline",
-          ),
-        ],
-      );
+      const { reviews, comments, reactions, events, statuses, timeline } =
+        await collectAutomatedReviewEvidence(
+          github,
+          common,
+          pullNumber,
+          headSha,
+        );
       effectiveReviewResetKey = durableReviewRequestKey(
         events,
         reviewResetKey,
@@ -2919,45 +2936,13 @@ async function readMergeGroupSourceEvidence({
   pullNumber,
   sourceHeadSha,
 }) {
-  const [reviews, comments, reactions, events, statuses, timeline] = await Promise.all([
-    collectAll(
-      github,
-      github.rest.pulls.listReviews,
-      { ...common, pull_number: pullNumber },
-      "source reviews",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listComments,
-      { ...common, issue_number: pullNumber },
-      "source comments",
-    ),
-    collectAll(
-      github,
-      github.rest.reactions.listForIssue,
-      { ...common, issue_number: pullNumber },
-      "source pull request reactions",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEvents,
-      { ...common, issue_number: pullNumber },
-      "source pull request events",
-    ),
-    collectAll(
-      github,
-      github.rest.repos.listCommitStatusesForRef,
-      { ...common, ref: sourceHeadSha },
-      "source review statuses",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEventsForTimeline,
-      { ...common, issue_number: pullNumber },
-      "source review timeline",
-    ),
-  ]);
-  return { reviews, comments, reactions, events, statuses, timeline };
+  return collectAutomatedReviewEvidence(
+    github,
+    common,
+    pullNumber,
+    sourceHeadSha,
+    "source ",
+  );
 }
 
 async function requireCurrentAutomatedReview({
@@ -3482,44 +3467,14 @@ async function revalidateAutomatedReviewRequest({
   marker,
 }) {
   const common = { owner, repo };
-  const [reviews, comments, reactions, events, statuses, timeline] = await Promise.all([
-    collectAll(
+  const { reviews, comments, reactions, events, statuses, timeline } =
+    await collectAutomatedReviewEvidence(
       github,
-      github.rest.pulls.listReviews,
-      { ...common, pull_number: pullNumber },
-      "final request reviews",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listComments,
-      { ...common, issue_number: pullNumber },
-      "final request comments",
-    ),
-    collectAll(
-      github,
-      github.rest.reactions.listForIssue,
-      { ...common, issue_number: pullNumber },
-      "final request reactions",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEvents,
-      { ...common, issue_number: pullNumber },
-      "final request events",
-    ),
-    collectAll(
-      github,
-      github.rest.repos.listCommitStatusesForRef,
-      { ...common, ref: headSha },
-      "final request statuses",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEventsForTimeline,
-      { ...common, issue_number: pullNumber },
-      "final request timeline",
-    ),
-  ]);
+      common,
+      pullNumber,
+      headSha,
+      "final request ",
+    );
   if (validateRequestEpoch) {
     const currentKey = resolveAutomatedReviewRequestEpochKey(
       events,
