@@ -9,6 +9,7 @@ import {
 } from "../adapters/file-system-capabilities.ts";
 import { isProxyWithoutHooks } from "./error-introspection.ts";
 import { isNotFoundError } from "./not-found-error.ts";
+import { primordialPromiseAll, primordialPromiseCatch } from "./primordials/promise.ts";
 
 export { isNotFoundError };
 
@@ -177,7 +178,7 @@ class NodeFileSystem implements FileSystem {
       );
     }
 
-    const [fsModule, osModule, pathModule] = await Promise.all([
+    const [fsModule, osModule, pathModule] = await primordialPromiseAll([
       import("node:fs/promises"),
       import("node:os"),
       import("node:path"),
@@ -206,12 +207,12 @@ class NodeFileSystem implements FileSystem {
 
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
-    return this.getFs().readFile(path, { encoding: "utf8" }) as Promise<string>;
+    return await (this.getFs().readFile(path, { encoding: "utf8" }) as Promise<string>);
   }
 
   async readFile(path: string): Promise<Uint8Array> {
     await this.ensureInitialized();
-    return this.getFs().readFile(path) as Promise<Uint8Array>;
+    return await (this.getFs().readFile(path) as Promise<Uint8Array>);
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
@@ -311,7 +312,7 @@ class NodeFileSystem implements FileSystem {
       // refuses one, and refuses it with a different code on Node (ERR_FS_EISDIR)
       // than on Bun (EFAULT). Ask the filesystem instead of reading the code.
       if (recursive) throw error;
-      const info = await this.getFs().lstat(path).catch(() => undefined);
+      const info = await primordialPromiseCatch(this.getFs().lstat(path), () => undefined);
       if (!info?.isDirectory()) throw error;
       await this.getFs().rmdir(path);
     }
@@ -465,11 +466,18 @@ export function createFileSystem(): FileSystem {
     | Promise<import("../adapters/base.ts").FileSystemAdapter>
     | undefined;
   const loadSemanticAdapter = () =>
-    semanticAdapter ??= isDeno
-      ? import("../adapters/runtime/deno/filesystem-adapter.ts")
-        .then(({ DenoFileSystemAdapter }) => new DenoFileSystemAdapter())
-      : import("../adapters/runtime/shared/node-filesystem-adapter.ts")
-        .then(({ NodeCompatibleFileSystemAdapter }) => new NodeCompatibleFileSystemAdapter());
+    semanticAdapter ??= (async () => {
+      if (isDeno) {
+        const { DenoFileSystemAdapter } = await import(
+          "../adapters/runtime/deno/filesystem-adapter.ts"
+        );
+        return new DenoFileSystemAdapter();
+      }
+      const { NodeCompatibleFileSystemAdapter } = await import(
+        "../adapters/runtime/shared/node-filesystem-adapter.ts"
+      );
+      return new NodeCompatibleFileSystemAdapter();
+    })();
 
   Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
     value: async (

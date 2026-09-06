@@ -9,6 +9,7 @@
  */
 
 import { join, toFileUrl } from "#veryfront/compat/path";
+import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
@@ -142,7 +143,7 @@ async function retainTemporaryParent(path: string, cacheDir: string): Promise<()
   }
   return async () => {
     if (--entry.count !== 0) return;
-    entry.cleanup = getLocalFs().remove(path).catch(() => undefined);
+    entry.cleanup = primordialPromiseCatch(getLocalFs().remove(path), () => undefined);
     await entry.cleanup;
     if (entry.count === 0) {
       releasePin();
@@ -274,7 +275,11 @@ async function verifyMdxCacheFile(
 }
 
 /** Internal test seam for cache verification error handling. */
-export const __moduleWriterInternals = { verifyMdxCacheFile, releaseTemporaryParents };
+export const __moduleWriterInternals = {
+  verifyMdxCacheFile,
+  releaseTemporaryParents,
+  retainTemporaryParent,
+};
 
 export async function doLoadModuleESM(
   compiledProgramCode: string,
@@ -552,11 +557,13 @@ export async function doLoadModuleESM(
           if (
             refreshedPath !== originalFilePath && !mapHas(temporaryParentFiles, originalFilePath)
           ) {
-            getLocalFs().remove(originalFilePath).catch((error) =>
-              logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
-                originalFilePath,
-                error,
-              })
+            void primordialPromiseCatch(
+              getLocalFs().remove(originalFilePath),
+              (error) =>
+                logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
+                  originalFilePath,
+                  error,
+                }),
             );
           }
 
@@ -627,11 +634,13 @@ export async function doLoadModuleESM(
 
         // Clean up orphaned module file if path changed
         if (refreshedPath !== originalFilePath && !mapHas(temporaryParentFiles, originalFilePath)) {
-          getLocalFs().remove(originalFilePath).catch((error) =>
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
-              originalFilePath,
-              error,
-            })
+          void primordialPromiseCatch(
+            getLocalFs().remove(originalFilePath),
+            (error) =>
+              logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
+                originalFilePath,
+                error,
+              }),
           );
         }
 

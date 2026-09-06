@@ -3,8 +3,19 @@ import { utimes as utime } from "node:fs/promises";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __moduleWriterInternals } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
+import {
+  primordialPromiseAll,
+  primordialPromiseAllSettled,
+  primordialPromiseCatch,
+  primordialPromiseFinally,
+  primordialPromiseReject,
+  primordialPromiseResolve,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
 import { __importTransformerInternals } from "#veryfront/transforms/mdx/esm-module-loader/import-transformer.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import { Semaphore as CacheSemaphore } from "#veryfront/utils/semaphore.ts";
 import { LazyJsxImportScope } from "#veryfront/transforms/mdx/esm-module-loader/lazy-jsx-imports.ts";
 import {
   __jsxCacheInternals,
@@ -12,7 +23,9 @@ import {
   JsxCacheCapacityError,
   MAX_JSX_CACHE_ARTIFACTS_PER_DIRECTORY,
   resolveOwnedJsxArtifactPath,
+  retainJsxArtifactForImport,
   retainJsxArtifactsReferencedIn,
+  withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
 } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import {
@@ -23,17 +36,219 @@ import {
 // Real filesystem, native module loading, and process-wide prototype mutation
 // require the integration lane under the semantic unit-boundary audit.
 describe("MDX cache shared-realm lifecycle", () => {
-  it("cache filenames remain stable when padding is replaced with traversal segments", () => {
+  it("the cache semaphore preserves queued work and permits after queue methods are replaced", async () => {
+    const semaphore = new CacheSemaphore(1, { acquireTimeoutMs: 100 });
+    const queue = Object.getOwnPropertyDescriptor(semaphore, "waiting")!.value;
+    const shift = Array.prototype.shift;
+    const push = Array.prototype.push;
+    const barrier = Promise.withResolvers<void>();
+    const first = semaphore.acquire(async () => {
+      await barrier.promise;
+      return 1;
+    });
+    await Promise.resolve();
+    let results: PromiseSettledResult<number>[] = [];
+    try {
+      Array.prototype.shift = function () {
+        if (this === queue) return { resolve: () => {} };
+        return shift.call(this);
+      };
+      Array.prototype.push = function (...items) {
+        if (this === queue) throw new Error("fixture replaced queue push");
+        return Reflect.apply(push, this, items);
+      };
+      const second = semaphore.acquire(async () => 2);
+      barrier.resolve();
+      results = await Promise.allSettled([first, second]);
+    } finally {
+      Array.prototype.shift = shift;
+      Array.prototype.push = push;
+      barrier.resolve();
+      await first;
+    }
+    assertEquals(results, [{ status: "fulfilled", value: 1 }, { status: "fulfilled", value: 2 }]);
+    assertEquals(semaphore.active, 0);
+    assertEquals(semaphore.waitingCount, 0);
+  });
+
+  it("temporary-parent removal releases its pin after Promise.catch is replaced", async () => {
+    const dir = await makeTempDir();
+    const path = dir + "/" +
+      buildMdxJsxCacheFileName("/project/Parent.tsx", "export const value = 67;");
+    const originalCatch = Promise.prototype.catch;
+    let pins = -1;
+    try {
+      await writeTextFile(path, "export const value = 67;");
+      const release = await __moduleWriterInternals.retainTemporaryParent(path, dir);
+      Promise.prototype.catch = () => {
+        throw new Error("fixture replaced Promise.catch");
+      };
+      await release();
+      pins = __jsxCacheInternals.jsxArtifactActiveRefCount(path);
+    } finally {
+      Promise.prototype.catch = originalCatch;
+      __jsxCacheInternals.releaseJsxArtifact(path);
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+      await remove(dir, { recursive: true });
+    }
+    assertEquals(pins, 0);
+  });
+
+  it("preserves values, rejection, and cleanup without mutable Promise dispatch", async () => {
+    // Let the test runner attach its own continuation before replacing methods.
+    await primordialPromiseResolve();
+    const originals = {
+      resolve: Promise.resolve,
+      reject: Promise.reject,
+      all: Promise.all,
+      allSettled: Promise.allSettled,
+      then: Promise.prototype.then,
+      catch: Promise.prototype.catch,
+      finally: Promise.prototype.finally,
+    };
+    const failure = new Error("fixture rejection");
+    const poison = () => {
+      throw new Error("fixture replaced Promise operation");
+    };
+    let cleanupCount = 0;
+    let values: unknown;
+    let outcomes: unknown;
+    let recovered: unknown;
+    try {
+      Promise.resolve = poison;
+      Promise.reject = poison;
+      Promise.all = poison;
+      Promise.allSettled = poison;
+      Promise.prototype.then = poison;
+      Promise.prototype.catch = poison;
+      Promise.prototype.finally = poison;
+      values = await primordialPromiseAll([
+        primordialPromiseThen(primordialPromiseResolve(2), async (value) => value + 1),
+        4,
+      ]);
+      outcomes = await primordialPromiseAllSettled([
+        primordialPromiseFinally(primordialPromiseResolve(5), () => {
+          cleanupCount++;
+        }),
+        primordialPromiseFinally(primordialPromiseReject(failure), () => {
+          cleanupCount++;
+        }),
+      ]);
+      recovered = await primordialPromiseCatch(primordialPromiseReject(failure), () => 6);
+    } finally {
+      Promise.resolve = originals.resolve;
+      Promise.reject = originals.reject;
+      Promise.all = originals.all;
+      Promise.allSettled = originals.allSettled;
+      Promise.prototype.then = originals.then;
+      Promise.prototype.catch = originals.catch;
+      Promise.prototype.finally = originals.finally;
+    }
+    assertEquals(values, [3, 4]);
+    assertEquals(outcomes, [
+      { status: "fulfilled", value: 5 },
+      { status: "rejected", reason: failure },
+    ]);
+    assertEquals(recovered, 6);
+    assertEquals(cleanupCount, 2);
+  });
+  it("artifact leases and maintenance do not dispatch replaced Promise operations", async () => {
+    const dir = await makeTempDir();
+    const source = "export const value = 61;";
+    const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/Promises.tsx", source);
+    const stale = dir + "/" + buildMdxJsxCacheFileName("/project/StalePromises.tsx", source);
+    const originals = {
+      resolve: Promise.resolve,
+      all: Promise.all,
+      allSettled: Promise.allSettled,
+      then: Promise.prototype.then,
+      catch: Promise.prototype.catch,
+      finally: Promise.prototype.finally,
+    };
+    let completed = false;
+    let freshExists = false;
+    let staleExists = true;
+    let phase = "lock";
+    const poison = () => {
+      throw new Error(`fixture replaced Promise operation during ${phase}`);
+    };
+    const guarded = <T>(original: T): T =>
+      function (this: unknown, ...args: unknown[]) {
+        const caller = new Error().stack?.split("\n")[2] ?? "";
+        if (
+          caller.includes("jsx-cache.ts:") || caller.includes("import-transformer.ts:") ||
+          caller.includes("semaphore.ts:") || caller.includes("compat/fs.ts:")
+        ) return poison();
+        return Reflect.apply(original as (...args: unknown[]) => unknown, this, args);
+      } as T;
+    try {
+      await writeTextFile(artifact, source);
+      await writeTextFile(stale, source);
+      const old = new Date(Date.now() - 2 * JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS);
+      await utime(stale, old, old);
+      // Artifact preparation loads the native adapter before project evaluation.
+      await withJsxArtifactLock(artifact, async () => {});
+      // Native filesystem internals also dispatch Promise methods. Target direct
+      // framework calls here; the pure helper test poisons every dispatch above.
+      Promise.resolve = guarded(originals.resolve);
+      Promise.all = guarded(originals.all);
+      Promise.allSettled = guarded(originals.allSettled);
+      Promise.prototype.then = guarded(originals.then);
+      Promise.prototype.catch = guarded(originals.catch);
+      Promise.prototype.finally = guarded(originals.finally);
+      await withJsxArtifactLock(artifact, async () => {
+        completed = true;
+      });
+      phase = "retention";
+      const release = await retainJsxArtifactForImport(artifact);
+      release();
+      phase = "maintenance";
+      await __jsxCacheInternals.collectExcessJsxArtifacts(dir, new Map(), Date.now());
+      await __jsxCacheInternals.revisitJsxCacheDirectory(dir);
+    } catch (error) {
+      throw new Error(`Promise fixture failed during ${phase}`, { cause: error });
+    } finally {
+      Promise.resolve = originals.resolve;
+      Promise.all = originals.all;
+      Promise.allSettled = originals.allSettled;
+      Promise.prototype.then = originals.then;
+      Promise.prototype.catch = originals.catch;
+      Promise.prototype.finally = originals.finally;
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+      try {
+        freshExists = await stat(artifact).then(() => true, () => false);
+        staleExists = await stat(stale).then(() => true, () => false);
+      } finally {
+        await remove(dir, { recursive: true });
+      }
+    }
+    assertEquals(completed, true);
+    assertEquals(freshExists, true);
+    assertEquals(staleExists, false);
+  });
+
+  it("cache filenames remain stable when hash and padding intrinsics are replaced", () => {
     const path = "fixtures/project/Value.tsx";
     const source = "export const value = 53;";
     const expected = buildMdxJsxCacheFileName(path, source);
     const padStart = String.prototype.padStart;
+    const charCodeAt = String.prototype.charCodeAt;
+    const numberToString = Number.prototype.toString;
+    const imul = Math.imul;
     let observed: string;
     try {
       String.prototype.padStart = () => "/../";
+      String.prototype.charCodeAt = () => 0;
+      Number.prototype.toString = () => "/../";
+      Math.imul = () => 0;
       observed = buildMdxJsxCacheFileName(path, source);
     } finally {
       String.prototype.padStart = padStart;
+      String.prototype.charCodeAt = charCodeAt;
+      Number.prototype.toString = numberToString;
+      Math.imul = imul;
     }
     assertEquals(observed, expected);
   });

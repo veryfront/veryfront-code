@@ -8,7 +8,6 @@
  */
 
 import { join } from "#veryfront/compat/path";
-import { primordialArrayValues } from "#veryfront/platform/compat/primordials/array.ts";
 import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -37,6 +36,13 @@ import {
 } from "#veryfront/transforms/shared/server-only-packages.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
+import {
+  primordialPromiseAll,
+  primordialPromiseCatch,
+  primordialPromiseFinally,
+  primordialPromiseResolve,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { parseImports, replaceSpecifiers } from "../../esm/lexer.ts";
 import {
@@ -441,21 +447,18 @@ async function mapJsxTransformsWithCleanup<T, R>(
     return await parallelMap(
       items,
       (item) => {
-        if (mapFailed) return Promise.resolve(null);
+        if (mapFailed) return primordialPromiseResolve(null);
         const run = transformOne(item);
-        const settled = run.then(
-          () => undefined,
-          () => undefined,
-        );
+        const settled = primordialPromiseThen(run, () => undefined, () => undefined);
         setAdd(inFlightTransforms, settled);
-        void settled.then(() => setDelete(inFlightTransforms, settled));
+        void primordialPromiseThen(settled, () => setDelete(inFlightTransforms, settled));
         return run;
       },
       options,
     );
   } catch (error) {
     mapFailed = true;
-    await Promise.all(primordialArrayValues(setValues(inFlightTransforms)));
+    await primordialPromiseAll(setValues(inFlightTransforms));
     await cleanup();
     throw error;
   }
@@ -522,13 +525,13 @@ export async function transformJsxImports(
   const refreshSelectedArtifacts = (): Promise<void> => {
     if (selectedArtifactRefreshInFlight) return selectedArtifactRefreshInFlight;
     const run = refreshJsxArtifactsBounded(setValues(selectedArtifacts), true);
-    selectedArtifactRefreshInFlight = run.finally(() => {
+    selectedArtifactRefreshInFlight = primordialPromiseFinally(run, () => {
       selectedArtifactRefreshInFlight = undefined;
     });
     return selectedArtifactRefreshInFlight;
   };
   const selectedArtifactHeartbeat = hostSetInterval(
-    () => void refreshSelectedArtifacts().catch(() => undefined),
+    () => void primordialPromiseCatch(refreshSelectedArtifacts(), () => undefined),
     JSX_CACHE_VARIANT_MIN_AGE_MS / 4,
   );
   unrefTimer(selectedArtifactHeartbeat);

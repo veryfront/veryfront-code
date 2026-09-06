@@ -10,6 +10,10 @@
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { primordialPromiseAll } from "#veryfront/platform/compat/primordials/promise.ts";
+import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+
+const IntrinsicArray = Array;
 
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;
@@ -61,10 +65,10 @@ export function parallelMap<T, R>(
 
       const semaphore = resolveParallelSemaphore(options);
       const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
-      const results: R[] = new Array(items.length);
+      const results: R[] = new IntrinsicArray(items.length);
 
-      await Promise.all(
-        items.map(async (item, index) => {
+      await primordialPromiseAll(
+        primordialArrayMap(items, async (item, index) => {
           await acquireOrThrow(semaphore, timeoutMs, "parallelMap");
           try {
             results[index] = await fn(item, index);
@@ -88,7 +92,7 @@ export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
   options: ParallelOptions = {},
 ): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
   return parallelMap(
-    [...fns] as (() => Promise<unknown>)[],
+    primordialArrayMap(fns, (fn) => fn),
     (fn) => fn(),
     options,
   ) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;

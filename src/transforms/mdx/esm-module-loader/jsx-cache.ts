@@ -18,6 +18,15 @@ import {
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
 import { basename, dirname, join, normalize } from "#veryfront/compat/path";
+import {
+  IntrinsicPromise,
+  primordialPromiseAll,
+  primordialPromiseAllSettled,
+  primordialPromiseCatch,
+  primordialPromiseFinally,
+  primordialPromiseResolve,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
 import { isAlreadyExistsError, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -415,7 +424,7 @@ export function refreshJsxArtifactsBounded(
       }
     })();
   }
-  return Promise.all(primordialArrayValues(workers)).then(() => undefined);
+  return primordialPromiseThen(primordialPromiseAll(workers), () => undefined);
 }
 
 function retainJsxArtifact(artifactPath: string): void {
@@ -458,18 +467,21 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
         while (nextIndex < artifactPaths.length) {
           const artifactPath = artifactPaths[nextIndex++];
           if (artifactPath === undefined) continue;
-          await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-            await withJsxArtifactRefreshSlot(async () => {
-              await assertLeaseOwned();
-              await refreshJsxArtifactMtime(artifactPath, 0);
-            });
-          }).catch(() => undefined);
+          await primordialPromiseCatch(
+            withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+              await withJsxArtifactRefreshSlot(async () => {
+                await assertLeaseOwned();
+                await refreshJsxArtifactMtime(artifactPath, 0);
+              });
+            }),
+            () => undefined,
+          );
         }
       })();
     }
-    await Promise.all(primordialArrayValues(workers));
+    await primordialPromiseAll(workers);
   })();
-  lazyJsxArtifactHeartbeatInFlight = run.finally(() => {
+  lazyJsxArtifactHeartbeatInFlight = primordialPromiseFinally(run, () => {
     lazyJsxArtifactHeartbeatInFlight = undefined;
     if (mapSize(lazyJsxArtifactExpirations) === 0 && lazyJsxArtifactHeartbeat !== undefined) {
       hostClearInterval(lazyJsxArtifactHeartbeat);
@@ -687,7 +699,7 @@ async function retainJsxArtifactPaths(
   const refreshAll = (): Promise<void> => {
     if (refreshInFlight) return refreshInFlight;
     const run = refreshJsxArtifactsBounded(uniqueArtifactPaths, required);
-    refreshInFlight = run.finally(() => {
+    refreshInFlight = primordialPromiseFinally(run, () => {
       refreshInFlight = undefined;
     });
     return refreshInFlight;
@@ -702,7 +714,7 @@ async function retainJsxArtifactPaths(
     throw error;
   }
   const heartbeat = hostSetInterval(
-    () => void refreshAll().catch(() => undefined),
+    () => void primordialPromiseCatch(refreshAll(), () => undefined),
     JSX_CACHE_MTIME_REFRESH_INTERVAL_MS,
   );
   unrefTimer(heartbeat);
@@ -893,7 +905,7 @@ async function acquireFilesystemLeaseTransition(
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
       if (!(await hasLiveFilesystemLeaseTransition(lockPath))) continue;
-      await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+      await new IntrinsicPromise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   throw new Error(`Timed out waiting for JSX cache lease transition ${basename(lockPath)}`);
@@ -1022,7 +1034,7 @@ async function restoreDisplacedFilesystemLease(
       return;
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
-      await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+      await new IntrinsicPromise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   throw new Error(
@@ -1053,7 +1065,9 @@ async function withFilesystemLease<T>(
       try {
         if (await hasLiveFilesystemLeaseTransition(lockPath)) {
           await removeFilesystemLeaseIfOwned(lockPath, leaseOwner);
-          await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+          await new IntrinsicPromise((resolve) =>
+            hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS)
+          );
           continue;
         }
       } catch (error) {
@@ -1065,7 +1079,7 @@ async function withFilesystemLease<T>(
     } catch (error) {
       if (!isAlreadyExistsError(error)) throw error;
       if (await recoverStaleFilesystemLease(lockPath, hostNow(), createExclusive)) continue;
-      await new Promise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
+      await new IntrinsicPromise((resolve) => hostSetTimeout(resolve, JSX_ARTIFACT_LEASE_RETRY_MS));
     }
   }
   if (!acquired) throw new Error("Timed out waiting for a JSX cache lease");
@@ -1073,7 +1087,8 @@ async function withFilesystemLease<T>(
   const heartbeat = localFs.utime
     ? hostSetInterval(() => {
       const now = new IntrinsicDate();
-      void localFs.utime?.(lockPath, now, now).catch(() => undefined);
+      const refresh = localFs.utime?.(lockPath, now, now);
+      if (refresh) void primordialPromiseCatch(refresh, () => undefined);
     }, JSX_ARTIFACT_LEASE_HEARTBEAT_MS)
     : undefined;
   if (heartbeat !== undefined) unrefTimer(heartbeat);
@@ -1143,20 +1158,16 @@ export async function withJsxArtifactLock<T>(
   operation: (assertLeaseOwned: () => Promise<void>) => Promise<T>,
   options: { waitForLiveLease?: boolean } = {},
 ): Promise<T> {
-  const previous = mapGet(jsxArtifactLocks, artifactPath) ?? Promise.resolve();
-  const run = previous.then(() =>
+  const previous = mapGet(jsxArtifactLocks, artifactPath) ?? primordialPromiseResolve();
+  const run = primordialPromiseThen(previous, () =>
     withFilesystemLease(
       `${artifactPath}.lock`,
       operation,
       options.waitForLiveLease ?? false,
-    )
-  );
-  const settled = run.then(
-    () => undefined,
-    () => undefined,
-  );
+    ));
+  const settled = primordialPromiseThen(run, () => undefined, () => undefined);
   mapSet(jsxArtifactLocks, artifactPath, settled);
-  void settled.then(() => {
+  void primordialPromiseThen(settled, () => {
     if (mapGet(jsxArtifactLocks, artifactPath) === settled) {
       mapDelete(jsxArtifactLocks, artifactPath);
     }
@@ -1557,28 +1568,25 @@ function pumpPersistedJsxCachePrunePromotions(): void {
   activeJsxCachePrunePromotionRequestedAgain = false;
   const promotion = promotePersistedJsxCachePruneRequest(requestDirectory);
   persistedJsxCachePrunePromotion = promotion;
-  void promotion.then(
-    () => {
-      if (activeJsxCachePrunePromotionRequestedAgain) {
-        setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
-      }
-      activeJsxCachePrunePromotionDirectory = undefined;
-      activeJsxCachePrunePromotionRequestedAgain = false;
-      persistedJsxCachePrunePromotion = undefined;
-      pumpPersistedJsxCachePrunePromotions();
-    },
-    () => {
+  void primordialPromiseThen(promotion, () => {
+    if (activeJsxCachePrunePromotionRequestedAgain) {
       setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
-      activeJsxCachePrunePromotionDirectory = undefined;
-      activeJsxCachePrunePromotionRequestedAgain = false;
-      persistedJsxCachePrunePromotion = undefined;
-      persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
-        persistedJsxCachePrunePromotionRetry = undefined;
-        pumpPersistedJsxCachePrunePromotions();
-      }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
-      unrefTimer(persistedJsxCachePrunePromotionRetry);
-    },
-  );
+    }
+    activeJsxCachePrunePromotionDirectory = undefined;
+    activeJsxCachePrunePromotionRequestedAgain = false;
+    persistedJsxCachePrunePromotion = undefined;
+    pumpPersistedJsxCachePrunePromotions();
+  }, () => {
+    setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+    activeJsxCachePrunePromotionDirectory = undefined;
+    activeJsxCachePrunePromotionRequestedAgain = false;
+    persistedJsxCachePrunePromotion = undefined;
+    persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
+      persistedJsxCachePrunePromotionRetry = undefined;
+      pumpPersistedJsxCachePrunePromotions();
+    }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+    unrefTimer(persistedJsxCachePrunePromotionRetry);
+  });
 }
 
 function requestPersistedJsxCachePrunePromotion(
@@ -1621,7 +1629,7 @@ function pumpJsxCachePersistence(): void {
     }
   })();
   jsxCachePersistencePump = pump;
-  void pump.finally(() => {
+  void primordialPromiseFinally(pump, () => {
     jsxCachePersistencePump = undefined;
     if (mapSize(pendingJsxCachePersistence) === 0) return;
     jsxCachePersistenceRetry = hostSetTimeout(() => {
@@ -1682,15 +1690,15 @@ async function revisitJsxCacheDirectory(
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<void> {
   try {
-    await scheduledJsxCachePruneSemaphore.acquire(() =>
-      collectExcessJsxArtifacts(
+    await scheduledJsxCachePruneSemaphore.acquire(async () => {
+      await collectExcessJsxArtifacts(
         esmCacheDir,
         new IntrinsicMap(),
         hostNow(),
         0,
         requestDirectory,
-      ).then(() => undefined)
-    );
+      );
+    });
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
       error: cacheFilesystemErrorCode(error),
@@ -1847,8 +1855,8 @@ async function waitForJsxCacheMaintenanceForTests(): Promise<void> {
   while (
     jsxCachePersistencePump !== undefined || persistedJsxCachePrunePromotion !== undefined
   ) {
-    await Promise.allSettled(
-      primordialArrayValues([jsxCachePersistencePump, persistedJsxCachePrunePromotion]),
+    await primordialPromiseAllSettled(
+      [jsxCachePersistencePump, persistedJsxCachePrunePromotion],
     );
   }
 }
@@ -2077,7 +2085,7 @@ async function readJsxArtifactDates(
       }
     })();
   }
-  await Promise.all(primordialArrayValues(workers));
+  await primordialPromiseAll(workers);
   return dated;
 }
 

@@ -1,3 +1,19 @@
+import {
+  primordialArrayIndexOf,
+  primordialArrayPush,
+  primordialArrayShift,
+  primordialArraySplice,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  IntrinsicPromise,
+  primordialPromiseReject,
+  primordialPromiseResolve,
+  primordialPromiseThen,
+} from "#veryfront/platform/compat/primordials/promise.ts";
+
+const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
+const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
 /** Default timeout for acquiring a semaphore permit (ms) */
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
 
@@ -36,7 +52,10 @@ export class Semaphore {
     timeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS,
     options: { signal?: AbortSignal } = {},
   ): Promise<boolean> {
-    return this.tryAcquireWithReport(timeoutMs, options).then((report) => report.acquired);
+    return primordialPromiseThen(
+      this.tryAcquireWithReport(timeoutMs, options),
+      (report) => report.acquired,
+    );
   }
 
   /**
@@ -49,25 +68,25 @@ export class Semaphore {
   ): Promise<SemaphoreAcquireReport> {
     const { signal } = options;
     if (signal?.aborted) {
-      return Promise.reject(
+      return primordialPromiseReject(
         signal.reason ?? new DOMException("The operation was aborted", "AbortError"),
       );
     }
 
     if (this.permits > 0) {
       this.permits--;
-      return Promise.resolve({ acquired: true, waiting: this.waitQueue.length });
+      return primordialPromiseResolve({ acquired: true, waiting: this.waitQueue.length });
     }
 
     if (timeoutMs <= 0) {
-      return Promise.resolve({ acquired: false, waiting: this.waitQueue.length });
+      return primordialPromiseResolve({ acquired: false, waiting: this.waitQueue.length });
     }
 
     if (this.waitQueue.length >= this.maxQueueSize) {
-      return Promise.resolve({ acquired: false, waiting: this.waitQueue.length });
+      return primordialPromiseResolve({ acquired: false, waiting: this.waitQueue.length });
     }
 
-    return new Promise<SemaphoreAcquireReport>((resolve, reject) => {
+    return new IntrinsicPromise<SemaphoreAcquireReport>((resolve, reject) => {
       const waiter: SemaphoreWaiter = {
         resolve,
         reject,
@@ -76,11 +95,11 @@ export class Semaphore {
       };
 
       const removeWaiter = (): void => {
-        const index = this.waitQueue.indexOf(waiter);
-        if (index !== -1) this.waitQueue.splice(index, 1);
+        const index = primordialArrayIndexOf(this.waitQueue, waiter);
+        if (index !== -1) primordialArraySplice(this.waitQueue, index, 1);
       };
       const cleanup = (): void => {
-        if (waiter.timeoutId !== undefined) clearTimeout(waiter.timeoutId);
+        if (waiter.timeoutId !== undefined) hostClearTimeout(waiter.timeoutId);
         if (waiter.signal && waiter.onAbort) {
           waiter.signal.removeEventListener("abort", waiter.onAbort);
         }
@@ -102,7 +121,7 @@ export class Semaphore {
       }
 
       if (Number.isFinite(timeoutMs)) {
-        waiter.timeoutId = setTimeout(() => {
+        waiter.timeoutId = hostSetTimeout(() => {
           if (waiter.settled) return;
           waiter.settled = true;
           // Read the depth before this waiter leaves the queue, otherwise the
@@ -114,16 +133,16 @@ export class Semaphore {
         }, timeoutMs);
       }
 
-      this.waitQueue.push(waiter);
+      primordialArrayPush(this.waitQueue, waiter);
     });
   }
 
   release(): void {
     let next: SemaphoreWaiter | undefined;
-    while ((next = this.waitQueue.shift())) {
+    while ((next = primordialArrayShift(this.waitQueue))) {
       if (next.settled) continue;
       next.settled = true;
-      if (next.timeoutId !== undefined) clearTimeout(next.timeoutId);
+      if (next.timeoutId !== undefined) hostClearTimeout(next.timeoutId);
       if (next.signal && next.onAbort) {
         next.signal.removeEventListener("abort", next.onAbort);
       }

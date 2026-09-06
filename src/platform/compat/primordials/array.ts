@@ -5,10 +5,13 @@
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeMap = Array.prototype.map;
 const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSort = Array.prototype.sort;
+const ArrayPrototypeShift = Array.prototype.shift;
+const ArrayPrototypeSplice = Array.prototype.splice;
 const ReflectApply = Reflect.apply;
 const iteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
 
@@ -58,6 +61,18 @@ export function primordialArrayMap<T, U>(
 
 export function primordialArrayPop<T>(values: T[]): T | undefined {
   return ReflectApply(ArrayPrototypePop, values, []) as T | undefined;
+}
+
+export function primordialArrayShift<T>(values: T[]): T | undefined {
+  return ReflectApply(ArrayPrototypeShift, values, []) as T | undefined;
+}
+
+export function primordialArrayIndexOf<T>(values: readonly T[], value: T): number {
+  return ReflectApply(ArrayPrototypeIndexOf, values, [value]) as number;
+}
+
+export function primordialArraySplice<T>(values: T[], start: number, count: number): T[] {
+  return ReflectApply(ArrayPrototypeSplice, values, [start, count]) as T[];
 }
 
 export function primordialArrayPush<T>(values: T[], value: T): void {
