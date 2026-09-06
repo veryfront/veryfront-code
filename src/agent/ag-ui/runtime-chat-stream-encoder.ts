@@ -54,7 +54,7 @@ export interface AgUiRuntimeChatStreamEncoder {
 export interface CreateAgUiRuntimeChatStreamEncoderOptions {
   responseMessageId: string;
   sendReasoning?: boolean;
-  onError?: (error: unknown) => string;
+  onError?: (error: unknown, context?: { code?: string }) => string;
 }
 
 type ToolPart = {
@@ -139,8 +139,16 @@ function isEmptyRecord(value: Record<string, unknown>): boolean {
   return Object.keys(value).length === 0;
 }
 
-function formatErrorText(error: unknown, onError?: (error: unknown) => string): string {
-  return onError ? onError(error) : error instanceof Error ? error.message : String(error);
+function formatErrorText(
+  error: unknown,
+  onError?: (error: unknown, context?: { code?: string }) => string,
+  code?: string,
+): string {
+  return onError
+    ? code ? onError(error, { code }) : onError(error)
+    : error instanceof Error
+    ? error.message
+    : String(error);
 }
 
 function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsage | null {
@@ -567,6 +575,7 @@ export function createAgUiRuntimeChatStreamEncoder(
             errorText: formatErrorText(
               getStringField(event, "error") ?? "Framework stream failed",
               options.onError,
+              code,
             ),
             ...(code ? { code } : {}),
           });
