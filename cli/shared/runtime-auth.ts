@@ -1,7 +1,7 @@
 import { deleteEnv, deleteHostSecret, getEnv, setEnv, setHostSecret } from "#cli/process-env";
 import { readToken } from "../auth/token-store.ts";
 import { getEnvironmentConfig } from "veryfront/config";
-import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { refreshEnvironmentConfig } from "#cli/environment-config";
 import {
   getEnvSource,
   markConfigFileSource,
