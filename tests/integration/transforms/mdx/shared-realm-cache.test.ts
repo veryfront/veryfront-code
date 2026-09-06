@@ -71,6 +71,77 @@ describe("MDX cache shared-realm lifecycle", () => {
     assertEquals(semaphore.waitingCount, 0);
   });
 
+  it("cache semaphore timeout cleanup does not consult Array species", async () => {
+    const semaphore = new CacheSemaphore(1, { acquireTimeoutMs: 5 });
+    const barrier = Promise.withResolvers<void>();
+    const blocking = semaphore.acquire(async () => {
+      await barrier.promise;
+    });
+    await Promise.resolve();
+    const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+    let timedOut = false;
+    let waiting = -1;
+    try {
+      Object.defineProperty(Array, Symbol.species, {
+        configurable: true,
+        get() {
+          if (new Error().stack?.includes("/primordials/array.ts")) {
+            throw new Error("fixture replaced Array species");
+          }
+          return Array;
+        },
+      });
+      try {
+        await semaphore.acquire(async () => undefined);
+      } catch {
+        timedOut = true;
+      }
+      waiting = semaphore.waitingCount;
+    } finally {
+      if (species) Object.defineProperty(Array, Symbol.species, species);
+      else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+      barrier.resolve();
+      await blocking;
+    }
+    assertEquals(timedOut, true);
+    assertEquals(waiting, 0);
+  });
+
+  it("SSR semaphore abort cleanup does not consult Array species", async () => {
+    const semaphore = new Semaphore(1);
+    const controller = new AbortController();
+    await semaphore.tryAcquire();
+    const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+    let aborted = false;
+    let waiting = -1;
+    try {
+      Object.defineProperty(Array, Symbol.species, {
+        configurable: true,
+        get() {
+          if (new Error().stack?.includes("/primordials/array.ts")) {
+            throw new Error("fixture replaced Array species");
+          }
+          return Array;
+        },
+      });
+      const pending = semaphore.tryAcquire(500, { signal: controller.signal });
+      controller.abort(new DOMException("species abort", "AbortError"));
+      try {
+        await pending;
+      } catch {
+        aborted = true;
+      }
+      waiting = semaphore.waiting;
+    } finally {
+      if (species) Object.defineProperty(Array, Symbol.species, species);
+      else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+      semaphore.release();
+    }
+    assertEquals(aborted, true);
+    assertEquals(waiting, 0);
+    assertEquals(semaphore.available, 1);
+  });
+
   it("temporary-parent removal releases its pin after Promise.catch is replaced", async () => {
     const dir = await makeTempDir();
     const path = dir + "/" +
@@ -285,6 +356,73 @@ describe("MDX cache shared-realm lifecycle", () => {
       await remove(dir, { recursive: true });
     }
     assertEquals(value, 59);
+  });
+
+  it("subsequent lazy rewrites settle while parsed-import iteration remains replaced", async () => {
+    const dir = await makeTempDir();
+    const source = "export const value = 61;";
+    const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/Subsequent.tsx", source);
+    const scope = new LazyJsxImportScope();
+    const iterator = Array.prototype[Symbol.iterator];
+    let rewritten = "";
+    try {
+      await writeTextFile(artifact, source);
+      Array.prototype[Symbol.iterator] = function () {
+        const first = this[0];
+        if (
+          Array.isArray(first) ||
+          (first !== null && typeof first === "object" && "ss" in first)
+        ) {
+          throw new Error("fixture replaced parsed-import iterator");
+        }
+        return Reflect.apply(iterator, this, []);
+      };
+      rewritten = await scope.rewrite(
+        `export const load = () => import(${JSON.stringify("file://" + artifact)});`,
+        dir,
+      );
+    } finally {
+      Array.prototype[Symbol.iterator] = iterator;
+      scope.release();
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(dir, { recursive: true });
+    }
+    assertEquals(rewritten.includes("_bridge"), true);
+  });
+
+  it("lazy retention and pruning do not consult Array species", async () => {
+    const dir = await makeTempDir();
+    const source = "export const value = 63;";
+    const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/Species.tsx", source);
+    const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+    let release: (() => void) | undefined;
+    try {
+      await writeTextFile(artifact, source);
+      Object.defineProperty(Array, Symbol.species, {
+        configurable: true,
+        get() {
+          if (new Error().stack?.includes("/primordials/array.ts")) {
+            throw new Error("fixture replaced Array species");
+          }
+          return Array;
+        },
+      });
+      release = await retainJsxArtifactsReferencedIn(
+        `export const load = () => import(${JSON.stringify("file://" + artifact)});`,
+        dir,
+      );
+      await __jsxCacheInternals.runLazyJsxArtifactHeartbeat();
+      release();
+      release = undefined;
+      await __jsxCacheInternals.revisitJsxCacheDirectory(dir);
+      assertEquals(await stat(artifact).then(() => true, () => false), true);
+    } finally {
+      if (species) Object.defineProperty(Array, Symbol.species, species);
+      else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+      release?.();
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
+      await remove(dir, { recursive: true });
+    }
   });
 
   it("quota admission counts real artifacts when string predicates are replaced", async () => {

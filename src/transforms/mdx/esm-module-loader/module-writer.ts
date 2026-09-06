@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-writer
  */
 
-import { join, toFileUrl } from "#veryfront/compat/path";
+import { basename, join, toFileUrl } from "#veryfront/compat/path";
 import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -68,6 +68,10 @@ import {
 import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import {
+  primordialArrayJoin,
+  primordialArrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
@@ -98,9 +102,17 @@ function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
 function mapValues<K, V>(map: Map<K, V>): V[] {
   const values: V[] = [];
   IntrinsicReflectApply(MapPrototypeForEach, map, [(value: V) => {
-    values[values.length] = value;
+    primordialArrayPush(values, value);
   }]);
   return values;
+}
+
+function firstValues<T>(values: readonly T[], limit: number): T[] {
+  const selected: T[] = [];
+  for (let index = 0; index < values.length && index < limit; index++) {
+    primordialArrayPush(selected, values[index]!);
+  }
+  return selected;
 }
 
 const temporaryParentReferences = new IntrinsicMap<string, {
@@ -431,9 +443,7 @@ export async function doLoadModuleESM(
     const unresolved = hasUnresolvedImports(rewritten);
     if (unresolved.count > 0) {
       const errorMsg = `MDX has ${unresolved.count} unresolved module imports: ${
-        unresolved.paths
-          .slice(0, 5)
-          .join(", ")
+        primordialArrayJoin(firstValues(unresolved.paths, 5), ", ")
       }`;
       logger.error(`${LOG_PREFIX_MDX_RENDERER} ${errorMsg}`);
       throw IMPORT_RESOLUTION_ERROR.create({ detail: errorMsg });
@@ -595,7 +605,7 @@ export async function doLoadModuleESM(
           `${LOG_PREFIX_MDX_LOADER} ${missingBundles.length} framework bundle(s) missing, regenerating`,
           {
             projectSlug,
-            missing: missingBundles.slice(0, 3),
+            missing: firstValues(missingBundles, 3),
             total: frameworkBundlePaths.length,
           },
         );
@@ -674,7 +684,7 @@ export async function doLoadModuleESM(
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
       () => import(`${toFileUrl(filePath).href}?v=${codeHash}`),
-      { "mdx.file_path": filePath.split("/").pop() || filePath },
+      { "mdx.file_path": basename(filePath) || filePath },
     ) as Record<string, unknown> & { __vfLayout?: React.ComponentType };
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {

@@ -11,7 +11,10 @@ import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/con
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { primordialPromiseAll } from "#veryfront/platform/compat/primordials/promise.ts";
-import { primordialArrayMap } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  primordialArrayMap,
+  primordialArraySet,
+} from "#veryfront/platform/compat/primordials/array.ts";
 
 const IntrinsicArray = Array;
 
@@ -71,7 +74,7 @@ export function parallelMap<T, R>(
         primordialArrayMap(items, async (item, index) => {
           await acquireOrThrow(semaphore, timeoutMs, "parallelMap");
           try {
-            results[index] = await fn(item, index);
+            primordialArraySet(results, index, await fn(item, index));
           } finally {
             semaphore.release();
           }
@@ -91,8 +94,12 @@ export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
   fns: T,
   options: ParallelOptions = {},
 ): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  const dense: Array<() => Promise<unknown>> = [];
+  for (let index = 0; index < fns.length; index++) {
+    primordialArraySet(dense, index, fns[index]!);
+  }
   return parallelMap(
-    primordialArrayMap(fns, (fn) => fn),
+    dense,
     (fn) => fn(),
     options,
   ) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;

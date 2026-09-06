@@ -8,6 +8,7 @@ import {
   primordialArrayMap,
   primordialArrayPop,
   primordialArrayPush,
+  primordialArraySet,
   primordialArrayShift,
   primordialArraySort,
   primordialArraySplice,
@@ -15,6 +16,72 @@ import {
 } from "./array.ts";
 
 describe("platform/compat/primordials/array", () => {
+  it("constructs filter, map, and splice results without consulting Array species", () => {
+    const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
+    const inheritedZero = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    const values = [1, 2, 3];
+    const queue = [1, 2, 3];
+    const appended: number[] = [];
+    let inheritedWrite = false;
+    let filtered: number[] = [];
+    let mapped: number[] = [];
+    let removed: number[] = [];
+    try {
+      Object.defineProperty(Array, Symbol.species, {
+        configurable: true,
+        get() {
+          throw new Error("poisoned Array species");
+        },
+      });
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set() {
+          inheritedWrite = true;
+        },
+      });
+      filtered = primordialArrayFilter(values, (value) => value > 1);
+      mapped = primordialArrayMap(values, (value) => value * 2);
+      removed = primordialArraySplice(queue, 1, 1);
+      primordialArrayPush(appended, 4);
+    } finally {
+      if (species) Object.defineProperty(Array, Symbol.species, species);
+      else delete (Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+      if (inheritedZero) Object.defineProperty(Array.prototype, "0", inheritedZero);
+      else delete Array.prototype[0];
+    }
+    assertEquals(inheritedWrite, false);
+    assertEquals(filtered, [2, 3]);
+    assertEquals(mapped, [2, 4, 6]);
+    assertEquals(removed, [2]);
+    assertEquals(queue, [1, 3]);
+    assertEquals(appended, [4]);
+    assertEquals(Object.getOwnPropertyDescriptor(appended, "0"), {
+      configurable: true,
+      enumerable: true,
+      value: 4,
+      writable: true,
+    });
+  });
+
+  it("snapshots map and filter length while preserving their hole contracts", () => {
+    const sparse = new Array<number>(3);
+    primordialArraySet(sparse, 0, 1);
+    primordialArraySet(sparse, 2, 3);
+    const mapped = primordialArrayMap(sparse, (value, index, values) => {
+      if (index === 0) primordialArrayPush(values as number[], 4);
+      return value * 2;
+    });
+    const filtered = primordialArrayFilter(sparse, (value, index, values) => {
+      if (index === 0) primordialArrayPush(values as number[], 5);
+      return value > 0;
+    });
+    assertEquals(mapped.length, 3);
+    assertEquals(1 in mapped, false);
+    assertEquals(mapped[0], 2);
+    assertEquals(mapped[2], 6);
+    assertEquals(filtered, [1, 3, 4]);
+  });
+
   it("uses module-load-time captures after array prototypes are replaced", () => {
     const originals = {
       at: Array.prototype.at,

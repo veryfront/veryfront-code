@@ -8,6 +8,10 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import {
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -83,6 +87,9 @@ const IntrinsicSet = Set;
 const hostNow = Date.now;
 const dateGetTime = Function.prototype.call.bind(Date.prototype.getTime);
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicObjectEntries = Object.entries;
+const IntrinsicObjectKeys = Object.keys;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
@@ -115,7 +122,7 @@ function setDelete<T>(set: Set<T>, value: T): boolean {
 function setValues<T>(set: Set<T>): T[] {
   const values: T[] = [];
   IntrinsicReflectApply(SetPrototypeForEach, set, [(value: T) => {
-    values[values.length] = value;
+    primordialArrayPush(values, value);
   }]);
   return values;
 }
@@ -158,7 +165,7 @@ export async function rewriteProjectAliasImports(code: string): Promise<string> 
  */
 export async function transformReactToLocalPaths(code: string): Promise<string> {
   const localPaths = getLocalReactPaths();
-  if (Object.keys(localPaths).length === 0) return code;
+  if (IntrinsicObjectKeys(localPaths).length === 0) return code;
 
   return await replaceSpecifiers(code, (specifier) => localPaths[specifier] || null);
 }
@@ -166,22 +173,28 @@ export async function transformReactToLocalPaths(code: string): Promise<string> 
 function stripReactFromImportMap(importMap: ImportMapConfig): ImportMapConfig {
   const imports = importMap.imports ? { ...importMap.imports } : undefined;
   if (imports) {
-    for (const key of Object.keys(imports)) {
+    for (const key of primordialArrayValues(IntrinsicObjectKeys(imports))) {
       if (isReactSpecifier(key)) delete imports[key];
     }
   }
 
-  const scopes = importMap.scopes
-    ? Object.fromEntries(
-      Object.entries(importMap.scopes).map(([scope, mappings]) => {
-        const filtered = { ...mappings };
-        for (const key of Object.keys(filtered)) {
-          if (isReactSpecifier(key)) delete filtered[key];
-        }
-        return [scope, filtered];
-      }),
-    )
-    : undefined;
+  let scopes: Record<string, Record<string, string>> | undefined;
+  if (importMap.scopes) {
+    scopes = {};
+    for (const entry of primordialArrayValues(IntrinsicObjectEntries(importMap.scopes))) {
+      const scope = entry[0];
+      const filtered = { ...entry[1] };
+      for (const key of primordialArrayValues(IntrinsicObjectKeys(filtered))) {
+        if (isReactSpecifier(key)) delete filtered[key];
+      }
+      IntrinsicObjectDefineProperty(scopes, scope, {
+        configurable: true,
+        enumerable: true,
+        value: filtered,
+        writable: true,
+      });
+    }
+  }
 
   return { imports, scopes };
 }
@@ -216,7 +229,7 @@ async function assertNoConfiguredServerExternalImports(
   if (options.serverExternalPackages === undefined) return;
   const sourceModule = `${options.projectDir}/__veryfront_mdx_root__.mjs`;
 
-  for (const imported of await parseImports(code)) {
+  for (const imported of primordialArrayValues(await parseImports(code))) {
     const specifier = imported.n;
     if (!specifier) continue;
     const configuredPackage = getConfiguredServerExternalPackage(
@@ -295,7 +308,10 @@ export async function pinSameOriginSSRModuleImports(
 
 async function hasReactImport(code: string): Promise<boolean> {
   const imports = await parseImports(code);
-  return imports.some((importSpecifier) => importSpecifier.n === "react");
+  for (const importSpecifier of primordialArrayValues(imports)) {
+    if (importSpecifier.n === "react") return true;
+  }
+  return false;
 }
 
 /**
@@ -495,7 +511,7 @@ export async function transformJsxImports(
   }> = [];
 
   const imports = await parseImports(code);
-  for (const importSpecifier of imports) {
+  for (const importSpecifier of primordialArrayValues(imports)) {
     const specifier = importSpecifier.n;
     if (!specifier?.startsWith("file://")) continue;
 
@@ -503,7 +519,7 @@ export async function transformJsxImports(
     const ext = filePath.match(/\.(tsx?|jsx?)$/)?.[1];
     if (!ext) continue;
 
-    importsToProcess.push({ specifier, filePath, ext });
+    primordialArrayPush(importsToProcess, { specifier, filePath, ext });
   }
 
   if (importsToProcess.length === 0) return code;
@@ -706,15 +722,22 @@ export async function transformJsxImports(
     ensureJsxCacheSweepArmed(esmCacheDir);
   }
 
+  let successfulTransforms = 0;
+  let cachedTransforms = 0;
+  for (const result of primordialArrayValues(transformResults)) {
+    if (!result) continue;
+    successfulTransforms++;
+    if (result.cached) cachedTransforms++;
+  }
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
     total: importsToProcess.length,
-    success: transformResults.filter(Boolean).length,
-    cached: transformResults.filter((r) => r?.cached).length,
+    success: successfulTransforms,
+    cached: cachedTransforms,
     durationMs: (performance.now() - transformStart).toFixed(1),
   });
 
   const replacements = new IntrinsicMap<string, string>();
-  for (const t of transformResults) {
+  for (const t of primordialArrayValues(transformResults)) {
     if (t) mapSet(replacements, t.specifier, t.replacement);
   }
 

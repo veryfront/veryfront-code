@@ -14,6 +14,7 @@ import {
   primordialArrayFilter,
   primordialArrayMap,
   primordialArrayPush,
+  primordialArraySet,
   primordialArraySort,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
@@ -411,18 +412,21 @@ export function refreshJsxArtifactsBounded(
   const workerCount = mathMin(JSX_ARTIFACT_REFRESH_CONCURRENCY, artifactPaths.length);
   const workers: Array<Promise<void>> = [];
   for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-    workers[workers.length] = (async () => {
-      while (nextIndex < artifactPaths.length) {
-        const artifactPath = artifactPaths[nextIndex++];
-        if (artifactPath === undefined) continue;
-        await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-          await withJsxArtifactRefreshSlot(async () => {
-            await assertLeaseOwned();
-            await refreshJsxArtifactMtime(artifactPath, 0, hostNow(), required);
+    primordialArrayPush(
+      workers,
+      (async () => {
+        while (nextIndex < artifactPaths.length) {
+          const artifactPath = artifactPaths[nextIndex++];
+          if (artifactPath === undefined) continue;
+          await withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+            await withJsxArtifactRefreshSlot(async () => {
+              await assertLeaseOwned();
+              await refreshJsxArtifactMtime(artifactPath, 0, hostNow(), required);
+            });
           });
-        });
-      }
-    })();
+        }
+      })(),
+    );
   }
   return primordialPromiseThen(primordialPromiseAll(workers), () => undefined);
 }
@@ -454,7 +458,7 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
         mapDelete(lazyJsxArtifactExpirations, artifactPath);
         continue;
       }
-      artifactPaths[artifactPaths.length] = artifactPath;
+      primordialArrayPush(artifactPaths, artifactPath);
     }
     let nextIndex = 0;
     const workers: Array<Promise<void>> = [];
@@ -463,21 +467,24 @@ function runLazyJsxArtifactHeartbeat(): Promise<void> {
       artifactPaths.length,
     );
     for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-      workers[workers.length] = (async () => {
-        while (nextIndex < artifactPaths.length) {
-          const artifactPath = artifactPaths[nextIndex++];
-          if (artifactPath === undefined) continue;
-          await primordialPromiseCatch(
-            withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
-              await withJsxArtifactRefreshSlot(async () => {
-                await assertLeaseOwned();
-                await refreshJsxArtifactMtime(artifactPath, 0);
-              });
-            }),
-            () => undefined,
-          );
-        }
-      })();
+      primordialArrayPush(
+        workers,
+        (async () => {
+          while (nextIndex < artifactPaths.length) {
+            const artifactPath = artifactPaths[nextIndex++];
+            if (artifactPath === undefined) continue;
+            await primordialPromiseCatch(
+              withJsxArtifactLock(artifactPath, async (assertLeaseOwned) => {
+                await withJsxArtifactRefreshSlot(async () => {
+                  await assertLeaseOwned();
+                  await refreshJsxArtifactMtime(artifactPath, 0);
+                });
+              }),
+              () => undefined,
+            );
+          }
+        })(),
+      );
     }
     await primordialPromiseAll(workers);
   })();
@@ -1421,9 +1428,11 @@ async function promotePersistedJsxCachePruneRequest(
       move > index;
       move--
     ) {
-      persistedCandidates[move] = persistedCandidates[move - 1]!;
+      primordialArraySet(persistedCandidates, move, persistedCandidates[move - 1]!);
     }
-    if (index < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) persistedCandidates[index] = request;
+    if (index < MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
+      primordialArraySet(persistedCandidates, index, request);
+    }
   };
   try {
     const localFs = getLocalFs();
@@ -2076,14 +2085,18 @@ async function readJsxArtifactDates(
   const workers: Array<Promise<void>> = [];
   const workerCount = mathMin(JSX_ARTIFACT_REFRESH_CONCURRENCY, names.length);
   for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-    workers[workerIndex] = (async () => {
-      while (next < names.length) {
-        const index = next++;
-        const name = names[index]!;
-        const modifiedAtMs = await readArtifactModifiedAtMs(join(directory, name));
-        dated[index] = { name, modifiedAtMs };
-      }
-    })();
+    primordialArraySet(
+      workers,
+      workerIndex,
+      (async () => {
+        while (next < names.length) {
+          const index = next++;
+          const name = names[index]!;
+          const modifiedAtMs = await readArtifactModifiedAtMs(join(directory, name));
+          primordialArraySet(dated, index, { name, modifiedAtMs });
+        }
+      })(),
+    );
   }
   await primordialPromiseAll(workers);
   return dated;
@@ -2117,10 +2130,10 @@ async function collectExcessJsxArtifacts(
       if (stringEndsWith(entry.name, ".mjs.lock")) {
         const artifactName = stringSlice(entry.name, 0, -".lock".length);
         if (isJsxArtifactName(artifactName)) {
-          possibleOrphanLeaseArtifacts[possibleOrphanLeaseArtifacts.length] = {
+          primordialArrayPush(possibleOrphanLeaseArtifacts, {
             artifactName,
             lockName: entry.name,
-          };
+          });
         }
         continue;
       }

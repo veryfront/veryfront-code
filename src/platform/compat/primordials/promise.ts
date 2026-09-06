@@ -1,4 +1,6 @@
 /** Host Promise operations for work that continues after project evaluation. */
+import { primordialArraySet } from "./array.ts";
+
 export const IntrinsicPromise = Promise;
 export const primordialPromiseResolve = Promise.resolve.bind(Promise);
 export const primordialPromiseReject = Promise.reject.bind(Promise);
@@ -55,18 +57,20 @@ export function primordialPromiseAll<const T extends readonly unknown[]>(
 export function primordialPromiseAll(values: readonly unknown[]): Promise<unknown[]> {
   return new IntrinsicPromise((resolve, reject) => {
     const results: unknown[] = [];
-    let remaining = values.length;
-    if (remaining === 0) resolve(results);
+    let remaining = 1;
     for (let index = 0; index < values.length; index++) {
+      const value = values[index];
+      remaining++;
       void (async () => {
         try {
-          results[index] = await values[index];
+          primordialArraySet(results, index, await value);
           if (--remaining === 0) resolve(results);
         } catch (error) {
           reject(error);
         }
       })();
     }
+    if (--remaining === 0) resolve(results);
   });
 }
 
@@ -75,13 +79,18 @@ export function primordialPromiseAllSettled<T>(
 ): Promise<PromiseSettledResult<Awaited<T>>[]> {
   const settled: Promise<PromiseSettledResult<Awaited<T>>>[] = [];
   for (let index = 0; index < values.length; index++) {
-    settled[index] = (async () => {
-      try {
-        return { status: "fulfilled", value: await (values[index] as T) } as const;
-      } catch (reason) {
-        return { status: "rejected", reason } as const;
-      }
-    })();
+    const value = values[index] as T;
+    primordialArraySet(
+      settled,
+      index,
+      (async () => {
+        try {
+          return { status: "fulfilled", value: await value } as const;
+        } catch (reason) {
+          return { status: "rejected", reason } as const;
+        }
+      })(),
+    );
   }
   return primordialPromiseAll(settled);
 }

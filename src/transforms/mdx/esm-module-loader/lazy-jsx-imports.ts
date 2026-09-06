@@ -206,7 +206,7 @@ export class LazyJsxImportScope {
     // Content-derived bindings keep module identity stable and avoid collisions
     // with authored identifiers, including escaped identifier spellings.
     const binding = `__vf_lazy_${await computeHash(code)}`;
-    for (const imported of parsed.imports) {
+    for (const imported of primordialArrayValues(parsed.imports)) {
       if (imported.d < 0) continue;
       const path = resolveOwnedJsxArtifactPath(imported.n, cacheDir);
       if (path === undefined) continue;
@@ -240,7 +240,7 @@ export class LazyJsxImportScope {
     const rewriteRange = (start: number, end: number): string => {
       let result = "";
       let cursor = start;
-      for (const imported of parsed.imports) {
+      for (const imported of primordialArrayValues(parsed.imports)) {
         if (imported.ss < cursor || imported.se > end || imported.d < 0) continue;
         const path = resolveOwnedJsxArtifactPath(imported.n, cacheDir);
         const index = path === undefined ? undefined : mapGet(paths, path);
