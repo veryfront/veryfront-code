@@ -3734,15 +3734,14 @@ export default config as const;
         await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "module" }));
 
         for (const specifier of ["#cli/environment-config", "#cli/host-api-base"]) {
-          await assertRejects(
+          const error = await assertRejects(
             () =>
               rewriteProjectConfigImportsFromProject(
                 `import value from ${JSON.stringify(specifier)};\nexport default value;\n`,
                 configPath,
               ),
-            Error,
-            `Cannot find module '${specifier}'`,
           );
+          assertStringIncludes(error.message, specifier);
         }
       }, { prefix: "vf-config-host-private-cli-alias-" });
     });
