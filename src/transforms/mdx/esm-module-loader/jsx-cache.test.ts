@@ -30,8 +30,11 @@ import {
   buildMdxJsxCacheFileNamePrefix,
   MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
   MDX_JSX_CACHE_NAMESPACE_PREFIX,
-} from "./cache-format.ts";
-import { __importTransformerInternals, transformJsxImports } from "./import-transformer.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  __importTransformerInternals,
+  transformJsxImports,
+} from "#veryfront/transforms/mdx/esm-module-loader/import-transformer.ts";
 import {
   __jsxCacheInternals,
   ensureCachedJsxModulePatched,
@@ -46,13 +49,13 @@ import {
   retainJsxArtifactsReferencedIn,
   withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
-} from "./jsx-cache.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import {
   MAX_MDX_MODULE_CODE_BYTES,
   MAX_MDX_MODULE_IMPORTS_PER_FILE,
   ModuleSourceLimitError,
-} from "./module-fetcher/limits.ts";
-import { getLocalFs } from "./cache/index.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
+import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
 function limitErrorMessage(error: unknown): string {

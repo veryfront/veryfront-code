@@ -16,17 +16,17 @@ import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { Semaphore } from "#veryfront/utils/semaphore.ts";
-import { parseImports } from "../../esm/lexer.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import {
   buildMdxJsxCacheFileNamePrefix,
   MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
   MDX_JSX_CACHE_NAMESPACE_PREFIX,
   MDX_JSX_CACHE_ROOT_PREFIX,
-} from "./cache-format.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
-import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./module-fetcher/limits.ts";
+import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 

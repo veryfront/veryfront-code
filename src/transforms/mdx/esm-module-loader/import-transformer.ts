@@ -67,7 +67,7 @@ import {
   refreshJsxArtifactsBounded,
   withJsxArtifactLock,
   withJsxArtifactWriteCapacity,
-} from "./jsx-cache.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;

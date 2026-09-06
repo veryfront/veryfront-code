@@ -5,7 +5,7 @@
  */
 
 import { dirname, resolve } from "#veryfront/compat/path";
-import { isFrameworkSourceFile } from "../constants.ts";
+import { isFrameworkSourceFile } from "#veryfront/transforms/mdx/esm-module-loader/constants.ts";
 import {
   DEFAULT_REACT_VERSION,
   type ImportSpecifierInfo,

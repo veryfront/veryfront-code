@@ -49,7 +49,7 @@ import {
   transformJsxImports,
   transformReactToLocalPaths,
 } from "./import-transformer.ts";
-import { retainJsxArtifactsReferencedIn } from "./jsx-cache.ts";
+import { retainJsxArtifactsReferencedIn } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 import {
   findMissingFrameworkBundles,
   findVfModuleImports,
