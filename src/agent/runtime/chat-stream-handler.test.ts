@@ -1867,7 +1867,7 @@ describe("chat-stream-handler", () => {
 
       assertEquals(events, [{
         type: "error",
-        error: "Purchase additional credits or select a lower-cost model.",
+        error: "Insufficient AI credits",
         code: "INSUFFICIENT_CREDITS",
       }]);
       assertEquals(JSON.stringify(events).includes("provider-private-diagnostic"), false);
@@ -1969,6 +1969,20 @@ describe("chat-stream-handler", () => {
       });
     });
 
+    it("does not invoke hostile lastError accessors while checking provider evidence", () => {
+      const providerError = new Error("safe fallback");
+      Object.defineProperty(providerError, "lastError", {
+        get() {
+          throw new Error("hostile lastError accessor");
+        },
+      });
+
+      assertEquals(resolveRuntimeStreamErrorEvent(providerError), {
+        type: "error",
+        error: "safe fallback",
+      });
+    });
+
     it("keeps structured provider diagnostics out of public runtime errors", () => {
       const cases = [
         {
@@ -2003,6 +2017,46 @@ describe("chat-stream-handler", () => {
             type: testCase.type,
             message: `private ${testCase.type} diagnostic`,
           }),
+        });
+
+        const event = resolveRuntimeStreamErrorEvent(providerError);
+        assertEquals(event, testCase.expected);
+        assertEquals(JSON.stringify(event).includes("private"), false);
+      }
+    });
+
+    it("keeps problem-body diagnostics out of public runtime errors", () => {
+      const cases = [
+        {
+          body: {
+            slug: "insufficient-credits",
+            error: "private credit diagnostic",
+            suggestion: "private credit suggestion",
+          },
+          expected: {
+            type: "error",
+            code: "INSUFFICIENT_CREDITS",
+            error: "Insufficient AI credits",
+          },
+        },
+        {
+          body: {
+            slug: "resource-limit-exceeded",
+            error: "private resource diagnostic",
+            suggestion: "private resource suggestion",
+          },
+          expected: {
+            type: "error",
+            code: "RESOURCE_LIMIT_EXCEEDED",
+            error: "Resource limit exceeded",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const providerError = new Error("Provider request failed with status 402");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify(testCase.body),
         });
 
         const event = resolveRuntimeStreamErrorEvent(providerError);

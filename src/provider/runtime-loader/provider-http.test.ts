@@ -432,7 +432,7 @@ describe("provider-http", () => {
       assertEquals(err.message, "Provider request failed with status 402");
       assertEquals(parseProviderError(err), {
         code: "INSUFFICIENT_CREDITS",
-        message: "AI credit limit exceeded: 4 credits required, 0 available.",
+        message: "Insufficient AI credits",
         status: 402,
       });
     });
@@ -452,7 +452,7 @@ describe("provider-http", () => {
       assertEquals(Object.keys(err).includes("responseBody"), false);
       assertEquals(parseProviderError(err), {
         code: "RESOURCE_LIMIT_EXCEEDED",
-        message: "Reduce the request size and try again.",
+        message: "Resource limit exceeded",
         status: 402,
       });
     });

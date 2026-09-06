@@ -124,6 +124,7 @@ class HostedChildExecutionFailure extends Error {
       outputTokens: number;
       totalTokens: number;
     },
+    readonly terminalErrorCode?: string,
   ) {
     super(message);
     this.name = "HostedChildExecutionFailure";
@@ -360,7 +361,8 @@ function resolveHostedChildExecutionErrorState(
     const providerError = resolveKnownProviderTerminalError(error);
     return {
       status: "failed",
-      terminalErrorCode: providerError?.code ?? input.executionFailedCode,
+      terminalErrorCode: error.terminalErrorCode ?? providerError?.code ??
+        input.executionFailedCode,
       terminalErrorMessage: boundTerminalErrorText(
         providerError?.message ?? error.message,
         MAX_FAILURE_MESSAGE_LENGTH,
@@ -408,7 +410,11 @@ export async function runHostedChildExecutionLifecycle<
         const snapshot = options.getExecutionSnapshot() ?? buildChildRunExecutionSnapshot(result);
 
         if (!snapshot.success) {
-          throw new HostedChildExecutionFailure(snapshot.error ?? "Unknown error", snapshot.usage);
+          throw new HostedChildExecutionFailure(
+            snapshot.error ?? "Unknown error",
+            snapshot.usage,
+            snapshot.terminalErrorCode,
+          );
         }
 
         return {

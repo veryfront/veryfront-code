@@ -898,7 +898,7 @@ function mapWireEventToChatEvents(
         errorText: wireEvent.payload.message?.length
           ? wireEvent.payload.message
           : "Conversation agent run failed",
-        ...(wireEvent.payload.code ? { code: wireEvent.payload.code } : {}),
+        ...(wireEvent.payload.code?.length ? { code: wireEvent.payload.code } : {}),
       }];
   }
 }

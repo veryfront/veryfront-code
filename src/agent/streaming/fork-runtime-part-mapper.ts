@@ -7,7 +7,12 @@ import {
   parseToolInputObject,
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
-import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
+import {
+  type ForkPart,
+  type ForkRuntimeStep,
+  ForkRuntimeStreamError,
+  type ForkRuntimeStreamLogger,
+} from "./fork-runtime-types.ts";
 
 type ForkToolCallPart = Extract<ForkPart, { type: "tool-call" }>;
 type ForkToolResultPart = Extract<ForkPart, { type: "tool-result" }>;
@@ -385,7 +390,8 @@ export function mapAgUiRuntimeEventToForkParts(
         : typeof event.error === "string"
         ? event.error
         : "Framework stream failed";
-      return [{ type: "error", error: new Error(errorText) }];
+      const code = typeof event.code === "string" && event.code.length > 0 ? event.code : undefined;
+      return [{ type: "error", error: new ForkRuntimeStreamError(errorText, code) }];
     }
 
     default:

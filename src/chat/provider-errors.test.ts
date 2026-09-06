@@ -13,7 +13,7 @@ describe("chat/provider-errors", () => {
       })),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Purchase additional credits or upgrade your subscription plan.",
+        message: "Insufficient AI credits",
         status: 402,
       },
     );
@@ -25,7 +25,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "RESOURCE_LIMIT_EXCEEDED",
-        message: "Reduce the request size.",
+        message: "Resource limit exceeded",
         status: 402,
       },
     );
@@ -49,8 +49,7 @@ describe("chat/provider-errors", () => {
 
     assertEquals(parseProviderError(error), {
       code: "INSUFFICIENT_CREDITS",
-      message:
-        "Agent run credit limit exceeded: 85.5 credits required, 57.25 remaining. Start a new reviewed run or reduce the scope of this run.",
+      message: "Insufficient AI credits",
       status: 402,
     });
 
@@ -64,8 +63,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message:
-          "AI credit limit exceeded: 20 credits required, 12 available. Purchase additional credits or upgrade your subscription plan.",
+        message: "Insufficient AI credits",
         status: 402,
       },
     );
@@ -82,7 +80,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Start a new reviewed run.",
+        message: "Insufficient AI credits",
         status: 402,
       },
     );
@@ -96,7 +94,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "AI credit limit exceeded",
+        message: "Insufficient AI credits",
         status: 402,
       },
     );
@@ -343,7 +341,7 @@ describe("chat/provider-errors", () => {
       ),
       {
         code: "RESOURCE_LIMIT_EXCEEDED",
-        message: "Reduce the request size.",
+        message: "Resource limit exceeded",
         status: 402,
       },
     );
