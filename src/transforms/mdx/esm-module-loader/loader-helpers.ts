@@ -30,7 +30,7 @@ import {
   dynamicDependencyFailure,
   toImportStringLiteral,
 } from "./module-fetcher/nested-imports.ts";
-import type { ESMLoaderContext } from "./types.ts";
+import type { MdxPreparationContext } from "./types.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import {
   assertMdxModuleImportCount,
@@ -58,7 +58,7 @@ export async function findMissingFrameworkBundles(paths: string[]): Promise<stri
   return missing;
 }
 
-export function resolveProjectDir(context: ESMLoaderContext): string {
+export function resolveProjectDir(context: MdxPreparationContext): string {
   if (context.projectDir) return context.projectDir;
 
   const envProjectDir = context.adapter?.env.get("VERYFRONT_PROJECT_DIR") ??
@@ -75,7 +75,9 @@ export function resolveProjectDir(context: ESMLoaderContext): string {
  * Initialize the ESM cache directory.
  * Includes contentSourceId in the path to isolate preview vs production caches.
  */
-export async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
+export async function initializeCacheDir(
+  context: MdxPreparationContext,
+): Promise<string> {
   if (context.esmCacheDir) return context.esmCacheDir;
 
   if (!context.projectId) {
@@ -156,7 +158,7 @@ export async function processVfModuleImports(
     end: number;
     isDynamic?: boolean;
   }>,
-  context: ESMLoaderContext,
+  context: MdxPreparationContext,
   projectDir: string,
   strictMissingModules: boolean,
 ): Promise<string> {

@@ -41,6 +41,9 @@ export interface ESMLoaderContext {
   strictMissingModules?: boolean;
 }
 
+/** Compilation inputs without a host-owned cache of evaluated modules. */
+export type MdxPreparationContext = Omit<ESMLoaderContext, "moduleCache">;
+
 export interface FSAdapter {
   readFile(path: string): Promise<string | Uint8Array>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
