@@ -15,6 +15,7 @@ import {
   createStreamState,
   processStream,
   processStreamInternal,
+  resolveRuntimeStreamErrorEvent,
   summarizeProviderToolDebugValue,
 } from "./chat-stream-handler.ts";
 import {
@@ -1851,6 +1852,53 @@ describe("chat-stream-handler", () => {
         code: "INSUFFICIENT_CREDITS",
       }]);
       assertEquals(JSON.stringify(events).includes("provider-private-diagnostic"), false);
+    });
+
+    it("preserves provider account and spend-limit classifications at the runtime boundary", () => {
+      const cases = [
+        {
+          body: {
+            slug: "insufficient-credits",
+            error: "AI provider spend limit exceeded for the daily window.",
+            suggestion: "provider-private-suggestion",
+          },
+          expected: {
+            type: "error",
+            code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
+            error:
+              "The AI provider spend limit has been reached. Try again later or ask an administrator to raise the AI provider spend limit.",
+          },
+        },
+        {
+          body: {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+            },
+            privateDetail: "provider-private-diagnostic",
+          },
+          expected: {
+            type: "error",
+            code: "AI_PROVIDER_BILLING_ERROR",
+            error:
+              "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const providerError = new Error("Provider request failed");
+        Object.defineProperty(providerError, "responseBody", {
+          value: JSON.stringify(testCase.body),
+        });
+
+        const event = resolveRuntimeStreamErrorEvent(providerError);
+
+        assertEquals(event, testCase.expected);
+        assertEquals(JSON.stringify(event).includes("provider-private"), false);
+      }
     });
 
     it("forwards non-Error stream errors as string", async () => {
