@@ -1828,6 +1828,24 @@ describe("chat-stream-handler", () => {
       assertEquals(events[0], { type: "error", error: "Provider timeout" });
     });
 
+    it("contains hostile Proxy errors as one in-band fallback event", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const hostileError = new Proxy(new Error("original fallback"), {
+        getPrototypeOf() {
+          throw new Error("hostile getPrototypeOf");
+        },
+      });
+      const result = createMockResult([
+        { type: "error", error: hostileError },
+        { type: "finish", finishReason: "error", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(events, [{ type: "error", error: "Unknown error" }]);
+    });
+
     it("preserves curated terminal details from structured stream error parts", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();

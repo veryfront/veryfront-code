@@ -7,6 +7,7 @@ import {
   createHostedChatRuntimeAgentAdapter,
   type HostedChatRuntimeAgentAdapterInput,
 } from "./chat-runtime-agent-adapter.ts";
+import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
 
 const encoder = new TextEncoder();
 const unrestrictedSourceIntegrationPolicy = {
@@ -319,5 +320,57 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
         },
       },
     ]);
+  });
+
+  it("preserves terminal codes through the standard hosted AG-UI response", async () => {
+    const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {
+      stream() {
+        return Promise.resolve({
+          toDataStreamResponse: () =>
+            createSseResponse([{
+              type: "error",
+              error: "Buy credits",
+              code: "INSUFFICIENT_CREDITS",
+            }]),
+        });
+      },
+    };
+    const adapter = createHostedChatRuntimeAgentAdapter({
+      runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    });
+    const streamResult = await adapter.stream({
+      messages: [],
+      abortSignal: new AbortController().signal,
+    });
+    const response = createAgUiChatUiTrackedResponse({
+      agUiInput: {
+        threadId: crypto.randomUUID(),
+        runId: "run-1",
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agentId: "agent-1",
+      modelId: "custom/model",
+      execution: {
+        agentUIStream: streamResult.toUIMessageStream({
+          generateMessageId: () => "assistant-message",
+        }),
+        fail: async () => {},
+        waitForFinish: async () => {},
+      },
+    });
+
+    const runErrorFrame = (await response.text()).split("\n\n").find((frame) =>
+      frame.includes("event: RunError")
+    );
+    const runErrorData = runErrorFrame?.split("\n").find((line) => line.startsWith("data: "));
+    const runErrorPayload = runErrorData
+      ? JSON.parse(runErrorData.slice(6)) as Record<string, unknown>
+      : undefined;
+
+    assertEquals(runErrorPayload?.code, "INSUFFICIENT_CREDITS");
+    assertEquals(runErrorPayload?.message, "Buy credits");
   });
 });

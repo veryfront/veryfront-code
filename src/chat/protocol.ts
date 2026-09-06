@@ -345,6 +345,7 @@ export type ChatStreamEvent =
   | {
     type: "error";
     errorText: string;
+    code?: string;
   };
 
 /** Public API contract for message lifecycle chunk. */
@@ -471,6 +472,7 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
   | {
     type: "error";
     errorText: string;
+    code?: string;
   }
   | {
     type: `data-${string}`;

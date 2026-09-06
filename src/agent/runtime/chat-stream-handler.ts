@@ -29,6 +29,7 @@ import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { withToolInputStatusTransitions } from "#veryfront/provider/runtime-loader/tool-input-status.ts";
+import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   applyLifecycleSnapshotToChatStreamState,
   createRuntimeStreamProviderAdapter,
@@ -59,6 +60,7 @@ import {
   isIntegrationAuthenticationActionResult,
 } from "#veryfront/tool/result.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { readOwnDataProperty } from "./data-property-descriptor.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -96,32 +98,52 @@ export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
   code?: string;
 }
 
+function hasProviderStreamErrorEvidence(error: unknown): boolean {
+  try {
+    if (error instanceof ProviderError) return true;
+    return typeof readOwnDataProperty(error, "responseBody", "provider stream error", false) ===
+      "string";
+  } catch {
+    return false;
+  }
+}
+
 /** Preserve only curated provider terminal details across the runtime stream boundary. */
 export function resolveRuntimeStreamErrorEvent(error: unknown): RuntimeStreamErrorEvent {
-  if (error instanceof StreamLifecycleFailure) {
+  try {
+    if (error instanceof StreamLifecycleFailure) {
+      return {
+        type: "error",
+        error: error.lifecycleError.publicMessage,
+        ...(error.lifecycleError.code === "PROVIDER_TERMINAL_ERROR" &&
+            error.lifecycleError.providerCode
+          ? { code: error.lifecycleError.providerCode }
+          : {}),
+      };
+    }
+
+    const knownProviderError = hasProviderStreamErrorEvidence(error)
+      ? resolveKnownProviderTerminalError(error)
+      : null;
+    if (knownProviderError) {
+      return {
+        type: "error",
+        error: knownProviderError.message,
+        code: knownProviderError.code,
+      };
+    }
+
     return {
       type: "error",
-      error: error.lifecycleError.publicMessage,
-      ...(error.lifecycleError.code === "PROVIDER_TERMINAL_ERROR" &&
-          error.lifecycleError.providerCode
-        ? { code: error.lifecycleError.providerCode }
-        : {}),
+      error: error instanceof Error ? error.message : String(error),
     };
+  } catch {
+    try {
+      return { type: "error", error: stringifyToolError(error) };
+    } catch {
+      return { type: "error", error: "Unknown error" };
+    }
   }
-
-  const knownProviderError = resolveKnownProviderTerminalError(error);
-  if (knownProviderError) {
-    return {
-      type: "error",
-      error: knownProviderError.message,
-      code: knownProviderError.code,
-    };
-  }
-
-  return {
-    type: "error",
-    error: error instanceof Error ? error.message : String(error),
-  };
 }
 
 /**
