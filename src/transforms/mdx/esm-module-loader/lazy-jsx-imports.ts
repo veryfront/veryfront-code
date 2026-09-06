@@ -1,7 +1,10 @@
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { CACHE_ERROR } from "#veryfront/errors";
-import { primordialArrayPush } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  primordialArrayPush,
+  primordialArrayValues,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { parseMaskedImports } from "#veryfront/transforms/esm/lexer.ts";
 import { getLocalFs } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
@@ -52,6 +55,8 @@ const setRegistration = registrations.set.bind(registrations);
 const deleteRegistration = registrations.delete.bind(registrations);
 const freeze = Object.freeze;
 const stringify = JSON.stringify;
+const objectCreate = Object.create;
+const objectEntries = Object.entries;
 const keySalt = crypto.randomUUID();
 const MAX_RECOVERY_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 const MAX_RECOVERY_SNAPSHOTS = 256;
@@ -177,8 +182,10 @@ function snapshotImportOptions(
   if (attributes === null || (typeof attributes !== "object" && typeof attributes !== "function")) {
     throw new TypeError("Import attributes must be an object");
   }
-  const snapshot: Record<string, string> = Object.create(null);
-  for (const [key, value] of Object.entries(attributes)) {
+  const snapshot: Record<string, string> = objectCreate(null);
+  for (const entry of primordialArrayValues(objectEntries(attributes))) {
+    const key = entry[0];
+    const value = entry[1];
     if (typeof value !== "string") throw new TypeError("Import attribute values must be strings");
     snapshot[key] = value;
   }

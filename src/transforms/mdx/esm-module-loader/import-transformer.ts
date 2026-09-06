@@ -8,6 +8,7 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import { primordialArrayValues } from "#veryfront/platform/compat/primordials/array.ts";
 import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -105,7 +106,9 @@ function setDelete<T>(set: Set<T>, value: T): boolean {
 
 function setValues<T>(set: Set<T>): T[] {
   const values: T[] = [];
-  IntrinsicReflectApply(SetPrototypeForEach, set, [(value: T) => values.push(value)]);
+  IntrinsicReflectApply(SetPrototypeForEach, set, [(value: T) => {
+    values[values.length] = value;
+  }]);
   return values;
 }
 
@@ -450,7 +453,7 @@ async function mapJsxTransformsWithCleanup<T, R>(
     );
   } catch (error) {
     mapFailed = true;
-    await Promise.all(setValues(inFlightTransforms));
+    await Promise.all(primordialArrayValues(setValues(inFlightTransforms)));
     await cleanup();
     throw error;
   }

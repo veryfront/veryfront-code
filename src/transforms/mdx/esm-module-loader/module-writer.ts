@@ -108,6 +108,22 @@ const temporaryParentReferences = new IntrinsicMap<string, {
   retention: Promise<() => void>;
 }>();
 
+async function releaseTemporaryParents(releases: readonly (() => Promise<void>)[]): Promise<void> {
+  for (let index = 0; index < releases.length; index++) {
+    try {
+      await releases[index]!();
+    } catch {
+      // Remaining files stay discoverable by the quota-accounted root sweep.
+      // One cleanup failure must not skip other releases or mask the load error.
+      try {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Temporary parent cleanup deferred`);
+      } catch {
+        // Project-modified logging must not interrupt the remaining releases.
+      }
+    }
+  }
+}
+
 async function retainTemporaryParent(path: string, cacheDir: string): Promise<() => Promise<void>> {
   const entry = mapGet(temporaryParentReferences, path) ?? {
     count: 0,
@@ -258,7 +274,7 @@ async function verifyMdxCacheFile(
 }
 
 /** Internal test seam for cache verification error handling. */
-export const __moduleWriterInternals = { verifyMdxCacheFile };
+export const __moduleWriterInternals = { verifyMdxCacheFile, releaseTemporaryParents };
 
 export async function doLoadModuleESM(
   compiledProgramCode: string,
@@ -688,9 +704,6 @@ export async function doLoadModuleESM(
   } finally {
     releaseJsxArtifacts?.();
     lazyJsxImports.release();
-    const releases = mapValues(temporaryParentFiles);
-    for (let index = 0; index < releases.length; index++) {
-      await releases[index]!();
-    }
+    await releaseTemporaryParents(mapValues(temporaryParentFiles));
   }
 }
