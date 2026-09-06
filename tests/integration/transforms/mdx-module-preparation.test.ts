@@ -19,6 +19,85 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
 
 describe("MDX module preparation", () => {
+  it("rejects an uncaptured JSX import without reading its source", async () => {
+    const fs = createFileSystem();
+    const dir = await fs.makeTempDir();
+    const adapter = await runtime.get();
+    const childPath = join(dir, "child.jsx");
+    await fs.writeTextFile(childPath, "export default function Child() { return <div />; }");
+    const readFile = adapter.fs.readFile.bind(adapter.fs);
+    const readDescriptor = Object.getOwnPropertyDescriptor(adapter.fs, "readFile");
+    let childReads = 0;
+    Object.defineProperty(adapter.fs, "readFile", {
+      configurable: true,
+      value: (path: string) => {
+        if (path === childPath) childReads++;
+        return readFile(path);
+      },
+    });
+    try {
+      await assertRejects(
+        () =>
+          prepareModuleGraphESM(
+            `export { default } from ${jsonForInlineScript(toFileUrl(childPath).href)};`,
+            {
+              adapter,
+              projectDir: dir,
+              projectId: "graph-test",
+              contentSourceId: "release-test",
+              esmCacheDir: dir,
+              dependencyPinningCacheKey: "off",
+            },
+            { maxEntries: 2, maxBytes: 4096 },
+          ),
+        Error,
+        "missing an imported source",
+      );
+      assertEquals(childReads, 0, "graph capture must not invoke the legacy JSX file reader");
+    } finally {
+      if (readDescriptor) Object.defineProperty(adapter.fs, "readFile", readDescriptor);
+      else Reflect.deleteProperty(adapter.fs, "readFile");
+      await fs.remove(dir, { recursive: true });
+    }
+  });
+
+  it("does not recover dependencies discovered inside inert file URL text", async () => {
+    const fs = createFileSystem();
+    const dir = await fs.makeTempDir();
+    let recoveryLookups = 0;
+    __setDistributedCacheAccessorForTests(() => {
+      recoveryLookups++;
+      return Promise.resolve(null);
+    });
+    try {
+      const unrelated = join(dir, "veryfront-mdx-esm", "unrelated.mjs");
+      await fs.mkdir(join(dir, "veryfront-mdx-esm"), { recursive: true });
+      const missingBundle = toFileUrl(join(dir, "veryfront-http-bundle", "http-abc123.mjs")).href;
+      await fs.writeTextFile(unrelated, `import ${jsonForInlineScript(missingBundle)};`);
+      const graph = await prepareModuleGraphESM(
+        `export const label = ${jsonForInlineScript(toFileUrl(unrelated).href)};`,
+        {
+          adapter: await runtime.get(),
+          projectDir: dir,
+          projectId: "graph-test",
+          contentSourceId: "release-test",
+          esmCacheDir: dir,
+          dependencyPinningCacheKey: "off",
+        },
+        { maxEntries: 1, maxBytes: 4096 },
+      );
+      assertEquals(graph.files.length, 1);
+      assertEquals(
+        recoveryLookups,
+        0,
+        "inert text must not trigger an uncaptured file walk or HTTP recovery",
+      );
+    } finally {
+      __setDistributedCacheAccessorForTests(null);
+      await fs.remove(dir, { recursive: true });
+    }
+  });
+
   it("prepares a closed graph from the final root and HTTP dependencies on cold and warm caches", async () => {
     const fs = createFileSystem();
     const dir = await fs.makeTempDir();

@@ -319,30 +319,34 @@ async function writeModuleESM(
       effectiveContext.moduleServerOrigin,
     );
 
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
-    const vfModuleImports = findVfModuleImports(rewritten);
-    const strictMissingModules = effectiveContext.strictMissingModules ?? true;
-    rewritten = await withSpan(
-      SpanNames.MDX_PROCESS_VF_MODULES,
-      () =>
-        processVfModuleImports(
-          rewritten,
-          vfModuleImports,
-          effectiveContext,
-          projectDir,
-          strictMissingModules,
-        ),
-      { "mdx.vf_module_count": vfModuleImports.length },
-    );
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
+    // These legacy transforms read file URLs without recording source ownership.
+    // Captured preparation leaves them unresolved so graph closure rejects them.
+    if (!sourceCapture) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
+      const vfModuleImports = findVfModuleImports(rewritten);
+      const strictMissingModules = effectiveContext.strictMissingModules ?? true;
+      rewritten = await withSpan(
+        SpanNames.MDX_PROCESS_VF_MODULES,
+        () =>
+          processVfModuleImports(
+            rewritten,
+            vfModuleImports,
+            effectiveContext,
+            projectDir,
+            strictMissingModules,
+          ),
+        { "mdx.vf_module_count": vfModuleImports.length },
+      );
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
 
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
-    rewritten = await withSpan(
-      SpanNames.MDX_TRANSFORM_JSX,
-      () => transformJsxImports(rewritten, adapter, esmCacheDir),
-      { "mdx.project_slug": projectSlug },
-    );
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
+      rewritten = await withSpan(
+        SpanNames.MDX_TRANSFORM_JSX,
+        () => transformJsxImports(rewritten, adapter, esmCacheDir),
+        { "mdx.project_slug": projectSlug },
+      );
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
+    }
 
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
@@ -365,7 +369,7 @@ async function writeModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths START`, {
       projectSlug,
     });
-    rewritten = await transformReactToLocalPaths(rewritten);
+    if (!sourceCapture) rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
     const effectiveReactVersion = effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION;
@@ -423,6 +427,16 @@ async function writeModuleESM(
       }
     });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight DONE`, { projectSlug, filePath });
+
+    if (sourceCapture) {
+      // The linker uses captured bytes, not cache file existence. Legacy host
+      // import recovery scans may read uncaptured files and do not apply here.
+      return Object.freeze({
+        filePath,
+        importUrl: `${toFileUrl(filePath).href}?v=${codeHash}`,
+        source: rewritten,
+      });
+    }
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import START`, {
       projectSlug,
