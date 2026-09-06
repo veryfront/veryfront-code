@@ -1296,20 +1296,50 @@ function materializeRuntimeStreamPart(part: unknown): unknown {
 }
 
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
-  for await (const part of stream) {
-    try {
-      const materializedPart = materializeRuntimeStreamPart(part);
-      if (
-        typeof materializedPart === "object" && materializedPart !== null &&
-        (materializedPart as { type?: unknown }).type === "error"
-      ) {
-        throw createRuntimeProviderStreamFailure(
-          (materializedPart as { error?: unknown }).error,
-        );
+  const reader = stream.getReader();
+  let completed = false;
+  let cleanupContinuesInBackground = false;
+
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) {
+        completed = true;
+        return;
       }
-      yield materializedPart;
-    } catch (error) {
-      throw createRuntimeProviderStreamFailure(error);
+
+      try {
+        const materializedPart = materializeRuntimeStreamPart(part.value);
+        if (
+          typeof materializedPart === "object" && materializedPart !== null &&
+          (materializedPart as { type?: unknown }).type === "error"
+        ) {
+          throw createRuntimeProviderStreamFailure(
+            (materializedPart as { error?: unknown }).error,
+          );
+        }
+        yield materializedPart;
+      } catch (error) {
+        cleanupContinuesInBackground = true;
+        void (async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Provider cleanup cannot replace or delay the terminal provider error.
+          } finally {
+            reader.releaseLock();
+          }
+        })();
+        throw createRuntimeProviderStreamFailure(error);
+      }
+    }
+  } finally {
+    if (!cleanupContinuesInBackground) {
+      try {
+        if (!completed) await reader.cancel();
+      } finally {
+        reader.releaseLock();
+      }
     }
   }
 }
