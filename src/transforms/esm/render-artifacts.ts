@@ -19,12 +19,12 @@ import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation/normalization.ts";
 import { resolveThroughExistingAncestor } from "#veryfront/security/path-validation/canonical.ts";
 
-interface RenderArtifactInput {
+export interface RenderArtifactInput {
   files: readonly { path: string; source: string }[];
   entrypoints: readonly string[];
 }
 
-interface RenderArtifactLimits {
+export interface RenderArtifactLimits {
   /** Files and nested directories, excluding the private publication root. */
   maxEntries: number;
   /** Combined UTF-8 paths and module contents, not a measurement of heap usage. */

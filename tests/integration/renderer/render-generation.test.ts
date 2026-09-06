@@ -6,14 +6,26 @@ import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { execPath, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { fromFileUrl, join, relative } from "#veryfront/compat/path";
-import { RenderArtifacts } from "#veryfront/transforms/esm/render-artifacts.ts";
+import { fromFileUrl, join, relative, toFileUrl } from "#veryfront/compat/path";
+import {
+  type RenderArtifactInput,
+  RenderArtifacts,
+} from "#veryfront/transforms/esm/render-artifacts.ts";
+import { linkRenderModules } from "#veryfront/transforms/esm/link-render-modules.ts";
+import { prepareModuleESM } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
 import { build, stop as stopBundler } from "veryfront/extensions/bundler";
 
 describe("render generation process lifetime", () => {
   afterAll(stopBundler);
-  for (const completion of ["drain", "cancel"] as const) {
-    it(`retains a prepared lazy graph until process exit after ${completion}`, async () => {
+  for (
+    const [preparation, completion] of [
+      ["bundled", "drain"],
+      ["bundled", "cancel"],
+      ["mdx", "drain"],
+      ["mdx", "cancel"],
+    ] as const
+  ) {
+    it(`retains a ${preparation} lazy graph until process exit after ${completion}`, async () => {
       const fs = createFileSystem();
       const adapter = await runtime.get();
       const cache = await fs.makeTempDir();
@@ -47,24 +59,57 @@ describe("render generation process lifetime", () => {
   return (await child.load()).value;
 }`,
         );
-        const output = join(cache, "output");
-        const bundled = await build({
-          entryPoints: { entry: join(cache, "entry.mjs") },
-          outdir: output,
-          bundle: true,
-          splitting: true,
-          format: "esm",
-          platform: "neutral",
-          outExtension: { ".js": ".mjs" },
-          write: false,
-        });
-        const graph = {
-          files: bundled.outputFiles.map((file) => ({
-            path: relative(output, file.path).replaceAll("\\", "/"),
-            source: file.text,
-          })),
-          entrypoints: ["entry.mjs"],
-        };
+        let graph: RenderArtifactInput;
+        if (preparation === "mdx") {
+          const childUrl = toFileUrl(join(cache, "child.mjs")).href;
+          const prepared = await prepareModuleESM(
+            `export async function load() {
+  const child = await import(${JSON.stringify(childUrl + "?v=first")});
+  const repeated = await import(${JSON.stringify(childUrl + "?v=first")});
+  const other = await import(${JSON.stringify(childUrl + "?v=second")});
+  if (child !== repeated || child === other) throw new Error("Module identity changed");
+  return (await child.load()).value;
+}`,
+            {
+              adapter,
+              projectDir: cache,
+              projectId: "generation-test",
+              contentSourceId: "release-test",
+              esmCacheDir: cache,
+              dependencyPinningCacheKey: "off",
+            },
+          );
+          // Capture only test-owned files. Production capture must establish
+          // authorization and consistency, not crawl arbitrary cache paths.
+          const modules = await Promise.all(
+            [prepared.filePath, join(cache, "child.mjs"), join(cache, "leaf.mjs")].map(
+              async (path) => ({ url: toFileUrl(path).href, source: await fs.readTextFile(path) }),
+            ),
+          );
+          graph = await linkRenderModules({
+            modules,
+            entrypoints: [toFileUrl(prepared.filePath).href],
+          }, { maxEntries: 8, maxBytes: 4096 });
+        } else {
+          const output = join(cache, "output");
+          const bundled = await build({
+            entryPoints: { entry: join(cache, "entry.mjs") },
+            outdir: output,
+            bundle: true,
+            splitting: true,
+            format: "esm",
+            platform: "neutral",
+            outExtension: { ".js": ".mjs" },
+            write: false,
+          });
+          graph = {
+            files: bundled.outputFiles.map((file) => ({
+              path: relative(output, file.path).replaceAll("\\", "/"),
+              source: file.text,
+            })),
+            entrypoints: ["entry.mjs"],
+          };
+        }
         artifacts = new RenderArtifacts(graph, { maxEntries: 8, maxBytes: 4096 });
         peerArtifacts = new RenderArtifacts(graph, { maxEntries: 8, maxBytes: 4096 });
         const [prepared, peer] = await Promise.all([artifacts.prepare(), peerArtifacts.prepare()]);
@@ -131,7 +176,7 @@ describe("render generation process lifetime", () => {
         // this executor's live graph, even when both copies share a filesystem.
         await peerArtifacts.release();
         assertEquals(await fs.exists(peer.directory), false);
-        assertEquals(await fs.exists(join(prepared.directory, "entry.mjs")), true);
+        assertEquals(await fs.exists(fromFileUrl(prepared.entrypointUrls[0]!)), true);
         const closing = generation.close();
         await assertRejects(() => generation!.render(request()), Error, "draining");
         if (completion === "drain") {
