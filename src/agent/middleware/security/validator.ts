@@ -415,8 +415,8 @@ function extractPartInputText(part: unknown): string[] {
  * `system` belongs here: structured input accepts caller-supplied system
  * messages and the runtime converter forwards them to the provider as system
  * prompts, so they carry more authority than user text, not less. Assistant and
- * tool messages stay exempt because they are model-authored replay that would
- * otherwise block a benign follow-up turn.
+ * tool messages remain exempt for replay compatibility. The host must supply
+ * trusted replay: this role-based filter does not authenticate message origin.
  */
 const VALIDATED_INPUT_ROLES: ReadonlySet<Message["role"]> = new Set(["user", "system"]);
 

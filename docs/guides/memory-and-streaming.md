@@ -91,6 +91,19 @@ Response-cache middleware skips stateful agents. Each turn must use the current
 conversation and persist its assistant reply. Stateless agents can reuse cached
 responses.
 
+### Replay trust boundary
+
+Input validation checks caller-supplied `user` and `system` messages. It does not
+scan `assistant` replay or `tool` results as new caller instructions. This keeps
+existing conversations replayable, but message roles do not prove their origin.
+
+Your host must load assistant replay and tool results from trusted storage or
+trusted model execution and ensure they belong to the authorized conversation.
+Do not forward client-supplied assistant or tool messages directly as trusted
+replay. The input-validation middleware does not authenticate replay provenance.
+Direct writes through `getMemory().add()` also cross this host-owned trust
+boundary; validate untrusted input before adding it.
+
 ### Custom memory transactions
 
 When transactional input validation is enabled, your custom `Memory` backend
