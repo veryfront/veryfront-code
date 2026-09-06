@@ -29,13 +29,18 @@ export type TurnInputValidator = (messages: Message[]) => Promise<void>;
  * Validate the full provider-bound conversation assembled for one turn.
  *
  * Receives the persisted history and this turn's resolved input separately, so
- * a hook can tell which messages the turn is actually adding. When memory
- * rewrites the transcript during persistence, the runtime passes the complete
- * provider-bound transcript as `turnInput` with empty `history`.
+ * a hook can tell which messages the turn is actually adding. For middleware
+ * without a projection validator, a memory replacement that is not an ordered
+ * subset falls back to the complete transcript as `turnInput` with empty
+ * `history`. A registered projection validator receives rewrites separately.
  */
 export type TurnMessageValidator = (history: Message[], turnInput: Message[]) => Promise<void>;
 
-/** Validate provider assemblies created only by a memory projection rewrite. */
+/**
+ * Validate changed caller values and provider assemblies after a memory rewrite.
+ * `previousMessages` is the detached pre-write transcript, including provider
+ * replay provenance, so unchanged occurrences need not be validated again.
+ */
 export type TurnMessageProjectionValidator = (
   messages: Message[],
   previousMessages?: Message[],

@@ -8,11 +8,194 @@ import { securityMiddleware } from "#veryfront/agent/middleware/security/validat
 import type { ModelRuntime } from "#veryfront/provider";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "#veryfront/agent/runtime/provider-metadata.ts";
+import {
   registerTurnMessageProjectionValidator,
   registerTurnMessageValidator,
 } from "#veryfront/agent/middleware/turn-validation.ts";
 
 describe("custom memory transaction boundary", () => {
+  for (const mutation of ["replacement", "in-place"] as const) {
+    for (const role of ["user", "system"] as const) {
+      it(`rejects a ${mutation} ${role} projection before dispatch and rolls back`, async () => {
+        const store = new ConversationMemory<Message>({ type: "conversation" });
+        let commits = 0;
+        let rollbacks = 0;
+        let providerCalls = 0;
+        const model: ModelRuntime = {
+          provider: "openai",
+          modelId: "veryfront-cloud/openai/changed-projection",
+          doGenerate() {
+            providerCalls += 1;
+            return Promise.resolve({
+              content: [{ type: "text" as const, text: "answer" }],
+              finishReason: "stop" as const,
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            });
+          },
+          doStream: () => Promise.reject(new Error("Expected generate")),
+        };
+        const runtime = new AgentRuntime("changed-projection", {
+          model: model.modelId,
+          system: "Helpful",
+          maxSteps: 1,
+          security: false,
+          middleware: [securityMiddleware({ input: { blockedPatterns: [/forbidden/] } })],
+        }, { resolveModelRuntime: () => model });
+        const memory: Memory<Message> = {
+          add: store.add.bind(store),
+          getMessages: store.getMessages.bind(store),
+          clear: store.clear.bind(store),
+          getStats: store.getStats.bind(store),
+          beginTransaction() {
+            const staged: Message[] = [];
+            return Promise.resolve({
+              add(message: Message) {
+                if (mutation === "in-place") {
+                  const part = message.parts[0];
+                  if (part?.type === "text" && "text" in part) part.text = "forbidden";
+                  staged.push(message);
+                } else {
+                  staged.push({ ...message, parts: [{ type: "text", text: "forbidden" }] });
+                }
+                return Promise.resolve();
+              },
+              getMessages: () => Promise.resolve(staged),
+              commit() {
+                commits += 1;
+                return Promise.resolve();
+              },
+              rollback() {
+                rollbacks += 1;
+                return Promise.resolve();
+              },
+            });
+          },
+        };
+        Reflect.set(runtime, "memory", memory);
+
+        await assertRejects(
+          () =>
+            runtime.generate([{ id: "current", role, parts: [{ type: "text", text: "benign" }] }]),
+          Error,
+          "Input validation failed",
+        );
+        assertEquals(providerCalls, 0);
+        assertEquals(commits, 0);
+        assertEquals(rollbacks, 1);
+        assertEquals(await store.getMessages(), []);
+      });
+    }
+  }
+
+  for (const delivered of [false, true]) {
+    for (const projection of ["removal", "metadata-loss"] as const) {
+      it(`preserves ${delivered ? "delivered" : "live"} replay boundaries after ${projection}`, async () => {
+        const first: Message = {
+          id: "first",
+          role: "user",
+          parts: [{ type: "text", text: "forbid" }],
+        };
+        const metadata = {
+          anthropic: {
+            rawAssistantMessages: [[{ type: "thinking", thinking: "", signature: "test" }]],
+          },
+        };
+        const separator = attachProviderMetadata(
+          { id: "separator", role: "assistant", parts: [] },
+          metadata,
+        );
+        if (delivered) markProviderReplayDelivered(separator);
+        const store = new ConversationMemory<Message>({ type: "conversation" });
+        await store.add(first);
+        await store.add(separator);
+        let commits = 0;
+        let rollbacks = 0;
+        let providerCalls = 0;
+        let projections = 0;
+        const recorder: AgentMiddleware = (context, next) => {
+          registerTurnMessageProjectionValidator(context, (_messages, previousMessages) => {
+            projections += 1;
+            const previousSeparator = previousMessages?.find((message) =>
+              message.id === separator.id
+            );
+            if (!previousSeparator) {
+              throw new Error("Expected replay separator in validation baseline");
+            }
+            assertEquals(previousSeparator === separator, false);
+            assertEquals(readAttachedProviderMetadata(previousSeparator), metadata);
+            assertEquals(readAttachedProviderMetadata(previousSeparator) === metadata, false);
+            assertEquals(isProviderReplayDelivered(previousSeparator), delivered);
+            return Promise.resolve();
+          });
+          return next();
+        };
+        const model: ModelRuntime = {
+          provider: "openai",
+          modelId: "veryfront-cloud/openai/replay-projection",
+          doGenerate() {
+            providerCalls += 1;
+            return Promise.reject(new Error("Unsafe replay projection reached provider"));
+          },
+          doStream: () => Promise.reject(new Error("Expected generate")),
+        };
+        const runtime = new AgentRuntime("replay-projection", {
+          model: model.modelId,
+          system: "Helpful",
+          maxSteps: 1,
+          security: false,
+          middleware: [recorder, securityMiddleware({ input: { blockedPatterns: [/forbidden/] } })],
+        }, { resolveModelRuntime: () => model });
+        const memory: Memory<Message> = {
+          add: store.add.bind(store),
+          getMessages: store.getMessages.bind(store),
+          clear: store.clear.bind(store),
+          getStats: store.getStats.bind(store),
+          beginTransaction() {
+            let staged = [first, separator];
+            return Promise.resolve({
+              add(message: Message) {
+                staged = projection === "removal"
+                  ? [first, message]
+                  : [first, structuredClone(separator), message];
+                return Promise.resolve();
+              },
+              getMessages: () => Promise.resolve(staged),
+              commit() {
+                commits += 1;
+                return Promise.resolve();
+              },
+              rollback() {
+                rollbacks += 1;
+                return Promise.resolve();
+              },
+            });
+          },
+        };
+        Reflect.set(runtime, "memory", memory);
+        await assertRejects(
+          () =>
+            runtime.generate([{
+              id: "last",
+              role: "user",
+              parts: [{ type: "text", text: "den" }],
+            }]),
+          Error,
+          "Input validation failed",
+        );
+        assertEquals(projections, 1);
+        assertEquals(providerCalls, 0);
+        assertEquals(commits, 0);
+        assertEquals(rollbacks, 1);
+        assertEquals(await store.getMessages(), [first, separator]);
+      });
+    }
+  }
+
   it("validates a reordered replacement as a projection and rolls it back", async () => {
     const retained: Message = {
       id: "retained",

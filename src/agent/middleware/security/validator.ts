@@ -656,6 +656,33 @@ function extractMergedRuns(messages: Message[]): Message[][] {
   return [...extractMergedSystemRuns(messages), ...extractAdjacentRuns(messages, "user")];
 }
 
+function sameProviderMessageContent(previous: Message, projected: Message): boolean {
+  return previous.role === projected.role && isDeepStrictEqual(previous.parts, projected.parts);
+}
+
+function createMessageOccurrenceMatcher(previousMessages: Message[], messages: Message[]) {
+  const uniqueById = (values: Message[]): Map<string, Message | undefined> => {
+    const unique = new Map<string, Message | undefined>();
+    for (const message of values) {
+      unique.set(message.id, unique.has(message.id) ? undefined : message);
+    }
+    return unique;
+  };
+  const previousById = uniqueById(previousMessages);
+  const projectedById = uniqueById(messages);
+  const sameOccurrence = (previous: Message, projected: Message | undefined): boolean => {
+    if (previous === projected) return true;
+    if (!projected || !previous.id || previous.id !== projected.id) return false;
+    // Custom transactional memory can deserialize each read. Stable IDs plus
+    // provider content equality recover provenance only when neither snapshot
+    // contains an ambiguous duplicate occurrence.
+    return previousById.get(previous.id) === previous &&
+      projectedById.get(projected.id) === projected &&
+      sameProviderMessageContent(previous, projected);
+  };
+  return sameOccurrence;
+}
+
 /**
  * Assemble every merged run into the forms the provider can produce.
  *
@@ -678,24 +705,9 @@ function extractMergedRunTexts(
   previousMessages?: Message[],
 ): string[] {
   const previousRuns = previousMessages && extractMergedRuns(previousMessages);
-  const uniqueById = (values: Message[]): Map<string, Message | undefined> => {
-    const unique = new Map<string, Message | undefined>();
-    for (const message of values) {
-      unique.set(message.id, unique.has(message.id) ? undefined : message);
-    }
-    return unique;
-  };
-  const previousById = previousMessages && uniqueById(previousMessages);
-  const projectedById = previousMessages && uniqueById(messages);
-  const sameOccurrence = (previous: Message, projected: Message | undefined): boolean => {
-    if (previous === projected) return true;
-    if (!projected || !previous.id || previous.id !== projected.id) return false;
-    // Custom transactional memory can deserialize each read. Stable IDs plus
-    // complete snapshot equality recover provenance only when neither snapshot
-    // contains an ambiguous duplicate occurrence.
-    return previousById?.get(previous.id) === previous &&
-      projectedById?.get(projected.id) === projected && isDeepStrictEqual(previous, projected);
-  };
+  const sameOccurrence = previousMessages
+    ? createMessageOccurrenceMatcher(previousMessages, messages)
+    : undefined;
   const runTexts = new Set<string>();
   for (const run of extractMergedRuns(messages)) {
     // Only an identical grouping keeps its provenance. Comparing text alone
@@ -704,7 +716,7 @@ function extractMergedRunTexts(
     if (
       previousRuns?.some((previous) =>
         previous.length === run.length &&
-        previous.every((message, index) => sameOccurrence(message, run[index]))
+        previous.every((message, index) => sameOccurrence?.(message, run[index]))
       )
     ) continue;
     if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
@@ -1539,6 +1551,24 @@ export function securityMiddleware(
         );
       });
       registerTurnMessageProjectionValidator(context, async (messages, previousMessages) => {
+        // Consume occurrences, rather than IDs, so duplicate IDs and freshly
+        // deserialized messages retain their individual validation provenance.
+        const remainingPrevious = previousMessages?.slice() ?? [];
+        const changed = messages.filter((message) => {
+          const index = remainingPrevious.findIndex((previous) =>
+            previous.id === message.id && sameProviderMessageContent(previous, message)
+          );
+          if (index < 0) return true;
+          remainingPrevious.splice(index, 1);
+          return false;
+        });
+        const texts = changed
+          .filter((message) => !isSummaryMemoryProjectionMessage(message))
+          .flatMap(extractMessageInputText);
+        const assembled = [
+          ...changed.filter(isSummaryMemoryProjectionMessage).flatMap(extractMessageInputText),
+          ...changed.flatMap(extractMessageAssembledTexts),
+        ];
         const runTexts = extractMergedRunTexts(
           messages,
           undefined,
@@ -1547,12 +1577,12 @@ export function securityMiddleware(
         );
         await assertInputTextsValid(
           inputValidator,
-          { texts: [], assembled: runTexts },
+          { texts, assembled: [...assembled, ...runTexts] },
           onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
-          runTexts,
+          [...texts, ...assembled, ...runTexts],
           "Provider-visible messages contain content sanitization removes",
           onProviderViolation,
         );

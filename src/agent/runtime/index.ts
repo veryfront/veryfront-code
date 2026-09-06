@@ -51,7 +51,12 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
-import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
+import {
+  attachProviderMetadata,
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
@@ -645,15 +650,22 @@ function providerValuesEqual(
   return true;
 }
 
+function providerMessagesEqual(left: Message, right: Message): boolean {
+  return left.role === right.role &&
+    providerValuesEqual(left.parts, right.parts, new IntrinsicWeakMap()) &&
+    providerValuesEqual(
+      readAttachedProviderMetadata(left),
+      readAttachedProviderMetadata(right),
+      new IntrinsicWeakMap(),
+    ) && isProviderReplayDelivered(left) === isProviderReplayDelivered(right);
+}
+
 function providerTranscriptsEqual(left: readonly Message[], right: readonly Message[]): boolean {
   if (left.length !== right.length) return false;
   for (let index = 0; index < left.length; index++) {
     const leftMessage = left[index]!;
     const rightMessage = right[index]!;
-    if (
-      leftMessage.role !== rightMessage.role ||
-      !providerValuesEqual(leftMessage.parts, rightMessage.parts, new IntrinsicWeakMap())
-    ) return false;
+    if (!providerMessagesEqual(leftMessage, rightMessage)) return false;
   }
   return true;
 }
@@ -668,10 +680,7 @@ function providerTranscriptIsOrderedSubset(
     let matched = false;
     while (fullIndex < full.length) {
       const current = full[fullIndex++]!;
-      if (
-        candidate.role === current.role &&
-        providerValuesEqual(candidate.parts, current.parts, new IntrinsicWeakMap())
-      ) {
+      if (providerMessagesEqual(candidate, current)) {
         matched = true;
         break;
       }
@@ -1946,6 +1955,22 @@ export class AgentRuntime {
         if (validateTurnMessages && history.length > 0) {
           await validateTurnMessages(history, committedInputMessages);
         }
+      }
+      // Memory adapters may normalize staged objects in place. Keep validation
+      // provenance detached from every object the transaction receives, while
+      // preserving replay metadata that determines provider message boundaries.
+      if (validateTurnMessages || validateProjectedMessages) {
+        validated = validated.map((message) => {
+          const snapshot = cloneMessageForCommit(message);
+          propagateSyntheticMessageMarks(message, snapshot);
+          if (isRuntimeGeneratedUserMessage(message)) markRuntimeGeneratedUserMessage(snapshot);
+          attachProviderMetadata(
+            snapshot,
+            cloneStructuredValuePreservingOpaque(readAttachedProviderMetadata(message)),
+          );
+          if (isProviderReplayDelivered(message)) markProviderReplayDelivered(snapshot);
+          return snapshot;
+        });
       }
       for (const msg of committedInputMessages) await turnMemory.add(msg);
       persisted = await turnMemory.getMessages();

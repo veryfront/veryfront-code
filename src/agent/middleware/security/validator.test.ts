@@ -741,6 +741,107 @@ describe("securityMiddleware", () => {
     }
   });
 
+  it("validates changed projection values without revalidating retained caller values", async () => {
+    const validated: string[] = [];
+    const middleware = securityMiddleware({
+      input: {
+        validate: (text) => {
+          validated.push(text);
+          return text !== "rejected";
+        },
+      },
+    });
+    const current: Message = {
+      id: "current",
+      role: "user",
+      parts: [{ type: "text", text: "current" }],
+    };
+    const retained: Message = {
+      id: "retained",
+      role: "user",
+      parts: [{ type: "text", text: "retained" }],
+    };
+    const context = createContext({ input: [current] });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProjection = getTurnMessageProjectionValidator(context);
+    if (!validateProjection) throw new Error("Expected projection validation");
+    const previous = [retained, current];
+
+    await validateProjection(structuredClone([current, retained]), structuredClone(previous));
+    await validateProjection(structuredClone([current]), structuredClone(previous));
+    assertEquals(validated, ["current"]);
+    await assertRejects(
+      () =>
+        validateProjection([
+          structuredClone(retained),
+          { ...current, parts: [{ type: "text", text: "rejected" }] },
+        ], structuredClone(previous)),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(validated, ["current", "rejected"]);
+  });
+
+  it("preserves individual provenance across duplicate IDs and metadata-only changes", async () => {
+    const validated: string[] = [];
+    const middleware = securityMiddleware({
+      input: {
+        validate: (text) => {
+          validated.push(text);
+          return true;
+        },
+      },
+    });
+    const current: Message = {
+      id: "duplicate",
+      role: "user",
+      parts: [{ type: "text", text: "current" }],
+    };
+    const context = createContext({ input: [current] });
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProjection = getTurnMessageProjectionValidator(context);
+    if (!validateProjection) throw new Error("Expected projection validation");
+    const previous = [structuredClone(current), structuredClone(current)];
+    const projected = previous.map((message, index) => ({
+      ...structuredClone(message),
+      timestamp: index + 1,
+      metadata: { normalized: true },
+    }));
+
+    await validateProjection(projected, previous);
+    assertEquals(validated, ["current"]);
+    await validateProjection([...projected, structuredClone(current)], previous);
+    assertEquals(validated, ["current", "current"]);
+  });
+
+  it("validates new within-message projection assemblies and sanitization", async () => {
+    for (const sanitize of [false, true]) {
+      const middleware = securityMiddleware({
+        input: sanitize ? { sanitize: true } : { blockedPatterns: [/forbidden/] },
+      });
+      const original: Message = {
+        id: "current",
+        role: "user",
+        parts: [{ type: "text", text: "safe" }],
+      };
+      const context = createContext({ input: [original] });
+      await middleware(context, () => Promise.resolve(createResponse("ok")));
+      const validateProjection = getTurnMessageProjectionValidator(context);
+      if (!validateProjection) throw new Error("Expected projection validation");
+      const projected: Message = {
+        ...original,
+        parts: sanitize
+          ? [{ type: "text", text: "<script>payload</script>" }]
+          : [{ type: "text", text: "forbid" }, { type: "text", text: "den" }],
+      };
+      await assertRejects(
+        () => validateProjection([projected], [original]),
+        Error,
+        "Input validation failed",
+      );
+    }
+  });
+
   it("does not trust a new projection boundary because another historical run has the same text", async () => {
     const middleware = securityMiddleware({ input: { blockedPatterns: [/forbidden/] } });
     const context = createContext();
@@ -1269,6 +1370,9 @@ describe("securityMiddleware", () => {
     }
 
     await validateTurn([], await memory.getMessages());
+    const validateProjection = getTurnMessageProjectionValidator(context);
+    if (!validateProjection) throw new Error("Expected projection validation");
+    await validateProjection(await memory.getMessages(), []);
   });
 
   it("blocks a split injection across systems a sendable assistant turn separates", async () => {
