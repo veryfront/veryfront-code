@@ -9,6 +9,7 @@ const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypeSort = Array.prototype.sort;
 const ArrayPrototypeShift = Array.prototype.shift;
 const ReflectApply = Reflect.apply;
+const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const iteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
@@ -19,12 +20,12 @@ function hasOwnIndex(values: readonly unknown[], index: number): boolean {
 
 /** Define an own indexed data slot without invoking an inherited setter. */
 export function primordialArraySet<T>(values: T[], index: number, value: T): void {
-  ObjectDefineProperty(values, index, {
-    configurable: true,
-    enumerable: true,
-    value,
-    writable: true,
-  });
+  const descriptor = ObjectCreate(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.value = value;
+  descriptor.writable = true;
+  ObjectDefineProperty(values, index, descriptor);
 }
 
 /** Iterate a trusted array without consulting mutable array iterator hooks. */

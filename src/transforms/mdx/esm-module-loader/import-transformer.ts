@@ -87,6 +87,7 @@ const IntrinsicSet = Set;
 const hostNow = Date.now;
 const dateGetTime = Function.prototype.call.bind(Date.prototype.getTime);
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectCreate = Object.create;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectEntries = Object.entries;
 const IntrinsicObjectKeys = Object.keys;
@@ -109,6 +110,19 @@ function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
 
 function mapSize<K, V>(map: Map<K, V>): number {
   return IntrinsicReflectApply(MapSizeGetter, map, []) as number;
+}
+
+function defineOwnDataProperty<T extends object>(
+  target: T,
+  key: PropertyKey,
+  value: unknown,
+): void {
+  const descriptor = IntrinsicObjectCreate(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.value = value;
+  descriptor.writable = true;
+  IntrinsicObjectDefineProperty(target, key, descriptor);
 }
 
 function setAdd<T>(set: Set<T>, value: T): void {
@@ -187,12 +201,7 @@ function stripReactFromImportMap(importMap: ImportMapConfig): ImportMapConfig {
       for (const key of primordialArrayValues(IntrinsicObjectKeys(filtered))) {
         if (isReactSpecifier(key)) delete filtered[key];
       }
-      IntrinsicObjectDefineProperty(scopes, scope, {
-        configurable: true,
-        enumerable: true,
-        value: filtered,
-        writable: true,
-      });
+      defineOwnDataProperty(scopes, scope, filtered);
     }
   }
 
