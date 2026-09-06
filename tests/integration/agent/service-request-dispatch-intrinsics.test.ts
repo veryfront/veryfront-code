@@ -115,6 +115,56 @@ async function exerciseDispatch(install: InstallProbe): Promise<void> {
 }
 
 describe("agent service request dispatch intrinsics", () => {
+  it("ignores inherited preflight methods and headers in sparse policy arrays", async () => {
+    const allowMethods: ("GET" | "DELETE")[] = ["GET"];
+    const allowHeaders = ["Content-Type"];
+    allowMethods.length = 2;
+    allowHeaders.length = 2;
+    const runtime = defineAgentService({
+      serviceName: "sparse-preflight",
+      agents: {},
+      defaultAgentId: "test",
+      server: { cors: { origins: ["*"], allowMethods, allowHeaders } },
+    }).createRuntime();
+    const request = new NativeRequest("https://agent.example.test/custom", {
+      method: "OPTIONS",
+      headers: {
+        Origin: TEST_ORIGIN,
+        "Access-Control-Request-Method": "DELETE",
+        "Access-Control-Request-Headers": "Authorization",
+      },
+    });
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, "1");
+    Object.defineProperty(Array.prototype, "1", {
+      configurable: true,
+      get() {
+        return this === allowMethods
+          ? "DELETE"
+          : this === allowHeaders
+          ? "Authorization"
+          : undefined;
+      },
+      set(value) {
+        Object.defineProperty(this, "1", {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      },
+    });
+    let response: Response;
+    try {
+      response = await runtime.fetch(request);
+    } finally {
+      if (original) Object.defineProperty(Array.prototype, "1", original);
+      else Reflect.deleteProperty(Array.prototype, "1");
+    }
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("Access-Control-Allow-Methods"), "GET");
+    assertEquals(response.headers.get("Access-Control-Allow-Headers"), "Content-Type");
+  });
+
   it("rejects inherited routes in a sparse host route table", async () => {
     const routes = new Array(1);
     const runtime = defineAgentService({

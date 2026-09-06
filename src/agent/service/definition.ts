@@ -43,7 +43,6 @@ const HeadersForEach = Headers.prototype.forEach;
 const MapForEach = Map.prototype.forEach;
 const SetForEach = Set.prototype.forEach;
 const URLSearchParamsForEach = URLSearchParams.prototype.forEach;
-const ArrayJoin = Array.prototype.join;
 const StringStartsWith = String.prototype.startsWith;
 const StringIndexOf = String.prototype.indexOf;
 const StringSlice = String.prototype.slice;
@@ -546,6 +545,19 @@ function normalizeCorsConfig(
   return normalized;
 }
 
+function joinOwnPolicyEntries(values: readonly string[]): string {
+  let result = "";
+  let first = true;
+  for (let index = 0; index < values.length; index++) {
+    if (!ObjectHasOwn(values, index)) continue;
+    if (!first) result += ", ";
+    first = false;
+    const value = values[index];
+    if (value !== undefined && value !== null) result += NativeString(value);
+  }
+  return result;
+}
+
 function includesOwnOrigin(origins: string[], value: string): boolean {
   for (let index = 0; index < origins.length; index++) {
     if (ObjectHasOwn(origins, index) && origins[index] === value) return true;
@@ -595,12 +607,12 @@ function createCorsPreflightResponse(
   const allowMethods = config.allowMethods ?? ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
   IntrinsicReflectApply(HeadersSet, headers, [
     "Access-Control-Allow-Methods",
-    IntrinsicReflectApply(ArrayJoin, allowMethods, [", "]),
+    joinOwnPolicyEntries(allowMethods),
   ]);
 
   const requestedHeaders = readRequestHeader(request, "Access-Control-Request-Headers");
   const allowHeaders = config.allowHeaders
-    ? IntrinsicReflectApply(ArrayJoin, config.allowHeaders, [", "]) as string
+    ? joinOwnPolicyEntries(config.allowHeaders)
     : requestedHeaders;
   if (allowHeaders) {
     IntrinsicReflectApply(HeadersSet, headers, ["Access-Control-Allow-Headers", allowHeaders]);
