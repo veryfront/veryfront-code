@@ -5,6 +5,24 @@ import { parseProviderError } from "./provider-errors.ts";
 import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
+  it("preserves typed provider overload failures without exposing provider bodies", async () => {
+    for (const provider of ["anthropic", "openai", "google"] as const) {
+      const error = await buildProviderError(
+        provider,
+        new Response("private provider diagnostic", {
+          status: provider === "anthropic" ? 529 : 503,
+        }),
+      );
+
+      const expected = {
+        code: "OVERLOADED_ERROR",
+        message: "The LLM provider is currently overloaded",
+      };
+      assertEquals(parseProviderError(error), expected);
+      assertEquals(parseProviderError({ lastError: error }), expected);
+    }
+  });
+
   it("parses gateway problem JSON strings and direct provider problem objects", () => {
     assertEquals(
       parseProviderError(JSON.stringify({
