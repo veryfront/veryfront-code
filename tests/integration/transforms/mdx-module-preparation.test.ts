@@ -6,12 +6,56 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { MDXModule } from "#veryfront/transforms/mdx/types.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { linkRenderModules } from "#veryfront/transforms/esm/link-render-modules.ts";
+import { RenderArtifacts } from "#veryfront/transforms/esm/render-artifacts.ts";
 import {
   doLoadModuleESM,
   prepareModuleESM,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-writer.ts";
 
 describe("MDX module preparation", () => {
+  it("retains the final transformed root for publication after its cache file is deleted", async () => {
+    const fs = createFileSystem();
+    const dir = await fs.makeTempDir();
+    let artifacts: RenderArtifacts | undefined;
+    try {
+      const prepared = await prepareModuleESM(
+        "const MDXLayout = () => null; export const value = 42;",
+        {
+          adapter: await runtime.get(),
+          projectDir: dir,
+          projectId: "preparation-test",
+          contentSourceId: "release-test",
+          esmCacheDir: dir,
+          dependencyPinningCacheKey: "off",
+        },
+      );
+      assertEquals(prepared.source, await fs.readTextFile(prepared.filePath));
+      assertEquals(
+        prepared.source.includes("export { MDXLayout as __vfLayout }"),
+        true,
+        "capture must include the writer's generated layout export",
+      );
+      await fs.remove(prepared.filePath);
+      const url = toFileUrl(prepared.filePath).href;
+      const limits = { maxEntries: 1, maxBytes: 4096 };
+      const graph = await linkRenderModules({
+        modules: [{ url, source: prepared.source }],
+        entrypoints: [url],
+      }, limits);
+      artifacts = new RenderArtifacts(graph, limits);
+      const published = await artifacts.prepare();
+      assertEquals(
+        await fs.readTextFile(join(published.directory, graph.entrypoints[0]!)),
+        prepared.source,
+      );
+    } finally {
+      await artifacts?.release();
+      await fs.remove(dir, { recursive: true });
+    }
+  });
+
   it("prepares an artifact without evaluating its top-level code", async () => {
     const fs = createFileSystem();
     const dir = await fs.makeTempDir();
@@ -72,12 +116,12 @@ describe("MDX module preparation", () => {
     try {
       await fs.writeTextFile(
         childPath,
-        `globalThis[${JSON.stringify(marker)}] = "child";
+        `globalThis[${jsonForInlineScript(marker)}] = "child";
 export const load = () => import("./leaf.mjs");`,
       );
       await fs.writeTextFile(
         join(dir, "leaf.mjs"),
-        `globalThis[${JSON.stringify(marker)}] = "leaf"; export const value = 42;`,
+        `globalThis[${jsonForInlineScript(marker)}] = "leaf"; export const value = 42;`,
       );
       const context = {
         adapter: await runtime.get(),
@@ -89,7 +133,7 @@ export const load = () => import("./leaf.mjs");`,
         dependencyPinningCacheKey: "off",
       };
       const code = `export const load = () => import(${
-        JSON.stringify(toFileUrl(childPath).href)
+        jsonForInlineScript(toFileUrl(childPath).href)
       });`;
       await prepareModuleESM(code, context);
       assertEquals(

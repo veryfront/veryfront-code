@@ -81,11 +81,18 @@ describe("render generation process lifetime", () => {
           );
           // Capture only test-owned files. Production capture must establish
           // authorization and consistency, not crawl arbitrary cache paths.
-          const modules = await Promise.all(
-            [prepared.filePath, join(cache, "child.mjs"), join(cache, "leaf.mjs")].map(
-              async (path) => ({ url: toFileUrl(path).href, source: await fs.readTextFile(path) }),
+          const modules = [
+            { url: toFileUrl(prepared.filePath).href, source: prepared.source },
+            ...await Promise.all(
+              [join(cache, "child.mjs"), join(cache, "leaf.mjs")].map(
+                async (path) => ({
+                  url: toFileUrl(path).href,
+                  source: await fs.readTextFile(path),
+                }),
+              ),
             ),
-          );
+          ];
+          await fs.remove(prepared.filePath);
           graph = await linkRenderModules({
             modules,
             entrypoints: [toFileUrl(prepared.filePath).href],

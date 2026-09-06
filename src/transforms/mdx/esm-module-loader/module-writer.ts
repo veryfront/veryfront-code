@@ -185,13 +185,15 @@ async function verifyMdxCacheFile(
 export const __moduleWriterInternals = { verifyMdxCacheFile };
 
 /**
- * Verified local module artifact, before tenant code is evaluated.
- * This is a cache location, not a lifetime lease or a complete graph snapshot.
- * A generation owner must capture its dependencies before allowing eviction.
+ * Final root source and verified cache location, before tenant code is evaluated.
+ * The source survives root cache eviction; dependencies are not captured or leased.
+ * A generation owner must also capture them before publishing a complete graph.
  */
 export interface PreparedMdxModule {
   readonly filePath: string;
   readonly importUrl: string;
+  /** Final transformed root bytes, including generated exports and rewritten imports. */
+  readonly source: string;
 }
 
 /** Prepare an MDX artifact without importing it or consulting cached exports. */
@@ -578,7 +580,7 @@ async function writeModuleESM(
 
     const importUrl = `${toFileUrl(filePath).href}?v=${codeHash}`;
     if (!moduleCache) {
-      return Object.freeze({ filePath, importUrl });
+      return Object.freeze({ filePath, importUrl, source: rewritten });
     }
 
     const mod = await withSpan(
