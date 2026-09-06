@@ -3741,6 +3741,7 @@ export default config as const;
                 configPath,
               ),
           );
+          assertInstanceOf(error, Error);
           assertStringIncludes(error.message, specifier);
         }
       }, { prefix: "vf-config-host-private-cli-alias-" });
