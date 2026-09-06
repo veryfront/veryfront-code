@@ -83,8 +83,10 @@ function importedArtifact(specifier: string | undefined, importer: string): stri
   // Check depth before URL normalization erases traversal. File URLs strip
   // ASCII tabs/newlines, trim trailing C0/space, and recognize backslashes and
   // percent-encoded dots. Query and fragment text do not affect path depth.
-  const path = specifier.replace(/[\t\n\r]/g, "").replace(/[\u0000-\u0020]+$/, "")
-    .split(/[?#]/, 1)[0]!.replaceAll("\\", "/");
+  const normalized = specifier.replace(/[\t\n\r]/g, "");
+  let end = normalized.length;
+  while (end > 0 && normalized.charCodeAt(end - 1) <= 0x20) end--;
+  const path = normalized.slice(0, end).split(/[?#]/, 1)[0]!.replaceAll("\\", "/");
   let depth = importer.split("/").length - 1;
   for (const segment of path.split("/")) {
     const dots = segment.replace(/%2e/gi, ".");
