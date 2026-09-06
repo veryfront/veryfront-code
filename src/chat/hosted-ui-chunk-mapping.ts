@@ -134,6 +134,7 @@ export type HostedStreamPartForUiChunkMapping =
   | {
     type: "error";
     error: unknown;
+    code?: string;
   }
   | {
     type: "tool-input-end";
@@ -322,7 +323,11 @@ export function mapHostedStreamPartToChatUiChunks(
       return [{ type: "tool-output-denied", toolCallId: part.toolCallId }];
 
     case "error":
-      return [{ type: "error", errorText: onError(part.error) }];
+      return [{
+        type: "error",
+        errorText: onError(part.error),
+        ...(typeof part.code === "string" && part.code.length > 0 ? { code: part.code } : {}),
+      }];
 
     case "tool-input-end":
     case "raw":
