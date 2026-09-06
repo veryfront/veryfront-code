@@ -38,6 +38,7 @@ import {
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { createAgentMemory, type Memory, NoMemory } from "#veryfront/agent/memory/index.ts";
 import { beginMemoryTransaction } from "#veryfront/agent/memory/memory.ts";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
@@ -1716,6 +1717,7 @@ export class AgentRuntime {
   private prepareTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
+    abortSignal?: AbortSignal,
   ): Promise<{
     messages: Message[];
     addMessage: (message: Message) => Promise<void>;
@@ -1752,8 +1754,10 @@ export class AgentRuntime {
     }
 
     const leaveLineage = enterSerializedTurn(this);
-    const task = this.#turnCommitQueue.then(async () => {
+    const predecessor = this.#turnCommitQueue;
+    const task = awaitAbortable(predecessor, abortSignal).then(async () => {
       try {
+        throwIfAborted(abortSignal);
         const prepared = await this.#commitTurnMessages(inputMessages, context);
         return {
           ...prepared,
@@ -1776,11 +1780,17 @@ export class AgentRuntime {
         leaveLineage();
         throw error;
       }
+    }, (error: unknown) => {
+      leaveLineage();
+      throw error;
     });
-    this.#turnCommitQueue = task.then(
+    const finalized = task.then(
       ({ finalized }) => finalized,
       () => undefined,
     );
+    // Cancellation releases this caller, not the preceding turn's queue slot.
+    // Later turns must still wait until that predecessor has finalized.
+    this.#turnCommitQueue = Promise.all([predecessor, finalized]).then(() => undefined);
     return task;
   }
 
@@ -1789,6 +1799,7 @@ export class AgentRuntime {
   private createTurnPersistence(
     inputMessages: Message[],
     context: AgentContext,
+    abortSignal?: AbortSignal,
   ): {
     persisted: boolean;
     persist: () => Promise<Message[]>;
@@ -1841,6 +1852,7 @@ export class AgentRuntime {
         transaction ??= this.prepareTurnMessages(
           resolveValidatedTurnInput(context.input, inputMessages),
           context,
+          abortSignal,
         );
         return transaction.then(({ messages }) => messages);
       },
@@ -1936,7 +1948,7 @@ export class AgentRuntime {
       persisted = await turnMemory.getMessages();
       if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
         if (providerTranscriptIsOrderedSubset(persisted, validated)) {
-          await validateProjectedMessages?.(persisted);
+          await validateProjectedMessages?.(persisted, validated);
         } else {
           await validateTurnMessages?.([], persisted);
         }
@@ -2176,7 +2188,11 @@ export class AgentRuntime {
         // validated again. A middleware that answers without calling `next()`
         // (a cache hit) still accepted the turn, so persistence runs after the
         // chain resolves when the continuation never reached it.
-        const turnPersistence = this.createTurnPersistence(inputMessages, agentContext);
+        const turnPersistence = this.createTurnPersistence(
+          inputMessages,
+          agentContext,
+          abortSignal,
+        );
 
         const chain = new MiddlewareChain(this.config.middleware);
         let response: AgentResponse;
@@ -2355,7 +2371,11 @@ export class AgentRuntime {
       // a later, benign turn. A middleware that answers without calling `next()`
       // (a cache hit) still accepted the turn, so persistence runs after the
       // chain resolves when the continuation never reached it.
-      const turnPersistence = this.createTurnPersistence(inputMessages, agentContext);
+      const turnPersistence = this.createTurnPersistence(
+        inputMessages,
+        agentContext,
+        streamAbortSignal,
+      );
 
       // Deferring persistence into the stream body moved the memory calls past
       // the point where the route can still return a 5xx, so probe the memory

@@ -674,9 +674,18 @@ function extractMergedRunTexts(
   messages: Message[],
   mustInclude?: ReadonlySet<Message>,
   mustAlsoInclude?: ReadonlySet<Message>,
+  previousRuns?: readonly Message[][],
 ): string[] {
   const runTexts = new Set<string>();
   for (const run of extractMergedRuns(messages)) {
+    // Only an identical grouping keeps its provenance. Comparing text alone
+    // would also exempt a newly joined boundary that happens to duplicate a
+    // different historical run, or a run shortened by trimming.
+    if (
+      previousRuns?.some((previous) =>
+        previous.length === run.length && previous.every((message, index) => message === run[index])
+      )
+    ) continue;
     if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
     if (mustAlsoInclude && !run.some((message) => mustAlsoInclude.has(message))) continue;
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
@@ -1453,8 +1462,13 @@ export function securityMiddleware(
           config.onViolation,
         );
       });
-      registerTurnMessageProjectionValidator(context, async (messages) => {
-        const runTexts = extractMergedRunTexts(messages, new Set(messages));
+      registerTurnMessageProjectionValidator(context, async (messages, previousMessages) => {
+        const runTexts = extractMergedRunTexts(
+          messages,
+          undefined,
+          undefined,
+          previousMessages && extractMergedRuns(previousMessages),
+        );
         await assertInputTextsValid(
           inputValidator,
           { texts: [], assembled: runTexts },

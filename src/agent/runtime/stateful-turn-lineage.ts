@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { AGENT_ERROR } from "#veryfront/errors";
+import type { AgentRuntime } from "./index.ts";
 
 interface TurnFrame {
-  runtime: object;
+  runtime: AgentRuntime;
   parent?: TurnFrame;
   active: boolean;
   children: Set<TurnFrame>;
@@ -14,10 +15,10 @@ const storage = new AsyncLocalStorage<TurnFrame>();
 const run = AsyncLocalStorage.prototype.run;
 const getStore = AsyncLocalStorage.prototype.getStore;
 const apply = Reflect.apply;
-const queueTails = new WeakMap<object, TurnFrame>();
+const queueTails = new WeakMap<AgentRuntime, TurnFrame>();
 
 /** Preserve call ancestry across delegated generate and stream operations. */
-export function withRuntimeTurnLineage<T>(runtime: object, operation: () => T): T {
+export function withRuntimeTurnLineage<T>(runtime: AgentRuntime, operation: () => T): T {
   const parent = apply(getStore, storage, []) as TurnFrame | undefined;
   return apply(run, storage, [
     { runtime, parent, active: false, children: new Set<TurnFrame>() },
@@ -40,7 +41,7 @@ function reaches(frame: TurnFrame, target: TurnFrame): boolean {
 }
 
 /** Reject queue waits on an unfinished ancestor; independent calls still queue. */
-export function enterSerializedTurn(runtime: object): () => void {
+export function enterSerializedTurn(runtime: AgentRuntime): () => void {
   const frame = apply(getStore, storage, []) as TurnFrame | undefined;
   if (!frame || frame.runtime !== runtime) return () => {};
   let parent = frame.parent;

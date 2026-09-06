@@ -193,6 +193,86 @@ describe("custom memory transactions", () => {
   });
 
   for (const mode of ["generate", "stream"] as const) {
+    it(`cancels a queued ${mode} turn without releasing its predecessor`, async () => {
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      let calls = 0;
+      const runtime = new AgentRuntime("queued-cancellation", {
+        model: "hosted/queued-cancellation",
+        system: "You are helpful.",
+        memory: { type: "conversation" },
+        skills: false,
+        maxSteps: 1,
+        middleware: [(context, next) => {
+          registerTurnMessageValidator(context, () => Promise.resolve());
+          return next();
+        }],
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: {
+              provider: "hosted",
+              modelId: "hosted/queued-cancellation",
+              async doGenerate() {
+                if (++calls === 1) {
+                  entered.resolve();
+                  await release.promise;
+                }
+                return {
+                  content: [{ type: "text" as const, text: "ok" }],
+                  finishReason: "stop" as const,
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                };
+              },
+              doStream: () => Promise.reject(new Error("Cancelled input reached the provider")),
+            },
+          }),
+      });
+      const first = runtime.generate([message("first")]);
+      await entered.promise;
+      const second = mode === "generate"
+        ? runtime.generate(
+          [message("cancelled")],
+          undefined,
+          undefined,
+          undefined,
+          controller.signal,
+        )
+        : runtime.stream(
+          [message("cancelled")],
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          controller.signal,
+        ).then((stream) => new Response(stream).text());
+      const settled = second.then(() => true, () => true);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), 1000);
+      });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        controller.abort();
+        assertEquals(await Promise.race([settled, deadline]), true);
+        const third = runtime.generate([message("third")]);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assertEquals(calls, 1);
+        release.resolve();
+        await first;
+        assertEquals((await third).text, "ok");
+        assertEquals(
+          (await runtime.getMemory().getMessages()).some(({ id }) => id === "cancelled"),
+          false,
+        );
+      } finally {
+        clearTimeout(timer);
+        release.resolve();
+        await first;
+        await settled;
+      }
+    });
+
     it(`rejects ${mode} finalization after a public memory clear`, async () => {
       const runtime = new AgentRuntime("transaction-clear", {
         model: "hosted/transaction-clear",

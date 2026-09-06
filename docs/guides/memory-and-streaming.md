@@ -130,11 +130,16 @@ For built-in stateful memory, a direct `getMemory().add()` or
 `getMemory().clear()` during an active validated turn also rejects commit.
 Rollback removes the rejected turn and preserves your concurrent memory changes.
 
+Memory projection validation checks newly merged message groups after trimming.
+Unchanged retained groups keep their previous validation status.
+
 Validated turns on one stateful agent runtime run sequentially until commit or
 rollback finishes. Your delegation graph must not call back into an ancestor
 runtime with an active validated turn. Veryfront rejects that cycle before it
 waits on memory, so the cycle cannot block later turns. Independent concurrent
 calls still wait for their turn normally.
+Cancelling a queued turn stops that request without persisting its input. Later
+turns still wait for the active turn to finish.
 
 The standalone `RedisMemory` class does not currently implement this transaction
 capability. If you connect it to transactional agent validation through a custom

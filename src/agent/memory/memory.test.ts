@@ -5,6 +5,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   beginMemoryTransaction,
   BufferMemory,
@@ -134,7 +135,13 @@ describe("built-in transaction conflicts", () => {
         else await memory.add(external);
         await transaction.add({ ...userMessage("output", "staged output"), role: "assistant" });
 
-        await assertRejects(() => transaction.commit(), Error, "Memory changed");
+        const error = await assertRejects(
+          () => transaction.commit(),
+          VeryfrontError,
+          "Memory changed",
+        );
+        assertEquals(error.slug, "agent-error");
+        assertEquals(error.status, 500);
         await transaction.rollback();
 
         assertEquals(await memory.getMessages(), mutation === "clear" ? [] : [history, external]);

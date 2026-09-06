@@ -1897,6 +1897,45 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(projectionValidatorCalls, 1);
   });
 
+  for (const type of ["conversation", "buffer"] as const) {
+    it(`preserves trusted historical runs after ${type} memory trims an unrelated message`, async () => {
+      const model: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/retained-history",
+        doGenerate: () =>
+          Promise.resolve({
+            content: [{ type: "text" as const, text: "ok" }],
+            finishReason: "stop" as const,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }),
+        doStream: () => Promise.reject(new Error("Expected generate path")),
+      };
+      const assistant = agent({
+        id: `retained-history-${type}`,
+        model: model.modelId,
+        system: "You are helpful.",
+        skills: false,
+        maxSteps: 1,
+        memory: { type, maxMessages: 3 },
+        security: false,
+        middleware: [securityMiddleware({ input: { blockedPatterns: [/forbidden/] } })],
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+      const memory = assistant.getMemory();
+      for (
+        const [id, role, text] of [
+          ["older", "user", "older message"],
+          ["first", "system", "forbid"],
+          ["second", "system", "den"],
+        ] as const
+      ) {
+        await memory.add({ id, role, parts: [{ type: "text", text }] });
+      }
+
+      assertEquals((await assistant.generate({ input: "benign" })).text, "ok");
+    });
+  }
+
   it("persists a turn once when a middleware invokes the continuation twice", async () => {
     // Persistence runs inside the middleware continuation, so a retry or
     // fallback wrapper must not write the turn's input to memory once per

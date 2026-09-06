@@ -731,8 +731,35 @@ describe("securityMiddleware", () => {
     const validateProjection = getTurnMessageProjectionValidator(context);
     if (!validateProjection) throw new Error("Expected projection validation");
 
+    for (const previous of [undefined, context.input as Message[]]) {
+      await assertRejects(
+        () => validateProjection((context.input as Message[]).slice(1), previous),
+        Error,
+        "Input validation failed",
+      );
+    }
+  });
+
+  it("does not trust a new projection boundary because another historical run has the same text", async () => {
+    const middleware = securityMiddleware({ input: { blockedPatterns: [/forbidden/] } });
+    const context = createContext();
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    // A second registration must retain provenance through composition too.
+    await middleware(context, () => Promise.resolve(createResponse("ok")));
+    const validateProjection = getTurnMessageProjectionValidator(context);
+    if (!validateProjection) throw new Error("Expected projection validation");
+    const history: Message[] = [
+      { id: "old-first", role: "user", parts: [{ type: "text", text: "forbid" }] },
+      { id: "old-second", role: "user", parts: [{ type: "text", text: "den" }] },
+      { id: "separator-1", role: "assistant", parts: [{ type: "text", text: "separator" }] },
+      { id: "new-first", role: "user", parts: [{ type: "text", text: "forbid" }] },
+      { id: "separator-2", role: "assistant", parts: [{ type: "text", text: "separator" }] },
+      { id: "new-second", role: "user", parts: [{ type: "text", text: "den" }] },
+    ];
+
+    await validateProjection(history.slice(0, 2), history);
     await assertRejects(
-      () => validateProjection((context.input as Message[]).slice(1)),
+      () => validateProjection([history[3]!, history[5]!], history),
       Error,
       "Input validation failed",
     );

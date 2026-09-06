@@ -36,7 +36,10 @@ export type TurnInputValidator = (messages: Message[]) => Promise<void>;
 export type TurnMessageValidator = (history: Message[], turnInput: Message[]) => Promise<void>;
 
 /** Validate provider assemblies created only by a memory projection rewrite. */
-export type TurnMessageProjectionValidator = (messages: Message[]) => Promise<void>;
+export type TurnMessageProjectionValidator = (
+  messages: Message[],
+  previousMessages?: Message[],
+) => Promise<void>;
 
 /** Validate the effective system layers immediately before a provider request. */
 export type TurnProviderRequestValidator = (
@@ -119,9 +122,9 @@ export function registerTurnMessageProjectionValidator(
   turnMessageProjectionValidators.set(
     context,
     previous
-      ? async (messages) => {
-        await previous(messages);
-        await validate(messages);
+      ? async (messages, previousMessages) => {
+        await previous(messages, previousMessages);
+        await validate(messages, previousMessages);
       }
       : validate,
   );

@@ -9,7 +9,7 @@ import {
   type MinimalMessage,
 } from "./memory-interface.ts";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { CONFIG_INVALID } from "#veryfront/errors";
+import { AGENT_ERROR, CONFIG_INVALID } from "#veryfront/errors";
 
 type BasicMemoryType = "conversation" | "buffer";
 interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
@@ -17,15 +17,18 @@ interface MemoryRollback<M extends MinimalMessage = MinimalMessage> {
   rollback(rejectedMessages?: ReadonlySet<M>): Promise<void>;
 }
 interface RollbackObserver<M> {
-  add(message: M, owner?: object): void;
+  add(message: M, owner?: symbol): void;
   clear(): void;
 }
 // Each factory retains its message type; the heterogeneous registry erases
 // that type until captureMemoryRollback retrieves it with the same memory.
 const memoryWriteOwner = new AsyncLocalStorage<
-  { owner: object; memory: object; message: unknown; claimed: boolean }
+  { owner: symbol; memory: object; message: unknown; claimed: boolean }
 >();
-function claimMemoryWrite(memory: object, message: unknown): object | undefined {
+function claimMemoryWrite<M extends MinimalMessage>(
+  memory: Memory<M>,
+  message: M,
+): symbol | undefined {
   const write = memoryWriteOwner.getStore();
   if (!write || write.claimed || write.memory !== memory || write.message !== message) {
     return undefined;
@@ -33,10 +36,10 @@ function claimMemoryWrite(memory: object, message: unknown): object | undefined 
   write.claimed = true;
   return write.owner;
 }
-const memoryRollbackFactories = new WeakMap<object, (owner?: object) => unknown>();
+const memoryRollbackFactories = new WeakMap<object, (owner?: symbol) => unknown>();
 function registerMemoryRollbackFactory<M extends MinimalMessage>(
   memory: Memory<M>,
-  factory: (owner?: object) => MemoryRollback<M>,
+  factory: (owner?: symbol) => MemoryRollback<M>,
 ): void {
   memoryRollbackFactories.set(memory, factory);
 }
@@ -47,7 +50,7 @@ export function captureMemoryRollback<M extends MinimalMessage>(
   _fallbackMessages: readonly M[],
 ): MemoryRollback<M> {
   const factory = memoryRollbackFactories.get(memory) as
-    | ((owner?: object) => MemoryRollback<M>)
+    | ((owner?: symbol) => MemoryRollback<M>)
     | undefined;
   if (factory) return factory();
 
@@ -79,8 +82,8 @@ export async function beginMemoryTransaction<M extends MinimalMessage>(
     }
     return transaction;
   }
-  const owner = {};
-  const factory = memoryRollbackFactories.get(memory) as (owner: object) => MemoryRollback<M>;
+  const owner = Symbol("memory transaction");
+  const factory = memoryRollbackFactories.get(memory) as (owner: symbol) => MemoryRollback<M>;
   const rollback = factory(owner);
   const attempted = new Set<M>();
   return {
@@ -156,7 +159,7 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
     registerMemoryRollbackFactory(this, (owner) => {
       const messages = [...this.messages];
       const clearVersion = this.clearVersion;
-      const additions: Array<{ message: M; owner?: object }> = [];
+      const additions: Array<{ message: M; owner?: symbol }> = [];
       const observe: RollbackObserver<M> = {
         add: (message, owner) => additions.push({ message, owner }),
         clear: () => {
@@ -177,7 +180,7 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
             owner &&
             (this.clearVersion !== clearVersion || additions.some((entry) => entry.owner !== owner))
           ) {
-            throw CONFIG_INVALID.create({
+            throw AGENT_ERROR.create({
               detail: "Memory changed concurrently during the transaction. Retry the turn.",
             });
           }
@@ -354,7 +357,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
       const messages = [...this.messages];
       const summary = this.summary;
       const clearVersion = this.clearVersion;
-      const additions: Array<{ message: M; owner?: object }> = [];
+      const additions: Array<{ message: M; owner?: symbol }> = [];
       const observe: RollbackObserver<M> = {
         add: (message, owner) => additions.push({ message, owner }),
         clear: () => {
@@ -375,7 +378,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
             owner &&
             (this.clearVersion !== clearVersion || additions.some((entry) => entry.owner !== owner))
           ) {
-            throw CONFIG_INVALID.create({
+            throw AGENT_ERROR.create({
               detail: "Memory changed concurrently during the transaction. Retry the turn.",
             });
           }
