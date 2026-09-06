@@ -10,6 +10,10 @@
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { sendSSE } from "./sse-utils.ts";
 import {
   mergeToolCallInput,
@@ -95,33 +99,6 @@ export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
   type: "error";
   error: string;
   code?: string;
-}
-
-const runtimeProviderStreamFailureCauses = new WeakMap<object, unknown>();
-
-class RuntimeProviderStreamFailure extends Error {
-  constructor(cause: unknown) {
-    super("Provider stream failed");
-    this.name = "RuntimeProviderStreamFailure";
-    runtimeProviderStreamFailureCauses.set(this, cause);
-  }
-}
-
-function createRuntimeProviderStreamFailure(error: unknown): RuntimeProviderStreamFailure {
-  return new RuntimeProviderStreamFailure(error);
-}
-
-function readRuntimeProviderStreamFailureCause(
-  error: unknown,
-): { found: false } | { found: true; cause: unknown } {
-  if (
-    (typeof error !== "object" || error === null) &&
-    typeof error !== "function"
-  ) {
-    return { found: false };
-  }
-  if (!runtimeProviderStreamFailureCauses.has(error)) return { found: false };
-  return { found: true, cause: runtimeProviderStreamFailureCauses.get(error) };
 }
 
 function wrapRuntimeProviderReadableStream(

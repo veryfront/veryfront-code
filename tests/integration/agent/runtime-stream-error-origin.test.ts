@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent, runWithRunEventSink } from "#veryfront/agent/index.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { defineError } from "#veryfront/errors";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { createSSECollector } from "#veryfront/agent/runtime/chat-stream-handler.test-helpers.ts";
 import {
@@ -32,6 +33,13 @@ const PROVIDER_FAILURES = [
     },
   },
 ] as const;
+
+const PRIVATE_PROVIDER_ERROR = defineError({
+  slug: "provider-private-runtime-test",
+  category: "GENERAL",
+  title: "Provider private runtime test",
+  status: 500,
+});
 
 async function withLifecycleMode<T>(
   mode: "legacy" | "active",
@@ -395,6 +403,66 @@ describe("agent runtime stream error provenance", () => {
         const runtimeAgent = agent({
           model: model.modelId,
           system: "Provider rejection privacy test",
+          resolveModelTransport: async () => ({ model }),
+        });
+
+        const body = await streamBody(runtimeAgent);
+
+        assertStringIncludes(body, '"error":"Provider stream failed"');
+        assertEquals(body.includes(privateMarker), false);
+        assertEquals(body.includes('"code"'), false);
+      });
+    });
+
+    it(`redacts ${mode} provider-owned VeryfrontError details`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const privateMarker = `private-provider-veryfront-error-${mode}`;
+        const model: ModelRuntime = {
+          provider: "hosted",
+          modelId: `hosted/provider-private-veryfront-error-${mode}`,
+          doGenerate: () => Promise.reject(new Error("generate must not be called")),
+          doStream: () => Promise.reject(PRIVATE_PROVIDER_ERROR.create({ detail: privateMarker })),
+        };
+        const runtimeAgent = agent({
+          model: model.modelId,
+          system: "Provider VeryfrontError privacy test",
+          resolveModelTransport: async () => ({ model }),
+        });
+
+        const body = await streamBody(runtimeAgent);
+
+        assertStringIncludes(body, '"error":"Provider stream failed"');
+        assertEquals(body.includes(privateMarker), false);
+        assertEquals(body.includes('"code"'), false);
+      });
+    });
+
+    it(`redacts ${mode} provider-part normalization failures`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const privateMarker = `private-provider-part-${mode}`;
+        const providerPart = Object.defineProperty({}, "type", {
+          enumerable: true,
+          get() {
+            throw new Error(privateMarker);
+          },
+        });
+        const model: ModelRuntime = {
+          provider: "hosted",
+          modelId: `hosted/provider-part-private-${mode}`,
+          doGenerate: () => Promise.reject(new Error("generate must not be called")),
+          doStream: () =>
+            Promise.resolve({
+              stream: new ReadableStream({
+                start(controller) {
+                  controller.enqueue(providerPart);
+                  controller.close();
+                },
+              }),
+            }),
+        };
+        const runtimeAgent = agent({
+          model: model.modelId,
+          system: "Provider part privacy test",
           resolveModelTransport: async () => ({ model }),
         });
 

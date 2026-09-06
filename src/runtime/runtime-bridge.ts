@@ -6,6 +6,7 @@
  * types and calls into this bridge at the edge.
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import type {
@@ -1230,23 +1231,31 @@ function normalizeStreamPart(part: unknown): unknown {
 
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
   for await (const part of stream) {
-    yield normalizeStreamPart(part);
+    try {
+      yield normalizeStreamPart(part);
+    } catch (error) {
+      throw createRuntimeProviderStreamFailure(error);
+    }
   }
 }
 
 async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
   for await (const part of stream) {
-    if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text-delta") {
-      continue;
-    }
+    try {
+      if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text-delta") {
+        continue;
+      }
 
-    if ("text" in part && typeof part.text === "string") {
-      yield part.text;
-      continue;
-    }
+      if ("text" in part && typeof part.text === "string") {
+        yield part.text;
+        continue;
+      }
 
-    if ("delta" in part && typeof part.delta === "string") {
-      yield part.delta;
+      if ("delta" in part && typeof part.delta === "string") {
+        yield part.delta;
+      }
+    } catch (error) {
+      throw createRuntimeProviderStreamFailure(error);
     }
   }
 }
