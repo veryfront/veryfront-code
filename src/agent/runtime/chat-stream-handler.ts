@@ -123,7 +123,9 @@ function wrapRuntimeProviderReadableStream(
           } else controller.enqueue(next.value);
         } catch (error) {
           releaseReader();
-          controller.error(createRuntimeProviderStreamFailure(error));
+          controller.error(
+            isStatefulTurnCycleError(error) ? error : createRuntimeProviderStreamFailure(error),
+          );
         }
       },
       async cancel(reason) {
