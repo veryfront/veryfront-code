@@ -227,7 +227,7 @@ describe("agent runtime stream error provenance", () => {
       });
     });
 
-    it(`preserves ${mode} source-open provider failures`, async () => {
+    it(`does not classify ${mode} source-open application failures as provider errors`, async () => {
       const { controller, encoder } = createSSECollector();
       const failure = await captureFailure(() =>
         processStream(
@@ -242,7 +242,42 @@ describe("agent runtime stream error provenance", () => {
         )
       );
 
-      assertEquals(resolveRuntimeExecutionErrorEvent(failure), PROVIDER_FAILURES[0].expected);
+      assertEquals(resolveRuntimeExecutionErrorEvent(failure), {
+        type: "error",
+        error: PROVIDER_FAILURES[0].message,
+      });
+    });
+
+    it(`preserves ${mode} attachment validation failures before provider dispatch`, async () => {
+      await withLifecycleMode(mode, async () => {
+        const model = scriptedModel([{ text: "must not run" }], {
+          modelId: `hosted/attachment-error-origin-${mode}`,
+          only: "stream",
+        });
+        const runtimeAgent = agent({
+          model: model.modelId,
+          system: "Attachment validation provenance test",
+          resolveModelTransport: async () => ({ model }),
+        });
+
+        const result = await runtimeAgent.stream({
+          messages: [{
+            id: "attachment-message",
+            role: "user",
+            parts: [{
+              type: "file",
+              filename: "capacity.png",
+              mediaType: "image/png",
+              url: "http://localhost/file",
+            }],
+          }],
+        });
+        const body = await result.toDataStreamResponse().text();
+
+        assertStringIncludes(body, 'Attachment \\"capacity.png\\" cannot be sent to the model');
+        assertEquals(body.includes("OVERLOADED_ERROR"), false);
+        assertEquals(model.callCount, 0);
+      });
     });
 
     it(`preserves ${mode} doStream rejection as a provider failure`, async () => {

@@ -638,13 +638,7 @@ async function processActiveStream(
   abortSignal: AbortSignal | undefined,
 ): Promise<void> {
   const baseAdapter = createRuntimeStreamProviderAdapter({
-    open: (signal) => {
-      try {
-        return source.open(signal).fullStream;
-      } catch (error) {
-        throw createRuntimeProviderStreamFailure(error);
-      }
-    },
+    open: (signal) => source.open(signal).fullStream,
     options: {
       availableToolNames: callbacks?.availableToolNames
         ? new Set(callbacks.availableToolNames)
@@ -793,19 +787,11 @@ export function processStreamInternal(
   // provider wrappers. After Gate 2 the extensions emit raw streams, so the
   // legacy compatibility boundary reinstates the wrapper for source-opened
   // streams only; pre-opened results keep their historical unwrapped shape.
-  let result: RuntimeStreamResult;
-  if (isRuntimeStreamSource(resultOrSource)) {
-    try {
-      result = wrapLegacyRuntimeStreamResult(
-        resultOrSource.open(abortSignal ?? new AbortController().signal),
-      );
-    } catch (error) {
-      throwIfAborted(abortSignal);
-      throw createRuntimeProviderStreamFailure(error);
-    }
-  } else {
-    result = resultOrSource;
-  }
+  const result = isRuntimeStreamSource(resultOrSource)
+    ? wrapLegacyRuntimeStreamResult(
+      resultOrSource.open(abortSignal ?? new AbortController().signal),
+    )
+    : resultOrSource;
 
   const process = async () => {
     let eventCount = 0;
