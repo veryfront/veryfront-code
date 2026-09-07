@@ -138,4 +138,57 @@ describe("production shutdown coordinator", () => {
     });
     assertEquals(events, ["drained", "exit:0"]);
   });
+
+  it("stops a server acquired after shutdown starts and before cleanup finishes", async () => {
+    const events: string[] = [];
+    let requestSignal: (() => void) | undefined;
+    let resumeStartup: (() => void) | undefined;
+    let startupSignal: AbortSignal | undefined;
+
+    const run = runProductionProcessOwner({
+      start: ({ signal }) => {
+        startupSignal = signal;
+        return new Promise((resolve) => {
+          resumeStartup = () => {
+            events.push(`startup-resumed:aborted=${signal.aborted}`);
+            resolve({
+              ready: Promise.resolve(),
+              stop: () => {
+                events.push("stop-late-server");
+                return Promise.resolve();
+              },
+            });
+          };
+        });
+      },
+      shutdown: async (_reason, server, abort) => {
+        events.push(`shutdown:server=${server ? "yes" : "no"}`);
+        abort();
+        resumeStartup?.();
+        await Promise.resolve();
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      exit: (code) => events.push(`exit:${code}`),
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+        return () => events.push("signals-disposed");
+      },
+    });
+
+    requestSignal?.();
+    await run;
+
+    assertEquals(startupSignal?.aborted, true);
+    assertEquals(events, [
+      "shutdown:server=no",
+      "startup-resumed:aborted=true",
+      "stop-late-server",
+      "flush",
+      "exit:0",
+      "signals-disposed",
+    ]);
+  });
 });

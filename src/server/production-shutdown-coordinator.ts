@@ -36,6 +36,17 @@ export interface ProductionProcessOwnerOptions {
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
 }
 
+function ownServerStop(server: OwnedProductionServer): OwnedProductionServer {
+  let stopping: Promise<void> | undefined;
+  return {
+    ready: server.ready,
+    stop: () => {
+      stopping ??= Promise.resolve().then(() => server.stop());
+      return stopping;
+    },
+  };
+}
+
 /** Coordinates competing process shutdown triggers through one drain and exit. */
 export function createProductionShutdownCoordinator(
   options: ProductionShutdownCoordinatorOptions,
@@ -94,7 +105,14 @@ export async function runProductionProcessOwner(
   let shutdownRequested = false;
   const coordinator = createProductionShutdownCoordinator({
     shutdown: async (reason) => {
-      await options.shutdown(reason, server, () => controller.abort());
+      const serverAtShutdownStart = server;
+      // No admitted response can be drained without a returned server handle.
+      // Abort pending startup immediately so a late listener observes shutdown.
+      if (!serverAtShutdownStart) controller.abort();
+      await options.shutdown(reason, serverAtShutdownStart, () => controller.abort());
+      // Startup may settle while shutdown is draining. Its handle was not part
+      // of the initial cleanup snapshot, so stop it before telemetry flush/exit.
+      if (!serverAtShutdownStart && server) await server.stop();
     },
     flush: options.flush,
     exit: options.exit,
@@ -113,9 +131,10 @@ export async function runProductionProcessOwner(
       signal: controller.signal,
       onMemoryRecycle: () => requestShutdown("memory-pressure"),
     }).then(async (startedServer): Promise<StartupOutcome> => {
-      server = startedServer;
+      server = ownServerStop(startedServer);
       try {
-        await startedServer.ready;
+        if (shutdownRequested) await server.stop();
+        await server.ready;
         if (!shutdownRequested) options.onReady?.();
         return { status: "ready" };
       } catch (error) {

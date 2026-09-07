@@ -434,7 +434,13 @@ export async function runDirectProductionServer(
   dependencies: DirectProductionServerDependencies,
 ): Promise<void> {
   let bootstrap: BootstrapResult | undefined;
+  let bootstrapDisposal: Promise<void> | undefined;
   let drainTimeoutMs: number | undefined;
+  const disposeBootstrap = (): Promise<void> => {
+    if (!bootstrap) return Promise.resolve();
+    bootstrapDisposal ??= Promise.resolve().then(() => bootstrap?.dispose?.());
+    return bootstrapDisposal;
+  };
 
   await runProductionProcessOwner({
     start: async ({ signal, onMemoryRecycle }) => {
@@ -466,6 +472,10 @@ export async function runDirectProductionServer(
       );
       const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
       bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
+      if (signal.aborted) {
+        await disposeBootstrap();
+        signal.throwIfAborted();
+      }
       drainTimeoutMs = parseShutdownDrainTimeoutMs(
         adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
       );
@@ -486,10 +496,13 @@ export async function runDirectProductionServer(
         signal: reason,
         drainTimeoutMs,
         abort,
-        dispose: bootstrap?.dispose,
+        dispose: disposeBootstrap,
         stop: server?.stop ?? (() => Promise.resolve()),
         logger,
       });
+      // Bootstrap can finish while graceful shutdown is already running. Its
+      // dynamic owner releases it here if the earlier cleanup step saw none.
+      await disposeBootstrap();
     },
     flush: dependencies.flush,
     exit: dependencies.exit ?? exit,
