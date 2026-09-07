@@ -18,6 +18,8 @@ import {
   getExecutorModelGenerateResultSchema,
   getExecutorModelMetadataSchema,
   getExecutorModelOptionsSchema,
+  getExecutorModelReconciliationResultSchema,
+  getExecutorModelReconciliationSchema,
   getExecutorModelRequestSchema,
   getExecutorModelStreamFrameSchema,
   parseExecutorModelData,
@@ -72,6 +74,28 @@ export function createExecutorModelBroker(options: {
         context.signal.throwIfAborted();
         await getModel(modelId).prepare?.(context.signal);
         return null;
+      },
+    }],
+    ["model.reconcile", {
+      mode: "unary",
+      async handle(input, context) {
+        const request = parseExecutorModelData(getExecutorModelReconciliationSchema(), input);
+        context.signal.throwIfAborted();
+        const model = getModel(request.modelId);
+        const reconcile = model._reconcileProviderMetadata;
+        if (typeof reconcile !== "function") {
+          throw new TypeError("Managed model metadata reconciliation is unavailable");
+        }
+        const providerMetadata = await reconcile.call(model, {
+          providerMetadata: request.providerMetadata,
+          suppressedToolCalls: request.suppressedToolCalls,
+          abortSignal: context.signal,
+        });
+        context.signal.throwIfAborted();
+        return executorModelJson(parseExecutorModelData(
+          getExecutorModelReconciliationResultSchema(),
+          executorModelJson({ providerMetadata }),
+        ));
       },
     }],
     ["model.generate", {
@@ -153,6 +177,9 @@ function modelMetadata(id: string, model: ModelRuntime) {
     executionMode: model.executionMode,
     runtimeCapabilities: model.runtimeCapabilities,
     _generateViaStream: model._generateViaStream,
+    ...(typeof model._reconcileProviderMetadata === "function"
+      ? { reconcilesProviderMetadata: true }
+      : {}),
   };
 }
 
@@ -225,7 +252,7 @@ function createExecutorModelRuntime(
   authoritySignal: AbortSignal,
   assertActive: () => void,
 ): ModelRuntime<ModelRuntimeCallOptions> {
-  const { id, ...metadata } = descriptor;
+  const { id, reconcilesProviderMetadata, ...metadata } = descriptor;
   const withAuthority = (signal?: AbortSignal) =>
     signal ? AbortSignal.any([authoritySignal, signal]) : authoritySignal;
   const makeCall = (options: ModelRuntimeCallOptions) => {
@@ -240,6 +267,28 @@ function createExecutorModelRuntime(
   };
   return Object.freeze({
     ...metadata,
+    ...(reconcilesProviderMetadata
+      ? {
+        async _reconcileProviderMetadata(input: {
+          providerMetadata: Record<string, unknown>;
+          suppressedToolCalls: readonly { id: string; name: string }[];
+          abortSignal?: AbortSignal;
+        }) {
+          assertActive();
+          const request = executorModelJson({
+            modelId: id,
+            providerMetadata: input.providerMetadata,
+            suppressedToolCalls: input.suppressedToolCalls,
+          });
+          parseExecutorModelData(getExecutorModelReconciliationSchema(), request);
+          const result = await channel.request("model.reconcile", request, {
+            signal: withAuthority(input.abortSignal),
+          });
+          return parseExecutorModelData(getExecutorModelReconciliationResultSchema(), result)
+            .providerMetadata;
+        },
+      }
+      : {}),
     async prepare(signal?: AbortSignal) {
       assertActive();
       const combinedSignal = withAuthority(signal);

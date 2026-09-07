@@ -104,6 +104,89 @@ async function connected(model = stubModel(), options: Parameters<typeof pair>[1
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("executor managed model bridge", () => {
+  it("reconciles bounded metadata through the broker and omits unsupported hooks", async () => {
+    const plain = await connected();
+    try {
+      assertEquals(plain.proxy._reconcileProviderMetadata, undefined);
+    } finally {
+      await plain.close();
+    }
+    let calls = 0;
+    const channels = await connected(stubModel({
+      _reconcileProviderMetadata(input: { providerMetadata: Record<string, unknown> }) {
+        calls++;
+        return calls === 1 ? input.providerMetadata : undefined;
+      },
+    }));
+    try {
+      const reconcile = channels.proxy._reconcileProviderMetadata;
+      assert(typeof reconcile === "function");
+      const input = { providerMetadata: { synthetic: [1, 2] }, suppressedToolCalls: [] };
+      assertEquals(await reconcile(input), input.providerMetadata);
+      assertEquals(await reconcile(input), undefined);
+      await assertRejects(() =>
+        channels.caller.request("model.reconcile", {
+          modelId,
+          ...input,
+          suppressedToolCalls: [{ id: "tool", name: "lookup", unexpected: true }],
+        })
+      );
+      assertEquals(calls, 2);
+      revokeModelRuntimeResolver(channels.resolver);
+      await assertRejects(() => reconcile(input));
+      assertEquals(calls, 2);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("cancels remote metadata reconciliation and rejects executable serialization hooks", async () => {
+    const entered = Promise.withResolvers<AbortSignal>();
+    const channels = await connected(stubModel({
+      _reconcileProviderMetadata(input: { abortSignal: AbortSignal }) {
+        entered.resolve(input.abortSignal);
+        return new Promise((_, reject) => {
+          input.abortSignal.addEventListener("abort", () => reject(new Error("Cancelled")), {
+            once: true,
+          });
+        });
+      },
+    }));
+    try {
+      const reconcile = channels.proxy._reconcileProviderMetadata;
+      assert(typeof reconcile === "function");
+      let serializationCalls = 0;
+      const invalid = [1];
+      Object.defineProperty(invalid, "toJSON", {
+        value: () => {
+          serializationCalls++;
+          return [];
+        },
+      });
+      await assertRejects(() =>
+        reconcile({
+          providerMetadata: { invalid },
+          suppressedToolCalls: [],
+        })
+      );
+      assertEquals(serializationCalls, 0);
+      const controller = new AbortController();
+      const pending = reconcile({
+        providerMetadata: {},
+        suppressedToolCalls: [],
+        abortSignal: controller.signal,
+      });
+      const rejected = assertRejects(() => pending);
+      const upstream = await entered.promise;
+      controller.abort();
+      await rejected;
+      await tick();
+      assertEquals(upstream.aborted, true);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("preserves metadata, readiness, neutral generation options, and data results", async () => {
     let received: ModelRuntimeCallOptions | undefined;
     let prepared = 0;

@@ -181,6 +181,23 @@ export const getExecutorModelRequestSchema = defineSchema((v) =>
   v.object({ modelId: getModelIdSchema() }).strict()
 );
 
+export const getExecutorModelReconciliationSchema = defineSchema((v) =>
+  v.object({
+    modelId: getModelIdSchema(),
+    providerMetadata: v.record(v.string(), getJsonValueSchema()),
+    suppressedToolCalls: v.array(
+      v.object({
+        id: v.string().min(1).max(256),
+        name: v.string().min(1).max(256),
+      }).strict(),
+    ).max(MAX_ITEMS),
+  }).strict()
+);
+
+export const getExecutorModelReconciliationResultSchema = defineSchema((v) =>
+  v.object({ providerMetadata: v.record(v.string(), getJsonValueSchema()).optional() }).strict()
+);
+
 export const getExecutorModelCallSchema = defineSchema((v) =>
   v.object({ modelId: getModelIdSchema(), options: getExecutorModelOptionsSchema() }).strict()
 );
@@ -202,6 +219,7 @@ export const getExecutorModelMetadataSchema = defineSchema((v) =>
         ]).optional(),
       }).strict().optional(),
       _generateViaStream: v.boolean().optional(),
+      reconcilesProviderMetadata: v.boolean().optional(),
     }).strict(),
   ).max(MAX_MODELS)
 );
@@ -268,11 +286,19 @@ export function executorModelJson(value: unknown): JsonValue {
     const output: Record<string, unknown> | unknown[] = array ? [] : {};
     const keys = Reflect.ownKeys(input);
     if (keys.length > 100_000) throw new TypeError("Invalid managed model data");
-    if (array && (keys.length !== input.length + 1 || input.length > 100_000)) {
+    // First-party provider snapshots pin an inert own toJSON value on arrays.
+    // Copy only their indexed data; never invoke or transport a serialization hook.
+    const guard = array ? Object.getOwnPropertyDescriptor(input, "toJSON") : undefined;
+    const guardedArray = guard !== undefined && "value" in guard && guard.value === undefined &&
+      guard.enumerable === false && guard.configurable === false && guard.writable === false;
+    if (
+      array && (keys.length !== input.length + 1 + (guardedArray ? 1 : 0) || input.length > 100_000)
+    ) {
       throw new TypeError("Invalid managed model data");
     }
     for (const key of keys) {
       if (array && key === "length") continue;
+      if (guardedArray && key === "toJSON") continue;
       const descriptor = Object.getOwnPropertyDescriptor(input, key);
       if (
         typeof key !== "string" || !descriptor || !("value" in descriptor) || !descriptor.enumerable
