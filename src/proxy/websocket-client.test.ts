@@ -123,6 +123,63 @@ function silentStream(cancel?: () => Promise<void>): {
   };
 }
 
+describe("upstream WebSocket reader retirement", () => {
+  it("waits for reader cancellation when the message callback throws", async () => {
+    const cancelStarted = Promise.withResolvers<void>();
+    const canceled = Promise.withResolvers<void>();
+    const streamClosed = Promise.withResolvers<{ closeCode?: number; reason?: string }>();
+    const readable = new ReadableStream<string | Uint8Array>({
+      start(controller) {
+        controller.enqueue("synthetic message");
+      },
+      cancel() {
+        cancelStarted.resolve();
+        return canceled.promise;
+      },
+    });
+    const writable = new WritableStream<string | Uint8Array>();
+    const stream: UpstreamWebSocketStream = {
+      opened: Promise.resolve({ readable, writable }),
+      closed: streamClosed.promise,
+      close() {
+        streamClosed.resolve({});
+      },
+    };
+    const socket = new UpstreamWebSocket("ws://upstream.test/_ws", new Headers(), () => stream);
+    const closed = Promise.withResolvers<CloseEvent>();
+    let closeCount = 0;
+    socket.onmessage = () => {
+      throw new Error("synthetic message callback failure");
+    };
+    socket.onclose = (event) => {
+      closeCount++;
+      closed.resolve(event);
+    };
+    try {
+      assertEquals(
+        await Promise.race([
+          cancelStarted.promise.then(() => "cancel"),
+          closed.promise.then(() => "close"),
+        ]),
+        "cancel",
+        "a failed message callback must cancel its reader before reporting close",
+      );
+      assertEquals(socket.readyState, WebSocket.CLOSING);
+      assertEquals(closeCount, 0);
+    } finally {
+      canceled.resolve();
+      stream.close();
+      await closed.promise;
+      await readable.cancel();
+    }
+    assertEquals((await closed.promise).code, 1006);
+    assertEquals(socket.readyState, WebSocket.CLOSED);
+    assertEquals(readable.locked, false);
+    assertEquals(writable.locked, false);
+    assertEquals(closeCount, 1);
+  });
+});
+
 describe("upstream WebSocket client", () => {
   it("settles stream ownership when the open callback throws", async () => {
     const cancelStarted = Promise.withResolvers<void>();
