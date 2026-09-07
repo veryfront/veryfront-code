@@ -675,7 +675,7 @@ export class HTMLGenerator {
       const { getProjectReact } = await import(
         "#veryfront/react/compat/ssr-adapter/index.ts"
       );
-      const React = await getProjectReact(reactVersion);
+      const React = await getProjectReact(reactVersion, this.config.adapter);
       const createElement = React.createElement as (
         component: unknown,
         props: unknown,

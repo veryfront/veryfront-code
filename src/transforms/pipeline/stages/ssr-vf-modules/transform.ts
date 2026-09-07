@@ -12,7 +12,6 @@ import {
 import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
-import denoConfig from "#deno-config" with { type: "json" };
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
@@ -31,6 +30,7 @@ import {
 } from "./specifier-resolver.ts";
 import {
   buildFrameworkTransformCacheKey,
+  DENO_CONFIG_STUB_CODE,
   EMBEDDED_SRC_DIR,
   FRAMEWORK_ROOT,
   frameworkFileCache,
@@ -43,8 +43,6 @@ import {
   veryfrontTransformCache,
 } from "./constants.ts";
 import { buildFrameworkVfModuleCacheFileName } from "../../../mdx/esm-module-loader/cache-format.ts";
-
-const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
 /**
  * Unique token embedded in every cycle-detection placeholder as an extra

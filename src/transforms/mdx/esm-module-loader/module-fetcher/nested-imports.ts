@@ -28,6 +28,8 @@ import {
 } from "./limits.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
+import type { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
+import { toFileUrl } from "#veryfront/compat/path";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/.+)$/)?.[1] ?? null;
@@ -320,6 +322,7 @@ export async function processNestedImports(
   strictMissingModules: boolean,
   parentModulePath?: string,
   projectSlug?: string,
+  sourceCapture?: ModuleSourceCapture,
 ): Promise<string> {
   const replacements: SourceSpanReplacement[] = [];
 
@@ -338,7 +341,9 @@ export async function processNestedImports(
     } of results
   ) {
     if (nestedFilePath) {
-      const importTarget = toImportStringLiteral(`file://${nestedFilePath}${suffix ?? ""}`);
+      const importTarget = toImportStringLiteral(
+        `${toFileUrl(nestedFilePath).href}${suffix ?? ""}`,
+      );
       replacements.push({
         start,
         end,
@@ -359,14 +364,14 @@ export async function processNestedImports(
         moduleCode,
         original,
         esmCacheDir,
-        { failOnImport: strictMissingModules, deferredError },
+        { failOnImport: strictMissingModules, deferredError, sourceCapture },
       );
       if (deferredPath) {
         replacements.push({
           start,
           end,
           expected: original,
-          replacement: toImportStringLiteral(`file://${deferredPath}${suffix ?? ""}`),
+          replacement: toImportStringLiteral(`${toFileUrl(deferredPath).href}${suffix ?? ""}`),
         });
         continue;
       }
@@ -382,9 +387,11 @@ export async function processNestedImports(
       });
     }
 
-    const stubPath = await createStubModule(modulePath, moduleCode, original, esmCacheDir);
+    const stubPath = await createStubModule(modulePath, moduleCode, original, esmCacheDir, {
+      sourceCapture,
+    });
     if (stubPath) {
-      const importTarget = toImportStringLiteral(`file://${stubPath}${suffix ?? ""}`);
+      const importTarget = toImportStringLiteral(`${toFileUrl(stubPath).href}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
@@ -402,6 +409,7 @@ export async function processNestedImports(
 }
 
 export interface ResolveNestedModuleImportsInput {
+  sourceCapture?: ModuleSourceCapture;
   moduleCode: string;
   esmCacheDir: string;
   normalizedPath: string;
@@ -495,7 +503,7 @@ export async function resolveNestedModuleImports(
       let nestedFilePath: string | null;
       try {
         nestedFilePath = await input.fetchAndCacheModule(
-          path,
+          input.sourceCapture ? path + suffix : path,
           input.parentBasePath ?? input.normalizedPath,
         );
       } catch (error) {
@@ -552,5 +560,6 @@ export async function resolveNestedModuleImports(
     input.strictMissingModules,
     input.normalizedPath,
     input.projectSlug,
+    input.sourceCapture,
   );
 }

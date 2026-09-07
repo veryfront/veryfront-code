@@ -118,6 +118,8 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
 
       assertEquals(r1.compiledCode, COMPILED_CODE);
       assertEquals(r2.compiledCode, COMPILED_CODE);
+      assertEquals(r1.sourcePath, "/project/test.mdx");
+      assertEquals(r2.sourcePath, "/project/test.mdx");
       // setCachedBundle called once proves compileAndCache ran once
       assertEquals(setCacheCount, 1);
     });
@@ -227,6 +229,11 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
       const result = await compiler.compileMDX("# Cached", {}, "cached.mdx");
 
       assertEquals(result.compiledCode, "cached-code", "a bundle cache hit is returned verbatim");
+      assertEquals(
+        result.sourcePath,
+        "/project/cached.mdx",
+        "cached bundles retain their source identity",
+      );
       assertEquals(setCacheCount, 0, "a cache hit must not rewrite the bundle cache");
     });
   });

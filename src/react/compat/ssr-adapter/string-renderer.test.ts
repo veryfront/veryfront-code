@@ -67,6 +67,23 @@ async function waitForDeadline(
 }
 
 describe("react/compat/ssr-adapter/string-renderer", () => {
+  it("uses the supplied runtime for static markup without replacing the version cache", async () => {
+    __injectReactDOMServerForTests({
+      renderToString: () => "legacy",
+      renderToStaticMarkup: () => "legacy",
+    });
+    const html = await renderToStaticMarkupAdapter(React.createElement("div"), {
+      reactRuntime: {
+        react: React,
+        server: {
+          renderToString: () => "prepared",
+          renderToStaticMarkup: () => "prepared",
+        },
+      },
+    });
+    assertEquals(html, "prepared");
+    assertEquals(await renderToStaticMarkupAdapter(React.createElement("div")), "legacy");
+  });
   afterEach(() => {
     __injectReactDOMServerForTests(null);
     resetReactCache();

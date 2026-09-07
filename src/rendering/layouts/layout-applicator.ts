@@ -1,5 +1,6 @@
 import { dirname, join } from "#veryfront/compat/path";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { flattenRouteParams } from "#veryfront/routing";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -21,6 +22,8 @@ import {
 } from "../app-reserved.ts";
 import { resolveRouterModeForPage } from "../router-detection.ts";
 import { getProjectReact } from "#veryfront/react";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { extractComponent } from "#veryfront/modules/react-loader/extract-component.ts";
 import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
@@ -185,7 +188,7 @@ export class LayoutApplicator {
             layoutDataMap,
             reactVersion,
           );
-          const React = await getProjectReact(reactVersion);
+          const React = await getProjectReact(reactVersion, this.adapter);
           const island = React.createElement(
             "div",
             { id: CLIENT_PAGE_ISLAND_ID },
@@ -229,7 +232,7 @@ export class LayoutApplicator {
           wrappedElement = await this.wrapWithAppComponent(wrappedElement);
         }
 
-        const React = await getProjectReact(reactVersion);
+        const React = await getProjectReact(reactVersion, this.adapter);
 
         const headingsArray = this.headings ?? [];
         const flatParams = flattenRouteParams(this.params);
@@ -353,6 +356,34 @@ export class LayoutApplicator {
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
     RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
   }> {
+    const prepared = getRuntimeModuleLoader(this.adapter);
+    throwIfAborted(this.signal);
+    const [contextModule, routerModule] = prepared
+      ? await awaitAbortable(
+        Promise.all([
+          prepared.importModule({ kind: "package", specifier: "veryfront/context" }),
+          prepared.importModule({ kind: "package", specifier: "veryfront/router" }),
+        ]),
+        this.signal,
+      )
+      : await this.loadLegacyFrameworkProviders();
+    throwIfAborted(this.signal);
+    const PageContextProvider = contextModule.PageContextProvider;
+    const RouterProvider = routerModule.RouterProvider;
+    if (typeof PageContextProvider !== "function" || typeof RouterProvider !== "function") {
+      throw new Error("Failed to load framework context or router providers");
+    }
+    return {
+      PageContextProvider: PageContextProvider as BundledReact.ComponentType<
+        Record<string, unknown>
+      >,
+      RouterProvider: RouterProvider as BundledReact.ComponentType<Record<string, unknown>>,
+    };
+  }
+
+  private async loadLegacyFrameworkProviders(): Promise<
+    [Record<string, unknown>, Record<string, unknown>]
+  > {
     const fs = createFileSystem();
     const decoder = new TextDecoder();
     const [contextModuleInfo, routerModuleInfo] = await Promise.all([
@@ -383,7 +414,7 @@ export class LayoutApplicator {
       signal: this.signal,
     } as const;
 
-    const [contextModule, routerModule] = await Promise.all([
+    return await Promise.all([
       loadModuleFromSource(
         decoder.decode(contextSource),
         contextModuleInfo.path,
@@ -399,20 +430,6 @@ export class LayoutApplicator {
         loadOptions,
       ),
     ]);
-
-    const PageContextProvider = contextModule.PageContextProvider;
-    const RouterProvider = routerModule.RouterProvider;
-
-    if (typeof PageContextProvider !== "function" || typeof RouterProvider !== "function") {
-      throw new Error("Failed to load framework context or router providers");
-    }
-
-    return {
-      PageContextProvider: PageContextProvider as BundledReact.ComponentType<
-        Record<string, unknown>
-      >,
-      RouterProvider: RouterProvider as BundledReact.ComponentType<Record<string, unknown>>,
-    };
   }
 
   private async wrapWithAppComponent(
@@ -426,41 +443,51 @@ export class LayoutApplicator {
 
         try {
           logger.debug("Loading App component from", appPath);
-          const appSource = await this.adapter.fs.readFile(appPath);
-          const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
-
+          const prepared = getRuntimeModuleLoader(this.adapter);
           let App: BundledReact.ComponentType<Record<string, unknown>> | null;
 
-          if (isMdx) {
-            App = await this.loadMdxAppComponent(appSource, appPath);
-          } else {
-            const loadComponentFromSource = await this.getComponentSourceLoader();
-            App = await loadComponentFromSource(
-              appSource,
-              appPath,
-              this.projectDir,
-              this.adapter,
-              {
-                projectId: this.projectId ?? this.projectDir,
-                projectSlug: this.projectSlug,
-                dev: this.mode === "development",
-                mode: this.environment,
-                moduleServerUrl: this.config?.dev?.moduleServerUrl,
-                moduleServerOrigin: this.requestUrl?.origin,
-                contentSourceId: this.contentSourceId,
-                reactVersion: await this.getReactVersion(),
-                dependencyPinningCacheKey: this.dependencyPinningCacheKey,
-                dependencyPinningDependencies: this.dependencyPinningDependencies,
-                dependencyPinningSource: this.dependencyPinningSource,
-                serverExternalPackages: this.config?.build?.serverExternalPackages,
-                signal: this.signal,
-              },
+          if (prepared) {
+            throwIfAborted(this.signal);
+            const module = await awaitAbortable(
+              prepared.importModule({ kind: "source", path: appPath }),
+              this.signal,
             );
+            throwIfAborted(this.signal);
+            App = extractComponent(module, appPath);
+          } else {
+            const appSource = await this.adapter.fs.readFile(appPath);
+            const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
+            if (isMdx) {
+              App = await this.loadMdxAppComponent(appSource, appPath);
+            } else {
+              const loadComponentFromSource = await this.getComponentSourceLoader();
+              App = await loadComponentFromSource(
+                appSource,
+                appPath,
+                this.projectDir,
+                this.adapter,
+                {
+                  projectId: this.projectId ?? this.projectDir,
+                  projectSlug: this.projectSlug,
+                  dev: this.mode === "development",
+                  mode: this.environment,
+                  moduleServerUrl: this.config?.dev?.moduleServerUrl,
+                  moduleServerOrigin: this.requestUrl?.origin,
+                  contentSourceId: this.contentSourceId,
+                  reactVersion: await this.getReactVersion(),
+                  dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+                  dependencyPinningDependencies: this.dependencyPinningDependencies,
+                  dependencyPinningSource: this.dependencyPinningSource,
+                  serverExternalPackages: this.config?.build?.serverExternalPackages,
+                  signal: this.signal,
+                },
+              );
+            }
           }
 
           if (!App) return pageElement;
 
-          const React = await getProjectReact(await this.getReactVersion());
+          const React = await getProjectReact(await this.getReactVersion(), this.adapter);
           logger.debug("Wrapped page with App component");
           return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
@@ -529,7 +556,7 @@ export class LayoutApplicator {
       SpanNames.LAYOUT_WRAP_RESERVED,
       async () => {
         const reactVersion = await this.getReactVersion();
-        const React = await getProjectReact(reactVersion);
+        const React = await getProjectReact(reactVersion, this.adapter);
 
         try {
           const segmentDir = dirname(pageFilePath);

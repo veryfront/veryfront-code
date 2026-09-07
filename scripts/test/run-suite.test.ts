@@ -167,6 +167,22 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("runs render generation integration coverage in Node and Bun", async () => {
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      for (
+        const file of [
+          "tests/integration/transforms/mdx-module-preparation.test.ts",
+          "tests/integration/transforms/http-module-capture.test.ts",
+          "tests/integration/renderer/render-generation.test.ts",
+          "tests/integration/renderer/render-generation-pool.test.ts",
+        ]
+      ) {
+        assert(plan.files.includes(file), `${suite} must select ${file}`);
+      }
+    }
+  });
+
   it("runs the non-Deno compat integrations in the Node and Bun suites", async () => {
     // Both files assert behavior that only exists off Deno: the KV polyfill
     // installs `globalThis.Deno.openKv` nowhere else, and `runCommand` only
@@ -742,6 +758,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
+      "tests/integration/renderer/render-generation.test.ts",
+      "tests/integration/renderer/render-generation-pool.test.ts",
+      "tests/integration/transforms/mdx-module-preparation.test.ts",
+      "tests/integration/transforms/http-module-capture.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
@@ -752,6 +772,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
+      "tests/integration/renderer/render-generation.test.ts",
+      "tests/integration/renderer/render-generation-pool.test.ts",
+      "tests/integration/transforms/mdx-module-preparation.test.ts",
+      "tests/integration/transforms/http-module-capture.test.ts",
       "tests/integration/runtime/compat/abort-signal-reason.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",

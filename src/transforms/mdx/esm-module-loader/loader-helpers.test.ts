@@ -6,18 +6,16 @@ import {
   processVfModuleImports,
   resolveProjectDir,
 } from "./loader-helpers.ts";
-import type { ESMLoaderContext } from "./types.ts";
+import type { MdxPreparationContext } from "./types.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { clearModulePathCache, getModulePathCache } from "./cache/index.ts";
 import { MDX_MODULE_DEV_COMPILE_VARIANT } from "./module-fetcher/cache-keys.ts";
 
-function makeContext(overrides: Partial<ESMLoaderContext> = {}): ESMLoaderContext {
+function makeContext(overrides: Partial<MdxPreparationContext> = {}): MdxPreparationContext {
   return {
-    moduleCache: new LRUCache({ maxEntries: 10 }),
     ...overrides,
   };
 }
@@ -123,7 +121,7 @@ import { bar } from "/_vf_modules/components/Button.js";
 
   describe("processVfModuleImports compile mode", () => {
     async function collectPathCacheKeys(
-      mode: ESMLoaderContext["mode"],
+      mode: MdxPreparationContext["mode"],
     ): Promise<string[]> {
       const projectDir = await makeTempDir({ prefix: "vf-mdx-entry-mode-project-" });
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-entry-mode-cache-" });
@@ -141,7 +139,6 @@ import { bar } from "/_vf_modules/components/Button.js";
           code,
           findVfModuleImports(code),
           {
-            moduleCache: new LRUCache({ maxEntries: 10 }),
             esmCacheDir,
             adapter: await getLocalAdapter(),
             projectId: "mdx-entry-mode",
@@ -210,7 +207,7 @@ import { bar } from "/_vf_modules/components/Button.js";
               return undefined;
             },
           },
-        } as ESMLoaderContext["adapter"],
+        } as MdxPreparationContext["adapter"],
       });
       assertEquals(resolveProjectDir(context), "/env/project");
     });
@@ -225,7 +222,7 @@ import { bar } from "/_vf_modules/components/Button.js";
               return undefined;
             },
           },
-        } as ESMLoaderContext["adapter"],
+        } as MdxPreparationContext["adapter"],
       });
       assertEquals(resolveProjectDir(context), "/vf/project");
     });

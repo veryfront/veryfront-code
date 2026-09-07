@@ -5,10 +5,12 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
 import type { MDXComponents, MDXFrontmatter, MDXGlobals, MDXModule } from "./types.ts";
 import {
@@ -27,6 +29,8 @@ export interface MDXRenderOptions {
 /** Options for {@link MDXRenderer.loadModuleESM}. */
 export interface MDXLoadModuleOptions {
   adapter?: RuntimeAdapter;
+  /** Original source identity, required by an executor-owned module loader. */
+  sourcePath?: string;
   projectId?: string;
   projectDir?: string;
   projectSlug?: string;
@@ -91,21 +95,33 @@ export class MDXRenderer {
     legacyModuleServerOrigin?: string,
     legacyIsLocalProject?: boolean,
   ): Promise<MDXModule> {
-    const options = arguments.length <= 2 && !isRuntimeAdapter(optionsOrAdapter)
-      ? (optionsOrAdapter ?? {}) as MDXLoadModuleOptions
-      : {
-        adapter: optionsOrAdapter as RuntimeAdapter | undefined,
-        projectId: legacyProjectId,
-        projectDir: legacyProjectDir,
-        projectSlug: legacyProjectSlug,
-        contentSourceId: legacyContentSourceId,
-        reactVersion: legacyReactVersion,
-        dependencyPinningCacheKey: legacyDependencyPinningCacheKey,
-        dependencyPinningDependencies: legacyDependencyPinningDependencies,
-        dependencyPinningSource: legacyDependencyPinningSource,
-        moduleServerOrigin: legacyModuleServerOrigin,
-        isLocalProject: legacyIsLocalProject,
-      };
+    const options: MDXLoadModuleOptions =
+      arguments.length <= 2 && !isRuntimeAdapter(optionsOrAdapter)
+        ? (optionsOrAdapter ?? {}) as MDXLoadModuleOptions
+        : {
+          adapter: optionsOrAdapter as RuntimeAdapter | undefined,
+          projectId: legacyProjectId,
+          projectDir: legacyProjectDir,
+          projectSlug: legacyProjectSlug,
+          contentSourceId: legacyContentSourceId,
+          reactVersion: legacyReactVersion,
+          dependencyPinningCacheKey: legacyDependencyPinningCacheKey,
+          dependencyPinningDependencies: legacyDependencyPinningDependencies,
+          dependencyPinningSource: legacyDependencyPinningSource,
+          moduleServerOrigin: legacyModuleServerOrigin,
+          isLocalProject: legacyIsLocalProject,
+        };
+    const prepared = getRuntimeModuleLoader(options.adapter);
+    if (prepared) {
+      if (!options.sourcePath) {
+        throw INVALID_ARGUMENT.create({ detail: "Prepared MDX imports require sourcePath" });
+      }
+      const module = await prepared.importModule({ kind: "source", path: options.sourcePath });
+      // Older prepared modules expose the compiler-private layout under this alias.
+      return !module.MDXLayout && module.__vfLayout
+        ? { ...module, MDXLayout: module.__vfLayout } as MDXModule
+        : module as MDXModule;
+    }
     const {
       adapter,
       projectId,

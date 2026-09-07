@@ -3,6 +3,9 @@ import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/test
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
 import * as React from "react";
+import { renderToString } from "react-dom/server";
+import { PageContextProvider, RouterProvider } from "#veryfront/react/runtime/core.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -89,6 +92,124 @@ function createApplicator(
 }
 
 describe("LayoutApplicator helpers", () => {
+  for (const stage of ["providers", "mdx app"] as const) {
+    it(`cancels a stalled prepared ${stage} import`, async () => {
+      const appPath = "/project/components/app.mdx";
+      const adapter = createAdapter({ [appPath]: "unused" });
+      const started = Promise.withResolvers<void>();
+      const deferred = Promise.withResolvers<Record<string, unknown>>();
+      const controller = new AbortController();
+      Object.defineProperty(adapter, "moduleLoader", {
+        value: {
+          importModule: async (reference: RuntimeModuleReference) => {
+            if (
+              (stage === "mdx app" && reference.kind === "source") ||
+              (stage === "providers" && reference.kind === "package" &&
+                reference.specifier === "veryfront/context")
+            ) {
+              started.resolve();
+              return await deferred.promise;
+            }
+            return {
+              default: reference.kind === "source" ? Pass : React,
+              PageContextProvider: Pass,
+              RouterProvider: Pass,
+            };
+          },
+        },
+      });
+      const applicator = new LayoutApplicator({
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "release",
+        adapter,
+        config: { app: "components/app.mdx" },
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "production",
+        reactVersion: React.version,
+        signal: controller.signal,
+      });
+      const outcome = applicator.applyLayouts(
+        React.createElement("main"),
+        createPageInfo("/project/page.mdx", "page"),
+        undefined,
+        [],
+      )
+        .then(() => undefined, (error: unknown) => error);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await started.promise;
+        const reason = new Error("render cancelled");
+        controller.abort(reason);
+        const observed = await Promise.race([
+          outcome,
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, 0);
+          }),
+        ]);
+        assertStrictEquals(
+          observed,
+          reason,
+          "request cancellation must not wait for module completion",
+        );
+      } finally {
+        clearTimeout(timer);
+        deferred.resolve({ default: Pass, PageContextProvider: Pass, RouterProvider: Pass });
+        await outcome;
+      }
+    });
+  }
+
+  for (const extension of ["mdx", "tsx"]) {
+    it(`loads prepared providers and a ${extension} App without reading its source`, async () => {
+      const appPath = `/project/components/app.${extension}`;
+      const adapter = createAdapter({ [appPath]: "unused" });
+      let sourceReads = 0;
+      adapter.fs.readFile = () => {
+        sourceReads++;
+        return Promise.reject(new Error("Prepared App source must not be read"));
+      };
+      const App = ({ children }: { children?: React.ReactNode }) =>
+        React.createElement("article", null, children);
+      Object.defineProperty(adapter, "moduleLoader", {
+        value: {
+          importModule: async (reference: RuntimeModuleReference) => {
+            if (reference.kind === "source" && reference.path === appPath) return { default: App };
+            if (reference.kind === "package") {
+              if (reference.specifier === "react") return { default: React };
+              if (reference.specifier === "veryfront/context") return { PageContextProvider };
+              if (reference.specifier === "veryfront/router") return { RouterProvider };
+            }
+            throw new Error("Module was not prepared");
+          },
+        },
+      });
+      const applicator = new LayoutApplicator({
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "release",
+        adapter,
+        config: { app: `components/app.${extension}` },
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "production",
+        reactVersion: React.version,
+      });
+      const element = await applicator.applyLayouts(
+        React.createElement("main", null, "prepared"),
+        createPageInfo("/project/pages/page.mdx", "page"),
+        undefined,
+        [],
+      );
+      assertEquals(renderToString(element), "<article><main>prepared</main></article>");
+      assertEquals(sourceReads, 0, "prepared imports do not need compiler source bytes");
+    });
+  }
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);

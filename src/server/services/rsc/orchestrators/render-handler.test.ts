@@ -398,11 +398,12 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
         await (handler as unknown as {
           loadComponent: (
             pathname: string,
+            adapter: typeof denoAdapter,
             dependencySnapshot: typeof snapshot,
             reactVersion?: string,
             moduleServerOrigin?: string,
           ) => Promise<unknown>;
-        }).loadComponent("/", snapshot, "19.1.1", "http://localhost");
+        }).loadComponent("/", denoAdapter, snapshot, "19.1.1", "http://localhost");
 
         assertEquals(observedIsLocalProject, true);
         assertEquals(observedServerExternalPackages, ["knex"]);
@@ -447,11 +448,12 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
           await (handler as unknown as {
             loadComponent: (
               pathname: string,
+              adapter: typeof denoAdapter,
               dependencySnapshot: typeof snapshot,
               reactVersion?: string,
               moduleServerOrigin?: string,
             ) => Promise<unknown>;
-          }).loadComponent("/", snapshot, "19.1.1", "http://localhost");
+          }).loadComponent("/", denoAdapter, snapshot, "19.1.1", "http://localhost");
         };
 
         await loadWithMode("production");

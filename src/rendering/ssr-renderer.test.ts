@@ -21,6 +21,8 @@ import { ColorModeScript } from "#veryfront/react/components/ui/color-mode.tsx";
 import { Head } from "#veryfront/react/runtime/core.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
@@ -69,9 +71,90 @@ function readScriptNonce(nonce: unknown): string | undefined {
 }
 
 describe("rendering/ssr-renderer", () => {
+  it("selects the adapter's prepared runtime for string and streaming renders", async () => {
+    const adapter = createMockAdapter();
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async (reference: RuntimeModuleReference) =>
+          reference.kind === "package" && reference.specifier === "react"
+            ? { default: React }
+            : { ...actualReactDOMServer },
+      },
+    });
+    for (const mode of ["development", "production"]) {
+      const renderer = new SSRRenderer(mode, adapter, undefined, undefined, {
+        react: { version: React.version },
+      });
+      const result = await renderer.renderToHTML(React.createElement("div", null, "prepared"), {
+        mode,
+        wantsStream: mode === "production",
+      });
+      assertEquals(
+        result.stream ? await new Response(result.stream).text() : result.html,
+        "<div>prepared</div>",
+        `${mode} uses the executor runtime`,
+      );
+    }
+  });
   afterEach(() => {
     __injectReactDOMServerForTests(null);
     resetReactCache();
+  });
+
+  it("renders with each supplied React runtime without populating the shared version cache", async () => {
+    const server = (html: string): ReactDOMServer => ({
+      renderToString: () => html,
+      renderToStaticMarkup: () => html,
+    });
+    __injectReactDOMServerForTests(server("legacy"), React.version);
+    const renderer = new SSRRenderer("development", undefined, undefined, undefined, {
+      react: { version: React.version },
+    } as VeryfrontConfig);
+    const element = React.createElement("div");
+    const results = await Promise.all(
+      ["first", "second"].map((html) =>
+        renderer.renderToHTML(element, {
+          mode: "development",
+          wantsStream: false,
+          reactRuntime: { react: React, server: server(html) },
+        })
+      ),
+    );
+    assertEquals(results.map((result) => result.html), ["first", "second"]);
+    assertEquals(
+      (await renderer.renderToHTML(element, {
+        mode: "development",
+        wantsStream: false,
+      })).html,
+      "legacy",
+      "explicit runtimes must not replace the legacy cache entry",
+    );
+  });
+
+  it("rejects a supplied React runtime that differs from the selected project version", async () => {
+    let rendered = false;
+    const server: ReactDOMServer = {
+      renderToString: () => {
+        rendered = true;
+        return "unexpected";
+      },
+      renderToStaticMarkup: () => "unexpected",
+    };
+    __injectReactDOMServerForTests(server, "18.3.1");
+    const renderer = new SSRRenderer("development", undefined, undefined, undefined, {
+      react: { version: "18.3.1" },
+    } as VeryfrontConfig);
+    await assertRejects(
+      () =>
+        renderer.renderToHTML(React.createElement("div"), {
+          mode: "development",
+          wantsStream: false,
+          reactRuntime: { react: React, server },
+        }),
+      Error,
+      "React runtime version",
+    );
+    assertEquals(rendered, false, "a mismatched runtime must fail before component rendering");
   });
 
   it("propagates stream cancellation to the pipeable render abort function", async () => {

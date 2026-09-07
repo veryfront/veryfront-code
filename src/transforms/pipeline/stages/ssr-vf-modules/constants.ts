@@ -11,6 +11,7 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import denoConfig from "#deno-config" with { type: "json" };
 
 export const LOG_PREFIX = "[SSR-VF-MODULES]";
 
@@ -18,6 +19,9 @@ export const LOG_PREFIX = "[SSR-VF-MODULES]";
 // prototypes. Quote each primitive directly with the captured intrinsic so an
 // inherited Array.prototype.toJSON cannot collapse otherwise distinct keys.
 const JSONStringify = JSON.stringify;
+
+/** Synthetic framework configuration source, shared by file and captured outputs. */
+export const DENO_CONFIG_STUB_CODE = `export default ${JSONStringify(denoConfig)};`;
 
 function quoteCacheIdentityPart(value: string): string {
   return JSONStringify(value);

@@ -7,6 +7,7 @@ import {
   assertInstanceOf,
   assertNotEquals,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
@@ -34,6 +35,7 @@ import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { ModuleSourceCapture } from "./module-source-capture.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
@@ -50,6 +52,24 @@ import {
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+
+describe("borrowed HTTP module capture", () => {
+  it("invalidates the capture when an already aborted call throws synchronously", () => {
+    const capture = new ModuleSourceCapture({ maxEntries: 2, maxBytes: 1024 });
+    capture.record("file:///root.mjs", "export {};");
+    assertThrows(
+      () =>
+        cacheHttpImportsToLocal("export {};", {
+          cacheDir: "unused",
+          importMap: { imports: {} },
+          abortSignal: AbortSignal.abort(new Error("already cancelled")),
+        }, capture),
+      Error,
+      "already cancelled",
+    );
+    assertThrows(() => capture.take(), Error, "incomplete");
+  });
+});
 
 function extractBundleHashes(code: string): string[] {
   const hashes: string[] = [];

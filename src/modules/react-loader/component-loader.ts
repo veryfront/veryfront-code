@@ -13,6 +13,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { TransformedModuleCoordinator } from "./transformed-module-coordinator.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
 
 const transformedModuleFileSystem = createFileSystem();
 const transformedModuleCoordinator = new TransformedModuleCoordinator(
@@ -33,10 +35,19 @@ export async function loadModuleFromSource(
   // untyped caller ever supplies nothing, production is the safe landing.
   const dev = options?.dev ?? false;
   const ssr = options?.ssr ?? true;
-
+  const prepared = ssr ? getRuntimeModuleLoader(adapter) : undefined;
   return await withSpan(
     "modules.react.loadComponentFromSource",
     async () => {
+      if (prepared) {
+        throwIfAborted(options?.signal);
+        const module = await awaitAbortable(
+          prepared.importModule({ kind: "source", path: filePath }),
+          options?.signal,
+        );
+        throwIfAborted(options?.signal);
+        return module;
+      }
       const dependencyPinningSource = options?.dependencyPinningSource ?? projectDir;
       const dependencySnapshot = await resolveDependencyPinningSnapshot(
         dependencyPinningSource,
@@ -108,6 +119,7 @@ export async function loadModuleFromSource(
       "react.projectDir": projectDir,
       "react.ssr": ssr,
       "react.sourceLength": source.length,
+      ...(prepared ? { "react.prepared": true } : {}),
     },
   );
 }

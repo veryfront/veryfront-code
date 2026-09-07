@@ -8,6 +8,8 @@ import {
 } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { extractComponent } from "#veryfront/modules/react-loader/extract-component.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
@@ -272,6 +274,15 @@ export async function loadTSXComponent(
   signal?: AbortSignal,
 ): Promise<BundledReact.ComponentType> {
   throwIfAborted(signal);
+  const prepared = getRuntimeModuleLoader(adapter);
+  if (prepared) {
+    const module = await awaitAbortable(
+      prepared.importModule({ kind: "source", path: componentPath }),
+      signal,
+    );
+    throwIfAborted(signal);
+    return extractComponent(module, componentPath);
+  }
   const dev = modes.compileMode === "development";
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
@@ -373,6 +384,8 @@ export async function loadTSXComponent(
  */
 export interface MDXLayoutModuleOptions {
   bundle: MdxBundle;
+  /** Original layout source identity for prepared execution. */
+  sourcePath?: string;
   projectDir: string;
   adapter: RuntimeAdapter;
   projectId: string;
@@ -438,6 +451,17 @@ export function loadMDXLayout(
       });
 
       throwIfAborted(signal);
+      if (getRuntimeModuleLoader(adapter)) {
+        const mod = await awaitAbortable(
+          mdxRenderer.loadModuleESM("", {
+            adapter,
+            sourcePath: options.sourcePath ?? bundle.sourcePath,
+          }),
+          signal,
+        );
+        throwIfAborted(signal);
+        return mod.MDXLayout || mod.MainLayout || mod.default;
+      }
       const map = preloadedImportMap ?? (await awaitAbortable(
         preloadImportMap(projectDir, adapter, projectId, {
           projectDir,
@@ -460,6 +484,7 @@ export function loadMDXLayout(
       const mod = (await awaitAbortable(
         mdxRenderer.loadModuleESM(code, {
           adapter,
+          sourcePath: options.sourcePath ?? bundle.sourcePath,
           projectId,
           projectDir,
           projectSlug,
@@ -530,7 +555,7 @@ export async function applyTSXLayout(
     projectSlug,
   });
 
-  const React = await getProjectReact(reactVersion);
+  const React = await getProjectReact(reactVersion, adapter);
 
   try {
     applyTsxLayoutLog.debug("loadTSXComponent START", { componentPath: item.componentPath });
@@ -588,7 +613,7 @@ export async function applyMDXLayout(
   options: ApplyMDXLayoutOptions,
 ): Promise<BundledReact.ReactElement> {
   const { element, mergedComponents, reactVersion } = options;
-  const React = await getProjectReact(reactVersion);
+  const React = await getProjectReact(reactVersion, options.adapter);
   const LayoutFn = await loadMDXLayout(options);
 
   if (!LayoutFn) {

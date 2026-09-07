@@ -10,6 +10,36 @@ import { FakeTime } from "#std/testing/time";
 import { PageRenderer } from "./page-renderer.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
+
+describe("prepared script pages", () => {
+  it("renders and collects metadata from the prepared module without reading executable source", async () => {
+    const adapter = createMissingFileAdapter();
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async (reference: RuntimeModuleReference) => {
+          assertEquals(reference, { kind: "source", path: "/project/page.ts" });
+          return {
+            default: () => "<main>prepared script</main>",
+            generateMetadata: () => ({ title: "Prepared metadata" }),
+          };
+        },
+      },
+    });
+    const rendered = await handleScriptPage(
+      { entity: { path: "/project/page.ts", frontmatter: {} } } as never,
+      "page",
+      {
+        mode: "production",
+        config: {},
+        projectDir: "/project",
+        adapter,
+      },
+    );
+    assertStringIncludes(rendered.html, "<main>prepared script</main>");
+    assertEquals(rendered.frontmatter?.title, "Prepared metadata");
+  });
+});
 
 const PIN_KEY_A = "on:z7bg3qnfgtcb";
 const PIN_KEY_B = "on:3w5e11264sgsf";

@@ -124,6 +124,8 @@ export type MaybePromise<T> = T | Promise<T>;
 
 export interface MdxBundle {
   compiledCode: string;
+  /** Original file identity for prepared imports. Absent for anonymous inline bundles. */
+  sourcePath?: string;
   frontmatter?: MDXFrontmatter;
   globals?: MDXGlobals;
 }

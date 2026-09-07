@@ -6,6 +6,7 @@ import { appendClientModuleVersion, buildClientModuleUrl } from "../client-modul
 import type { RSCComponentProps } from "./component-detector.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
+import type { ReactServerRuntime } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 const logger = serverLogger.component("rsc");
 
@@ -29,7 +30,7 @@ export class RSCRenderer {
   renderToPayload<Props extends RSCComponentProps = RSCComponentProps>(
     Component: React.ComponentType<Props> | React.ReactElement,
     props: Props = {} as Props,
-    options: { reactVersion?: string } = {},
+    options: { reactVersion?: string; reactRuntime?: ReactServerRuntime } = {},
   ): Promise<RSCPayload> {
     return withSpan(
       "rsc.renderToPayload",
@@ -43,6 +44,7 @@ export class RSCRenderer {
             this.clientManifest,
             clientRefs,
             options.reactVersion ?? this.reactVersion,
+            options.reactRuntime,
           );
           const html = await treeToHTML(tree, clientRefs, this.clientManifest);
 

@@ -1,16 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertInstanceOf,
   assertNotStrictEquals,
+  assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import * as React from "react";
+import { VeryfrontError } from "#veryfront/errors";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 import {
   __setServerModuleLoaderForTests,
   getProjectReact,
   getReactDOMServer,
   type ReactDOMServer,
   resetReactCache,
+  resolveSSRRuntime,
 } from "./server-loader.ts";
 
 interface ReactMarker {
@@ -37,6 +44,139 @@ function createServerMarker(version: string): ReactDOMServer & { version: string
 }
 
 describe("react/compat/ssr-adapter/server-loader", () => {
+  it("rejects invalid explicit server exports with an initialization error", async () => {
+    const valid = createServerMarker(React.version);
+    for (
+      const server of [
+        null,
+        undefined,
+        {},
+        { ...valid, renderToString: undefined },
+        { ...valid, renderToStaticMarkup: "invalid" },
+        { ...valid, renderToReadableStream: true },
+        { ...valid, renderToPipeableStream: true },
+      ]
+    ) {
+      const error = await assertRejects(
+        () =>
+          resolveSSRRuntime({ reactRuntime: { react: React, server: server as ReactDOMServer } }),
+        VeryfrontError,
+        "invalid render exports",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "initialization-error");
+    }
+    const server = {
+      renderToString: valid.renderToString,
+      renderToStaticMarkup: valid.renderToStaticMarkup,
+    };
+    assertStrictEquals(
+      (await resolveSSRRuntime({ reactRuntime: { react: React, server } })).server,
+      server,
+    );
+  });
+
+  it("rejects incomplete prepared server modules before rendering", async () => {
+    const adapter = createMockAdapter();
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async () => ({ renderToString: () => "partial" }),
+      },
+    });
+    await assertRejects(
+      () => getReactDOMServer(React.version, adapter),
+      Error,
+      "invalid render exports",
+    );
+  });
+  it("keeps prepared runtimes out of shared version caches", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+    assertStrictEquals(await getProjectReact(React.version), React);
+    const references: RuntimeModuleReference[] = [];
+    const capturedReact = { ...React };
+    const capturedServer = createServerMarker(React.version);
+    const adapter = createMockAdapter();
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async (reference: RuntimeModuleReference) => {
+          references.push(reference);
+          if (reference.kind !== "package") throw new Error("Unexpected source load");
+          return reference.specifier === "react" ? { default: capturedReact } : capturedServer;
+        },
+      },
+    });
+    const selected = await resolveSSRRuntime({ reactVersion: React.version }, adapter);
+    assertStrictEquals(selected.react, capturedReact);
+    assertStrictEquals(selected.server, capturedServer);
+    assertStrictEquals(await getProjectReact(React.version), React);
+    assertEquals(
+      references.map((reference) => reference.kind === "package" && reference.specifier).sort(),
+      ["react", "react-dom/server"],
+    );
+    await assertRejects(() => getProjectReact("17.0.2", adapter), Error, "React runtime version");
+  });
+
+  it("does not recover rejected prepared React imports from the legacy loader", async () => {
+    let legacyLoads = 0;
+    __setServerModuleLoaderForTests(() => {
+      legacyLoads++;
+      return Promise.resolve({ default: React });
+    });
+    const adapter = createMockAdapter();
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async () => {
+          throw new Error("module not prepared");
+        },
+      },
+    });
+    await assertRejects(
+      () => getProjectReact(React.version, adapter),
+      Error,
+      "module not prepared",
+    );
+    await assertRejects(
+      () => getReactDOMServer(React.version, adapter),
+      Error,
+      "module not prepared",
+    );
+    assertEquals(legacyLoads, 0);
+  });
+  it("accepts equivalent version prefixes without accepting another release", async () => {
+    const reactRuntime = { react: React, server: createServerMarker(React.version) };
+    for (const prefix of ["v", "^v", "~v"]) {
+      const selected = await resolveSSRRuntime({
+        reactRuntime,
+        reactVersion: prefix + React.version,
+      });
+      assertStrictEquals(selected.react, React);
+      assertStrictEquals(selected.server, reactRuntime.server);
+    }
+    await assertRejects(
+      () =>
+        resolveSSRRuntime({
+          reactRuntime,
+          reactVersion: `v${React.version}-canary`,
+        }),
+      Error,
+      "React runtime version",
+    );
+  });
+  it("rejects missing or non-exact versions on an explicit runtime without guessing a default", async () => {
+    for (const version of ["", "latest", undefined]) {
+      await assertRejects(
+        () =>
+          resolveSSRRuntime({
+            reactRuntime: {
+              react: { ...React, version } as typeof React,
+              server: createServerMarker("19.2.4"),
+            },
+          }),
+        Error,
+        "React runtime version",
+      );
+    }
+  });
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);

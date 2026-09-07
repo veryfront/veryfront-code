@@ -58,6 +58,7 @@ export function compileMDXRuntime(
   target: CompilationTarget = "server",
   baseUrl?: string,
   studioEmbed?: boolean,
+  preserveImports?: boolean,
 ): Promise<ContentProcessingResult> {
   return withSpan(
     "transforms.compileMDXRuntime",
@@ -73,6 +74,7 @@ export function compileMDXRuntime(
           target,
           baseUrl,
           studioEmbed,
+          ...(preserveImports === undefined ? {} : { preserveImports }),
         });
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));

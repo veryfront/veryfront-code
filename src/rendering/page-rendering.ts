@@ -6,6 +6,7 @@ import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { clearMdxEsmCacheNamespace } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 import { getProjectReact } from "#veryfront/react";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { flattenRouteParams } from "#veryfront/routing";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -370,6 +371,7 @@ export function handleMDXPage(
 
         const mod = (await mdxRenderer.loadModuleESM(serverModuleCode, {
           adapter,
+          sourcePath: path,
           projectId: options?.projectId,
           projectDir,
           projectSlug: options?.projectSlug,
@@ -425,7 +427,7 @@ export function handleMDXPage(
         }
 
         // Get project's React for createElement to ensure element symbols match user components
-        const React = await getProjectReact(options?.reactVersion);
+        const React = await getProjectReact(options?.reactVersion, adapter);
         const pageElement = React.createElement(
           MDXComp as BundledReact.ComponentType<{ components?: MDXComponents }>,
           { components: mergedComponents },
@@ -437,7 +439,7 @@ export function handleMDXPage(
       try {
         return await loadPageElement();
       } catch (error) {
-        if (isMdxEsmExportMismatchError(error)) {
+        if (!getRuntimeModuleLoader(adapter) && isMdxEsmExportMismatchError(error)) {
           let recovered = false;
 
           try {

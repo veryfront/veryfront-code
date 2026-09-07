@@ -36,6 +36,7 @@ export function compileContent(
   target: CompilationTarget = "server",
   baseUrl?: string,
   studioEmbed?: boolean,
+  preserveImports?: boolean,
 ): Promise<ContentProcessingResult> {
   if (isMarkdownFile(filePath)) {
     return compileMarkdownRuntime(
@@ -59,5 +60,6 @@ export function compileContent(
     target,
     baseUrl,
     studioEmbed,
+    preserveImports,
   );
 }

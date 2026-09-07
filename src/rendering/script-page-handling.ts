@@ -32,6 +32,7 @@ import {
 } from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import { computeHash } from "./utils/index.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 
 const logger = rendererLogger.component("script");
 
@@ -418,6 +419,10 @@ async function loadScriptModule(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<ScriptPageModule> {
+  const prepared = getRuntimeModuleLoader(adapter);
+  if (prepared) {
+    return await prepared.importModule({ kind: "source", path: modulePath }) as ScriptPageModule;
+  }
   const fs = createFileSystem();
   const normalizedPath = normalizeModulePath(modulePath, projectDir);
 

@@ -73,6 +73,16 @@ const SSR_PIPELINE: TransformPlugin[] = [
   finalizePlugin,
 ];
 
+// Capture resolves these logical references through the project-scoped module
+// resolver. Do not materialize host file URLs or validate their cache files.
+const SSR_REFERENCE_PIPELINE: TransformPlugin[] = [
+  parsePlugin,
+  compilePlugin,
+  cssStripPlugin,
+  resolveImportsPlugin,
+  ssrHttpStubPlugin,
+];
+
 const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   browserServerExportsStripPlugin, // Drop server-only hooks + their now-unused imports
@@ -201,6 +211,13 @@ export function runPipeline(
   config?: PipelineConfig,
 ): Promise<TransformResult> {
   const fileName = filePath.split("/").pop() || filePath;
+  const ssrImports = config?.ssrImports ?? "files";
+  if (ssrImports !== "files" && ssrImports !== "references") {
+    throw new TypeError("SSR imports must be files or references");
+  }
+  if (ssrImports === "references" && !options.ssr) {
+    throw new TypeError("Logical SSR references require an SSR transform");
+  }
 
   return withSpan(
     "transform.pipeline",
@@ -226,6 +243,7 @@ export function runPipeline(
       };
 
       const ctx = await createTransformContext(source, filePath, projectDir, effectiveOptions);
+      if (ssrImports === "references") ctx.ssrImports = ssrImports;
       ctx.debug = config?.debug ?? false;
       ctx.onProgress?.({ phase: "pipeline:context", filePath });
 
@@ -241,6 +259,7 @@ export function runPipeline(
       if (pluginCacheIdentity.cacheable) {
         const [configHash, depsHash] = await Promise.all([
           computePipelineConfigIdentity({
+            ssrImports,
             reactVersion: ctx.reactVersion,
             jsxImportSource: ctx.jsxImportSource,
             moduleServerUrl: ctx.moduleServerUrl,
@@ -283,7 +302,7 @@ export function runPipeline(
             file: filePath.slice(-60),
           });
           // Fall through to re-run the pipeline.
-        } else if (effectiveOptions.ssr) {
+        } else if (effectiveOptions.ssr && ssrImports === "files") {
           // For SSR transforms, validate bundles exist before returning cached code.
           const httpBundlesValid = await validateCachedBundles(
             cached.code,
@@ -338,7 +357,9 @@ export function runPipeline(
         }
       }
 
-      const basePipeline = effectiveOptions.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
+      const basePipeline = effectiveOptions.ssr
+        ? ssrImports === "references" ? SSR_REFERENCE_PIPELINE : SSR_PIPELINE
+        : BROWSER_PIPELINE;
       let pipeline: readonly TransformPlugin[] = basePipeline;
       if (pluginCacheIdentity.plugins.length > 0) {
         const sortedPipeline: TransformPlugin[] = [];

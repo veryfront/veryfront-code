@@ -10,6 +10,21 @@ const encoder = new TextEncoder();
 describe("createSSRResponse", () => {
   afterEach(() => resetReactCache());
 
+  it("reports the supplied runtime version without using the legacy renderer", async () => {
+    __injectReactDOMServerForTests({
+      renderToString: () => "legacy",
+      renderToStaticMarkup: () => "legacy",
+    });
+    const response = await createSSRResponse(React.createElement("div"), {
+      reactRuntime: {
+        react: { ...React, version: "18.3.1" },
+        server: { renderToString: () => "prepared", renderToStaticMarkup: () => "prepared" },
+      },
+    });
+    assertStringIncludes(await response.text(), "prepared");
+    assertEquals(response.headers.get("x-react-version"), "18.3.1");
+  });
+
   it("wraps readable renderer output in a complete HTML document", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {

@@ -23,6 +23,7 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -51,6 +52,7 @@ import {
   resolveCachedModulePath,
 } from "./module-cache-lookup.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -859,6 +861,16 @@ export async function loadModule(
   config: ModuleLoaderConfig,
 ): Promise<Record<string, unknown>> {
   throwIfModuleLoadAborted(config);
+  const prepared = getRuntimeModuleLoader(config.adapter);
+  if (prepared) {
+    markModuleLoadProgress(config, "module:import-start", filePath);
+    const module = await awaitAbortable(
+      prepared.importModule({ kind: "source", path: filePath }),
+      config.signal,
+    );
+    markModuleLoadProgress(config, "module:imported", filePath);
+    return module;
+  }
   const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
   markModuleLoadProgress(config, "module:cache-ready", filePath);

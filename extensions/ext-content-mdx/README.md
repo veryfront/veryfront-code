@@ -24,6 +24,10 @@ export default defineConfig({
 - `compileMarkdown(options)` runs a unified Markdown pipeline (`remark-parse` to `remark-rehype` to `rehype-sanitize` to `rehype-stringify`) producing sanitized HTML wrapped in a React component.
 - `getRemarkPlugins()` / `getRehypePlugins()` returns the configured plugin list so callers can build a custom pipeline.
 
+### Import preservation
+
+`compileMdx` accepts `preserveImports: true`. Authored import specifiers remain unchanged for a later scoped resolver. The default is `false`, which retains the server or browser import rewriting. This option does not grant filesystem access.
+
 ## Content analysis
 
 Import the analysis API from its dedicated subpath. It does not load the MDX compiler or React runtime.

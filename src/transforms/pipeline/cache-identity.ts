@@ -2,7 +2,7 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
 import { fingerprintImportMap } from "../esm/http-cache-helpers.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
-import type { TransformPlugin } from "./types.ts";
+import type { PipelineConfig, TransformPlugin } from "./types.ts";
 import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
 
 const MAX_IMPORT_MAP_ENTRIES = 20_000;
@@ -439,6 +439,7 @@ function encodeCustomPluginIdentities(
 }
 
 export interface PipelineConfigIdentityInput {
+  ssrImports?: PipelineConfig["ssrImports"];
   reactVersion: string;
   jsxImportSource: string;
   studioEmbed: boolean;
@@ -478,6 +479,10 @@ export async function computePipelineConfigIdentity(
   );
   const dev = readOwnDataProperty(input, "dev", "Transform pipeline identity");
   const ssr = readOwnDataProperty(input, "ssr", "Transform pipeline identity");
+  const ssrImports = readOwnDataProperty(input, "ssrImports", "Transform pipeline identity");
+  if (ssrImports !== undefined && ssrImports !== "files" && ssrImports !== "references") {
+    throw new IntrinsicTypeError("SSR imports must be files or references");
+  }
   if (
     typeof studioEmbed !== "boolean" || typeof dev !== "boolean" ||
     typeof ssr !== "boolean"
@@ -497,7 +502,9 @@ export async function computePipelineConfigIdentity(
     studioEmbed,
     dev,
   });
-  let identity = "veryfront:transform-pipeline:v4;";
+  // v5 preserves MDX layout exports before minification.
+  let identity = "veryfront:transform-pipeline:v5;";
+  if (ssrImports === "references") identity += "ssr-imports=references-v1;";
   identity += `base=${encodeIdentityPrimitive(baseIdentity)};`;
   identity += `ssr=${encodeIdentityPrimitive(ssr)};`;
   identity += `project=${encodeIdentityPrimitive(projectDir)};`;

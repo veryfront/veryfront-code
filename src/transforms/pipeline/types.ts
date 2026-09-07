@@ -98,6 +98,8 @@ export interface TransformOptions {
  * Mutable - stages update ctx.code as they process.
  */
 export interface TransformContext {
+  /** Import representation selected by the pipeline configuration. */
+  ssrImports?: PipelineConfig["ssrImports"];
   /** Current code being transformed */
   code: string;
   /** Original source code (immutable) */
@@ -195,6 +197,8 @@ export interface TransformResult {
  * Pipeline configuration.
  */
 export interface PipelineConfig {
+  /** SSR dependency output, files by default. References require scoped resolution before execution. */
+  ssrImports?: "files" | "references";
   /** Enable debug logging */
   debug?: boolean;
   /** Enable timing collection */

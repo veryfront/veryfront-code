@@ -16,7 +16,12 @@ import {
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import {
+  getProjectReact,
+  getReactDOMServer,
+  type ReactServerRuntime,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { compileContent, extractFrontmatter } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
@@ -42,7 +47,6 @@ export interface RenderHandlerModuleOptions {
 }
 
 const logger = serverLogger.component("rsc");
-const fs = createFileSystem();
 
 function isContentComponent(componentPath: string): boolean {
   return /\.(?:md|mdx)$/i.test(componentPath);
@@ -63,6 +67,11 @@ export class RenderHandler {
     request?: Request,
   ): Promise<Response> {
     try {
+      const adapter = this.moduleOptions.adapter ??
+        await (this.moduleOptions.runtimeAdapter ?? (async () => {
+          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+          return await runtime.get();
+        }))();
       const requestedPinKey = request?.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined;
       const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
         this.moduleOptions.dependencyPinningSource ?? this.projectDir,
@@ -77,12 +86,24 @@ export class RenderHandler {
         : undefined;
       const component = await this.loadComponent(
         pathname,
+        adapter,
         dependencySnapshot,
         reactVersion,
         moduleServerOrigin,
       );
       const props = this.buildProps(pathname, searchParams);
-      const renderedPayload = await this.renderPayload(component, props, reactVersion);
+      const reactRuntime = getRuntimeModuleLoader(adapter)
+        ? {
+          react: await getProjectReact(reactVersion, adapter),
+          server: await getReactDOMServer(reactVersion, adapter),
+        }
+        : undefined;
+      const renderedPayload = await this.renderPayload(
+        component,
+        props,
+        reactVersion,
+        reactRuntime,
+      );
       const payload = dependencySnapshot.cacheKey === "off" ? renderedPayload : {
         ...renderedPayload,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
@@ -95,6 +116,7 @@ export class RenderHandler {
 
   private async loadComponent(
     pathname: string,
+    adapter: RuntimeAdapter,
     dependencySnapshot: DependencyPinningSnapshot,
     reactVersion?: string,
     moduleServerOrigin?: string,
@@ -102,7 +124,7 @@ export class RenderHandler {
     const componentPath = await resolveComponentPath(
       pathname,
       this.projectDir,
-      this.moduleOptions.adapter?.fs,
+      adapter.fs,
       this.appDir,
     );
     if (!componentPath) {
@@ -116,6 +138,7 @@ export class RenderHandler {
 
     const module = await this.loadComponentModule(
       componentPath,
+      adapter,
       dependencySnapshot,
       reactVersion,
       moduleServerOrigin,
@@ -136,16 +159,16 @@ export class RenderHandler {
 
   private async loadComponentModule(
     componentPath: string,
+    adapter: RuntimeAdapter,
     dependencySnapshot: DependencyPinningSnapshot,
     reactVersion?: string,
     moduleServerOrigin?: string,
   ): Promise<Record<string, unknown>> {
-    let adapter = this.moduleOptions.adapter;
+    const prepared = getRuntimeModuleLoader(adapter);
+    if (prepared) return await prepared.importModule({ kind: "source", path: componentPath });
 
     if (isContentComponent(componentPath)) {
-      const source = adapter
-        ? await adapter.fs.readFile(componentPath)
-        : await fs.readTextFile(componentPath);
+      const source = await adapter.fs.readFile(componentPath);
       const { body, frontmatter } = extractFrontmatter(source);
       const compiled = await compileContent(
         this.mode,
@@ -158,6 +181,7 @@ export class RenderHandler {
 
       return await mdxRenderer.loadModuleESM(compiled.compiledCode, {
         adapter,
+        sourcePath: componentPath,
         projectId: this.moduleOptions.projectId ?? this.projectDir,
         projectDir: this.projectDir,
         projectSlug: this.moduleOptions.projectSlug,
@@ -171,15 +195,6 @@ export class RenderHandler {
         moduleServerOrigin,
         isLocalProject: this.moduleOptions.isLocalProject === true,
       }) as Record<string, unknown>;
-    }
-
-    if (!adapter) {
-      adapter = await (this.moduleOptions.runtimeAdapter ?? (async () => {
-        const { runtime } = await import(
-          "#veryfront/platform/adapters/detect.ts"
-        );
-        return await runtime.get();
-      }))();
     }
 
     const source = await adapter.fs.readFile(componentPath);
@@ -210,6 +225,7 @@ export class RenderHandler {
     component: React.ComponentType<RenderProps>,
     props: RenderProps,
     reactVersion?: string,
+    reactRuntime?: ReactServerRuntime,
   ): Promise<RSCPayload> {
     const renderer = this.getRenderer();
     if (!renderer) {
@@ -223,6 +239,7 @@ export class RenderHandler {
 
     const payload = await renderer.renderToPayload(component, props, {
       reactVersion,
+      reactRuntime,
     });
     if (!payload) {
       throw toError(
