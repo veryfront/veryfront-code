@@ -435,6 +435,7 @@ export async function runDirectProductionServer(
 ): Promise<void> {
   let bootstrap: BootstrapResult | undefined;
   let bootstrapAtShutdownStart: BootstrapResult | undefined;
+  let finalizedLateBootstrap: BootstrapResult | undefined;
   let bootstrapDisposal: Promise<void> | undefined;
   let drainTimeoutMs: number | undefined;
   const disposeBootstrap = (): Promise<void> => {
@@ -509,8 +510,14 @@ export async function runDirectProductionServer(
     flush: dependencies.flush,
     beforeExit: () =>
       bootstrap && bootstrap !== bootstrapAtShutdownStart ? disposeBootstrap() : Promise.resolve(),
-    finalizeBeforeExit: () =>
-      bootstrap && bootstrap !== bootstrapAtShutdownStart ? disposeBootstrap() : undefined,
+    finalizeBeforeExit: () => {
+      if (
+        !bootstrap || bootstrap === bootstrapAtShutdownStart ||
+        bootstrap === finalizedLateBootstrap
+      ) return undefined;
+      finalizedLateBootstrap = bootstrap;
+      return disposeBootstrap();
+    },
     exit: dependencies.exit ?? exit,
     registerSignals: dependencies.registerSignals ?? ((handler) => {
       const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));

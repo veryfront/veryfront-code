@@ -4,6 +4,7 @@ export interface ProductionShutdownCoordinatorOptions {
   shutdown: (reason: ProductionShutdownReason) => Promise<void>;
   flush: () => Promise<unknown>;
   beforeExit?: () => Promise<unknown>;
+  finalizeBeforeExit?: () => Promise<unknown> | undefined;
   exit: (code: number) => void;
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
 }
@@ -85,6 +86,16 @@ export function createProductionShutdownCoordinator(
       await options.beforeExit?.();
     } catch (error) {
       notifyError(error, reason);
+    }
+
+    try {
+      while (true) {
+        const finalization = options.finalizeBeforeExit?.();
+        if (!finalization) break;
+        await finalization;
+      }
+    } catch (error) {
+      notifyError(error, reason);
     } finally {
       options.exit(0);
     }
@@ -112,6 +123,7 @@ export async function runProductionProcessOwner(
   const controller = new AbortController();
   let server: OwnedProductionServer | undefined;
   let serverAtShutdownStart: OwnedProductionServer | undefined;
+  let finalizedLateServer: OwnedProductionServer | undefined;
   let shutdownRequested = false;
   const coordinator = createProductionShutdownCoordinator({
     shutdown: async (reason) => {
@@ -128,11 +140,18 @@ export async function runProductionProcessOwner(
     beforeExit: async () => {
       if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();
       await options.beforeExit?.();
-      const finalization = options.finalizeBeforeExit?.();
-      if (finalization) await finalization;
-      // The custom hook can yield while startup publishes its handle. This is
-      // the final asynchronous fence before exit, so recheck after that yield.
-      if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();
+    },
+    finalizeBeforeExit: () => {
+      const customFinalization = options.finalizeBeforeExit?.();
+      if (customFinalization) return customFinalization;
+      if (
+        server && server !== serverAtShutdownStart && server !== finalizedLateServer &&
+        shutdownRequested
+      ) {
+        finalizedLateServer = server;
+        return server.stop();
+      }
+      return undefined;
     },
     exit: options.exit,
     onError: options.onError,
