@@ -9,13 +9,19 @@ import {
   type HostedExecutorAllocatorClient,
   type HostedExecutorSessionOptions,
 } from "./executor-session.ts";
-import type { HostedExecutorAllocation } from "./executor-session-schema.ts";
+import {
+  getHostedExecutorAllocationRequestSchema,
+  type HostedExecutorAllocation,
+  type HostedExecutorOwner,
+  readHostedExecutorBinding,
+  sameHostedExecutorBinding,
+} from "./executor-session-schema.ts";
 import type { ExecutorNodeTransport } from "./executor-node-transport.ts";
 
 const request = {
   allocationId: "11111111-1111-4111-8111-111111111111",
   invocationId: "22222222-2222-4222-8222-222222222222",
-  projectId: "project-test",
+  owner: { scopeKind: "project" as const, projectId: "project-test" },
   source: { type: "release" as const, releaseId: "release-test" },
   requestedAt: 1000,
   prepareDeadlineAt: 4000,
@@ -27,7 +33,7 @@ const fullBinding = {
   invocationId: binding.invocationId,
   generation: binding.generation,
   brokerInstanceId: binding.brokerInstanceId,
-  projectId: binding.projectId,
+  owner: binding.owner,
   source: binding.source,
 };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
@@ -37,11 +43,13 @@ async function tick(): Promise<void> {
 }
 
 function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
+  const expectedRequest = structuredClone(overrides.request ?? request);
+  const expectedBinding = { ...fullBinding, owner: expectedRequest.owner };
   const time = new ManualMonotonicClock();
   const clock = createHostedExecutorSessionClock(1000, time);
   const calls: string[] = [];
   const returned: HostedExecutorAllocation = {
-    binding: fullBinding,
+    binding: expectedBinding,
     phase: "ready",
     expiresAt: 2000,
     endpoint: {
@@ -61,27 +69,27 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
   const allocator: HostedExecutorAllocatorClient = {
     allocate(input, bootstrap) {
       calls.push("allocate");
-      assertEquals(input, request);
+      assertEquals(input, expectedRequest);
       allocatedKey = bootstrap.channelKey;
       allocatedKeyCopy = new Uint8Array(allocatedKey);
       return Promise.resolve(structuredClone(returned));
     },
     observe(input) {
       calls.push("observe");
-      assertEquals(input, fullBinding);
+      assertEquals(input, expectedBinding);
       return Promise.resolve(structuredClone(returned));
     },
     renew(input) {
       calls.push("renew");
-      assertEquals(input, fullBinding);
+      assertEquals(input, expectedBinding);
       returned.expiresAt = Math.min(clock.now() + 1000, request.hardDeadlineAt);
       return Promise.resolve(structuredClone(returned));
     },
     release(input, reason) {
       calls.push(`release:${reason}`);
-      assertEquals(input, fullBinding);
+      assertEquals(input, expectedBinding);
       return Promise.resolve({
-        binding: fullBinding,
+        binding: expectedBinding,
         phase: "released",
         expiresAt: returned.expiresAt,
         reason,
@@ -89,7 +97,7 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
     },
   };
   const options: HostedExecutorSessionOptions = {
-    request,
+    request: expectedRequest,
     expectedBrokerInstanceId: fullBinding.brokerInstanceId,
     expectedImage: image,
     allocator,
@@ -127,7 +135,7 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
     },
     createOperations(input, signal) {
       calls.push("operations");
-      assertEquals(input, fullBinding);
+      assertEquals(input, expectedBinding);
       assertEquals(signal.aborted, false);
       return {
         operations: new Map(),
@@ -165,6 +173,120 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
 }
 
 describe("hosted executor session", () => {
+  it("owns a global metadata session without any application project", async () => {
+    const owner: HostedExecutorOwner = { scopeKind: "global", serviceName: "platform-agent" };
+    const f = fixture({ request: { ...request, owner } });
+    const session = f.start();
+    const channel = await session.ready;
+    assertEquals(session.binding?.owner, owner);
+    assertEquals(Object.hasOwn(f.options.request, "projectId"), false);
+    assertEquals(Object.hasOwn(session.binding!, "projectId"), false);
+    assertEquals(await channel.request("echo", { discovery: true }), { discovery: true });
+    assertEquals((await session.close("completed")).release, "released");
+    await session.settled;
+    await f.peerClosed();
+  });
+
+  it("snapshots and freezes owner before allocator work and operation grants", async () => {
+    const owner: HostedExecutorOwner = { scopeKind: "global", serviceName: "platform-agent" };
+    const f = fixture({ request: { ...request, owner } });
+    const allocate = f.allocator.allocate;
+    f.allocator.allocate = (input, bootstrap, signal) => {
+      assert(Object.isFrozen(input.owner));
+      assertThrows(() => Object.assign(input.owner, { serviceName: "foreign" }), TypeError);
+      return allocate(input, bootstrap, signal);
+    };
+    const session = f.start();
+    owner.serviceName = "changed-after-start";
+    await session.ready;
+    assertEquals(session.binding?.owner, { scopeKind: "global", serviceName: "platform-agent" });
+    assert(Object.isFrozen(session.binding?.owner));
+    assertThrows(
+      () => Object.assign(session.binding!.owner, { serviceName: "foreign" }),
+      TypeError,
+    );
+    await session.close();
+    await session.settled;
+    await f.peerClosed();
+  });
+
+  for (
+    const owner of [undefined, {}, { scopeKind: "global" }, { scopeKind: "project" }, {
+      scopeKind: "global",
+      serviceName: "",
+    }, { scopeKind: "global", serviceName: "agent", projectId: "project" }]
+  ) {
+    it(`rejects missing or ambiguous allocation owner ${JSON.stringify(owner)}`, () => {
+      assertEquals(
+        getHostedExecutorAllocationRequestSchema().safeParse({ ...request, owner }).success,
+        false,
+      );
+    });
+  }
+
+  it("does not interpret a legacy project or absent owner as global", () => {
+    const { owner: _owner, ...rest } = request;
+    assertEquals(
+      getHostedExecutorAllocationRequestSchema().safeParse({ ...rest, projectId: "legacy-project" })
+        .success,
+      false,
+    );
+    assertEquals(getHostedExecutorAllocationRequestSchema().safeParse(rest).success, false);
+  });
+
+  it("compares scope and identity and freezes captured source ownership", () => {
+    const owner: HostedExecutorOwner = { scopeKind: "global", serviceName: "platform-agent" };
+    const captured = readHostedExecutorBinding({ binding: { ...fullBinding, owner } });
+    owner.serviceName = "changed";
+    assert(Object.isFrozen(captured.owner));
+    assertEquals(captured.owner, { scopeKind: "global", serviceName: "platform-agent" });
+    assertEquals(
+      sameHostedExecutorBinding(captured, {
+        ...captured,
+        owner: { scopeKind: "project", projectId: "platform-agent" },
+      }),
+      false,
+    );
+    assertEquals(
+      sameHostedExecutorBinding(captured, {
+        ...captured,
+        owner: { scopeKind: "global", serviceName: "another-service" },
+      }),
+      false,
+    );
+  });
+
+  it("rejects a foreign release acknowledgement while keeping the original owner binding", async () => {
+    const f = fixture({
+      request: { ...request, owner: { scopeKind: "global", serviceName: "platform-agent" } },
+    });
+    f.allocator.release = (binding, reason) => {
+      assertEquals(binding.owner, { scopeKind: "global", serviceName: "platform-agent" });
+      return Promise.resolve({
+        binding: { ...binding, owner: { scopeKind: "project", projectId: "platform-agent" } },
+        phase: "released",
+        reason,
+        expiresAt: 2000,
+      });
+    };
+    const session = f.start();
+    await session.ready;
+    assertEquals((await session.close()).release, "reaper-required");
+    await session.settled;
+    await f.peerClosed();
+  });
+  it("accepts explicit global discovery ownership without a project", () => {
+    const parsed = getHostedExecutorAllocationRequestSchema().safeParse({
+      allocationId: request.allocationId,
+      invocationId: request.invocationId,
+      owner: { scopeKind: "global", serviceName: "platform-agent" },
+      source: request.source,
+      requestedAt: request.requestedAt,
+      prepareDeadlineAt: request.prepareDeadlineAt,
+      hardDeadlineAt: request.hardDeadlineAt,
+    });
+    assertEquals(parsed.success, true);
+  });
   it("anchors UTC deadlines to a monotonic elapsed clock", async () => {
     const time = new ManualMonotonicClock();
     time.advanceBy(50);
@@ -347,7 +469,7 @@ describe("hosted executor session", () => {
       "allocationId",
       "invocationId",
       "brokerInstanceId",
-      "projectId",
+      "owner",
       "source",
     ] as const
   ) {
@@ -355,6 +477,8 @@ describe("hosted executor session", () => {
       const f = fixture();
       const changed = field === "source"
         ? { type: "release", releaseId: "other-release" }
+        : field === "owner"
+        ? { scopeKind: "project", projectId: "other-project" }
         : field.endsWith("Id") && (field === "allocationId" || field === "invocationId")
         ? "33333333-3333-4333-8333-333333333333"
         : "other-identity";
@@ -390,7 +514,7 @@ describe("hosted executor session", () => {
     });
   }
 
-  for (const loss of ["policy", "lease", "pod", "generation", "image"] as const) {
+  for (const loss of ["policy", "lease", "pod", "generation", "image", "owner"] as const) {
     it(`revokes channel work on ${loss} loss and never reattaches`, async () => {
       const f = fixture();
       const session = f.start();
@@ -399,6 +523,12 @@ describe("hosted executor session", () => {
       if (loss === "lease") f.returned.expiresAt = 1000;
       if (loss === "pod") f.returned.endpoint!.podUid = "replacement-pod";
       if (loss === "generation") f.returned.binding = { ...fullBinding, generation: 8 };
+      if (loss === "owner") {
+        f.returned.binding = {
+          ...fullBinding,
+          owner: { scopeKind: "global", serviceName: "foreign-service" },
+        };
+      }
       if (loss === "image") {
         f.returned.endpoint!.image = `registry.example.test/executor@sha256:${"b".repeat(64)}`;
       }

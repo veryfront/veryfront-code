@@ -54,7 +54,7 @@ export interface HostedExecutorSessionOptions {
   request: HostedExecutorAllocationRequest;
   /** Authenticated broker Pod UID, independently known by the trusted caller. */
   expectedBrokerInstanceId: string;
-  /** Digest-pinned image independently resolved for request.source by the trusted caller. */
+  /** Digest-pinned image independently resolved for request.owner and source by the trusted caller. */
   expectedImage: string;
   allocator: HostedExecutorAllocatorClient;
   /** Authenticate one connection. Snapshot the allocation key before awaiting. */
@@ -175,7 +175,11 @@ class Session implements HostedExecutorSession {
       getHostedExecutorAllocationRequestSchema(),
       options.request,
     );
-    this.#request = Object.freeze({ ...request, source: Object.freeze(request.source) });
+    this.#request = Object.freeze({
+      ...request,
+      owner: Object.freeze(request.owner),
+      source: Object.freeze(request.source),
+    });
     this.#expectedBroker = options.expectedBrokerInstanceId;
     this.#expectedImage = parseHostedExecutorData(
       getHostedExecutorImageSchema(),
@@ -185,7 +189,7 @@ class Session implements HostedExecutorSession {
       allocationId: request.allocationId,
       invocationId: request.invocationId,
       generation: 1,
-      projectId: request.projectId,
+      owner: request.owner,
       source: request.source,
       brokerInstanceId: this.#expectedBroker,
     });
@@ -372,7 +376,7 @@ class Session implements HostedExecutorSession {
     const expected = this.#binding ?? {
       allocationId: this.#request.allocationId,
       invocationId: this.#request.invocationId,
-      projectId: this.#request.projectId,
+      owner: this.#request.owner,
       source: this.#request.source,
       brokerInstanceId: this.#expectedBroker,
       generation: binding.generation,
