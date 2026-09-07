@@ -418,4 +418,49 @@ describe("direct production server owner", () => {
     assertEquals(caught, readinessError);
     assertEquals(events, ["stop-server", "dispose-bootstrap", "signals-disposed"]);
   });
+
+  it("preserves an undefined server stop rejection over bootstrap disposal failure", async () => {
+    const events: string[] = [];
+    const captured: unknown[] = [];
+    const adapter = createMockAdapter();
+    let signalHandler: ((signal: "SIGINT" | "SIGTERM") => void | Promise<void>) | undefined;
+
+    await runDirectProductionServer({
+      initializeErrorReporting: () => Promise.resolve(),
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(adapter),
+      bootstrap: () =>
+        Promise.resolve({
+          adapter,
+          config: {},
+          usingFSAdapter: false,
+          extensionLoader: {} as BootstrapResult["extensionLoader"],
+          dispose: () => Promise.reject(new Error("dispose failed")),
+        }),
+      startServer: () => {
+        return Promise.resolve({
+          ready: new Promise<void>((resolve) => {
+            setTimeout(() => {
+              resolve();
+              signalHandler?.("SIGTERM");
+            }, 0);
+          }),
+          stop: () => Promise.reject(undefined),
+        });
+      },
+      registerSignals: (handler) => {
+        signalHandler = handler;
+      },
+      gracefullyShutdown: async (options) => {
+        await options.stop();
+        return true;
+      },
+      flush: () => Promise.resolve(),
+      captureError: (error) => captured.push(error),
+      exit: (code) => events.push(`exit:${code}`),
+    });
+
+    assertEquals(captured, [undefined]);
+    assertEquals(events, ["exit:0"]);
+  });
 });

@@ -496,18 +496,20 @@ export async function runDirectProductionServer(
         return {
           ready: server.ready,
           stop: async () => {
+            let didStopFail = false;
             let stopError: unknown;
             try {
               await server.stop();
             } catch (error) {
+              didStopFail = true;
               stopError = error;
             }
             try {
               await disposeBootstrap();
             } catch (error) {
-              if (stopError === undefined) throw error;
+              if (!didStopFail) throw error;
             }
-            if (stopError !== undefined) throw stopError;
+            if (didStopFail) throw stopError;
           },
         };
       } catch (error) {
