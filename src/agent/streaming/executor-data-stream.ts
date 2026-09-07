@@ -54,6 +54,7 @@ export async function* readExecutorDataEvents(
         const fragment = next.value.subarray(offset, offset + 4096);
         validator.decode(fragment, { stream: true });
         for (const byte of fragment) {
+          if (terminal) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
           if (pendingBytes === pending.length) {
             const grown = new Uint8Array(
               Math.min(pending.length * 2, EXECUTOR_AGENT_MAX_PAYLOAD_BYTES + 2),
