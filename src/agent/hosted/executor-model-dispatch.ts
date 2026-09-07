@@ -19,6 +19,8 @@ import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { createExecutorModelBroker, type ExecutorModelDispatch } from "./executor-model-bridge.ts";
 import { executorModelJson, parseExecutorModelData } from "./executor-model-schema.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
+import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
+import { executorModelFailure } from "./executor-model-errors.ts";
 
 /** Ingress-owned invocation authority. The sink already owns its exact run identity. */
 export interface HostedExecutorModelScope {
@@ -32,6 +34,7 @@ interface HostedModelBrokerInput {
   resolveModelRuntime: AgentModelRuntimeResolver | undefined;
   allowedModelIds: ReadonlySet<string>;
   scope: HostedExecutorModelScope;
+  grant: ExecutorModelGrant;
 }
 
 /**
@@ -78,6 +81,8 @@ function createScopedHostedModelBroker(
   const binding = parseExecutorModelData(getExecutorBindingSchema(), input.scope.binding);
   const lifetime = input.scope.signal;
   const assertActive = input.scope.assertActive;
+  const admission = createExecutorModelAdmission(input.grant, input.allowedModelIds);
+  const admit = admission.admit;
   if (!(lifetime instanceof AbortSignal) || typeof assertActive !== "function") {
     throw new TypeError("Hosted model dispatch requires invocation authority");
   }
@@ -97,6 +102,10 @@ function createScopedHostedModelBroker(
   const operations = createExecutorModelBroker({
     resolveModelRuntime: input.resolveModelRuntime,
     allowedModelIds: input.allowedModelIds,
+    normalizeModelCall(request, context) {
+      assertScope(context);
+      return admission.normalize(request);
+    },
     async beforeModelDispatch(request, context) {
       assertScope(context);
       assertPersistedModelOptions(request);
@@ -114,11 +123,40 @@ function createScopedHostedModelBroker(
   return new Map([...operations].map(([name, operation]): [string, ExecutorOperation] => [
     name,
     operation.mode === "unary"
-      ? { mode: "unary", handle: (value, context) => operation.handle(value, bindContext(context)) }
+      ? {
+        mode: "unary",
+        async handle(value, context) {
+          const boundContext = bindContext(context);
+          let admission: ReturnType<typeof admit> | undefined;
+          try {
+            admission = name === "model.generate" ? admit(value) : undefined;
+            return await operation.handle(admission?.input ?? value, boundContext);
+          } catch (error) {
+            boundContext.signal.throwIfAborted();
+            const failure = executorModelFailure(error);
+            if (failure?.code === "RESOURCE_LIMIT_EXCEEDED") return failure;
+            throw error;
+          } finally {
+            admission?.release();
+          }
+        },
+      }
       : {
         mode: "stream",
         async *handle(value, context) {
-          yield* operation.handle(value, bindContext(context));
+          const boundContext = bindContext(context);
+          let admission: ReturnType<typeof admit> | undefined;
+          try {
+            admission = name === "model.stream" ? admit(value) : undefined;
+            yield* operation.handle(admission?.input ?? value, boundContext);
+          } catch (error) {
+            boundContext.signal.throwIfAborted();
+            const failure = executorModelFailure(error);
+            if (failure?.code !== "RESOURCE_LIMIT_EXCEEDED") throw error;
+            yield failure;
+          } finally {
+            admission?.release();
+          }
         },
       },
   ]));

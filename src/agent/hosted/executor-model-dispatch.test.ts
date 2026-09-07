@@ -19,6 +19,11 @@ import { createHostedExecutorModelBroker } from "./executor-model-dispatch.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic-model";
 const allowedModelIds = new Set([modelId]);
+const grant = () => ({
+  maxCalls: 256,
+  maxConcurrentCalls: 32,
+  models: new Map([[modelId, { maxOutputTokens: 4096, providerTools: [] }]]),
+});
 const binding = { allocationId: "allocation-test", generation: 1, invocationId: "invocation-test" };
 const prompt = [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }] as const;
 
@@ -129,6 +134,7 @@ describe("hosted executor model dispatch", () => {
     };
     let dispatched: ModelRuntimeCallOptions | undefined;
     const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
       allowedModelIds,
       scope: scope(),
       resolveModelRuntime: () =>
@@ -193,6 +199,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: false },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 2048 },
+        expectedMaxOutputTokens: 2048,
       },
       {
         reasoning: { enabled: false },
@@ -200,11 +207,13 @@ describe("hosted executor model dispatch", () => {
           anthropic: { thinking: { type: "adaptive" }, output_config: { effort: "high" } },
         },
         expected: { enabled: true, effort: "high" },
+        expectedMaxOutputTokens: 4096,
       },
       {
         reasoning: { enabled: true, budgetTokens: 1024 },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 1024 },
+        expectedMaxOutputTokens: 3072,
       },
     ] as const;
     for (const mode of ["generate", "stream"] as const) {
@@ -216,6 +225,7 @@ describe("hosted executor model dispatch", () => {
           providerOptions: testCase.providerOptions,
         };
         const channels = pair(createHostedExecutorModelBroker({
+          grant: grant(),
           allowedModelIds,
           scope: scope(),
           runEventSink: (value) => {
@@ -240,7 +250,10 @@ describe("hosted executor model dispatch", () => {
             while (!(await reader.read()).done) { /* Consume the provider stream. */ }
           }
           assertEquals(event?.model, { id: "claude-synthetic", modelProvider: "anthropic" });
-          assertEquals(event?.request, { reasoning: testCase.expected });
+          assertEquals(event?.request, {
+            maxOutputTokens: testCase.expectedMaxOutputTokens,
+            reasoning: testCase.expected,
+          });
           assert(event && !("providerOptions" in event));
         } finally {
           await channels.close();
@@ -253,6 +266,7 @@ describe("hosted executor model dispatch", () => {
     let events = 0;
     let dispatches = 0;
     const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
       allowedModelIds,
       scope: scope(),
       runEventSink: () => {
@@ -291,6 +305,7 @@ describe("hosted executor model dispatch", () => {
     ) {
       let event: AgentRunModelCallContextEvent | undefined;
       const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         runEventSink: (value) => {
@@ -308,7 +323,7 @@ describe("hosted executor model dispatch", () => {
         const runtime = await proxy(channels);
         await runtime.doGenerate({ prompt, ...(reasoning ? { reasoning } : {}) });
         assertEquals(event?.model, { id: "o3", modelProvider: "openai" });
-        assertEquals(event?.request, { reasoning: expected });
+        assertEquals(event?.request, { maxOutputTokens: 4096, reasoning: expected });
       } finally {
         await channels.close();
       }
@@ -320,6 +335,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         runEventSink: () => {
@@ -393,6 +409,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         runEventSink: () => {
@@ -406,7 +423,9 @@ describe("hosted executor model dispatch", () => {
       for (const bucket of ["google", "veryfront-cloud"]) {
         await runtime.doGenerate({
           prompt,
-          providerOptions: { [bucket]: { generationConfig: { responseSchema } } },
+          providerOptions: {
+            [bucket]: { generationConfig: { maxOutputTokens: 4096, responseSchema } },
+          },
         });
         await runtime.doGenerate({
           prompt,
@@ -447,6 +466,7 @@ describe("hosted executor model dispatch", () => {
   it("requires an explicit sink and rejects failed persistence before generate or stream", async () => {
     assertThrows(() =>
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         resolveModelRuntime: () => model(() => {}),
@@ -456,6 +476,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         resolveModelRuntime: () => model(() => dispatches++),
@@ -491,6 +512,7 @@ describe("hosted executor model dispatch", () => {
       let active = true;
       let dispatches = 0;
       const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: {
           binding,
@@ -529,6 +551,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         resolveModelRuntime: () => model(() => dispatches++),
@@ -581,6 +604,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         resolveModelRuntime: () => model(() => dispatches++),
@@ -632,6 +656,7 @@ describe("hosted executor model dispatch", () => {
     const persisted = Promise.withResolvers<void>();
     const order: string[] = [];
     const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
       allowedModelIds,
       scope: scope(),
       resolveModelRuntime: () => model((_options, mode) => order.push(mode)),
@@ -664,6 +689,7 @@ describe("hosted executor model dispatch", () => {
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
+        grant: grant(),
         allowedModelIds,
         scope: scope(),
         resolveModelRuntime: () => model(() => dispatches++),
@@ -710,6 +736,7 @@ describe("hosted executor model dispatch", () => {
     let preparations = 0;
     let active = true;
     const operations = createHostedExecutorModelBroker({
+      grant: grant(),
       allowedModelIds,
       scope: {
         ...scope(),
@@ -760,6 +787,7 @@ describe("hosted executor model dispatch", () => {
       };
       return pair(
         createHostedExecutorModelBroker({
+          grant: grant(),
           allowedModelIds,
           scope: scope(undefined, invocation),
           runEventSink: sink,

@@ -39,6 +39,11 @@ function setup() {
   const lifetime = new AbortController();
   let calls = 0;
   const options = {
+    grant: {
+      maxCalls: 3,
+      maxConcurrentCalls: 1,
+      models: new Map([[modelId, { maxOutputTokens: 32, providerTools: [] }]]),
+    },
     allowedModelIds,
     scope: {
       binding,
