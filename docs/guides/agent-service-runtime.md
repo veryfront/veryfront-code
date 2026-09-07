@@ -64,10 +64,13 @@ entries. Route handlers retain ordinary-object params; decoded keys bypass
 inherited setters.
 
 Framework responses supply explicit status, status text, and empty-header defaults
-to native constructors. This prevents Node's intermediate Web IDL dictionary from
-inheriting response fields from `Object.prototype`, including CORS headers for a
-denied origin. These defaults apply only to omitted values. Invalid response
-values still fail native validation, and host handler errors propagate unchanged.
+to native constructors. These defaults override inherited data properties,
+including CORS headers for a denied origin, and apply only to omitted values.
+If `Object.prototype` defines an accessor for `headers`, `status`, or `statusText`,
+response construction throws a `TypeError` before native option conversion can
+invoke it. The runtime does not remove the accessor, return an empty response, or
+retry with weaker CORS rules. Invalid response values still fail native
+validation, and host handler errors propagate unchanged.
 
 The service discovers the same project primitives as the app runtime:
 

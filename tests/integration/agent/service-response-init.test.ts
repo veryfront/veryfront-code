@@ -11,6 +11,62 @@ const allowedOrigin = "https://studio.example.test";
 const deniedOrigin = "https://untrusted.example.test";
 
 describe("agent service native response init", () => {
+  it("rejects inherited response accessors before native conversion invokes them", async () => {
+    const runtime = defineAgentService({
+      serviceName: "response-accessors",
+      agents: {},
+      defaultAgentId: "test",
+      server: { cors: { origins: [allowedOrigin], credentials: true } },
+    }).createRuntime();
+    const request = new Request("https://agent.example.test/liveness", {
+      headers: { Origin: deniedOrigin },
+    });
+
+    for (const field of ["headers", "status", "statusText"]) {
+      const original = Object.getOwnPropertyDescriptor(Object.prototype, field);
+      let reads = 0;
+      let writes = 0;
+      let failure: unknown;
+      let response: Response | undefined;
+      Object.defineProperty(Object.prototype, field, {
+        configurable: true,
+        get() {
+          reads++;
+          if (field === "headers") {
+            return { "Access-Control-Allow-Origin": deniedOrigin };
+          }
+          return field === "status" ? 200 : "Injected";
+        },
+        set() {
+          writes++;
+        },
+      });
+      try {
+        response = await runtime.fetch(request);
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (original) Object.defineProperty(Object.prototype, field, original);
+        else Reflect.deleteProperty(Object.prototype, field);
+      }
+      await response?.body?.cancel();
+      assertEquals(reads, 0, `${field} getter must not run`);
+      assertEquals(writes, 0, `${field} setter must not run`);
+      assertEquals(failure instanceof TypeError, true, `${field} must fail explicitly`);
+      assertEquals(
+        (failure as Error).message,
+        "Cannot construct a response with inherited option accessors",
+      );
+    }
+
+    const response = await runtime.request("/liveness", {
+      headers: { Origin: allowedOrigin },
+    });
+    assertEquals(response.status, 200);
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), allowedOrigin);
+    assertEquals(await response.text(), "OK");
+  });
+
   it("propagates host errors and rejects malformed headers without a success fallback", async () => {
     const failure = new Error("synthetic host failure");
     const runtime = defineAgentService({

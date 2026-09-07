@@ -11,6 +11,7 @@ const NativeHeaders = Headers;
 const NativeResponse = Response;
 const NativeSet = Set;
 const NativeString = String;
+const NativeTypeError = TypeError;
 const NativeURLSearchParams = URLSearchParams;
 const NativeHasInstance = Function.prototype[Symbol.hasInstance];
 const NativeArrayFrom = Array.from;
@@ -50,6 +51,7 @@ const NativeDecodeURIComponent = decodeURIComponent;
 const StringToUpperCase = String.prototype.toUpperCase;
 const ObjectHasOwn = Object.hasOwn;
 const EmptyHeadersInit: Record<string, string> = ObjectCreate(null);
+const ResponseInitFields = ["headers", "status", "statusText"] as const;
 const RequestInitFields = [
   "body",
   "cache",
@@ -242,6 +244,16 @@ function createNativeResponse(
   status?: number,
   statusText?: string,
 ): Response {
+  // Node assigns into a normal internal dictionary, so inherited accessors
+  // can intercept even explicit fields. Reject that state without invoking
+  // project code or changing process-wide prototypes during construction.
+  for (let index = 0; index < ResponseInitFields.length; index++) {
+    const field = ResponseInitFields[index]!;
+    const descriptor = ObjectGetOwnPropertyDescriptor(NativeObjectPrototype, field);
+    if (descriptor && !ObjectHasOwn(descriptor, "value")) {
+      throw new NativeTypeError("Cannot construct a response with inherited option accessors");
+    }
+  }
   // Node converts the init into an ordinary dictionary internally. Supply
   // every field so that dictionary cannot inherit response defaults.
   const init: ResponseInit = ObjectCreate(null);
