@@ -141,6 +141,43 @@ describe("isolated executor local project discovery", () => {
     }
   });
 
+  for (
+    const [failure, config] of [
+      ["invalid setting", 'export default { dev: { port: "synthetic-invalid-port" } };'],
+      ["invalid syntax", "export default {"],
+    ] as const
+  ) {
+    it(`reports CONFIG_INVALID and releases discovery after config ${failure}`, async () => {
+      const p = await project();
+      const healthy = await project();
+      const discovery = owner(p.dir, "writer");
+      const next = owner(healthy.dir, "writer");
+      try {
+        await writeFile(join(p.dir, "veryfront.config.ts"), config);
+        assertEquals(await request(discovery, "discovery.describe"), {
+          ok: false,
+          code: "CONFIG_INVALID",
+        });
+        assertEquals(discovery.signal.aborted, true);
+        await discovery.settled;
+        assertThrows(() => discovery.getRuntime(), ExecutorDiscoveryError);
+        assertEquals(existsSync(p.projected), false);
+        assertEquals(agentRegistry.get("writer"), undefined);
+
+        const recovered = getExecutorDiscoveryResultSchema().parse(
+          await request(next, "discovery.describe"),
+        );
+        assert(recovered.ok);
+        assertEquals(recovered.value.defaultAgentId, "writer");
+      } finally {
+        await discovery.close();
+        await next.close();
+        await p.cleanup();
+        await healthy.cleanup();
+      }
+    });
+  }
+
   it("preserves valid metadata while keeping collected import errors local", async () => {
     const p = await project();
     await writeFile(

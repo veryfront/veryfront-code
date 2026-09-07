@@ -40,7 +40,10 @@ export class ExecutorDiscoveryError extends VeryfrontError {
 export function discoveryFailureCode(error: unknown): FailureCode {
   if (error instanceof ExecutorDiscoveryError) return error.code;
   const slug = snapshotVeryfrontError(error)?.slug;
-  if (slug === "config-invalid") return "CONFIG_INVALID";
+  if (
+    slug === "config-invalid" || slug === "config-validation-failed" ||
+    slug === "config-parse-error"
+  ) return "CONFIG_INVALID";
   if (slug === "agent-not-found") return "AGENT_NOT_FOUND";
   return "EXECUTOR_DISCOVERY_FAILED";
 }
