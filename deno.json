@@ -408,6 +408,7 @@
     "#cli/commands/files/command": "./cli/commands/files/command.ts",
     "#cli/commands/knowledge/command": "./cli/commands/knowledge/command.ts",
     "#cli/commands/knowledge/result": "./cli/commands/knowledge/result.ts",
+    "#cli/commands/serve/command": "./cli/commands/serve/command.ts",
     "#cli/commands/uploads/command": "./cli/commands/uploads/command.ts",
     "#deno-config": "./deno.json",
     "#std/path": "jsr:@std/path@1.1.4",
