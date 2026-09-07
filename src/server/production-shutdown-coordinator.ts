@@ -110,10 +110,11 @@ export async function runProductionProcessOwner(
 ): Promise<void> {
   const controller = new AbortController();
   let server: OwnedProductionServer | undefined;
+  let serverAtShutdownStart: OwnedProductionServer | undefined;
   let shutdownRequested = false;
   const coordinator = createProductionShutdownCoordinator({
     shutdown: async (reason) => {
-      const serverAtShutdownStart = server;
+      serverAtShutdownStart = server;
       // No admitted response can be drained without a returned server handle.
       // Abort pending startup immediately so a late listener observes shutdown.
       if (!serverAtShutdownStart) controller.abort();
@@ -124,11 +125,11 @@ export async function runProductionProcessOwner(
     },
     flush: options.flush,
     beforeExit: async () => {
-      if (server && shutdownRequested) await server.stop();
+      if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();
       await options.beforeExit?.();
       // The custom hook can yield while startup publishes its handle. This is
       // the final asynchronous fence before exit, so recheck after that yield.
-      if (server && shutdownRequested) await server.stop();
+      if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();
     },
     exit: options.exit,
     onError: options.onError,

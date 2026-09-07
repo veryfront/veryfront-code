@@ -311,4 +311,53 @@ describe("production shutdown coordinator", () => {
       "exit:0",
     ]);
   });
+
+  it("does not re-await an initial server stop after bounded cleanup times out", async () => {
+    const events: string[] = [];
+    let requestSignal: (() => void) | undefined;
+    let releaseStop: (() => void) | undefined;
+
+    const run = runProductionProcessOwner({
+      start: () =>
+        Promise.resolve({
+          ready: Promise.resolve(),
+          stop: () => {
+            events.push("stop-start");
+            return new Promise<void>((resolve) => {
+              releaseStop = resolve;
+            });
+          },
+        }),
+      shutdown: async (_reason, server) => {
+        events.push(`shutdown:server=${server ? "yes" : "no"}`);
+        void server?.stop();
+        await Promise.resolve();
+        events.push("cleanup-timeout");
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      beforeExit: () => {
+        events.push("before-exit");
+        return Promise.resolve();
+      },
+      exit: (code) => events.push(`exit:${code}`),
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+      onReady: () => requestSignal?.(),
+    });
+
+    await run;
+    assertEquals(events, [
+      "shutdown:server=yes",
+      "stop-start",
+      "cleanup-timeout",
+      "flush",
+      "before-exit",
+      "exit:0",
+    ]);
+    releaseStop?.();
+  });
 });
