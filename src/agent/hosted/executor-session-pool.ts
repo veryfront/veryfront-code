@@ -1,14 +1,14 @@
-import { performanceMonotonicClock } from "../streaming/lifecycle/clock.ts";
+import { performanceMonotonicClock } from "#veryfront/agent/streaming/lifecycle/clock.ts";
 import {
   type AbsoluteDeadlineTimer,
   createClockDeadlineTimer,
-} from "../streaming/lifecycle/deadlines.ts";
+} from "#veryfront/agent/streaming/lifecycle/deadlines.ts";
 import {
   createHostedExecutorSession,
   type HostedExecutorSession,
   type HostedExecutorSessionCloseResult,
   type HostedExecutorSessionOptions,
-} from "./executor-session.ts";
+} from "#veryfront/agent/hosted/executor-session.ts";
 
 export interface HostedExecutorSessionPoolOptions {
   /** Finite process admission ceiling, including preparation and resource retirement. Maximum 256. */

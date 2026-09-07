@@ -1,18 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ExecutorChannel } from "../executor/channel.ts";
-import { createClockDeadlineTimer } from "../streaming/lifecycle/deadlines.ts";
-import { ManualMonotonicClock } from "../streaming/lifecycle/testing.ts";
+import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
+import { createClockDeadlineTimer } from "#veryfront/agent/streaming/lifecycle/deadlines.ts";
+import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testing.ts";
 import type {
   HostedExecutorSession,
   HostedExecutorSessionCloseResult,
   HostedExecutorSessionOptions,
-} from "./executor-session.ts";
+} from "#veryfront/agent/hosted/executor-session.ts";
 import {
   createHostedExecutorSessionPool,
   type HostedExecutorSessionPool,
-} from "./executor-session-pool.ts";
+} from "#veryfront/agent/hosted/executor-session-pool.ts";
 
 function sessionDouble() {
   const closed = Promise.withResolvers<HostedExecutorSessionCloseResult>();
