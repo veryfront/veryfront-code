@@ -1,5 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
@@ -268,6 +269,40 @@ it("agent service routes classify AG-UI setup failures", async () => {
     "EXTERNAL_SERVICE_ERROR",
     "an unclassified setup failure streams the default provider error code",
   );
+});
+
+it("agent service routes preserve registered AG-UI setup error titles and codes", async () => {
+  const { routeSet } = createRouteSet({
+    prepareExecution: () =>
+      Promise.reject(PERMISSION_DENIED.create({ detail: "Synthetic private setup detail" })),
+  });
+  const response = await routeSet.handleAgUiRequest(
+    createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+  );
+
+  assertEquals(response.status, 403);
+  const output = await response.text();
+  assertStringIncludes(output, '"message":"File/resource permission denied"');
+  assertStringIncludes(output, '"code":"PERMISSION_DENIED"');
+  assertEquals(output.includes("Synthetic private setup detail"), false);
+});
+
+it("agent service routes redact mutable AG-UI setup error titles", async () => {
+  const error = PERMISSION_DENIED.create();
+  const privateValue = "synthetic-private-credential";
+  error.title = `Synthetic setup failure: Bearer ${privateValue}`;
+  const { routeSet } = createRouteSet({
+    prepareExecution: () => Promise.reject(error),
+  });
+  const response = await routeSet.handleAgUiRequest(
+    createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+  );
+
+  assertEquals(response.status, 403);
+  const output = await response.text();
+  assertEquals(output.includes(privateValue), false);
+  assertStringIncludes(output, '"message":"Synthetic setup failure: Bearer [REDACTED]"');
+  assertStringIncludes(output, '"code":"PERMISSION_DENIED"');
 });
 
 Deno.test("agent service routes ignore client-controlled AG-UI target agent ids", async () => {
