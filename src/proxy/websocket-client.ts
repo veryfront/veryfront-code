@@ -88,7 +88,7 @@ export class UpstreamWebSocket {
     this.#opening = this.#stream.opened.then(
       (connection) => this.#open(connection),
       (error: unknown) => this.#fail(error),
-    );
+    ).catch((error: unknown) => this.#fail(error));
     this.#stream.closed.then(
       (info) => this.#close(info.closeCode ?? 1005, info.reason ?? "", true),
       (error: unknown) => this.#fail(error),
@@ -134,8 +134,11 @@ export class UpstreamWebSocket {
     }
     this.#writer = connection.writable.getWriter();
     this.#readyState = WebSocket.OPEN;
-    this.onopen?.(new Event("open"));
-    this.#reading = this.#pump(connection.readable);
+    try {
+      this.onopen?.(new Event("open"));
+    } finally {
+      this.#reading = this.#pump(connection.readable);
+    }
   }
 
   async #pump(readable: ReadableStream<string | Uint8Array>): Promise<void> {
@@ -168,7 +171,7 @@ export class UpstreamWebSocket {
     this.#readyState = WebSocket.CLOSING;
     // A late opened connection owns cancellation too. Neither the close event
     // nor reader.cancel() alone establishes that the receive pump has finished.
-    await this.#opening;
+    await this.#opening.catch(() => {});
     await this.#reader?.cancel().catch(() => {});
     await this.#reading;
     await this.#writes;

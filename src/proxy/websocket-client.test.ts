@@ -124,6 +124,42 @@ function silentStream(cancel?: () => Promise<void>): {
 }
 
 describe("upstream WebSocket client", () => {
+  it("settles stream ownership when the open callback throws", async () => {
+    const cancelStarted = Promise.withResolvers<void>();
+    const canceled = Promise.withResolvers<void>();
+    const { stream } = silentStream(() => {
+      cancelStarted.resolve();
+      return canceled.promise;
+    });
+    const socket = new UpstreamWebSocket("ws://upstream.test/_ws", new Headers(), () => stream);
+    const errored = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let closeCount = 0;
+    socket.onopen = () => {
+      throw new Error("synthetic open callback failure");
+    };
+    socket.onerror = () => errored.resolve();
+    socket.onclose = () => {
+      closeCount++;
+      closed.resolve();
+    };
+    try {
+      await errored.promise;
+      await cancelStarted.promise;
+      assertEquals(socket.readyState, WebSocket.CLOSING);
+      assertEquals(closeCount, 0);
+    } finally {
+      canceled.resolve();
+      stream.close();
+    }
+    await closed.promise;
+    const connection = await stream.opened;
+    assertEquals(socket.readyState, WebSocket.CLOSED);
+    assertEquals(connection.readable.locked, false);
+    assertEquals(connection.writable.locked, false);
+    assertEquals(closeCount, 1);
+  });
+
   it("waits for deferred reader cancellation before reporting close", async () => {
     const cancellationStarted = Promise.withResolvers<void>();
     const cancellationFinished = Promise.withResolvers<void>();
