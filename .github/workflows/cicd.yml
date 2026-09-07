@@ -492,9 +492,7 @@ jobs:
   sonar:
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    # Keep this legacy check name until the repository ruleset requires the
-    # canonical gate below. Removing it earlier would leave `sonar` expected.
-    name: sonar
+    name: SonarQube Cloud scan
     needs: [coverage-shards, coverage-node-executor]
     if: ${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:

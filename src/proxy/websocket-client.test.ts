@@ -24,7 +24,7 @@ function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamSer
   const seenHeaders = new Promise<Record<string, string | null>>((resolve) => {
     resolveHeaders = resolve;
   });
-  const sockets = new Set<WebSocket>();
+  const sockets = new Map<WebSocket, Promise<void>>();
 
   // Bind ephemerally (port 0) so parallel test modules never collide on a fixed
   // port, and to 127.0.0.1 to avoid IPv6 flakiness — same shape as the other
@@ -45,14 +45,18 @@ function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamSer
       }
       const { socket, response } = Deno.upgradeWebSocket(req);
       socket.binaryType = "arraybuffer";
-      sockets.add(socket);
+      const closed = Promise.withResolvers<void>();
+      sockets.set(socket, closed.promise);
       socket.onmessage = (event) => {
         if (socket.readyState !== WebSocket.OPEN) return;
         // Binary frames are echoed verbatim so the caller can check byte fidelity.
         if (typeof event.data === "string") socket.send(`echo:${event.data}`);
         else socket.send(event.data as ArrayBuffer);
       };
-      socket.onclose = () => sockets.delete(socket);
+      socket.onclose = () => {
+        sockets.delete(socket);
+        closed.resolve();
+      };
       return response;
     },
   );
@@ -63,11 +67,12 @@ function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamSer
     url: new URL(`ws://${addr.hostname}:${addr.port}/_ws`),
     seenHeaders,
     async close() {
-      for (const socket of sockets) {
+      const closedSockets = [...sockets.values()];
+      for (const socket of sockets.keys()) {
         if (socket.readyState === WebSocket.OPEN) socket.close();
       }
       controller.abort();
-      await server.finished;
+      await Promise.all([server.finished, ...closedSockets]);
     },
   };
 }
@@ -86,7 +91,7 @@ function identityHeaders(): Headers {
  * a real `WebSocketStream` does: it does not settle a read already awaiting the
  * next frame.
  */
-function silentStream(): {
+function silentStream(cancel?: () => Promise<void>): {
   stream: UpstreamWebSocketStream;
   readCancelled: () => boolean;
 } {
@@ -99,6 +104,7 @@ function silentStream(): {
   const readable = new ReadableStream<string | Uint8Array>({
     cancel() {
       cancelled = true;
+      return cancel?.();
     },
   });
 
@@ -117,7 +123,210 @@ function silentStream(): {
   };
 }
 
+describe("upstream WebSocket reader retirement", () => {
+  it("waits for reader cancellation when the message callback throws", async () => {
+    const cancelStarted = Promise.withResolvers<void>();
+    const canceled = Promise.withResolvers<void>();
+    const streamClosed = Promise.withResolvers<{ closeCode?: number; reason?: string }>();
+    const readable = new ReadableStream<string | Uint8Array>({
+      start(controller) {
+        controller.enqueue("synthetic message");
+      },
+      cancel() {
+        cancelStarted.resolve();
+        return canceled.promise;
+      },
+    });
+    const writable = new WritableStream<string | Uint8Array>();
+    const stream: UpstreamWebSocketStream = {
+      opened: Promise.resolve({ readable, writable }),
+      closed: streamClosed.promise,
+      close() {
+        streamClosed.resolve({});
+      },
+    };
+    const socket = new UpstreamWebSocket("ws://upstream.test/_ws", new Headers(), () => stream);
+    const closed = Promise.withResolvers<CloseEvent>();
+    let closeCount = 0;
+    socket.onmessage = () => {
+      throw new Error("synthetic message callback failure");
+    };
+    socket.onclose = (event) => {
+      closeCount++;
+      closed.resolve(event);
+    };
+    try {
+      assertEquals(
+        await Promise.race([
+          cancelStarted.promise.then(() => "cancel"),
+          closed.promise.then(() => "close"),
+        ]),
+        "cancel",
+        "a failed message callback must cancel its reader before reporting close",
+      );
+      assertEquals(socket.readyState, WebSocket.CLOSING);
+      assertEquals(closeCount, 0);
+    } finally {
+      canceled.resolve();
+      stream.close();
+      await closed.promise;
+      await readable.cancel();
+    }
+    assertEquals((await closed.promise).code, 1006);
+    assertEquals(socket.readyState, WebSocket.CLOSED);
+    assertEquals(readable.locked, false);
+    assertEquals(writable.locked, false);
+    assertEquals(closeCount, 1);
+  });
+});
+
 describe("upstream WebSocket client", () => {
+  it("settles stream ownership when the open callback throws", async () => {
+    const cancelStarted = Promise.withResolvers<void>();
+    const canceled = Promise.withResolvers<void>();
+    const { stream } = silentStream(() => {
+      cancelStarted.resolve();
+      return canceled.promise;
+    });
+    const socket = new UpstreamWebSocket("ws://upstream.test/_ws", new Headers(), () => stream);
+    const errored = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let closeCount = 0;
+    socket.onopen = () => {
+      throw new Error("synthetic open callback failure");
+    };
+    socket.onerror = () => errored.resolve();
+    socket.onclose = () => {
+      closeCount++;
+      closed.resolve();
+    };
+    try {
+      await errored.promise;
+      await cancelStarted.promise;
+      assertEquals(socket.readyState, WebSocket.CLOSING);
+      assertEquals(closeCount, 0);
+    } finally {
+      canceled.resolve();
+      stream.close();
+    }
+    await closed.promise;
+    const connection = await stream.opened;
+    assertEquals(socket.readyState, WebSocket.CLOSED);
+    assertEquals(connection.readable.locked, false);
+    assertEquals(connection.writable.locked, false);
+    assertEquals(closeCount, 1);
+  });
+
+  it("waits for deferred reader cancellation before reporting close", async () => {
+    const cancellationStarted = Promise.withResolvers<void>();
+    const cancellationFinished = Promise.withResolvers<void>();
+    const { stream } = silentStream(() => {
+      cancellationStarted.resolve();
+      return cancellationFinished.promise;
+    });
+    const socket = new UpstreamWebSocket("ws://upstream.test/_ws", new Headers(), () => stream);
+    await new Promise<void>((resolve) => {
+      socket.onopen = () => resolve();
+    });
+    let closeCount = 0;
+    const closed = new Promise<void>((resolve) => {
+      socket.onclose = () => {
+        closeCount++;
+        resolve();
+      };
+    });
+    socket.close(1000, "done");
+    await cancellationStarted.promise;
+    try {
+      assertEquals(
+        closeCount,
+        0,
+        "close cannot claim completion before reader cancellation settles",
+      );
+    } finally {
+      cancellationFinished.resolve();
+      await closed;
+    }
+    assertEquals(closeCount, 1);
+    const connection = await stream.opened;
+    assertEquals(connection.readable.locked, false);
+    assertEquals(connection.writable.locked, false);
+  });
+
+  it("waits for cancellation of a late unopened connection before reporting close", async () => {
+    const opened = Promise.withResolvers<UpstreamWebSocketConnection>();
+    const closed = Promise.withResolvers<{ closeCode?: number; reason?: string }>();
+    const cancelStarted = Promise.withResolvers<void>();
+    const canceled = Promise.withResolvers<void>();
+    const socket = new UpstreamWebSocket("ws://upstream.test/_ws", new Headers(), () => ({
+      opened: opened.promise,
+      closed: closed.promise,
+      close() {
+        closed.resolve({ closeCode: 1000 });
+      },
+    }));
+    let openCount = 0;
+    let closeCount = 0;
+    socket.onopen = () => {
+      openCount++;
+    };
+    const closeEvent = new Promise<void>((resolve) => {
+      socket.onclose = () => {
+        closeCount++;
+        resolve();
+      };
+    });
+    socket.close();
+    opened.resolve({
+      readable: new ReadableStream<string | Uint8Array>({
+        cancel() {
+          cancelStarted.resolve();
+          return canceled.promise;
+        },
+      }),
+      writable: new WritableStream<string | Uint8Array>(),
+    });
+    await cancelStarted.promise;
+    try {
+      assertEquals(closeCount, 0);
+      assertEquals(openCount, 0);
+    } finally {
+      canceled.resolve();
+      await closeEvent;
+    }
+    assertEquals(closeCount, 1);
+  });
+
+  it("releases native loopback stream locks before each close event", async () => {
+    const server = startUpstreamServer();
+    const nativeFactory = resolveUpstreamWebSocketStreamFactory();
+    try {
+      for (let attempt = 0; attempt < 32; attempt++) {
+        let nativeStream: UpstreamWebSocketStream | undefined;
+        const socket = connectUpstreamWebSocket(server.url, new Headers(), (url, init) => {
+          nativeStream = nativeFactory(url, init);
+          return nativeStream;
+        });
+        await new Promise<void>((resolve) => {
+          socket.onopen = () => resolve();
+        });
+        const connection = await nativeStream!.opened;
+        let locksAtClose: boolean[] = [];
+        const closed = new Promise<void>((resolve) => {
+          socket.onclose = () => {
+            locksAtClose = [connection.readable.locked, connection.writable.locked];
+            resolve();
+          };
+        });
+        socket.close(1000, "done");
+        await closed;
+        assertEquals(locksAtClose, [false, false]);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it("settles a pending read when the socket closes", async () => {
     // Regression guard for a leak that surfaced as an intermittent CI failure on
     // unrelated pull requests: closing left `read()` awaiting the next frame, so
