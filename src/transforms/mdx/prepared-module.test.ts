@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
@@ -41,11 +47,13 @@ describe("prepared MDX modules", () => {
     });
     const renderer = new MDXRenderer();
     try {
-      await assertRejects(
+      const error = await assertRejects(
         () => renderer.loadModuleESM("export default 1;", { adapter }),
         Error,
         "sourcePath",
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
       assertStrictEquals(
         await renderer.loadModuleESM('throw new Error("not prepared");', {
           adapter,

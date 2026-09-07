@@ -121,7 +121,7 @@ describe("RenderGenerationPool", () => {
           throw new Error("must reuse");
         }),
       Error,
-      "capacity",
+      "Render generation capacity is exhausted",
     );
     const second = await pool.render(request(), identity("second"), () => makeGeneration("second"));
     assertEquals(await first.text(), "first");

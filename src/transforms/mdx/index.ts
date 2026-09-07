@@ -5,6 +5,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import React from "react";
@@ -112,7 +113,9 @@ export class MDXRenderer {
         };
     const prepared = getRuntimeModuleLoader(options.adapter);
     if (prepared) {
-      if (!options.sourcePath) throw new TypeError("Prepared MDX imports require sourcePath");
+      if (!options.sourcePath) {
+        throw INVALID_ARGUMENT.create({ detail: "Prepared MDX imports require sourcePath" });
+      }
       const module = await prepared.importModule({ kind: "source", path: options.sourcePath });
       // Older prepared modules expose the compiler-private layout under this alias.
       return !module.MDXLayout && module.__vfLayout

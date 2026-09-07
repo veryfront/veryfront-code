@@ -92,6 +92,77 @@ function createApplicator(
 }
 
 describe("LayoutApplicator helpers", () => {
+  for (const stage of ["providers", "mdx app"] as const) {
+    it(`cancels a stalled prepared ${stage} import`, async () => {
+      const appPath = "/project/components/app.mdx";
+      const adapter = createAdapter({ [appPath]: "unused" });
+      const started = Promise.withResolvers<void>();
+      const deferred = Promise.withResolvers<Record<string, unknown>>();
+      const controller = new AbortController();
+      Object.defineProperty(adapter, "moduleLoader", {
+        value: {
+          importModule: async (reference: RuntimeModuleReference) => {
+            if (
+              (stage === "mdx app" && reference.kind === "source") ||
+              (stage === "providers" && reference.kind === "package" &&
+                reference.specifier === "veryfront/context")
+            ) {
+              started.resolve();
+              return await deferred.promise;
+            }
+            return {
+              default: reference.kind === "source" ? Pass : React,
+              PageContextProvider: Pass,
+              RouterProvider: Pass,
+            };
+          },
+        },
+      });
+      const applicator = new LayoutApplicator({
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "release",
+        adapter,
+        config: { app: "components/app.mdx" },
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "production",
+        reactVersion: React.version,
+        signal: controller.signal,
+      });
+      const outcome = applicator.applyLayouts(
+        React.createElement("main"),
+        createPageInfo("/project/page.mdx", "page"),
+        undefined,
+        [],
+      )
+        .then(() => undefined, (error: unknown) => error);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await started.promise;
+        const reason = new Error("render cancelled");
+        controller.abort(reason);
+        const observed = await Promise.race([
+          outcome,
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, 0);
+          }),
+        ]);
+        assertStrictEquals(
+          observed,
+          reason,
+          "request cancellation must not wait for module completion",
+        );
+      } finally {
+        clearTimeout(timer);
+        deferred.resolve({ default: Pass, PageContextProvider: Pass, RouterProvider: Pass });
+        await outcome;
+      }
+    });
+  }
+
   it("loads prepared providers and an MDX app by its original source identity", async () => {
     const appPath = "/project/components/app.mdx";
     const adapter = createAdapter({ [appPath]: 'throw new Error("Do not compile this source");' });

@@ -1,5 +1,6 @@
 import { dirname, join } from "#veryfront/compat/path";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { flattenRouteParams } from "#veryfront/routing";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -356,12 +357,17 @@ export class LayoutApplicator {
     RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
   }> {
     const prepared = getRuntimeModuleLoader(this.adapter);
+    throwIfAborted(this.signal);
     const [contextModule, routerModule] = prepared
-      ? await Promise.all([
-        prepared.importModule({ kind: "package", specifier: "veryfront/context" }),
-        prepared.importModule({ kind: "package", specifier: "veryfront/router" }),
-      ])
+      ? await awaitAbortable(
+        Promise.all([
+          prepared.importModule({ kind: "package", specifier: "veryfront/context" }),
+          prepared.importModule({ kind: "package", specifier: "veryfront/router" }),
+        ]),
+        this.signal,
+      )
       : await this.loadLegacyFrameworkProviders();
+    throwIfAborted(this.signal);
     const PageContextProvider = contextModule.PageContextProvider;
     const RouterProvider = routerModule.RouterProvider;
     if (typeof PageContextProvider !== "function" || typeof RouterProvider !== "function") {
@@ -492,7 +498,11 @@ export class LayoutApplicator {
   ): Promise<BundledReact.ComponentType<Record<string, unknown>> | null> {
     const prepared = getRuntimeModuleLoader(this.adapter);
     if (prepared) {
-      const module = await prepared.importModule({ kind: "source", path: appPath });
+      throwIfAborted(this.signal);
+      const module = await awaitAbortable(
+        prepared.importModule({ kind: "source", path: appPath }),
+        this.signal,
+      );
       throwIfAborted(this.signal);
       return extractComponent(module, appPath);
     }
