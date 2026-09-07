@@ -1,4 +1,7 @@
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
 /** Serialized immutable snapshot and its acknowledged retention deadline. */
 export interface DependencySnapshotRecord {
@@ -18,6 +21,8 @@ export interface DependencySnapshotRecord {
  * different bytes at the same namespace/key must fail, never overwrite.
  *
  * Methods must be own data properties, not getters or inherited methods.
+ * This capability requires native proxy detection, available on Deno, Node, and
+ * Bun. Hosts without it reject provider configuration before inspecting methods.
  * Runtime operations have a five-second deadline and at most 64 unresolved
  * producers. Local history holds at most 4,096 entries or 32 MiB of serialized
  * values. Default requested retention is 23 hours, 59 minutes, leaving 60 seconds
@@ -79,6 +84,9 @@ export function resolveDependencySnapshotStoreHandle(value: unknown): Dependency
 
 /** Capture an explicit host capability without invoking accessors or proxy traps. */
 export function captureDependencySnapshotStore(value: unknown): DependencySnapshotStore {
+  if (!canIdentifyProxyWithoutHooks) {
+    throw new TypeError("Dependency snapshot storage requires native proxy detection");
+  }
   if (value === null || typeof value !== "object" || isProxyWithoutHooks(value)) {
     throw new TypeError("Dependency snapshot store must be a non-proxy object");
   }

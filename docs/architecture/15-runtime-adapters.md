@@ -38,6 +38,10 @@ Primary source areas:
 `DependencySnapshotStoreHandle` created by `createDependencySnapshotStoreHandle(provider)`.
 Provider methods remain in private host state, outside renderer cache traversal.
 Without a configured provider, standalone history is process-local.
+
+Shared storage requires native proxy detection, available on Deno, Node, and Bun.
+Hosts without this capability reject provider configuration before inspecting
+provider methods. Their default process-local history remains available.
 Replicas share history only when their project and branch/release identities match.
 The shared namespace excludes replica-local mount paths when a project identity is present.
 

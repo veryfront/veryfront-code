@@ -18,6 +18,11 @@ interface Entry {
   bytes: number;
 }
 
+interface PendingOperation {
+  value?: string;
+  promise: Promise<unknown>;
+}
+
 interface RegistryOptions {
   store?: DependencySnapshotStore;
   now?: () => number;
@@ -30,6 +35,15 @@ interface RegistryOptions {
 const nativeNow = Date.now;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
+const NativeMap = Map;
+const mapGet = NativeMap.prototype.get;
+const mapSet = NativeMap.prototype.set;
+const mapDelete = NativeMap.prototype.delete;
+const mapClear = NativeMap.prototype.clear;
+const mapKeys = NativeMap.prototype.keys;
+const mapSize = getOwnPropertyDescriptor(NativeMap.prototype, "size")!.get!;
+const mapIteratorNext = Object.getPrototypeOf(new NativeMap<string, unknown>().keys())
+  .next as () => IteratorResult<string>;
 const NativeAbortController = AbortController;
 const NativePromise = Promise;
 const promiseThen = Promise.prototype.then;
@@ -52,8 +66,8 @@ function option<K extends keyof RegistryOptions>(
 
 /** Immutable history with acknowledged publication and a bounded local fast path. */
 export class DependencySnapshotRegistry {
-  private readonly entries = new Map<string, Entry>();
-  private readonly pending = new Map<string, { value?: string; promise: Promise<unknown> }>();
+  private readonly entries = new NativeMap<string, Entry>();
+  private readonly pending = new NativeMap<string, PendingOperation>();
   private bytes = 0;
   private generation = 0;
   readonly #store?: DependencySnapshotStore;
@@ -146,32 +160,33 @@ export class DependencySnapshotRegistry {
 
   clear(): void {
     this.generation++;
-    this.entries.clear();
+    apply(mapClear, this.entries, []);
     this.bytes = 0;
   }
 
   private entry(key: string): Entry | undefined {
-    const entry = this.entries.get(key);
+    const entry = apply(mapGet, this.entries, [key]) as Entry | undefined;
     if (!entry) return undefined;
-    this.entries.delete(key);
+    apply(mapDelete, this.entries, [key]);
     if (entry.expiresAt <= this.now()) {
       this.bytes -= entry.bytes;
       return undefined;
     }
-    this.entries.set(key, entry);
+    apply(mapSet, this.entries, [key, entry]);
     return entry;
   }
 
   private insert(key: string, entry: Entry): void {
-    const prior = this.entries.get(key);
+    const prior = apply(mapGet, this.entries, [key]) as Entry | undefined;
     if (prior) this.bytes -= prior.bytes;
-    this.entries.delete(key);
-    this.entries.set(key, entry);
+    apply(mapDelete, this.entries, [key]);
+    apply(mapSet, this.entries, [key, entry]);
     this.bytes += entry.bytes;
-    while (this.entries.size > this.maxEntries || this.bytes > this.maxBytes) {
-      const oldest = this.entries.keys().next().value!;
-      this.bytes -= this.entries.get(oldest)!.bytes;
-      this.entries.delete(oldest);
+    while (apply(mapSize, this.entries, []) > this.maxEntries || this.bytes > this.maxBytes) {
+      const iterator = apply(mapKeys, this.entries, []);
+      const oldest = apply(mapIteratorNext, iterator, []).value as string;
+      this.bytes -= (apply(mapGet, this.entries, [oldest]) as Entry).bytes;
+      apply(mapDelete, this.entries, [oldest]);
     }
   }
 
@@ -180,11 +195,11 @@ export class DependencySnapshotRegistry {
     value: string | undefined,
     run: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    let pending = this.pending.get(key);
+    let pending = apply(mapGet, this.pending, [key]) as PendingOperation | undefined;
     if (pending && pending.value !== value) throw this.unavailable();
     try {
       if (!pending) {
-        if (this.pending.size >= 64) throw this.unavailable();
+        if (apply(mapSize, this.pending, []) >= 64) throw this.unavailable();
         const controller = new NativeAbortController();
         const signal = apply(controllerSignal, controller, []) as AbortSignal;
         const producer = apply(promiseThen, ready, [() => run(signal)]) as Promise<T>;
@@ -198,7 +213,8 @@ export class DependencySnapshotRegistry {
           }, this.timeoutMs);
           const release = () => {
             cancelTimeout(timer);
-            if (this.pending.get(key)?.promise === promise) this.pending.delete(key);
+            const current = apply(mapGet, this.pending, [key]) as PendingOperation | undefined;
+            if (current?.promise === promise) apply(mapDelete, this.pending, [key]);
           };
           void apply(promiseThen, producer, [
             (result: T) => {
@@ -214,7 +230,7 @@ export class DependencySnapshotRegistry {
         // Coalesced callers share the deadline, including its settled rejection.
         // Non-cooperative producers remain admitted until they actually settle.
         pending = { value, promise };
-        this.pending.set(key, pending);
+        apply(mapSet, this.pending, [key, pending]);
       }
       return await pending.promise as T;
     } catch {

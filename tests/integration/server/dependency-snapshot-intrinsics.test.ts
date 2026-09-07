@@ -27,6 +27,114 @@ function snapshot(dependencies: Record<string, string> = {}) {
   return createDependencyPinningSnapshot(`on:${hashDependencyPins(dependencies)}`, dependencies);
 }
 describe("dependency snapshot intrinsic capture", () => {
+  it("preserves local eviction without consulting replaced Map constructors or methods", async () => {
+    const OriginalMap = Map;
+    const methodNames = ["get", "set", "delete", "clear", "keys", "size"] as const;
+    const descriptors = methodNames.map((name) =>
+      Object.getOwnPropertyDescriptor(OriginalMap.prototype, name)!
+    );
+    const iteratorPrototype = Object.getPrototypeOf(new OriginalMap().keys());
+    const nextDescriptor = Object.getOwnPropertyDescriptor(iteratorPrototype, "next")!;
+    let touches = 0;
+    let evicted = false, retained = false, cleared = false;
+    try {
+      globalThis.Map = new Proxy(OriginalMap, {
+        construct(target, args) {
+          touches++;
+          return Reflect.construct(target, args);
+        },
+      });
+      for (const [index, name] of methodNames.entries()) {
+        const descriptor = descriptors[index]!;
+        Object.defineProperty(
+          OriginalMap.prototype,
+          name,
+          name === "size" ? { configurable: true, get: () => (touches++, 0) } : {
+            configurable: true,
+            writable: true,
+            value: function (this: object, ...args: unknown[]) {
+              touches++;
+              return Reflect.apply(descriptor.value, this, args);
+            },
+          },
+        );
+      }
+      Object.defineProperty(iteratorPrototype, "next", {
+        configurable: true,
+        writable: true,
+        value: function (this: object) {
+          touches++;
+          return Reflect.apply(nextDescriptor.value, this, []);
+        },
+      });
+      const registry = new DependencySnapshotRegistry({ maxEntries: 1 });
+      const first = snapshot({ react: "19.1.0" });
+      const second = snapshot({ react: "19.2.4" });
+      await registry.remember("map-eviction", first);
+      await registry.remember("map-eviction", second);
+      evicted = registry.peek("map-eviction", first.cacheKey) === undefined;
+      retained = registry.peek("map-eviction", second.cacheKey) === second;
+      registry.clear();
+      cleared = registry.peek("map-eviction", second.cacheKey) === undefined;
+    } finally {
+      globalThis.Map = OriginalMap;
+      for (const [index, name] of methodNames.entries()) {
+        Object.defineProperty(OriginalMap.prototype, name, descriptors[index]!);
+      }
+      Object.defineProperty(iteratorPrototype, "next", nextDescriptor);
+    }
+    assertEquals({ evicted, retained, cleared, touches }, {
+      evicted: true,
+      retained: true,
+      cleared: true,
+      touches: 0,
+    });
+  });
+
+  for (const operation of ["publish", "read"] as const) {
+    it(`limits stalled ${operation} producers when the Map size getter is replaced`, async () => {
+      const sizeDescriptor = Object.getOwnPropertyDescriptor(Map.prototype, "size")!;
+      let calls = 0;
+      let release!: () => void;
+      const stalled = new Promise<void>((resolve) => release = resolve);
+      const store: DependencySnapshotStore = {
+        publish: () => {
+          calls++;
+          return stalled;
+        },
+        read: () => {
+          calls++;
+          return stalled.then(() => null);
+        },
+      };
+      const registry = new DependencySnapshotRegistry({ store, timeoutMs: 5 });
+      try {
+        Object.defineProperty(Map.prototype, "size", { configurable: true, get: () => 0 });
+        await Promise.allSettled(
+          Array.from(
+            { length: 65 },
+            (_, index) =>
+              operation === "publish"
+                ? registry.remember(`bounded-map-${index}`, snapshot())
+                : registry.find(`bounded-map-${index}`, "on:1"),
+          ),
+        );
+      } finally {
+        Object.defineProperty(Map.prototype, "size", sizeDescriptor);
+        release();
+      }
+      assertEquals(
+        calls,
+        64,
+        "unsettled producers must remain bounded despite the replaced getter",
+      );
+      // Settlement releases admission even after every caller has timed out.
+      await stalled;
+      await registry.find("after-settlement", "on:1");
+      assertEquals(calls, 65, "settled producers must release their admission slots");
+    });
+  }
+
   for (const operation of ["publish", "read"] as const) {
     it(`keeps ${operation} bounded when scheduling and abort helpers are replaced`, async () => {
       const schedule = globalThis.setTimeout;
