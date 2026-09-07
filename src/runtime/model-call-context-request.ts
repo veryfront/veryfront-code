@@ -4,6 +4,7 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
+import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
@@ -92,10 +93,24 @@ function resolvePersistedReasoning(
     if (
       model.provider === "veryfront-cloud" &&
       resolveVeryfrontCloudOpenAITransport(catalogId) === "chat-completions" &&
-      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false &&
-      options.tools?.some((tool) => tool.type === "function")
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false
     ) {
-      return { enabled: false };
+      // Match the Chat builder's native bucket precedence, including an own
+      // tools value that clears the neutral list with [] or undefined.
+      const providerOptions = readProviderOptions(
+        options.providerOptions as Record<string, unknown> | undefined,
+        "openai",
+        "veryfront-cloud",
+      );
+      const tools = ObjectHasOwn(providerOptions, "tools") ? providerOptions.tools : options.tools;
+      if (
+        Array.isArray(tools) &&
+        tools.some((tool) =>
+          tool !== null && typeof tool === "object" && "type" in tool && tool.type === "function"
+        )
+      ) {
+        return { enabled: false };
+      }
     }
     const reasoning = resolveOpenAIReasoningConfig(model.modelId, modelProvider, options.reasoning);
     return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
