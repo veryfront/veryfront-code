@@ -34,7 +34,12 @@ import {
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
-import { ProviderOverloadedError, ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
+import {
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRequestError,
+  requestStream,
+} from "#veryfront/provider/runtime-loader.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -1919,6 +1924,44 @@ describe("chat-stream-handler", () => {
         assertEquals(event, testCase.expected);
         assertEquals(JSON.stringify(event).includes("provider-private"), false);
       }
+    });
+
+    it("surfaces workspace usage limits from the provider HTTP stream in terminal events", async () => {
+      let attempts = 0;
+      const providerError = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/messages",
+            providerKind: "anthropic",
+            providerLabel: "veryfront-cloud",
+            init: { method: "POST" },
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                new Response(
+                  JSON.stringify({
+                    type: "error",
+                    error: {
+                      type: "invalid_request_error",
+                      message:
+                        "You have reached your specified workspace API usage limits. You will regain access on 2026-08-01 at 00:00 UTC. <TOKEN> <PROMPT>",
+                    },
+                  }),
+                  { status: 400 },
+                ),
+              );
+            },
+          }),
+        ProviderRequestError,
+      );
+
+      assertEquals(attempts, 1);
+      assertEquals(resolveRuntimeStreamErrorEvent(providerError), {
+        type: "error",
+        code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
+        error:
+          "The AI provider workspace API usage limit has been reached. Wait for the limit to reset, or ask an administrator to raise the workspace limit.",
+      });
     });
 
     it("preserves typed provider quota failures before applying 429 heuristics", () => {
