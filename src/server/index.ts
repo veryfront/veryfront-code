@@ -60,6 +60,8 @@ export { DevServer, type DevServerHandler, startDevServer, startProductionServer
 export {
   gracefullyShutdownProductionServer,
   type GracefulProductionShutdownOptions,
+  parseShutdownCleanupTimeoutMs,
+  parseShutdownDrainTimeoutMs,
 } from "./graceful-shutdown.ts";
 export {
   createProductionShutdownCoordinator,

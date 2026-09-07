@@ -60,10 +60,12 @@ const defaultDependencies: GracefulProductionShutdownDependencies = {
   shutdownTelemetry: shutdownOTLP,
 };
 
+/** Parse the configured request-drain timeout or return the production default. */
 export function parseShutdownDrainTimeoutMs(raw: string | undefined): number {
   return parseShutdownTimeoutMs(raw, DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS);
 }
 
+/** Parse the configured post-drain cleanup timeout or return the production default. */
 export function parseShutdownCleanupTimeoutMs(raw: string | undefined): number {
   return parseShutdownTimeoutMs(raw, DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS);
 }

@@ -1,9 +1,10 @@
 import { cwd, getEnv } from "veryfront/platform";
-import { gracefullyShutdownProductionServer, runProductionProcessOwner } from "veryfront/server";
 import {
+  gracefullyShutdownProductionServer,
   parseShutdownCleanupTimeoutMs,
   parseShutdownDrainTimeoutMs,
-} from "#veryfront/server/graceful-shutdown.ts";
+  runProductionProcessOwner,
+} from "veryfront/server";
 import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
