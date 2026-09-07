@@ -287,6 +287,32 @@ it("agent service routes preserve registered AG-UI setup error titles and codes"
   assertEquals(output.includes("Synthetic private setup detail"), false);
 });
 
+it("agent service routes reject non-error and invalid custom setup statuses", async () => {
+  for (const status of [-1, 200, 204, 302, 399, 403.5, 600, 700]) {
+    const { routeSet } = createRouteSet({
+      prepareExecution: () => Promise.reject(PERMISSION_DENIED.create({ status })),
+    });
+    const response = await routeSet.handleAgUiRequest(
+      createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+    );
+    assertEquals(response.status, 500);
+    assertStringIncludes(await response.text(), '"code":"PERMISSION_DENIED"');
+  }
+});
+
+it("agent service routes preserve valid custom setup error statuses", async () => {
+  for (const status of [400, 422, 499, 503, 599]) {
+    const { routeSet } = createRouteSet({
+      prepareExecution: () => Promise.reject(PERMISSION_DENIED.create({ status })),
+    });
+    const response = await routeSet.handleAgUiRequest(
+      createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+    );
+    assertEquals(response.status, status);
+    assertStringIncludes(await response.text(), '"code":"PERMISSION_DENIED"');
+  }
+});
+
 it("agent service routes redact mutable AG-UI setup error slugs", async () => {
   const error = PERMISSION_DENIED.create();
   error.slug = "setup?token=synthetic-private-credential";
