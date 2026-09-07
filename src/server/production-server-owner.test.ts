@@ -339,4 +339,40 @@ describe("direct production server owner", () => {
       "exit:0",
     ]);
   });
+
+  it("disposes an acquired bootstrap when server startup rejects", async () => {
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    const startupError = new Error("server startup failed");
+    let caught: unknown;
+
+    try {
+      await runDirectProductionServer({
+        initializeErrorReporting: () => Promise.resolve(),
+        initializeRuntime: () => Promise.resolve(),
+        getAdapter: () => Promise.resolve(adapter),
+        bootstrap: () =>
+          Promise.resolve({
+            adapter,
+            config: {},
+            usingFSAdapter: false,
+            extensionLoader: {} as BootstrapResult["extensionLoader"],
+            dispose: () => {
+              events.push("dispose-bootstrap");
+            },
+          }),
+        startServer: () => Promise.reject(startupError),
+        registerSignals: () => () => events.push("signals-disposed"),
+        gracefullyShutdown: () => Promise.resolve(true),
+        flush: () => Promise.resolve(),
+        captureError: () => events.push("error"),
+        exit: () => events.push("exit"),
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, startupError);
+    assertEquals(events, ["dispose-bootstrap", "signals-disposed"]);
+  });
 });

@@ -1,4 +1,5 @@
 export type ProductionShutdownReason = "SIGINT" | "SIGTERM" | "memory-pressure";
+const MAX_FINALIZATION_PASSES = 3;
 
 export interface ProductionShutdownCoordinatorOptions {
   shutdown: (reason: ProductionShutdownReason) => Promise<void>;
@@ -89,7 +90,7 @@ export function createProductionShutdownCoordinator(
     }
 
     try {
-      while (true) {
+      for (let pass = 0; pass < MAX_FINALIZATION_PASSES; pass++) {
         const finalization = options.finalizeBeforeExit?.();
         if (!finalization) break;
         await finalization;

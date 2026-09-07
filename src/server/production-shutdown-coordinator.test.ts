@@ -388,4 +388,24 @@ describe("production shutdown coordinator", () => {
     assertEquals(caught, readinessError);
     assertEquals(events, ["stop", "signals-disposed"]);
   });
+
+  it("bounds a finalizer that always returns a completed promise", async () => {
+    const events: string[] = [];
+    let calls = 0;
+    const coordinator = createProductionShutdownCoordinator({
+      shutdown: () => Promise.resolve(),
+      flush: () => Promise.resolve(),
+      finalizeBeforeExit: () => {
+        calls++;
+        return Promise.resolve();
+      },
+      exit: (code) => events.push(`exit:${code}`),
+    });
+
+    coordinator.request("SIGTERM");
+    await coordinator.completed;
+
+    assertEquals(calls, 3);
+    assertEquals(events, ["exit:0"]);
+  });
 });

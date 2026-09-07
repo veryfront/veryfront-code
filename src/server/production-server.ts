@@ -482,16 +482,25 @@ export async function runDirectProductionServer(
         adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
       );
 
-      return await (dependencies.startServer ?? startProductionServer)({
-        projectDir,
-        port,
-        bindAddress,
-        debug: isDebugEnabled(adapter.env),
-        adapter,
-        bootstrapResult: bootstrap,
-        signal,
-        onMemoryRecycle,
-      });
+      try {
+        return await (dependencies.startServer ?? startProductionServer)({
+          projectDir,
+          port,
+          bindAddress,
+          debug: isDebugEnabled(adapter.env),
+          adapter,
+          bootstrapResult: bootstrap,
+          signal,
+          onMemoryRecycle,
+        });
+      } catch (error) {
+        try {
+          await disposeBootstrap();
+        } catch {
+          // Preserve the server startup failure as the process-owner result.
+        }
+        throw error;
+      }
     },
     shutdown: async (reason, server, abort) => {
       bootstrapAtShutdownStart = bootstrap;
