@@ -3,6 +3,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
+import { isNotFoundError } from "#veryfront/compat/fs.ts";
 import { serverLogger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
@@ -256,18 +257,20 @@ async function tryLoadErrorPage(
         return component;
       }
     } catch (_) {
-      // expected: resolveFile may fail, fall through to extension probing
+      // A resolution or load failure does not establish that the page is absent.
     }
 
-    await setCachedMiss(cacheKey, ctx);
     return null;
   }
 
+  let confirmedMissing = true;
   for (const ext of ERROR_PAGE_EXTENSIONS) {
     const filePath = joinPath(pagesDir, `${pageType}${ext}`);
     try {
       const stat = await ctx.adapter.fs.stat(filePath);
       if (!stat.isFile) continue;
+      // Keep an existing page retryable even if reading or importing it fails.
+      confirmedMissing = false;
 
       const component = await loadErrorComponent(
         filePath,
@@ -281,12 +284,12 @@ async function tryLoadErrorPage(
         await setCachedPath(cacheKey, filePath);
         return component;
       }
-    } catch (_) {
-      // expected: file with this extension doesn't exist
+    } catch (error) {
+      if (!isNotFoundError(error)) confirmedMissing = false;
     }
   }
 
-  await setCachedMiss(cacheKey, ctx);
+  if (confirmedMissing) await setCachedMiss(cacheKey, ctx);
   return null;
 }
 
