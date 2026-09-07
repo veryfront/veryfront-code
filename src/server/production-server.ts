@@ -2,12 +2,14 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
-import { cwd, exit, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
+import { cwd, exit, getEnv, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
+  getMemoryRecycleConfig,
   type MemoryRecycleEvent,
   startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,
@@ -24,8 +26,6 @@ import {
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import {
-  DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS,
-  DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
   gracefullyShutdownProductionServer,
   parseShutdownCleanupTimeoutMs,
   parseShutdownDrainTimeoutMs,
@@ -255,8 +255,19 @@ export function startProductionServerWithDependencies(
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
+      let initialOnRecycle = options.onMemoryRecycle;
+      if (!suppliedBootstrap && initialOnRecycle) {
+        try {
+          getMemoryRecycleConfig(baseAdapter.env);
+        } catch (error) {
+          if (!(error instanceof VeryfrontError) || error.slug !== "invalid-argument") throw error;
+          // Project .env may complete the parent policy. Validate it again
+          // after bootstrap, before opening a listener; do not recycle yet.
+          initialOnRecycle = undefined;
+        }
+      }
       const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env, {
-        onRecycle: options.onMemoryRecycle,
+        onRecycle: initialOnRecycle,
       });
       let ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
       // Installed before bootstrap so a rejection during startup is contained
@@ -457,8 +468,29 @@ export async function runDirectProductionServer(
   let bootstrapAtShutdownStart: BootstrapResult | undefined;
   let finalizedLateBootstrap: BootstrapResult | undefined;
   let bootstrapDisposal: Promise<void> | undefined;
-  let drainTimeoutMs: number | undefined;
-  let cleanupTimeoutMs: number | undefined;
+  let adapterEnv: RuntimeAdapter["env"] | undefined;
+  let shutdownTimeouts: {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } | undefined;
+  // Snapshot one pair at the first shutdown request. Adapter/bootstrap state
+  // may arrive later, but it must not extend or repartition that deadline.
+  const resolveShutdownTimeouts = (): {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } =>
+    shutdownTimeouts ??= {
+      drainTimeoutMs: parseShutdownDrainTimeoutMs(
+        adapterEnv
+          ? adapterEnv.get("SHUTDOWN_DRAIN_TIMEOUT_MS")
+          : getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+      ),
+      cleanupTimeoutMs: parseShutdownCleanupTimeoutMs(
+        adapterEnv
+          ? adapterEnv.get("SHUTDOWN_CLEANUP_TIMEOUT_MS")
+          : getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+      ),
+    };
   const disposeBootstrap = (): Promise<void> => {
     if (!bootstrap) return Promise.resolve();
     bootstrapDisposal ??= Promise.resolve().then(() => bootstrap?.dispose?.());
@@ -489,25 +521,14 @@ export async function runDirectProductionServer(
       }
 
       const adapter = await (dependencies.getAdapter ? dependencies.getAdapter() : runtime.get());
+      adapterEnv = adapter.env;
       const projectDir = cwd();
       const port = Number(
         adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
       );
       const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
-      const refreshShutdownTimeouts = (): void => {
-        drainTimeoutMs = parseShutdownDrainTimeoutMs(
-          adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
-        );
-        cleanupTimeoutMs = parseShutdownCleanupTimeoutMs(
-          adapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
-        );
-      };
-      // Parent-process values still bound shutdown while bootstrap is pending.
-      refreshShutdownTimeouts();
       bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
-      // Bootstrap loads project .env values. Resolve the drain and cleanup
-      // budget afterward so the process owner and graceful shutdown agree.
-      refreshShutdownTimeouts();
+      adapterEnv = bootstrap.adapter.env;
       if (signal.aborted) {
         // Begin releasing a bootstrap acquired after shutdown, but leave the
         // process owner to join it only within the remaining shutdown budget.
@@ -548,7 +569,7 @@ export async function runDirectProductionServer(
         try {
           await awaitBeforeDeadline(
             disposeBootstrap(),
-            Date.now() + (cleanupTimeoutMs ?? DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS),
+            Date.now() + resolveShutdownTimeouts().cleanupTimeoutMs,
           );
         } catch {
           // Preserve the server startup failure as the process-owner result.
@@ -556,11 +577,13 @@ export async function runDirectProductionServer(
         throw error;
       }
     },
-    shutdownTimeoutMs: () =>
-      (drainTimeoutMs ?? DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS) +
-      (cleanupTimeoutMs ?? DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS),
+    shutdownTimeoutMs: () => {
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
+      return drainTimeoutMs + cleanupTimeoutMs;
+    },
     shutdown: async (reason, server, abort) => {
       bootstrapAtShutdownStart = bootstrap;
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
       await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
         signal: reason,
         drainTimeoutMs,

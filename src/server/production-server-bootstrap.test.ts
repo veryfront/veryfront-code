@@ -78,6 +78,33 @@ describe("production server bootstrap ownership", () => {
     }
   });
 
+  it("completes a parent-enabled recycle policy from project bootstrap", async () => {
+    const adapter = createAdapter();
+    adapter.env.set?.("MEMORY_RECYCLE_ENABLED", "true");
+    let bootstrapped = false;
+    const server = await startProductionServerWithDependencies({
+      projectDir: "/app",
+      port: 0,
+      adapter,
+      unhandledRejectionGuard: false,
+      onMemoryRecycle: () => {},
+    }, {
+      bootstrap: () => {
+        bootstrapped = true;
+        adapter.env.set?.("MEMORY_RECYCLE_RSS_THRESHOLD_MB", "1024");
+        adapter.env.set?.("MEMORY_RECYCLE_CONSECUTIVE_SAMPLES", "2");
+        return Promise.resolve(createBootstrap(adapter, () => {}));
+      },
+    });
+    try {
+      assertEquals(bootstrapped, true);
+      assertEquals(getMemoryMonitoringState().active, true);
+    } finally {
+      await server.stop();
+      stopMemoryMonitoring();
+    }
+  });
+
   it("rejects an invalid bootstrap recycle policy and disposes owned resources", async () => {
     const adapter = createAdapter();
     let disposeCalls = 0;

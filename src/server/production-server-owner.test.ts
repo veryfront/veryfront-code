@@ -50,18 +50,20 @@ describe("direct production server owner", () => {
 
   it("uses shutdown timeouts loaded by project bootstrap", async () => {
     const adapter = createMockAdapter();
+    const bootstrappedAdapter = createMockAdapter();
     let signalHandler: ((signal: "SIGINT" | "SIGTERM") => void | Promise<void>) | undefined;
     let receivedTimeouts: [number | undefined, number | undefined] | undefined;
 
     await runDirectProductionServer({
       initializeRuntime: () => Promise.resolve(),
       getAdapter: () => Promise.resolve(adapter),
-      bootstrap: (_projectDir, selectedAdapter) => {
-        // Project .env is loaded during bootstrap, after adapter detection.
-        selectedAdapter.env.set?.("SHUTDOWN_DRAIN_TIMEOUT_MS", "1234");
-        selectedAdapter.env.set?.("SHUTDOWN_CLEANUP_TIMEOUT_MS", "567");
+      bootstrap: () => {
+        // Bootstrap owns the final project environment and may return a
+        // decorated adapter rather than the initially detected instance.
+        bootstrappedAdapter.env.set?.("SHUTDOWN_DRAIN_TIMEOUT_MS", "1234");
+        bootstrappedAdapter.env.set?.("SHUTDOWN_CLEANUP_TIMEOUT_MS", "567");
         return Promise.resolve({
-          adapter: selectedAdapter,
+          adapter: bootstrappedAdapter,
           config: {},
           usingFSAdapter: false,
           extensionLoader: {} as BootstrapResult["extensionLoader"],
