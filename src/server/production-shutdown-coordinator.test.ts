@@ -191,4 +191,64 @@ describe("production shutdown coordinator", () => {
       "signals-disposed",
     ]);
   });
+
+  it("awaits a server acquired during flush before exiting", async () => {
+    const events: string[] = [];
+    let requestSignal: (() => void) | undefined;
+    let resumeStartup: (() => void) | undefined;
+    let releaseStop: (() => void) | undefined;
+
+    const run = runProductionProcessOwner({
+      start: ({ signal }) =>
+        new Promise((resolve) => {
+          resumeStartup = () => {
+            events.push(`startup-resumed:aborted=${signal.aborted}`);
+            resolve({
+              ready: Promise.resolve(),
+              stop: () => {
+                events.push("stop-start");
+                return new Promise<void>((resolveStop) => {
+                  releaseStop = () => {
+                    events.push("stop-done");
+                    resolveStop();
+                  };
+                });
+              },
+            });
+          };
+        }),
+      shutdown: (_reason, server, abort) => {
+        events.push(`shutdown:server=${server ? "yes" : "no"}`);
+        abort();
+        return Promise.resolve();
+      },
+      flush: async () => {
+        events.push("flush-start");
+        resumeStartup?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        events.push("flush-done");
+        queueMicrotask(() => releaseStop?.());
+      },
+      exit: (code) => events.push(`exit:${code}`),
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+        return () => events.push("signals-disposed");
+      },
+    });
+
+    requestSignal?.();
+    await run;
+
+    assertEquals(events, [
+      "shutdown:server=no",
+      "flush-start",
+      "startup-resumed:aborted=true",
+      "stop-start",
+      "flush-done",
+      "stop-done",
+      "exit:0",
+      "signals-disposed",
+    ]);
+  });
 });

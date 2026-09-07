@@ -3,6 +3,7 @@ export type ProductionShutdownReason = "SIGINT" | "SIGTERM" | "memory-pressure";
 export interface ProductionShutdownCoordinatorOptions {
   shutdown: (reason: ProductionShutdownReason) => Promise<void>;
   flush: () => Promise<unknown>;
+  beforeExit?: () => Promise<unknown>;
   exit: (code: number) => void;
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
 }
@@ -34,6 +35,7 @@ export interface ProductionProcessOwnerOptions {
   ) => void | (() => void);
   onReady?: () => void;
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
+  beforeExit?: () => Promise<unknown>;
 }
 
 function ownServerStop(server: OwnedProductionServer): OwnedProductionServer {
@@ -76,6 +78,12 @@ export function createProductionShutdownCoordinator(
       await options.flush();
     } catch (error) {
       notifyError(error, reason);
+    }
+
+    try {
+      await options.beforeExit?.();
+    } catch (error) {
+      notifyError(error, reason);
     } finally {
       options.exit(0);
     }
@@ -115,6 +123,10 @@ export async function runProductionProcessOwner(
       if (!serverAtShutdownStart && server) await server.stop();
     },
     flush: options.flush,
+    beforeExit: async () => {
+      if (server && shutdownRequested) await server.stop();
+      await options.beforeExit?.();
+    },
     exit: options.exit,
     onError: options.onError,
   });
@@ -126,27 +138,37 @@ export async function runProductionProcessOwner(
   const disposeSignals = options.registerSignals(requestShutdown);
 
   try {
-    type StartupOutcome = { status: "ready" } | { status: "failed"; error: unknown };
+    type StartupOutcome =
+      | { status: "ready" }
+      | { status: "shutdown" }
+      | { status: "failed"; error: unknown };
     const startup = options.start({
       signal: controller.signal,
       onMemoryRecycle: () => requestShutdown("memory-pressure"),
-    }).then(async (startedServer): Promise<StartupOutcome> => {
-      server = ownServerStop(startedServer);
-      try {
-        if (shutdownRequested) await server.stop();
-        await server.ready;
-        if (!shutdownRequested) options.onReady?.();
-        return { status: "ready" };
-      } catch (error) {
-        return { status: "failed", error };
-      }
-    }, (error): StartupOutcome => ({ status: "failed", error }));
+    }).then(
+      async (startedServer): Promise<StartupOutcome> => {
+        server = ownServerStop(startedServer);
+        try {
+          if (shutdownRequested) await server.stop();
+          await server.ready;
+          if (!shutdownRequested) options.onReady?.();
+          return { status: "ready" };
+        } catch (error) {
+          return shutdownRequested ? { status: "shutdown" } : { status: "failed", error };
+        }
+      },
+      (error): StartupOutcome =>
+        shutdownRequested ? { status: "shutdown" } : { status: "failed", error },
+    );
 
     const first = await Promise.race([
       startup,
       coordinator.completed.then(() => ({ status: "shutdown" as const })),
     ]);
-    if (first.status === "shutdown") return;
+    if (first.status === "shutdown") {
+      await coordinator.completed;
+      return;
+    }
     if (first.status === "failed") throw first.error;
 
     await coordinator.completed;

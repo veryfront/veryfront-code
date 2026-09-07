@@ -505,6 +505,7 @@ export async function runDirectProductionServer(
       await disposeBootstrap();
     },
     flush: dependencies.flush,
+    beforeExit: disposeBootstrap,
     exit: dependencies.exit ?? exit,
     registerSignals: dependencies.registerSignals ?? ((handler) => {
       const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));
