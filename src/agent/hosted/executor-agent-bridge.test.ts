@@ -238,6 +238,8 @@ describe("executor hosted agent bridge", () => {
       'data: {"type":"text-delta","delta":42}\n\n',
       'data: {"type":"text-delta","delta":"unfinished"}\n\n',
       'data: {"type":"finish","finishReason":"tool-calls"}\n\n',
+      'data: {"type":"message-finish"}\n\ndata: {"type":"text-delta","delta":"late"}\n\n',
+      'data: {"type":"error","error":"failed"}\n\ndata: {"type":"message-finish"}\n\n',
       'data: {"type":"message-finish"}',
       "data: not-json\n\n",
     ]
@@ -276,6 +278,20 @@ describe("executor hosted agent bridge", () => {
 
   const invalidFrames: JsonValue[][] = [
     [{ type: "ready" }],
+    [{ type: "ready" }, {
+      type: "event",
+      event: { type: "message-finish" },
+    }, {
+      type: "event",
+      event: { type: "text-delta", delta: "late" },
+    }, { type: "complete" }],
+    [{ type: "ready" }, {
+      type: "event",
+      event: { type: "error", error: "failed" },
+    }, {
+      type: "event",
+      event: { type: "message-finish" },
+    }, { type: "complete" }],
     [{ type: "ready" }, {
       type: "event",
       event: { type: "finish", finishReason: "tool-calls" },

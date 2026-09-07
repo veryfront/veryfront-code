@@ -169,6 +169,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                 if (next.done) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
                 const frame = parseFrame(next.value);
                 if (frame.type === "event") {
+                  if (terminal) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
                   const event = parseExecutorDataEvent(frame.event);
                   terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
