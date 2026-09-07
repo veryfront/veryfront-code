@@ -39,7 +39,7 @@ const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} 
 const SONAR_JOB_TIMEOUT_MINUTES = 35;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
-const LEGACY_SONAR_CHECK_NAME = "sonar";
+const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
 const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
 const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
 
@@ -262,7 +262,7 @@ describe("merge quality gate workflow", () => {
       jobs["sonar-quality-gate"],
       "SonarQube Cloud quality gate job",
     );
-    assertEquals(sonar.name, LEGACY_SONAR_CHECK_NAME);
+    assertEquals(sonar.name, SONAR_SCAN_CHECK_NAME);
     assertEquals(sonarGate.name, SONAR_CHECK_NAME);
     assertEquals(sonarGate.needs, ["sonar"]);
     assertEquals(sonarGate.if, SONAR_GATE_JOB_EXPRESSION);
