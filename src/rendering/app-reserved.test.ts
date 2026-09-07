@@ -11,8 +11,69 @@ import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import { isVeryfrontError } from "#veryfront/errors";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeModuleReference } from "#veryfront/platform/adapters/base.ts";
 
 describe("rendering/app-reserved", () => {
+  it("finds a prepared ancestor JSX component through metadata without reading source", async () => {
+    const adapter = createMockAdapter();
+    const filePath = "/project/app/loading.jsx";
+    adapter.fs.files.set(filePath, "");
+    let reads = 0;
+    adapter.fs.readFile = () => {
+      reads++;
+      return Promise.reject(new Error("Compiler sources unavailable"));
+    };
+    const Component = () => null;
+    const imports: RuntimeModuleReference[] = [];
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: {
+        importModule: async (reference: RuntimeModuleReference) => {
+          imports.push(reference);
+          return { default: Component };
+        },
+      },
+    });
+    const result = await loadReservedWithPath(
+      ["/project/app/nested", "/project/app"],
+      "loading",
+      "/project",
+      { compileMode: "production", environment: "production" },
+      adapter,
+    );
+    assertStrictEquals(result?.component, Component);
+    assertEquals(result?.filePath, filePath);
+    assertEquals(imports, [{ kind: "source", path: filePath }]);
+    assertEquals(reads, 0);
+  });
+
+  it("does not recover a failed prepared component by reading legacy source", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/app/loading.tsx", "export default () => null;");
+    let reads = 0;
+    adapter.fs.readFile = () => {
+      reads++;
+      return Promise.reject(new Error("Must not read source"));
+    };
+    const failure = new Error("Prepared module unavailable");
+    Object.defineProperty(adapter, "moduleLoader", {
+      value: { importModule: () => Promise.reject(failure) },
+    });
+    const error = await assertRejects(() =>
+      loadReservedWithPath(
+        ["/project/app"],
+        "loading",
+        "/project",
+        { compileMode: "production", environment: "production" },
+        adapter,
+      )
+    );
+    if (!isVeryfrontError(error)) throw error;
+    assertEquals(error.slug, "component-error");
+    assertStrictEquals(error.cause, failure);
+    assertEquals(reads, 0);
+  });
+
   it("returns null when reserved component candidates are absent", async () => {
     const adapter = {
       fs: {

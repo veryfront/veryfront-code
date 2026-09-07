@@ -17,6 +17,8 @@ import {
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { extractComponent } from "#veryfront/modules/react-loader/extract-component.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
@@ -296,6 +298,14 @@ async function loadErrorComponent(
   dependencyPinningSource: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
 ): Promise<React.ComponentType<unknown> | null> {
+  const prepared = getRuntimeModuleLoader(ctx.adapter);
+  if (prepared) {
+    const Component = extractComponent(
+      await prepared.importModule({ kind: "source", path: filePath }),
+      filePath,
+    );
+    return typeof Component === "function" ? (Component as React.ComponentType<unknown>) : null;
+  }
   const src = await ctx.adapter.fs.readFile(filePath);
   const loadComponentFromSource = injectedComponentSourceLoader ??
     (await import(

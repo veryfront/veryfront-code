@@ -15,12 +15,17 @@ import { tryErrorPageFallback } from "./error-page-fallback.ts";
 
 describe("prepared error pages", () => {
   for (const status of [404, 500]) {
-    it(`renders the custom ${status} with the prepared React runtime`, async () => {
+    it(`renders the prepared custom ${status} without reading compiler sources`, async () => {
       const adapter = createMockAdapter();
       adapter.fs.directories.add("/project/app");
       adapter.fs.directories.add("/project/pages");
       const path = status === 404 ? "/project/app/not-found.tsx" : "/project/pages/500.tsx";
-      adapter.fs.files.set(path, 'throw new Error("Do not execute source");');
+      adapter.fs.files.set(path, "");
+      let sourceReads = 0;
+      adapter.fs.readFile = () => {
+        sourceReads++;
+        return Promise.reject(new Error("Prepared fallback source must not be read"));
+      };
       const Page = () => React.createElement("p", null, "prepared fallback");
       Object.defineProperty(adapter, "moduleLoader", {
         value: {
@@ -62,6 +67,7 @@ describe("prepared error pages", () => {
         assertExists(response);
         assertEquals(response.status, status);
         assertStringIncludes(await response.text(), "<p>prepared fallback</p>");
+        assertEquals(sourceReads, 0, "prepared fallbacks require metadata, not compiler sources");
       } finally {
         __setServerModuleLoaderForTests(null);
         resetReactCache();

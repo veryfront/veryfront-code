@@ -7,6 +7,9 @@ import type { loadComponentFromSource } from "#veryfront/modules/react-loader/co
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { COMPONENT_ERROR } from "#veryfront/errors";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { extractComponent } from "#veryfront/modules/react-loader/extract-component.ts";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -110,16 +113,18 @@ export async function loadReservedWithPath(
   throwIfAborted(signal);
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
-  const loadComponentFromSource = deps?.loadComponentFromSource ??
-    (await import("#veryfront/modules/react-loader/component-loader.ts"))
-      .loadComponentFromSource;
+  const prepared = getRuntimeModuleLoader(adapter);
 
   for (const dir of dirs) {
     for (const ext of [".tsx", ".jsx"]) {
       const file = join(dir, candidateName.replace(/\.tsx$/, ext));
-      let src: string;
+      let src: string | undefined;
       try {
-        src = await adapter.fs.readFile(file);
+        if (prepared) {
+          if (!(await adapter.fs.stat(file)).isFile) continue;
+        } else {
+          src = await adapter.fs.readFile(file);
+        }
       } catch (error) {
         throwIfAborted(signal);
         if (isCanonicalNotFoundError(error)) continue;
@@ -132,19 +137,34 @@ export async function loadReservedWithPath(
 
       let Cmp: Awaited<ReturnType<typeof loadComponentFromSource>>;
       try {
-        Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
-          projectId: projectId ?? projectDir,
-          dev: modes.compileMode === "development",
-          mode: modes.environment,
-          contentSourceId,
-          reactVersion,
-          serverExternalPackages,
-          moduleServerOrigin,
-          dependencyPinningCacheKey,
-          dependencyPinningDependencies,
-          dependencyPinningSource,
-          signal,
-        });
+        throwIfAborted(signal);
+        if (prepared) {
+          Cmp = extractComponent(
+            await awaitAbortable(
+              prepared.importModule({ kind: "source", path: file }),
+              signal,
+            ),
+            file,
+          );
+        } else {
+          const loadComponentFromSource = deps?.loadComponentFromSource ??
+            (await import("#veryfront/modules/react-loader/component-loader.ts"))
+              .loadComponentFromSource;
+          Cmp = await loadComponentFromSource(src!, file, projectDir, adapter, {
+            projectId: projectId ?? projectDir,
+            dev: modes.compileMode === "development",
+            mode: modes.environment,
+            contentSourceId,
+            reactVersion,
+            serverExternalPackages,
+            moduleServerOrigin,
+            dependencyPinningCacheKey,
+            dependencyPinningDependencies,
+            dependencyPinningSource,
+            signal,
+          });
+        }
+        throwIfAborted(signal);
       } catch (error) {
         throwIfAborted(signal);
         throw COMPONENT_ERROR.create({
