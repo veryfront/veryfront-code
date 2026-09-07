@@ -449,6 +449,8 @@ describe("executor discovery operations", () => {
           ok: false,
           code: "EXECUTOR_DISCOVERY_INVALID_OUTPUT",
         });
+        assertEquals(f.owner.signal.aborted, true);
+        assertEquals(f.cleanups, 1);
       } finally {
         await f.owner.close();
       }

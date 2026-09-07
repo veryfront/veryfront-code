@@ -263,4 +263,61 @@ describe("isolated executor local project discovery", () => {
       await p.cleanup();
     }
   });
+
+  it("keeps cached definitions usable when markdown fallback reaches the cache limit", async () => {
+    const p = await project();
+    const discovery = owner(p.dir, "writer");
+    try {
+      await mkdir(join(p.dir, "agents"));
+      const summary = getExecutorDiscoveryResultSchema().parse(
+        await request(discovery, "discovery.describe"),
+      );
+      assert(summary.ok);
+      for (let i = 0; i < 256; i++) {
+        const agentId = `fallback-${i}`;
+        await writeFile(
+          join(p.dir, "agents", `${agentId}.md`),
+          "---\nname: Fallback\n---\n\nSynthetic fallback instructions.\n",
+        );
+        // The default definition and 255 fallback definitions fill the cache.
+        if (i < 255) {
+          const result = getExecutorAgentDescribeResultSchema().parse(
+            await request(discovery, "agent.describe", { agentId }),
+          );
+          assert(result.ok);
+          assertEquals(result.value.definition.id, agentId);
+        }
+      }
+      const cached = await request(discovery, "agent.describe", { agentId: "fallback-0" });
+      await writeFile(
+        join(p.dir, "agents", "fallback-0.md"),
+        "---\nname: Changed\n---\n\nChanged fallback instructions.\n",
+      );
+
+      assertEquals(await request(discovery, "agent.describe", { agentId: "fallback-255" }), {
+        ok: false,
+        code: "EXECUTOR_DISCOVERY_BUSY",
+      });
+      assertEquals(await request(discovery, "agent.describe", { agentId: "coder" }), {
+        ok: false,
+        code: "EXECUTOR_DISCOVERY_BUSY",
+      });
+      assertEquals(existsSync(p.projected), false);
+      assertEquals(discovery.signal.aborted, false);
+      assertEquals(agentRegistry.get("writer")?.id, "writer");
+      assertEquals(discovery.getRuntime().agents.has("writer"), true);
+      assertEquals(
+        await request(discovery, "agent.describe", { agentId: "fallback-0" }),
+        cached,
+      );
+      assertEquals(
+        getExecutorDiscoveryResultSchema().parse(await request(discovery, "discovery.describe")),
+        summary,
+      );
+    } finally {
+      await discovery.close();
+      await p.cleanup();
+    }
+    assertEquals(agentRegistry.get("writer"), undefined);
+  });
 });
