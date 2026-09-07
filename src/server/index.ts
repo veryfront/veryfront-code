@@ -68,6 +68,7 @@ export {
   type OwnedProductionServer,
   type ProductionProcessOwnerOptions,
   type ProductionShutdownCoordinator,
+  type ProductionShutdownCoordinatorOptions,
   type ProductionShutdownReason,
   runProductionProcessOwner,
 } from "./production-shutdown-coordinator.ts";

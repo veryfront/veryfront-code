@@ -2,6 +2,7 @@ export type ProductionShutdownReason = "SIGINT" | "SIGTERM" | "memory-pressure";
 const MAX_FINALIZATION_PASSES = 3;
 const DEFAULT_PROCESS_SHUTDOWN_TIMEOUT_MS = 29_000;
 
+/** Callbacks and finalization deadline for one coordinated process shutdown. */
 export interface ProductionShutdownCoordinatorOptions {
   shutdown: (reason: ProductionShutdownReason) => Promise<void>;
   flush: () => Promise<unknown>;
@@ -179,7 +180,16 @@ export async function runProductionProcessOwner(
       serverAtShutdownStart = server;
       // The listener can already be serving while an outer startup wrapper is
       // still pending. The shutdown owner must drain before aborting it.
-      await options.shutdown(reason, serverAtShutdownStart, () => controller.abort());
+      try {
+        await awaitBeforeDeadline(
+          options.shutdown(reason, serverAtShutdownStart, () => controller.abort()),
+          shutdownDeadlineMs,
+        );
+      } finally {
+        // A consumer callback can stall or fail without aborting startup.
+        // Once its drain budget ends, the owner must stop late work too.
+        controller.abort();
+      }
       // Startup may settle while shutdown is draining. Its handle was not part
       // of the initial cleanup snapshot, so stop it before telemetry flush/exit.
       if (!serverAtShutdownStart && server) await awaitLateCleanup(server.stop());

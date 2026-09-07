@@ -1,3 +1,4 @@
+import type { ProductionShutdownCoordinatorOptions } from "veryfront/server";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -6,6 +7,51 @@ import {
 } from "./production-shutdown-coordinator.ts";
 
 describe("production shutdown coordinator", () => {
+  it("bounds a stalled consumer shutdown and aborts pending startup at the deadline", async () => {
+    const finishShutdown = Promise.withResolvers<void>();
+    let signal: AbortSignal | undefined;
+    let requestShutdown: (() => void) | undefined;
+    const events: string[] = [];
+    const run = runProductionProcessOwner({
+      start: (options) => {
+        signal = options.signal;
+        return new Promise(() => {});
+      },
+      shutdown: () => {
+        events.push("shutdown");
+        return finishShutdown.promise;
+      },
+      shutdownTimeoutMs: 0,
+      registerSignals: (handler) => {
+        requestShutdown = () => handler("SIGTERM");
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      exit: () => {
+        events.push("exit");
+      },
+    });
+    requestShutdown?.();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const completed = await Promise.race([
+        run.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 50);
+        }),
+      ]);
+      assertEquals(completed, true);
+      assertEquals(signal?.aborted, true);
+      assertEquals(events, ["shutdown", "flush", "exit"]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      finishShutdown.resolve();
+      await run;
+    }
+  });
+
   it("propagates readiness failure when cleanup cannot finish within its budget", async () => {
     const failure = new Error("readiness failed");
     const cleanupStarted = Promise.withResolvers<void>();
@@ -126,17 +172,19 @@ describe("production shutdown coordinator", () => {
 
   it("runs shutdown, flush, and exit once when memory and signals race", async () => {
     const events: string[] = [];
-    const coordinator = createProductionShutdownCoordinator({
-      shutdown: async (reason) => {
-        events.push(`shutdown:${reason}`);
-      },
-      flush: async () => {
-        events.push("flush");
-      },
-      exit: (code) => {
-        events.push(`exit:${code}`);
-      },
-    });
+    const coordinator = createProductionShutdownCoordinator(
+      {
+        shutdown: async (reason) => {
+          events.push(`shutdown:${reason}`);
+        },
+        flush: async () => {
+          events.push("flush");
+        },
+        exit: (code) => {
+          events.push(`exit:${code}`);
+        },
+      } satisfies ProductionShutdownCoordinatorOptions,
+    );
 
     coordinator.request("memory-pressure");
     coordinator.request("SIGTERM");
