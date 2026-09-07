@@ -258,7 +258,7 @@ export function startProductionServerWithDependencies(
       const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env, {
         onRecycle: options.onMemoryRecycle,
       });
-      const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      let ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
       // Installed before bootstrap so a rejection during startup is contained
       // too. This process serves every project on the pod, so one dropped
       // promise must not take the others down with it. Embedders that own the
@@ -271,7 +271,16 @@ export function startProductionServerWithDependencies(
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
         const bootstrap = suppliedBootstrap ??
           await dependencies.bootstrap(projectDir, baseAdapter);
-        if (!suppliedBootstrap) ownedBootstrap = bootstrap;
+        if (!suppliedBootstrap) {
+          ownedBootstrap = bootstrap;
+          // Bootstrap loads the project's .env. Keep parent-env monitoring active
+          // during startup, then validate and adopt the final project policy.
+          const config = startConfiguredMemoryMonitoring(bootstrap.adapter.env, {
+            onRecycle: options.onMemoryRecycle,
+          });
+          if (ownsMemoryMonitoring && !config.enabled) stopMemoryMonitoring();
+          ownsMemoryMonitoring = config.enabled;
+        }
         const adapter = bootstrap.adapter;
         const nodeWebSocketServerProvider = suppliedBootstrap === undefined
           ? bootstrap.nodeWebSocketServerProvider

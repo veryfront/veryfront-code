@@ -254,11 +254,31 @@ export async function runProductionServer(
       deferredReporter.setSentryModule(sentryModule);
       await sentryModule.initializeSentryFromEnv();
     });
+  let shutdownTimeouts: {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } | undefined;
+  // Capture one split when shutdown is first requested. Normal requests see
+  // project .env loaded by server startup; an earlier signal deliberately uses
+  // the parent environment rather than waiting for unfinished bootstrap.
+  const resolveShutdownTimeouts = (): {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } =>
+    shutdownTimeouts ??= {
+      drainTimeoutMs: parseShutdownDrainTimeoutMs(
+        getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+      ),
+      cleanupTimeoutMs: parseShutdownCleanupTimeoutMs(
+        getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+      ),
+    };
 
   await runProductionProcessOwner({
-    shutdownTimeoutMs: () =>
-      parseShutdownDrainTimeoutMs(getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS")) +
-      parseShutdownCleanupTimeoutMs(getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS")),
+    shutdownTimeoutMs: () => {
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
+      return drainTimeoutMs + cleanupTimeoutMs;
+    },
     start: ({ signal, onMemoryRecycle }) =>
       runProductionStartupWithErrorReporting(
         async () => {
@@ -307,8 +327,11 @@ export async function runProductionServer(
         initializeErrorReporting,
       ),
     shutdown: async (reason, server, abort) => {
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
       await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
         signal: reason,
+        drainTimeoutMs,
+        cleanupTimeoutMs,
         abort,
         stop: server?.stop ?? (() => Promise.resolve()),
         logger: cliLogger,
