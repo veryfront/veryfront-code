@@ -113,11 +113,12 @@ function createVeryfrontCloudModelInternal(
   });
   const usesHostPrivateCredential = inferenceCredential === undefined &&
     options.credentialSource !== "application" && getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
-  const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential;
+  const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential ||
+    options.credentialSource === "application";
   const useFirstPartyTransport = usesPrivateCredential ||
     options.providerSelection === "first-party";
   // Native provider request builders require a credential, but the guarded
-  // gateway fetch owns the real run-scoped token and replaces native auth.
+  // gateway fetch owns the real authority token and replaces native auth.
   const providerCredential = usesPrivateCredential
     ? `vf-placeholder-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
     : apiToken;
