@@ -745,6 +745,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
@@ -756,6 +757,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"

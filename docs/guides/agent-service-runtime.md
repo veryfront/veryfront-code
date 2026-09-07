@@ -63,6 +63,12 @@ use captured operations. Sparse route, origin, method, and header arrays ignore 
 entries. Route handlers retain ordinary-object params; decoded keys bypass
 inherited setters.
 
+Framework responses supply explicit status, status text, and empty-header defaults
+to native constructors. This prevents Node's intermediate Web IDL dictionary from
+inheriting response fields from `Object.prototype`, including CORS headers for a
+denied origin. These defaults apply only to omitted values. Invalid response
+values still fail native validation, and host handler errors propagate unchanged.
+
 The service discovers the same project primitives as the app runtime:
 
 - `agents/`

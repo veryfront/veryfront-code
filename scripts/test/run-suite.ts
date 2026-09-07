@@ -112,6 +112,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/kv-polyfill.test.ts",
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
+    "tests/integration/agent/service-response-init.test.ts",
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
   bun: [
@@ -123,6 +124,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/kv-polyfill.test.ts",
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
+    "tests/integration/agent/service-response-init.test.ts",
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
 } as const;

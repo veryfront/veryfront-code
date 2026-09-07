@@ -242,11 +242,12 @@ function createNativeResponse(
   status?: number,
   statusText?: string,
 ): Response {
-  if (status === undefined && statusText === undefined) return new NativeResponse(body);
-
+  // Node converts the init into an ordinary dictionary internally. Supply
+  // every field so that dictionary cannot inherit response defaults.
   const init: ResponseInit = ObjectCreate(null);
-  if (status !== undefined) init.status = status;
-  if (statusText !== undefined) init.statusText = statusText;
+  init.headers = EmptyHeadersInit;
+  init.status = status === undefined ? 200 : status;
+  init.statusText = statusText === undefined ? "" : statusText;
   return new NativeResponse(body, init);
 }
 
