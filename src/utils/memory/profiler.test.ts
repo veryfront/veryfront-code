@@ -485,6 +485,22 @@ describe("memory/profiler", () => {
 
     it("is disabled when omitted", () => {
       assertEquals(getMemoryRecycleConfig(envOf({})), { enabled: false });
+      assertEquals(getMemoryRecycleConfig(envOf({ MEMORY_RECYCLE_ENABLED: "" })), {
+        enabled: false,
+      });
+      assertEquals(getMemoryRecycleConfig(envOf({ MEMORY_RECYCLE_ENABLED: "false" })), {
+        enabled: false,
+      });
+    });
+
+    it("rejects misspelled enabled values instead of silently disabling recycle", () => {
+      for (const value of ["TRUE", "1", "yes"]) {
+        assertThrows(
+          () => getMemoryRecycleConfig(envOf({ MEMORY_RECYCLE_ENABLED: value })),
+          Error,
+          'must be "true" or "false"',
+        );
+      }
     });
 
     it("requires a positive RSS threshold and consecutive sample count when enabled", () => {
@@ -497,18 +513,17 @@ describe("memory/profiler", () => {
         { enabled: true, rssThresholdMB: 3584, consecutiveSamples: 3 },
       );
 
-      for (
-        const values of [
-          { MEMORY_RECYCLE_ENABLED: "true" },
-          { MEMORY_RECYCLE_ENABLED: "true", MEMORY_RECYCLE_RSS_THRESHOLD_MB: "0" },
-          { MEMORY_RECYCLE_ENABLED: "true", MEMORY_RECYCLE_RSS_THRESHOLD_MB: "nope" },
-          {
-            MEMORY_RECYCLE_ENABLED: "true",
-            MEMORY_RECYCLE_RSS_THRESHOLD_MB: "3584",
-            MEMORY_RECYCLE_CONSECUTIVE_SAMPLES: "0",
-          },
-        ]
-      ) {
+      const invalidConfigs: Array<Record<string, string>> = [
+        { MEMORY_RECYCLE_ENABLED: "true" },
+        { MEMORY_RECYCLE_ENABLED: "true", MEMORY_RECYCLE_RSS_THRESHOLD_MB: "0" },
+        { MEMORY_RECYCLE_ENABLED: "true", MEMORY_RECYCLE_RSS_THRESHOLD_MB: "nope" },
+        {
+          MEMORY_RECYCLE_ENABLED: "true",
+          MEMORY_RECYCLE_RSS_THRESHOLD_MB: "3584",
+          MEMORY_RECYCLE_CONSECUTIVE_SAMPLES: "0",
+        },
+      ];
+      for (const values of invalidConfigs) {
         let threw = false;
         try {
           getMemoryRecycleConfig(envOf(values));

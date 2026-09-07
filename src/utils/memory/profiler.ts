@@ -335,7 +335,13 @@ function parseRequiredPositiveNumber(raw: string | null | undefined, name: strin
 
 /** Resolve the process-owner RSS recycle policy. The policy is off unless explicitly enabled. */
 export function getMemoryRecycleConfig(env: MemoryMonitoringEnv): MemoryRecycleConfig {
-  if (env.get("MEMORY_RECYCLE_ENABLED") !== "true") return { enabled: false };
+  const enabled = env.get("MEMORY_RECYCLE_ENABLED")?.trim();
+  if (enabled === undefined || enabled === "" || enabled === "false") {
+    return { enabled: false };
+  }
+  if (enabled !== "true") {
+    throw new Error('MEMORY_RECYCLE_ENABLED must be "true" or "false" when set');
+  }
 
   const rssThresholdMB = parseRequiredPositiveNumber(
     env.get("MEMORY_RECYCLE_RSS_THRESHOLD_MB"),

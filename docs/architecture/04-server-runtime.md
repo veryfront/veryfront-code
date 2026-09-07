@@ -31,8 +31,9 @@ Primary source areas:
 ## RSS recycle containment
 
 Production process owners can opt in to a graceful recycle after sustained RSS
-pressure. The feature is disabled when `MEMORY_RECYCLE_ENABLED` is absent. When
-enabled, set all of these values:
+pressure. The feature is disabled when `MEMORY_RECYCLE_ENABLED` is absent or
+set to `false`. Other values fail startup instead of silently disabling the
+policy. When enabled, set all of these values:
 
 - `MEMORY_RECYCLE_ENABLED=true`
 - `MEMORY_RECYCLE_RSS_THRESHOLD_MB=<positive-megabytes>`

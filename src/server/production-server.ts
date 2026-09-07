@@ -43,6 +43,7 @@ import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts"
 import { runStartupDiscovery } from "./startup-discovery.ts";
 import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { runProductionProcessOwner } from "./production-shutdown-coordinator.ts";
+import { isServerShuttingDown } from "./shutdown-state.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -343,8 +344,11 @@ export function startProductionServer(
 
         const ready = (async () => {
           await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
-          // Mark server as initialized when ready resolves
-          setServerInitialized(true);
+          // Readiness can settle after a signal or memory-pressure shutdown has
+          // already entered lame-duck mode. Never publish ready again then.
+          if (!signal?.aborted && !isServerShuttingDown()) {
+            setServerInitialized(true);
+          }
         })();
 
         const server = await adapter.serve(handler, {
