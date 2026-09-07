@@ -45,6 +45,13 @@ const AI_PROVIDER_SPEND_LIMIT_ERROR = {
   status: 402,
 } as const;
 
+const AI_PROVIDER_WORKSPACE_LIMIT_ERROR = {
+  code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
+  message:
+    "The AI provider workspace API usage limit has been reached. Wait for the limit to reset, or ask an administrator to raise the workspace limit.",
+  status: 502,
+} as const;
+
 const AI_PROVIDER_BILLING_ERROR = {
   code: "AI_PROVIDER_BILLING_ERROR",
   message:
@@ -295,6 +302,13 @@ function isAssistantPrefillUnsupportedMessage(message: string): boolean {
   return mentionsAssistantPrefill && rejectsAssistantPrefill;
 }
 
+// Match both the provider rejection and the curated text that crosses child-run
+// boundaries. Return only curated wording; provider messages may echo secrets.
+function isProviderWorkspaceLimitMessage(normalizedMessage: string): boolean {
+  return normalizedMessage.includes("workspace api usage limit") &&
+    (normalizedMessage.includes("have reached") || normalizedMessage.includes("has been reached"));
+}
+
 // Detects provider-side billing errors reported via invalid_request_error messages.
 // Requires three independent signals to reduce false positives: the message must
 // mention (a) a known provider API, (b) billing/account, and (c) low credit balance.
@@ -344,6 +358,9 @@ function isInvalidRequestEnvelope(body: Record<string, unknown>): boolean {
  */
 function classifyInvalidRequestMessage(message: string): ParsedProviderError | null {
   const normalizedMessage = message.toLowerCase();
+  if (isProviderWorkspaceLimitMessage(normalizedMessage)) {
+    return AI_PROVIDER_WORKSPACE_LIMIT_ERROR;
+  }
   if (isProviderBillingMessage(normalizedMessage)) {
     return AI_PROVIDER_BILLING_ERROR;
   }
@@ -536,6 +553,9 @@ function parseProviderErrorInner(
     // whose envelope carries no `invalid_request_error` type at all.
     if (isOpenObjectSchemaRejection(message)) {
       return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
+    }
+    if (isProviderWorkspaceLimitMessage(normalizedMessage)) {
+      return AI_PROVIDER_WORKSPACE_LIMIT_ERROR;
     }
     if (isProviderBillingMessage(normalizedMessage)) {
       return AI_PROVIDER_BILLING_ERROR;

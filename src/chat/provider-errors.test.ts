@@ -298,6 +298,58 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("classifies workspace API usage limits without copying provider-controlled text", async () => {
+    const expected = {
+      code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
+      message:
+        "The AI provider workspace API usage limit has been reached. Wait for the limit to reset, or ask an administrator to raise the workspace limit.",
+      status: 502,
+    };
+    const body = {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "You have reached your specified workspace API usage limits. You will regain access on 2026-08-01 at 00:00 UTC. <TOKEN> <PROMPT>",
+      },
+    };
+    const error = await buildProviderError(
+      "anthropic",
+      new Response(JSON.stringify(body), { status: 400 }),
+    );
+
+    assertEquals(parseProviderError(error), expected);
+    assertEquals(parseProviderError({ lastError: error }), expected);
+    assertEquals(parseProviderError(new Error(expected.message)), expected);
+    assertEquals(error.message, "Provider request failed with status 400");
+    assertEquals(Object.keys(error).includes("responseBody"), false);
+  });
+
+  it("does not misclassify unrelated workspace or usage-limit failures", async () => {
+    for (
+      const message of [
+        "Workspace API usage limits are configured.",
+        "You have reached the maximum workspace count.",
+        "You have reached your specified API usage limits.",
+        "Workspace API usage limits could not be loaded. <TOKEN>",
+      ]
+    ) {
+      const error = await buildProviderError(
+        "anthropic",
+        new Response(
+          JSON.stringify({
+            error: { type: "invalid_request_error", message },
+          }),
+          { status: 400 },
+        ),
+      );
+      assertEquals(parseProviderError(error), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    }
+  });
+
   it("classifies upstream provider billing failures separately from user credits", () => {
     const expected = {
       code: "AI_PROVIDER_BILLING_ERROR",

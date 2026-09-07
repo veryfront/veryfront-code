@@ -747,6 +747,56 @@ describe("agent/hosted-child-lifecycle", () => {
     });
   });
 
+  it("persists a workspace usage-limit diagnosis across the hosted child run boundary", async () => {
+    const providerError = await buildProviderError(
+      "anthropic",
+      new Response(
+        JSON.stringify({
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message:
+              "You have reached your specified workspace API usage limits. You will regain access on 2026-08-01 at 00:00 UTC. <TOKEN> <PROMPT>",
+          },
+        }),
+        { status: 400 },
+      ),
+    );
+    const expectedMessage =
+      "The AI provider workspace API usage limit has been reached. Wait for the limit to reset, or ask an administrator to raise the workspace limit.";
+    const snapshots: ChildRunExecutionSnapshot[] = [];
+    const childResult = await handleHostedChildForkFailure({
+      error: new Error(getHostedStreamErrorText(providerError)),
+      description: "Summarize the repo",
+      kind: "invoke_agent",
+      finalText: "",
+      toolCalls: [],
+      toolResults: [],
+      startTime: Date.now(),
+      onSettled: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+    assertEquals(snapshots.length, 1);
+    assertEquals(snapshots[0]?.error, expectedMessage);
+    let persisted: unknown;
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {
+        failed: (state) => {
+          persisted = state;
+        },
+      },
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => Promise.resolve(childResult),
+      getExecutionSnapshot: () => snapshots[0] ?? null,
+    });
+
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.terminalErrorCode, "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED");
+    assertEquals(result.terminalState.terminalErrorMessage, expectedMessage);
+    assertEquals(persisted, result.terminalState);
+  });
+
   it("keeps a child run's schema rejection classified across the run boundary", async () => {
     // The child run boundary is the route the plain-message matcher in
     // `resolveKnownProviderTerminalError` exists for, so walk it end to end
