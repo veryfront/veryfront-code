@@ -329,6 +329,11 @@ describe("hosted ordinary application model resolver", () => {
           binding,
           transport: { readable: forward.readable, writable: backward.writable },
           operations: createEphemeralHostedExecutorModelBroker({
+            grant: {
+              maxCalls: 3,
+              maxConcurrentCalls: 1,
+              models: new Map([[modelId, { maxOutputTokens: 4096, providerTools: [] }]]),
+            },
             resolveModelRuntime: applicationResolver,
             allowedModelIds: input.allowedModelIds,
             scope: input.scope,
