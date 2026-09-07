@@ -39,8 +39,8 @@ import {
   createErrorResponseFromDefinition,
   DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE,
   PROJECT_EXECUTION_UNAVAILABLE,
-  VeryfrontError,
 } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { classifyBrowserModuleAbsoluteSourcePath } from "#veryfront/modules/server/browser-module-admission.ts";
 import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
@@ -275,7 +275,7 @@ export async function handleRSCEndpoint(
           applicationIdentity,
         });
       } catch (e) {
-        if (e instanceof VeryfrontError && e.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+        if (snapshotVeryfrontError(e)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
           throw e;
         }
         metrics.recordRSC("error");
@@ -315,7 +315,7 @@ export async function handleRSCEndpoint(
 
     return null;
   } catch (e) {
-    if (e instanceof VeryfrontError && e.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+    if (snapshotVeryfrontError(e)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
       return new Response(
         req.method === "HEAD" ? null : "Dependency snapshot storage is unavailable",
         {
@@ -560,9 +560,7 @@ async function handleModuleEndpoint({
       },
     });
   } catch (error) {
-    if (
-      error instanceof VeryfrontError && error.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug
-    ) {
+    if (snapshotVeryfrontError(error)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
       throw error;
     }
     if (error instanceof BrowserModuleDependencySnapshotError) {
