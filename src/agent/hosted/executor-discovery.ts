@@ -151,10 +151,11 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     const found = discovery.agents.get(agentId);
     let definition: RuntimeAgentMarkdownDefinition;
     if (found && module.doesProjectAgentRuntimeAgentMatchSource(found, agentSource)) {
-      definition = await module.runWithProjectAgentRuntime(
+      const projected = await module.runWithProjectAgentRuntime(
         discovery,
         () => module.createRuntimeAgentDefinitionFromAgent(found),
       );
+      definition = { ...projected, id: agentId };
     } else {
       if (agentSource === "code") throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
       const files = await import("../runtime/agent-definition-files.ts");
