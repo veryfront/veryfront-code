@@ -23,6 +23,16 @@ async function collect(stream: ReadableStream<Uint8Array>) {
 }
 
 describe("executor runtime data stream validation", () => {
+  it("requires whole-message completion after a provider finishes its step", async () => {
+    const step = 'data: {"type":"finish","finishReason":"tool-calls"}\n\n';
+    await assertRejects(() => collect(new Response(step).body!), ExecutorAgentError);
+    const complete = step + 'data: {"type":"message-finish"}\n\n';
+    assertEquals(await collect(new Response(complete).body!), [
+      { type: "finish", finishReason: "tool-calls" },
+      { type: "message-finish" },
+    ]);
+  });
+
   it("accepts an exact-limit event with its separator split across chunks", async () => {
     const prefix = 'data: {"type":"text-delta","delta":"';
     const suffix = '"}';
