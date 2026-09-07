@@ -204,4 +204,68 @@ describe("direct production server owner", () => {
       "exit:0",
     ]);
   });
+
+  it("does not re-await initial bootstrap disposal after cleanup times out", async () => {
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    let requestSignal: (() => void) | undefined;
+    let releaseDispose: (() => void) | undefined;
+
+    const run = runDirectProductionServer({
+      initializeErrorReporting: () => Promise.resolve(),
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(adapter),
+      bootstrap: () =>
+        Promise.resolve({
+          adapter,
+          config: {},
+          usingFSAdapter: false,
+          extensionLoader: {} as BootstrapResult["extensionLoader"],
+          dispose: () => {
+            events.push("dispose-start");
+            return new Promise<void>((resolve) => {
+              releaseDispose = resolve;
+            });
+          },
+        }),
+      startServer: () =>
+        Promise.resolve({
+          ready: new Promise<void>((resolve) => {
+            setTimeout(() => {
+              resolve();
+              requestSignal?.();
+            }, 0);
+          }),
+          stop: () => Promise.resolve(),
+        }),
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+      gracefullyShutdown: async (options) => {
+        events.push("shutdown-start");
+        void options.dispose?.();
+        await Promise.resolve();
+        events.push("cleanup-timeout");
+        await options.stop();
+        return false;
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      captureError: () => events.push("error"),
+      exit: (code) => events.push(`exit:${code}`),
+    });
+
+    await run;
+
+    assertEquals(events, [
+      "shutdown-start",
+      "dispose-start",
+      "cleanup-timeout",
+      "flush",
+      "exit:0",
+    ]);
+    releaseDispose?.();
+  });
 });

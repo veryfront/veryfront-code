@@ -434,6 +434,7 @@ export async function runDirectProductionServer(
   dependencies: DirectProductionServerDependencies,
 ): Promise<void> {
   let bootstrap: BootstrapResult | undefined;
+  let bootstrapAtShutdownStart: BootstrapResult | undefined;
   let bootstrapDisposal: Promise<void> | undefined;
   let drainTimeoutMs: number | undefined;
   const disposeBootstrap = (): Promise<void> => {
@@ -492,6 +493,7 @@ export async function runDirectProductionServer(
       });
     },
     shutdown: async (reason, server, abort) => {
+      bootstrapAtShutdownStart = bootstrap;
       await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
         signal: reason,
         drainTimeoutMs,
@@ -502,10 +504,11 @@ export async function runDirectProductionServer(
       });
       // Bootstrap can finish while graceful shutdown is already running. Its
       // dynamic owner releases it here if the earlier cleanup step saw none.
-      await disposeBootstrap();
+      if (bootstrap && bootstrap !== bootstrapAtShutdownStart) await disposeBootstrap();
     },
     flush: dependencies.flush,
-    beforeExit: disposeBootstrap,
+    beforeExit: () =>
+      bootstrap && bootstrap !== bootstrapAtShutdownStart ? disposeBootstrap() : Promise.resolve(),
     exit: dependencies.exit ?? exit,
     registerSignals: dependencies.registerSignals ?? ((handler) => {
       const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));
