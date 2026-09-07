@@ -37,7 +37,7 @@ export class RenderGeneration {
   readonly #releaseArtifacts: RenderGenerationOptions["releaseArtifacts"];
   readonly #maxConcurrentRenders: number;
   readonly #drainTimeoutMs: number;
-  #active = 0;
+  readonly #active = new Set<() => void>();
   #accepting = true;
   #drained?: () => void;
   #drainFinished = false;
@@ -69,21 +69,19 @@ export class RenderGeneration {
     if (!this.#accepting) {
       throw SERVICE_OVERLOADED.create({ detail: "Render generation is draining" });
     }
-    if (this.#active >= this.#maxConcurrentRenders) {
+    if (this.#active.size >= this.#maxConcurrentRenders) {
       throw SERVICE_OVERLOADED.create({ detail: "Render generation capacity is exhausted" });
     }
-    this.#active++;
-    let finished = false;
     const finish = () => {
-      if (finished) return;
-      finished = true;
-      if (--this.#active === 0) this.#drained?.();
+      if (!this.#active.delete(finish)) return;
+      if (this.#active.size === 0) this.#drained?.();
       try {
         onComplete?.();
       } catch {
         // A completion observer must not replace the render result or stream error.
       }
     };
+    this.#active.add(finish);
     try {
       const response = await this.#render(request);
       return completeOnResponseBodyConsumption(
@@ -111,7 +109,7 @@ export class RenderGeneration {
 
   async #close(): Promise<void> {
     if (!this.#drainFinished) {
-      if (this.#active > 0 && this.#drainTimeoutMs > 0) {
+      if (this.#active.size > 0 && this.#drainTimeoutMs > 0) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await new Promise<void>((resolve) => {
@@ -128,6 +126,9 @@ export class RenderGeneration {
     if (!this.#executorStopped) {
       await this.#stop();
       this.#executorStopped = true;
+      // Quiescence need not settle host response streams or pending headers.
+      // Release their reservations only after stop succeeds, exactly once.
+      for (const finish of this.#active) finish();
     }
     await this.#releaseArtifacts();
   }

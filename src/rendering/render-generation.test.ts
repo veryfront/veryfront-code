@@ -6,6 +6,25 @@ import { RenderGeneration } from "./render-generation.ts";
 const request = () => new Request("http://localhost/page");
 
 describe("RenderGeneration", () => {
+  it("settles a pending-header admission once after confirmed shutdown", async () => {
+    const response = Promise.withResolvers<Response>();
+    let completed = 0;
+    const generation = new RenderGeneration({
+      maxConcurrentRenders: 1,
+      drainTimeoutMs: 0,
+      executor: { render: () => response.promise, stop: async () => {} },
+      releaseArtifacts: async () => {},
+    });
+    const pending = generation.render(request(), () => {
+      completed++;
+    });
+    await generation.close();
+    assertEquals(completed, 1, "quiescence releases admission even before headers settle");
+    response.resolve(new Response("late"));
+    assertEquals(await (await pending).text(), "late");
+    assertEquals(completed, 1, "late completion is idempotent");
+  });
+
   it("keeps completion callback failures separate from rendering and admission", async () => {
     let completions = 0;
     let stops = 0;

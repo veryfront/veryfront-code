@@ -25,6 +25,72 @@ const makeGeneration = (
   });
 
 describe("RenderGenerationPool", () => {
+  it("reclaims aggregate admission after confirmed shutdown with an unsettled body", async () => {
+    const pool = new RenderGenerationPool({ maxGenerations: 2, maxConcurrentRenders: 1 });
+    const responses: Response[] = [];
+    try {
+      for (const drainTimeoutMs of [0, 1]) {
+        const key = identity(`old-${drainTimeoutMs}`);
+        responses.push(
+          await pool.render(request(), key, () =>
+            makeGeneration(null, {
+              drainTimeoutMs,
+              executor: {
+                render: async () => new Response(new ReadableStream()),
+                stop: async () => {},
+              },
+            })),
+        );
+        await pool.retire(key);
+      }
+      const current = await pool.render(request(), identity("current"), () => makeGeneration());
+      responses.push(current);
+      for (const stale of responses.slice(0, -1)) await stale.body!.cancel();
+      await assertRejects(
+        () => pool.render(request(), identity("extra"), () => makeGeneration()),
+        Error,
+        "request capacity",
+        "late settlement must not release another generation's reservation",
+      );
+      assertEquals(await current.text(), "page");
+    } finally {
+      for (const response of responses) {
+        if (!response.bodyUsed) await response.body?.cancel();
+      }
+      await pool.close();
+    }
+  });
+
+  it("retains aggregate admission until a failed stop succeeds on retry", async () => {
+    const pool = new RenderGenerationPool({ maxGenerations: 2, maxConcurrentRenders: 1 });
+    let stops = 0;
+    const response = await pool.render(request(), identity("old"), () =>
+      makeGeneration(null, {
+        executor: {
+          render: async () => new Response(new ReadableStream()),
+          stop: async () => {
+            if (++stops === 1) throw new Error("stop failed");
+          },
+        },
+      }));
+    try {
+      await assertRejects(() => pool.retire(identity("old")), Error, "stop failed");
+      await assertRejects(
+        () => pool.render(request(), identity("new"), () => makeGeneration()),
+        Error,
+        "request capacity",
+      );
+      await pool.retire(identity("old"));
+      assertEquals(
+        await (await pool.render(request(), identity("new"), () => makeGeneration())).text(),
+        "page",
+      );
+    } finally {
+      await response.body!.cancel();
+      await pool.close();
+    }
+  });
+
   it("retires a queued constructor without starting it and allows later explicit reuse", async () => {
     const pool = new RenderGenerationPool({ maxGenerations: 1, maxConcurrentRenders: 1 });
     let created = 0;
