@@ -41,21 +41,50 @@ function readOwnEnumerableDataDescriptor(
     : undefined;
 }
 
+function readProviderControl(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+  key: string,
+): PropertyDescriptor | undefined {
+  const provider = resolveModelCallProvider(model);
+  let selected: PropertyDescriptor | undefined;
+  for (const name of [provider, model.provider ?? provider]) {
+    if (!name) continue;
+    const bucket = readOwnEnumerableDataDescriptor(options.providerOptions, name)?.value;
+    if (Array.isArray(bucket)) continue;
+    selected = readOwnEnumerableDataDescriptor(bucket, key) ?? selected;
+  }
+  return selected;
+}
+
+function numberControl(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+function stopControl(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? [...value]
+    : undefined;
+}
+
 /** Project effective request settings without persisting raw provider options. */
 export function buildModelCallContextRequest(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequest | undefined {
   const reasoning = resolvePersistedReasoning(model, options);
-  return buildModelCallRequest(resolvePersistedSampling(model, options, reasoning), reasoning);
+  return buildModelCallRequest(resolvePersistedControls(model, options, reasoning), reasoning);
 }
 
-function resolvePersistedSampling(
+function resolvePersistedControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
   reasoning: RuntimeReasoningOption | undefined,
 ): ModelCallRequestSource {
-  if (resolveModelCallProvider(model) !== "openai" || typeof model.modelId !== "string") {
+  const provider = resolveModelCallProvider(model);
+  if (provider === "anthropic") return resolveAnthropicControls(model, options);
+  if (provider === "google") return resolveGoogleControls(model, options);
+  if (provider !== "openai") {
     return options;
   }
   const providerName = model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
@@ -65,8 +94,20 @@ function resolvePersistedSampling(
     "openai",
     providerName,
   );
-  const dropSampling = reasoning?.enabled === true || rejectsOpenAISamplingParams(model.modelId);
-  const effective = { ...options };
+  const dropSampling = reasoning?.enabled === true ||
+    (typeof model.modelId === "string" && rejectsOpenAISamplingParams(model.modelId));
+  const effective = {
+    ...options,
+    topK: numberControl(providerOptions.top_k),
+    seed: ObjectHasOwn(providerOptions, "seed")
+      ? numberControl(providerOptions.seed)
+      : options.seed,
+    stopSequences: ObjectHasOwn(providerOptions, "stop")
+      ? stopControl(providerOptions.stop)
+      : options.stopSequences?.length
+      ? options.stopSequences
+      : undefined,
+  };
   for (
     const [field, nativeField] of [
       ["temperature", "temperature"],
@@ -86,9 +127,78 @@ function resolvePersistedSampling(
   return effective;
 }
 
+function resolveAnthropicControls(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): ModelCallRequestSource {
+  const thinking = readProviderControl(model, options, "thinking")?.value;
+  // Adaptive native thinking is copied as-is; only enabled budget thinking
+  // triggers the Messages builder's neutral sampling filter.
+  const thinkingEnabled = options.reasoning?.enabled === true ||
+    readOwnEnumerableDataDescriptor(thinking, "type")?.value === "enabled";
+  const effective = { ...options };
+  for (
+    const [field, nativeField] of [
+      ["temperature", "temperature"],
+      ["topP", "top_p"],
+      ["topK", "top_k"],
+      ["seed", "seed"],
+      ["presencePenalty", "presence_penalty"],
+      ["frequencyPenalty", "frequency_penalty"],
+    ] as const
+  ) {
+    const native = readProviderControl(model, options, nativeField);
+    effective[field] = native
+      ? numberControl(native.value)
+      : !thinkingEnabled && (field === "temperature" || field === "topP")
+      ? options[field]
+      : undefined;
+  }
+  const stops = readProviderControl(model, options, "stop_sequences");
+  effective.stopSequences = stops
+    ? stopControl(stops.value)
+    : options.stopSequences?.length
+    ? options.stopSequences.slice(0, 4)
+    : undefined;
+  // maxOutputTokens remains the neutral output budget, independent of the
+  // provider's combined output/thinking max_tokens allowance.
+  return effective;
+}
+
+function resolveGoogleControls(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): ModelCallRequestSource {
+  const native = readProviderControl(model, options, "generationConfig");
+  const effective = {
+    ...options,
+    presencePenalty: undefined as number | undefined,
+    frequencyPenalty: undefined as number | undefined,
+    stopSequences: options.stopSequences?.length ? options.stopSequences : undefined,
+  };
+  if (!native) return effective;
+  // The builder replaces generationConfig wholesale, rather than merging
+  // its fields over the neutral controls.
+  for (
+    const field of [
+      "maxOutputTokens",
+      "temperature",
+      "topP",
+      "topK",
+      "seed",
+      "presencePenalty",
+      "frequencyPenalty",
+    ] as const
+  ) effective[field] = numberControl(readOwnEnumerableDataDescriptor(native.value, field)?.value);
+  effective.stopSequences = stopControl(
+    readOwnEnumerableDataDescriptor(native.value, "stopSequences")?.value,
+  );
+  return effective;
+}
+
 function buildModelCallRequest(
   options: ModelCallRequestSource,
-  reasoning = options.reasoning,
+  reasoning: RuntimeReasoningOption | undefined,
 ): ModelCallRequest | undefined {
   const projectedReasoning = reasoning
     ? {
@@ -128,6 +238,7 @@ function resolvePersistedReasoning(
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
   const modelProvider = resolveModelCallProvider(model);
+  if (modelProvider === "google") return resolveGoogleReasoning(model, options);
   if (modelProvider === "openai" && typeof model.modelId === "string") {
     const catalogId = `openai/${model.modelId}`;
     if (
@@ -162,15 +273,7 @@ function resolvePersistedReasoning(
     return options.reasoning;
   }
 
-  const providerOptions = options.providerOptions;
-  if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
-    return options.reasoning;
-  }
-  const anthropic = readOwnEnumerableDataDescriptor(providerOptions, "anthropic")?.value;
-  if (!anthropic || typeof anthropic !== "object" || Array.isArray(anthropic)) {
-    return options.reasoning;
-  }
-  const thinking = readOwnEnumerableDataDescriptor(anthropic, "thinking")?.value;
+  const thinking = readProviderControl(model, options, "thinking")?.value;
   if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) {
     return options.reasoning;
   }
@@ -192,7 +295,7 @@ function resolvePersistedReasoning(
     };
   }
 
-  const outputConfig = readOwnEnumerableDataDescriptor(anthropic, "output_config")?.value;
+  const outputConfig = readProviderControl(model, options, "output_config")?.value;
   const effort = outputConfig && typeof outputConfig === "object" && !Array.isArray(outputConfig)
     ? readOwnEnumerableDataDescriptor(outputConfig, "effort")?.value
     : undefined;
@@ -202,4 +305,29 @@ function resolvePersistedReasoning(
       ? { effort }
       : {}),
   };
+}
+
+function resolveGoogleReasoning(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): RuntimeReasoningOption | undefined {
+  const native = readProviderControl(model, options, "generationConfig");
+  if (!native) return options.reasoning;
+  const thinking = readOwnEnumerableDataDescriptor(native.value, "thinkingConfig")?.value;
+  const budget = readOwnEnumerableDataDescriptor(thinking, "thinkingBudget")?.value;
+  if (typeof budget !== "number" || !Number.isSafeInteger(budget) || budget < -1) return undefined;
+  const neutral = options.reasoning;
+  const neutralBudget = neutral?.budgetTokens ??
+    (neutral?.effort === "low"
+      ? 512
+      : neutral?.effort === "high"
+      ? 8192
+      : neutral?.effort === "max"
+      ? -1
+      : 2048);
+  if (
+    neutral?.enabled === true && budget === neutralBudget &&
+    readOwnEnumerableDataDescriptor(thinking, "includeThoughts")?.value === true
+  ) return neutral;
+  return budget === -1 ? { enabled: true, effort: "max" } : { enabled: true, budgetTokens: budget };
 }

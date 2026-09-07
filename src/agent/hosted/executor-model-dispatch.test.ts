@@ -167,7 +167,6 @@ describe("hosted executor model dispatch", () => {
           maxOutputTokens: 17,
           temperature: 0.4,
           topP: 0.9,
-          topK: 2,
           stopSequences: ["STOP"],
           seed: 2,
           presencePenalty: 0.3,
