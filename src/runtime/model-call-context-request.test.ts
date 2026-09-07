@@ -18,6 +18,10 @@ const tools: ModelRuntimeCallOptions["tools"] = [{
   name: "lookup",
   inputSchema: { type: "object", properties: {} },
 }];
+const nativeTools = [{
+  type: "function",
+  function: { name: "lookup", parameters: { type: "object", properties: {} } },
+}];
 
 describe("model call request projection", () => {
   for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
@@ -67,6 +71,74 @@ describe("model call request projection", () => {
         }
       }
     });
+
+    for (
+      const { name, options: toolOptions, hasFunctionTools } of [
+        {
+          name: "adds native function tools",
+          options: { providerOptions: { "veryfront-cloud": { tools: nativeTools } } },
+          hasFunctionTools: true,
+        },
+        {
+          name: "clears neutral tools with an empty native list",
+          options: { tools, providerOptions: { "veryfront-cloud": { tools: [] } } },
+          hasFunctionTools: false,
+        },
+        {
+          name: "clears neutral tools with an explicit undefined native list",
+          options: { tools, providerOptions: { "veryfront-cloud": { tools: undefined } } },
+          hasFunctionTools: false,
+        },
+        {
+          name: "uses native tools from the OpenAI bucket",
+          options: { providerOptions: { openai: { tools: nativeTools } } },
+          hasFunctionTools: true,
+        },
+        {
+          name: "lets the Cloud bucket clear OpenAI native tools",
+          options: {
+            providerOptions: { openai: { tools: nativeTools }, "veryfront-cloud": { tools: [] } },
+          },
+          hasFunctionTools: false,
+        },
+      ]
+    ) {
+      it(`matches ${modelId} reasoning when the request ${name}`, () => {
+        for (
+          const [reasoning, expectedEffort] of [
+            [undefined, "medium"],
+            [{ enabled: true, effort: "max" }, "high"],
+            [{ enabled: false }, undefined],
+          ] as const
+        ) {
+          const options: ModelRuntimeCallOptions = { prompt, reasoning, ...toolOptions };
+          const projected = buildModelCallContextRequest({
+            provider: "veryfront-cloud",
+            modelProvider: "openai",
+            modelId,
+          }, options);
+          const effort = hasFunctionTools ? undefined : expectedEffort;
+          for (const stream of [false, true]) {
+            const body = buildOpenAIChatRequest(
+              modelId,
+              "veryfront-cloud",
+              options,
+              stream,
+              createWarningCollector(),
+              {
+                reasoningWithFunctionTools: resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
+                  `openai/${modelId}`,
+                ),
+              },
+            );
+            assertEquals(body.reasoning_effort, effort);
+            assertEquals(body.tools?.[0]?.function.name, hasFunctionTools ? "lookup" : undefined);
+            assertEquals(projected?.reasoning?.effort, body.reasoning_effort);
+            assertEquals(projected?.reasoning?.enabled, body.reasoning_effort !== undefined);
+          }
+        }
+      });
+    }
   }
 
   it("retains reasoning for direct OpenAI and Cloud models without the Chat restriction", () => {
