@@ -101,6 +101,7 @@ export interface MemoryRecycleState {
   notified: boolean;
 }
 
+/** Process RSS sample and policy values when recycling is requested. */
 export interface MemoryRecycleEvent {
   rssMB: number;
   rssThresholdMB: number;

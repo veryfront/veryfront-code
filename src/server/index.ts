@@ -53,6 +53,8 @@ import {
 } from "#veryfront/extensions/websocket";
 import { type NodeUpgradeEventSource, NodeUpgradeLifecycle } from "./node-upgrade-lifecycle.ts";
 
+export type { MemoryRecycleEvent } from "#veryfront/utils/memory/index.ts";
+
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
 

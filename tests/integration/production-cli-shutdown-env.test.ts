@@ -1,7 +1,8 @@
+import type { MemoryRecycleEvent } from "veryfront/server";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { setEnv, withEnv } from "#veryfront/testing/deno-compat.ts";
-import { runProductionServer } from "../../cli/commands/serve/command.ts";
+import { runProductionServer } from "#cli/commands/serve/command";
 
 describe("production CLI shutdown environment", () => {
   it("uses one post-bootstrap timeout budget throughout CLI shutdown", async () => {
@@ -35,11 +36,13 @@ describe("production CLI shutdown environment", () => {
               // it can request recycling.
               setEnv("SHUTDOWN_DRAIN_TIMEOUT_MS", "3000");
               setEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS", "4000");
-              await onMemoryRecycle?.({
-                rssMB: 101,
-                rssThresholdMB: 100,
-                consecutiveSamples: 2,
-              });
+              await onMemoryRecycle?.(
+                {
+                  rssMB: 101,
+                  rssThresholdMB: 100,
+                  consecutiveSamples: 2,
+                } satisfies MemoryRecycleEvent,
+              );
 
               // Later environment writes cannot change an in-flight shutdown's
               // deadline or its drain/cleanup split.
