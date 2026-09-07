@@ -319,28 +319,18 @@ class Session implements HostedExecutorSession {
     const tracked = Promise.withResolvers<T>();
     this.#tasks.add(tracked.promise);
     void tracked.promise.catch(() => {});
-    const retire = () => {
-      this.#tasks.delete(tracked.promise);
-      this.#settle();
-    };
-    const rejected = (error: unknown) => {
-      tracked.reject(error);
-      retire();
-    };
-    try {
-      Promise.resolve(operation()).then((value) => {
-        try {
-          observe?.(value);
-          tracked.resolve(value);
-        } catch (error) {
-          tracked.reject(error);
-        } finally {
-          retire();
-        }
-      }, rejected);
-    } catch (error) {
-      rejected(error);
-    }
+    void (async () => {
+      try {
+        const value = await operation();
+        observe?.(value);
+        tracked.resolve(value);
+      } catch (error) {
+        tracked.reject(error);
+      } finally {
+        this.#tasks.delete(tracked.promise);
+        this.#settle();
+      }
+    })();
     return tracked.promise;
   }
 
@@ -547,24 +537,22 @@ class Session implements HostedExecutorSession {
     this.#releaseAttempted = true;
     const binding = this.#binding;
     const signal = this.#cleanup.signal;
-    try {
-      this.#track(
-        () =>
-          this.#allocator.release(
-            binding,
-            this.#reason === "completed" ? "completed" : "canceled",
-            signal,
-          ),
-        (value) => {
-          const released = parseHostedExecutorData(getHostedExecutorAllocationSchema(), value);
-          if (
-            !sameHostedExecutorBinding(released.binding, binding) ||
-            (released.phase !== "released" && released.phase !== "terminating")
-          ) throw new Error("Executor session invalid release acknowledgement");
-          this.#releaseConfirmed = released.phase === "released";
-        },
-      );
-    } catch { /* The independent allocator reaper retains responsibility. */ }
+    void this.#track(
+      () =>
+        this.#allocator.release(
+          binding,
+          this.#reason === "completed" ? "completed" : "canceled",
+          signal,
+        ),
+      (value) => {
+        const released = parseHostedExecutorData(getHostedExecutorAllocationSchema(), value);
+        if (
+          !sameHostedExecutorBinding(released.binding, binding) ||
+          (released.phase !== "released" && released.phase !== "terminating")
+        ) throw new Error("Executor session invalid release acknowledgement");
+        this.#releaseConfirmed = released.phase === "released";
+      },
+    ).catch(() => {/* The independent allocator reaper retains responsibility. */});
   }
 
   async #finishCleanup(): Promise<void> {

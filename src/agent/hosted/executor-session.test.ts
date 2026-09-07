@@ -660,6 +660,7 @@ describe("hosted executor session", () => {
       return allocation.promise;
     };
     const session = f.start();
+    assertEquals(preparation.signal.aborted, true);
     await assertRejects(() => session.ready);
     let closed = false;
     let settled = false;
@@ -681,5 +682,57 @@ describe("hosted executor session", () => {
     } finally {
       allocation.resolve(structuredClone(f.returned));
     }
+  });
+
+  for (const failure of ["throw", "reject"] as const) {
+    it(`retires allocation work after a client ${failure} without disclosing its error`, async () => {
+      const f = fixture();
+      f.allocator.allocate = () => {
+        const error = new Error("Synthetic private allocator detail");
+        if (failure === "throw") throw error;
+        return Promise.reject(error);
+      };
+      const session = f.start();
+      await assertRejects(() => session.ready, Error, "Executor session allocation-failed");
+      assertEquals(await session.closed, {
+        reason: "allocation-failed",
+        release: "reaper-required",
+      });
+      await session.settled;
+      assertEquals(f.calls.includes("connect"), false);
+      assertEquals(f.time.pendingWaitCount, 0);
+    });
+
+    it(`retires release work after a client ${failure} without confirming deletion`, async () => {
+      const f = fixture();
+      f.allocator.release = () => {
+        const error = new Error("Synthetic private release detail");
+        if (failure === "throw") throw error;
+        return Promise.reject(error);
+      };
+      const session = f.start();
+      await session.ready;
+      assertEquals(await session.close(), { reason: "canceled", release: "reaper-required" });
+      await session.settled;
+      await f.peerClosed();
+      assertEquals(f.time.pendingWaitCount, 0);
+    });
+  }
+
+  it("retires a release whose acknowledgement validation fails without confirming deletion", async () => {
+    const f = fixture();
+    f.allocator.release = () =>
+      Promise.resolve({
+        binding: { ...fullBinding, generation: fullBinding.generation + 1 },
+        phase: "released",
+        expiresAt: 2000,
+        reason: "canceled",
+      });
+    const session = f.start();
+    await session.ready;
+    assertEquals(await session.close(), { reason: "canceled", release: "reaper-required" });
+    await session.settled;
+    await f.peerClosed();
+    assertEquals(f.time.pendingWaitCount, 0);
   });
 });
