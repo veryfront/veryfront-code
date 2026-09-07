@@ -22,10 +22,9 @@ cannot receive `SONAR_TOKEN`. Fork pull requests still skip other protected
 dependency jobs and therefore fail this aggregate gate closed. Codecov
 reporting remains advisory.
 
-The scanner still emits the legacy `sonar` check during the ruleset migration.
-`SonarQube Cloud quality gate` is the canonical final check and depends on that
-scanner result. Remove the legacy check name only after the ruleset requires
-the canonical name and the canonical check has passed on `main`.
+The scanner emits the diagnostic `SonarQube Cloud scan` check.
+`SonarQube Cloud quality gate` is the only Sonar check required by the ruleset
+and depends on that scanner result.
 
 The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60
