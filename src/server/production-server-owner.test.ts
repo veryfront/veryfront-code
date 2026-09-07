@@ -246,7 +246,7 @@ describe("direct production server owner", () => {
         void options.dispose?.();
         await Promise.resolve();
         events.push("cleanup-timeout");
-        await options.stop();
+        void options.stop();
         return false;
       },
       flush: () => {
@@ -374,5 +374,48 @@ describe("direct production server owner", () => {
 
     assertEquals(caught, startupError);
     assertEquals(events, ["dispose-bootstrap", "signals-disposed"]);
+  });
+
+  it("disposes direct bootstrap after server readiness rejects", async () => {
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    const readinessError = new Error("readiness failed");
+    let caught: unknown;
+
+    try {
+      await runDirectProductionServer({
+        initializeErrorReporting: () => Promise.resolve(),
+        initializeRuntime: () => Promise.resolve(),
+        getAdapter: () => Promise.resolve(adapter),
+        bootstrap: () =>
+          Promise.resolve({
+            adapter,
+            config: {},
+            usingFSAdapter: false,
+            extensionLoader: {} as BootstrapResult["extensionLoader"],
+            dispose: () => {
+              events.push("dispose-bootstrap");
+            },
+          }),
+        startServer: () =>
+          Promise.resolve({
+            ready: Promise.reject(readinessError),
+            stop: () => {
+              events.push("stop-server");
+              return Promise.resolve();
+            },
+          }),
+        registerSignals: () => () => events.push("signals-disposed"),
+        gracefullyShutdown: () => Promise.resolve(true),
+        flush: () => Promise.resolve(),
+        captureError: () => events.push("error"),
+        exit: () => events.push("exit"),
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, readinessError);
+    assertEquals(events, ["stop-server", "dispose-bootstrap", "signals-disposed"]);
   });
 });

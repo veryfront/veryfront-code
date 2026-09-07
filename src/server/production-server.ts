@@ -483,7 +483,7 @@ export async function runDirectProductionServer(
       );
 
       try {
-        return await (dependencies.startServer ?? startProductionServer)({
+        const server = await (dependencies.startServer ?? startProductionServer)({
           projectDir,
           port,
           bindAddress,
@@ -493,6 +493,23 @@ export async function runDirectProductionServer(
           signal,
           onMemoryRecycle,
         });
+        return {
+          ready: server.ready,
+          stop: async () => {
+            let stopError: unknown;
+            try {
+              await server.stop();
+            } catch (error) {
+              stopError = error;
+            }
+            try {
+              await disposeBootstrap();
+            } catch (error) {
+              if (stopError === undefined) throw error;
+            }
+            if (stopError !== undefined) throw stopError;
+          },
+        };
       } catch (error) {
         try {
           await disposeBootstrap();
