@@ -169,6 +169,39 @@ describe("executor discovery operations", () => {
     }
   });
 
+  it("preserves filename-derived IDs for code agents without an explicit ID", async () => {
+    const discovered = agent({ system: "Filename-bound instructions", model: "openai/synthetic" });
+    const originalId = discovered.id;
+    const f = fixture({
+      agents: [discovered],
+      defaultAgentId: "filename-agent",
+      agentSource: "code",
+    });
+    f.state.agents.clear();
+    f.state.agents.set("filename-agent", discovered);
+    try {
+      for (const name of ["discovery.describe", "agent.describe"]) {
+        const result = await call(
+          f.owner,
+          name,
+          name === "agent.describe" ? { agentId: "filename-agent" } : {},
+        );
+        assert(result !== null && typeof result === "object" && !Array.isArray(result));
+        assertEquals(result.ok, true);
+        const value = result.value;
+        assert(value !== null && typeof value === "object" && !Array.isArray(value));
+        const definition = value.definition;
+        assert(definition !== null && typeof definition === "object" && !Array.isArray(definition));
+        assertEquals(definition.id, "filename-agent");
+        assertEquals(definition.instructions, "Filename-bound instructions");
+      }
+      assertEquals(discovered.id, originalId);
+      assertEquals(f.cleanups, 0);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("rejects wire paths, source replacement, and wrong bindings before discovery", async () => {
     const f = fixture();
     try {
