@@ -1,4 +1,5 @@
 import type { Agent } from "../types.ts";
+import { buildResponseInit } from "./response-init.ts";
 
 // Capture before project modules load: ingress requests still carry host
 // credentials while the service selects a route and applies CORS policy.
@@ -242,11 +243,7 @@ function createNativeResponse(
   status?: number,
   statusText?: string,
 ): Response {
-  if (status === undefined && statusText === undefined) return new NativeResponse(body);
-
-  const init: ResponseInit = ObjectCreate(null);
-  if (status !== undefined) init.status = status;
-  if (statusText !== undefined) init.statusText = statusText;
+  const init = buildResponseInit(NativeObjectPrototype, status, statusText);
   return new NativeResponse(body, init);
 }
 

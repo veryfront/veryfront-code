@@ -63,6 +63,17 @@ use captured operations. Sparse route, origin, method, and header arrays ignore 
 entries. Route handlers retain ordinary-object params; decoded keys bypass
 inherited setters.
 
+Framework responses supply explicit status, status text, and empty-header defaults
+to native constructors. These defaults override writable inherited data properties,
+including CORS headers for a denied origin, and apply only to omitted values.
+If `Object.prototype` defines an accessor for `headers`, `status`, or `statusText`,
+response construction throws a `TypeError` before native option conversion can
+invoke it. On Node, non-writable inherited data properties for these fields also
+cause native construction to throw a `TypeError`. The runtime does not remove
+these properties, return an empty response, or
+retry with weaker CORS rules. Invalid response values still fail native
+validation, and host handler errors propagate unchanged.
+
 The service discovers the same project primitives as the app runtime:
 
 - `agents/`
