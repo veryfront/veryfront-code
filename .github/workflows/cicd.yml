@@ -363,6 +363,36 @@ jobs:
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/4 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
+  coverage-node-executor:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: native executor coverage
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install Node resolver test dependencies
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p node_modules npm/node_modules
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
+      - name: Collect mapped native executor coverage
+        run: deno task coverage:ci:node-executor
+      - name: Upload native executor coverage lcov
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-native-executor
+          path: coverage/node-executor/lcov.info
+          retention-days: 1
+          if-no-files-found: error
+
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -463,8 +493,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     name: SonarQube Cloud scan
-    needs: [coverage-shards]
-    if: ${{ needs.coverage-shards.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [coverage-shards, coverage-node-executor]
+    if: ${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
     steps:
@@ -478,9 +508,14 @@ jobs:
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
+      - name: Download native executor coverage lcov
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-native-executor
+          path: coverage-profiles/coverage-native-executor
       - name: Normalize lcov paths
         run: |
-          for file in coverage-profiles/coverage-shard-*/lcov.info; do
+          for file in coverage-profiles/coverage-shard-*/lcov.info coverage-profiles/coverage-native-executor/lcov.info; do
             sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
           done
       - name: SonarQube Cloud scan

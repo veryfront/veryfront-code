@@ -169,10 +169,12 @@ export class UpstreamWebSocket {
     if (this.#settled) return;
     this.#settled = true;
     this.#readyState = WebSocket.CLOSING;
+    // Start cancellation before the failing receive pump releases its reader.
+    const cancellation = this.#reader?.cancel().catch(() => {});
     // A late opened connection owns cancellation too. Neither the close event
     // nor reader.cancel() alone establishes that the receive pump has finished.
     await this.#opening.catch(() => {});
-    await this.#reader?.cancel().catch(() => {});
+    await cancellation;
     await this.#reading;
     await this.#writes;
     this.#writer?.releaseLock();
