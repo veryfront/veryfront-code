@@ -170,8 +170,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                 const frame = parseFrame(next.value);
                 if (frame.type === "event") {
                   const event = parseExecutorDataEvent(frame.event);
-                  terminal ||= event.type === "message-finish" || event.type === "finish" ||
-                    event.type === "error";
+                  terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
                     textEncoder.encode(`data: ${JSON.stringify(event)}\n\n`),
                   );
