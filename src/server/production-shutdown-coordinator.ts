@@ -36,6 +36,7 @@ export interface ProductionProcessOwnerOptions {
   onReady?: () => void;
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
   beforeExit?: () => Promise<unknown>;
+  finalizeBeforeExit?: () => Promise<unknown> | undefined;
 }
 
 function ownServerStop(server: OwnedProductionServer): OwnedProductionServer {
@@ -127,6 +128,8 @@ export async function runProductionProcessOwner(
     beforeExit: async () => {
       if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();
       await options.beforeExit?.();
+      const finalization = options.finalizeBeforeExit?.();
+      if (finalization) await finalization;
       // The custom hook can yield while startup publishes its handle. This is
       // the final asynchronous fence before exit, so recheck after that yield.
       if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();

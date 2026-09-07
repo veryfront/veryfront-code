@@ -268,4 +268,75 @@ describe("direct production server owner", () => {
     ]);
     releaseDispose?.();
   });
+
+  it("rechecks late bootstrap ownership at the final exit fence", async () => {
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    let requestSignal: (() => void) | undefined;
+    let resolveBootstrap: ((value: BootstrapResult) => void) | undefined;
+    let markBootstrapStarted: (() => void) | undefined;
+    const bootstrapStarted = new Promise<void>((resolve) => {
+      markBootstrapStarted = resolve;
+    });
+
+    const run = runDirectProductionServer({
+      initializeErrorReporting: () => Promise.resolve(),
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(adapter),
+      bootstrap: () => {
+        events.push("bootstrap-start");
+        markBootstrapStarted?.();
+        return new Promise<BootstrapResult>((resolve) => {
+          resolveBootstrap = resolve;
+        });
+      },
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+      gracefullyShutdown: (options) => {
+        events.push("shutdown");
+        options.abort();
+        return Promise.resolve(true);
+      },
+      flush: () => {
+        events.push("flush-start");
+        return new Promise<void>((resolveFlush) => {
+          queueMicrotask(() => {
+            events.push("flush-resolve");
+            resolveFlush();
+            resolveBootstrap?.({
+              adapter,
+              config: {},
+              usingFSAdapter: false,
+              extensionLoader: {} as BootstrapResult["extensionLoader"],
+              dispose: () => {
+                events.push("dispose-start");
+                return new Promise<void>((resolve) => {
+                  setTimeout(() => {
+                    events.push("dispose-done");
+                    resolve();
+                  }, 0);
+                });
+              },
+            });
+          });
+        });
+      },
+      captureError: () => events.push("error"),
+      exit: (code) => events.push(`exit:${code}`),
+    });
+
+    await bootstrapStarted;
+    requestSignal?.();
+    await run;
+    assertEquals(events, [
+      "bootstrap-start",
+      "shutdown",
+      "flush-start",
+      "flush-resolve",
+      "dispose-start",
+      "dispose-done",
+      "exit:0",
+    ]);
+  });
 });
