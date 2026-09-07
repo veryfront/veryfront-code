@@ -356,7 +356,7 @@ class Channel implements ExecutorChannel {
   }
 
   #cancelOutgoing(call: OutgoingCall, reason: "cancelled" | "deadline"): void {
-    if (call.released || call.cancelled) return;
+    if (this.#error || call.released || call.cancelled) return;
     call.cancelled = true;
     call.error = new Error(`Executor call ${reason}`);
     this.#clearResults(call);

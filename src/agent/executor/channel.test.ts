@@ -356,4 +356,33 @@ describe("executor channel", () => {
       await receiver.closed;
     }
   });
+
+  it("does not schedule cancellation when returning a stream after channel closure", async () => {
+    const started = Promise.withResolvers<void>();
+    const { caller, receiver } = pair(
+      new Map([
+        ["wait", {
+          mode: "stream",
+          handle: async function* (_, { signal }) {
+            started.resolve();
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+            yield null;
+          },
+        }],
+      ]),
+    );
+    try {
+      const stream = caller.stream("wait", null);
+      const pendingRead = assertRejects(() => stream.next(), Error, "Executor channel closed");
+      await started.promise;
+      caller.close();
+      await pendingRead;
+      await assertRejects(() => stream.return!(), Error, "Executor channel closed");
+    } finally {
+      caller.close();
+      await receiver.closed;
+    }
+  });
 });
