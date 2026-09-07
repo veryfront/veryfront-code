@@ -477,13 +477,20 @@ export async function runDirectProductionServer(
         adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
       );
       const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
-      drainTimeoutMs = parseShutdownDrainTimeoutMs(
-        adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
-      );
-      cleanupTimeoutMs = parseShutdownCleanupTimeoutMs(
-        adapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
-      );
+      const refreshShutdownTimeouts = (): void => {
+        drainTimeoutMs = parseShutdownDrainTimeoutMs(
+          adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+        );
+        cleanupTimeoutMs = parseShutdownCleanupTimeoutMs(
+          adapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+        );
+      };
+      // Parent-process values still bound shutdown while bootstrap is pending.
+      refreshShutdownTimeouts();
       bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
+      // Bootstrap loads project .env values. Resolve the drain and cleanup
+      // budget afterward so the process owner and graceful shutdown agree.
+      refreshShutdownTimeouts();
       if (signal.aborted) {
         // Begin releasing a bootstrap acquired after shutdown, but leave the
         // process owner to join it only within the remaining shutdown budget.
@@ -537,6 +544,7 @@ export async function runDirectProductionServer(
       await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
         signal: reason,
         drainTimeoutMs,
+        cleanupTimeoutMs,
         abort,
         dispose: disposeBootstrap,
         stop: server?.stop ?? (() => Promise.resolve()),

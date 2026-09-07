@@ -5,6 +5,49 @@ import type { BootstrapResult } from "./bootstrap.ts";
 import { runDirectProductionServer } from "./production-server.ts";
 
 describe("direct production server owner", () => {
+  it("uses shutdown timeouts loaded by project bootstrap", async () => {
+    const adapter = createMockAdapter();
+    let signalHandler: ((signal: "SIGINT" | "SIGTERM") => void | Promise<void>) | undefined;
+    let receivedTimeouts: [number | undefined, number | undefined] | undefined;
+
+    await runDirectProductionServer({
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(adapter),
+      bootstrap: (_projectDir, selectedAdapter) => {
+        // Project .env is loaded during bootstrap, after adapter detection.
+        selectedAdapter.env.set?.("SHUTDOWN_DRAIN_TIMEOUT_MS", "1234");
+        selectedAdapter.env.set?.("SHUTDOWN_CLEANUP_TIMEOUT_MS", "567");
+        return Promise.resolve({
+          adapter: selectedAdapter,
+          config: {},
+          usingFSAdapter: false,
+          extensionLoader: {} as BootstrapResult["extensionLoader"],
+          dispose: () => {},
+        });
+      },
+      startServer: () =>
+        Promise.resolve({
+          ready: Promise.resolve().then(() => {
+            signalHandler?.("SIGTERM");
+          }),
+          stop: () => Promise.resolve(),
+        }),
+      registerSignals: (handler) => {
+        signalHandler = handler;
+      },
+      gracefullyShutdown: (options) => {
+        receivedTimeouts = [options.drainTimeoutMs, options.cleanupTimeoutMs];
+        options.abort();
+        return Promise.resolve(true);
+      },
+      flush: () => Promise.resolve(),
+      captureError: () => {},
+      exit: () => {},
+    });
+
+    assertEquals(receivedTimeouts, [1234, 567]);
+  });
+
   it("handles a signal while startup initialization is still pending", async () => {
     const events: string[] = [];
     let signalHandler: ((signal: "SIGINT" | "SIGTERM") => void | Promise<void>) | undefined;
