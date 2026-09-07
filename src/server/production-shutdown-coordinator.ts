@@ -111,7 +111,7 @@ export function createProductionShutdownCoordinator(
     }
 
     try {
-      await options.flush();
+      await awaitBeforeDeadline(options.flush(), options.finalizationDeadlineMs?.());
     } catch (error) {
       notifyError(error, reason);
     }
@@ -176,9 +176,8 @@ export async function runProductionProcessOwner(
   const coordinator = createProductionShutdownCoordinator({
     shutdown: async (reason) => {
       serverAtShutdownStart = server;
-      // No admitted response can be drained without a returned server handle.
-      // Abort pending startup immediately so a late listener observes shutdown.
-      if (!serverAtShutdownStart) controller.abort();
+      // The listener can already be serving while an outer startup wrapper is
+      // still pending. The shutdown owner must drain before aborting it.
       await options.shutdown(reason, serverAtShutdownStart, () => controller.abort());
       // Startup may settle while shutdown is draining. Its handle was not part
       // of the initial cleanup snapshot, so stop it before telemetry flush/exit.
@@ -227,7 +226,9 @@ export async function runProductionProcessOwner(
       async (startedServer): Promise<StartupOutcome> => {
         server = ownServerStop(startedServer);
         try {
-          if (shutdownRequested) await awaitLateCleanup(server.stop());
+          if (shutdownRequested && controller.signal.aborted) {
+            await awaitLateCleanup(server.stop());
+          }
           await server.ready;
           if (!shutdownRequested) options.onReady?.();
           return { status: "ready" };

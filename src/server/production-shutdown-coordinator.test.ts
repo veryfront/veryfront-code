@@ -6,6 +6,88 @@ import {
 } from "./production-shutdown-coordinator.ts";
 
 describe("production shutdown coordinator", () => {
+  it("drains admitted work while the outer startup handle is still pending", async () => {
+    const events: string[] = [];
+    const startup = Promise.withResolvers<{ ready: Promise<void>; stop: () => Promise<void> }>();
+    const draining = Promise.withResolvers<void>();
+    const finishDrain = Promise.withResolvers<void>();
+    let signal: AbortSignal | undefined;
+    let requestShutdown: (() => void) | undefined;
+    const run = runProductionProcessOwner({
+      start: (options) => {
+        signal = options.signal;
+        return startup.promise;
+      },
+      shutdown: async (_reason, _server, abort) => {
+        events.push(signal?.aborted ? "aborted-before-drain" : "drain-start");
+        draining.resolve();
+        await finishDrain.promise;
+        events.push("drained");
+        abort();
+      },
+      registerSignals: (handler) => {
+        requestShutdown = () => handler("SIGTERM");
+      },
+      flush: () => Promise.resolve(),
+      exit: () => {
+        events.push("exit");
+      },
+    });
+    requestShutdown?.();
+    await draining.promise;
+    startup.resolve({
+      ready: Promise.resolve(),
+      stop: () => {
+        events.push("stop");
+        return Promise.resolve();
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    try {
+      assertEquals(events, ["drain-start"], "pending startup can already have active responses");
+    } finally {
+      finishDrain.resolve();
+      await run;
+    }
+    assertEquals(events, ["drain-start", "drained", "stop", "exit"]);
+  });
+
+  it("exits after an exhausted shutdown budget even if error flushing hangs", async () => {
+    const finishFlush = Promise.withResolvers<void>();
+    let exited = false;
+    let requestShutdown: (() => void) | undefined;
+    const run = runProductionProcessOwner({
+      start: () => new Promise(() => {}),
+      shutdown: () => Promise.resolve(),
+      shutdownTimeoutMs: 0,
+      registerSignals: (handler) => {
+        requestShutdown = () => handler("SIGTERM");
+      },
+      flush: () => finishFlush.promise,
+      exit: () => {
+        exited = true;
+      },
+    });
+    requestShutdown?.();
+    let observationTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const completed = await Promise.race([
+        run.then(() => true),
+        new Promise<boolean>((resolve) => {
+          observationTimer = setTimeout(() => resolve(false), 50);
+        }),
+      ]);
+      assertEquals(completed, true, "expired budget must not await the stuck reporter");
+      assertEquals(exited, true);
+    } finally {
+      if (observationTimer !== undefined) clearTimeout(observationTimer);
+      finishFlush.resolve();
+      await run;
+    }
+  });
+
   it("runs shutdown, flush, and exit once when memory and signals race", async () => {
     const events: string[] = [];
     const coordinator = createProductionShutdownCoordinator({
