@@ -14,7 +14,7 @@ import {
   readProjectDependencyVersions,
   resolveRequestedDependencyPinningSnapshot,
   withDependencyPinningSourceFileSystem,
-} from "./package-registry.ts";
+} from "#veryfront/transforms/esm/package-registry.ts";
 import type {
   DependencySnapshotRecord,
   DependencySnapshotStore,

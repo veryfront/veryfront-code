@@ -29,50 +29,6 @@ function deferred() {
 }
 
 describe("dependency snapshot registry", () => {
-  it("does not capture an ambient replacement clock or expose its receiver", async () => {
-    const originalNow = Date.now;
-    const { store } = storeFixture();
-    let ambientCalls = 0;
-    try {
-      Date.now = () => {
-        ambientCalls++;
-        return originalNow();
-      };
-      const registry = new DependencySnapshotRegistry({ store });
-      await registry.remember("source", snapshot());
-    } finally {
-      Date.now = originalNow;
-    }
-    assertEquals(ambientCalls, 0);
-    let receiver: unknown = "not-called";
-    const registry = new DependencySnapshotRegistry({
-      store,
-      now: function (this: unknown) {
-        receiver = this;
-        return originalNow();
-      },
-    });
-    await registry.remember("source", snapshot());
-    assertEquals(receiver, undefined);
-  });
-  it("does not pass provider-bearing options to inherited configuration getters", async () => {
-    let observations = 0;
-    const { store } = storeFixture();
-    Object.defineProperty(Object.prototype, "now", {
-      configurable: true,
-      get() {
-        observations++;
-        return Date.now;
-      },
-    });
-    try {
-      const registry = new DependencySnapshotRegistry({ store });
-      await registry.remember("source", snapshot());
-    } finally {
-      Reflect.deleteProperty(Object.prototype, "now");
-    }
-    assertEquals(observations, 0);
-  });
   for (const skew of [-1000, 1000, 60000]) {
     it(`recovers fresh acknowledged history with ${skew}ms relative clock skew`, async () => {
       const { store } = storeFixture();

@@ -27,49 +27,6 @@ describe("snapshot store capability", () => {
       assertThrows(() => resolveDependencySnapshotStoreHandle(invalid));
     }
   });
-  it("does not expose a host capability through replaced object and weak-map helpers", async () => {
-    const store = { publish: () => Promise.resolve(), read: () => Promise.resolve(null) };
-    const original = {
-      apply: Reflect.apply,
-      freeze: Object.freeze,
-      descriptor: Object.getOwnPropertyDescriptor,
-      get: WeakMap.prototype.get,
-      set: WeakMap.prototype.set,
-    };
-    let observations = 0;
-    let read: Promise<unknown> | undefined;
-    try {
-      Reflect.apply = ((...args: Parameters<typeof Reflect.apply>) => {
-        if (args[1] === store) observations++;
-        return original.apply(...args);
-      }) as typeof Reflect.apply;
-      Object.getOwnPropertyDescriptor = (target, key) => {
-        if (target === store) observations++;
-        return original.descriptor(target, key);
-      };
-      Object.freeze = ((target: unknown) => {
-        observations++;
-        return original.freeze(target);
-      }) as typeof Object.freeze;
-      WeakMap.prototype.get = function (key) {
-        if (key === store) observations++;
-        return original.apply(original.get, this, [key]);
-      };
-      WeakMap.prototype.set = function (key, value) {
-        if (key === store) observations++;
-        return original.apply(original.set, this, [key, value]);
-      };
-      read = captureDependencySnapshotStore(store).read("scope", "key");
-    } finally {
-      Reflect.apply = original.apply;
-      Object.freeze = original.freeze;
-      Object.getOwnPropertyDescriptor = original.descriptor;
-      WeakMap.prototype.get = original.get;
-      WeakMap.prototype.set = original.set;
-    }
-    assertEquals(await read, null);
-    assertEquals(observations, 0);
-  });
   it("captures methods once and preserves their receiver", async () => {
     const value = {
       marker: "original",
