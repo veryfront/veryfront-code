@@ -186,6 +186,21 @@ export interface StartProductionServerOptions extends ServerOptions {
   onMemoryRecycle?: (event: MemoryRecycleEvent) => void | Promise<void>;
 }
 
+interface DirectProductionServerDependencies {
+  flush: () => Promise<unknown>;
+  captureError: (error: unknown, context: { boundary: string }) => void;
+  initializeErrorReporting?: () => Promise<unknown>;
+  initializeRuntime?: () => Promise<void>;
+  getAdapter?: () => Promise<RuntimeAdapter>;
+  bootstrap?: typeof bootstrapProd;
+  startServer?: typeof startProductionServer;
+  gracefullyShutdown?: typeof gracefullyShutdownProductionServer;
+  exit?: (code: number) => void;
+  registerSignals?: (
+    handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
+  ) => void | (() => void);
+}
+
 /** Starts production server. */
 export function startProductionServer(
   options: StartProductionServerOptions,
@@ -385,13 +400,97 @@ export function startProductionServer(
   );
 }
 
+/** Own the direct production entry from initialization through process exit. */
+export async function runDirectProductionServer(
+  dependencies: DirectProductionServerDependencies,
+): Promise<void> {
+  let bootstrap: BootstrapResult | undefined;
+  let drainTimeoutMs: number | undefined;
+
+  await runProductionProcessOwner({
+    start: async ({ signal, onMemoryRecycle }) => {
+      await dependencies.initializeErrorReporting?.();
+      if (dependencies.initializeRuntime) {
+        await dependencies.initializeRuntime();
+      } else {
+        const [otlpResult, cacheResult] = await Promise.allSettled([
+          initializeOTLPWithApis(),
+          initializeDistributedCaches(defaultDistributedCacheInitializers),
+        ]);
+
+        if (otlpResult.status === "rejected") {
+          logger.warn("OTLP initialization failed, continuing without tracing", {
+            error: otlpResult.reason,
+          });
+        }
+        if (cacheResult.status === "rejected") {
+          logger.warn("Distributed cache initialization failed, using memory fallback", {
+            error: cacheResult.reason,
+          });
+        }
+      }
+
+      const adapter = await (dependencies.getAdapter ? dependencies.getAdapter() : runtime.get());
+      const projectDir = cwd();
+      const port = Number(
+        adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
+      );
+      const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
+      bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
+      drainTimeoutMs = parseShutdownDrainTimeoutMs(
+        adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+      );
+
+      return await (dependencies.startServer ?? startProductionServer)({
+        projectDir,
+        port,
+        bindAddress,
+        debug: isDebugEnabled(adapter.env),
+        adapter,
+        bootstrapResult: bootstrap,
+        signal,
+        onMemoryRecycle,
+      });
+    },
+    shutdown: async (reason, server, abort) => {
+      await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
+        signal: reason,
+        drainTimeoutMs,
+        abort,
+        dispose: bootstrap?.dispose,
+        stop: server?.stop ?? (() => Promise.resolve()),
+        logger,
+      });
+    },
+    flush: dependencies.flush,
+    exit: dependencies.exit ?? exit,
+    registerSignals: dependencies.registerSignals ?? ((handler) => {
+      const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));
+      try {
+        const disposeTerminate = onSignal("SIGTERM", () => handler("SIGTERM"));
+        return () => {
+          disposeInterrupt();
+          disposeTerminate();
+        };
+      } catch (error) {
+        disposeInterrupt();
+        throw error;
+      }
+    }),
+    onReady: () => logger.info("Server fully initialized, ready to accept traffic"),
+    onError: (error, reason) => {
+      dependencies.captureError(error, { boundary: "process.shutdown" });
+      logger.warn("Unhandled error while shutting down production server", { reason, error });
+    },
+  });
+}
+
 if (import.meta.main) {
   const {
     captureApplicationError,
     flushApplicationErrors,
   } = await import("#veryfront/observability/application-errors.ts");
   const { initializeSentryFromEnv } = await import("#veryfront/observability/sentry.ts");
-  await initializeSentryFromEnv();
 
   // Register global error handlers FIRST to prevent process crashes from application errors
   // This ensures the renderer stays up even if user code throws unhandled exceptions
@@ -432,86 +531,10 @@ if (import.meta.main) {
   });
 
   try {
-    // Initialize OpenTelemetry tracing and distributed caches in parallel
-    // Both can fail independently without blocking the other
-    // Backend: API (production) > Redis (local dev) > Memory (fallback)
-    const [otlpResult, cacheResult] = await Promise.allSettled([
-      initializeOTLPWithApis(),
-      initializeDistributedCaches(defaultDistributedCacheInitializers),
-    ]);
-
-    if (otlpResult.status === "rejected") {
-      logger.warn("OTLP initialization failed, continuing without tracing", {
-        error: otlpResult.reason,
-      });
-    }
-
-    if (cacheResult.status === "rejected") {
-      logger.warn("Distributed cache initialization failed, using memory fallback", {
-        error: cacheResult.reason,
-      });
-    }
-
-    const adapter = await runtime.get();
-
-    const projectDir = cwd();
-    const port = Number(
-      adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
-    );
-    // BIND_ADDRESS: 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
-    // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
-    const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
-
-    const bootstrap = await bootstrapProd(projectDir, adapter);
-
-    // Graceful shutdown for direct CLI execution (e.g., deno run)
-    // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
-    const drainTimeoutMs = parseShutdownDrainTimeoutMs(
-      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
-    );
-
-    await runProductionProcessOwner({
-      start: ({ signal, onMemoryRecycle }) =>
-        startProductionServer({
-          projectDir,
-          port,
-          bindAddress,
-          debug: isDebugEnabled(adapter.env),
-          adapter, // Pass adapter to avoid re-detection
-          bootstrapResult: bootstrap,
-          signal,
-          onMemoryRecycle,
-        }),
-      shutdown: async (reason, server, abort) => {
-        await gracefullyShutdownProductionServer({
-          signal: reason,
-          drainTimeoutMs,
-          abort,
-          dispose: bootstrap.dispose,
-          stop: server?.stop ?? (() => Promise.resolve()),
-          logger,
-        });
-      },
+    await runDirectProductionServer({
       flush: flushApplicationErrors,
-      exit,
-      registerSignals: (handler) => {
-        const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));
-        try {
-          const disposeTerminate = onSignal("SIGTERM", () => handler("SIGTERM"));
-          return () => {
-            disposeInterrupt();
-            disposeTerminate();
-          };
-        } catch (error) {
-          disposeInterrupt();
-          throw error;
-        }
-      },
-      onReady: () => logger.info("Server fully initialized, ready to accept traffic"),
-      onError: (error, reason) => {
-        captureApplicationError(error, { boundary: "process.shutdown" });
-        logger.warn("Unhandled error while shutting down production server", { reason, error });
-      },
+      captureError: captureApplicationError,
+      initializeErrorReporting: initializeSentryFromEnv,
     });
   } catch (e) {
     captureApplicationError(e, { boundary: "process.startup" });
