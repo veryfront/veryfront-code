@@ -164,6 +164,7 @@ class Session implements HostedExecutorSession {
   #allocationAttempted = false;
   #releaseAttempted = false;
   #releaseConfirmed = false;
+  #releaseReason: "completed" | "canceled" = "canceled";
   #reason = "canceled";
   #failure?: Error;
   #cleanup?: AbortController;
@@ -505,6 +506,7 @@ class Session implements HostedExecutorSession {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#reason = reason;
+    this.#releaseReason = reason === "completed" ? "completed" : "canceled";
     this.#failure = new Error(`Executor session ${reason}`);
     this.#ready.reject(this.#failure);
     this.#preparationSignal?.removeEventListener("abort", this.#preparationAbort);
@@ -541,7 +543,7 @@ class Session implements HostedExecutorSession {
       () =>
         this.#allocator.release(
           binding,
-          this.#reason === "completed" ? "completed" : "canceled",
+          this.#releaseReason,
           signal,
         ),
       (value) => {

@@ -199,6 +199,59 @@ describe("hosted executor session", () => {
     assertEquals(f.time.pendingWaitCount, 0);
   });
 
+  for (const reason of ["completed", "canceled"] as const) {
+    for (const failure of ["operations", "transport"] as const) {
+      it(`releases a ${reason} session once when ${failure} cleanup throws`, async () => {
+        const f = fixture();
+        if (failure === "operations") {
+          const createOperations = f.options.createOperations;
+          f.options.createOperations = (...args) => {
+            const grant = createOperations(...args);
+            return {
+              operations: grant.operations,
+              revoke() {
+                grant.revoke();
+                throw new Error("Synthetic private revocation detail");
+              },
+            };
+          };
+        } else {
+          const connectTransport = f.options.connectTransport;
+          f.options.connectTransport = async (input) => {
+            const transport = await connectTransport(input);
+            return {
+              ...transport,
+              close() {
+                transport.close();
+                throw new Error("Synthetic private transport detail");
+              },
+            };
+          };
+        }
+        const session = f.start();
+        await session.ready;
+        const closed = await session.close(reason);
+        await session.settled;
+        await f.peer!.settled;
+        assertEquals(
+          await session.close(reason === "completed" ? "canceled" : "completed"),
+          closed,
+        );
+        assertEquals(closed, {
+          reason: failure === "operations"
+            ? "operation-revocation-failed"
+            : "transport-cleanup-failed",
+          release: "released",
+        });
+        assertEquals(f.calls.filter((call) => call.startsWith("release:")), [`release:${reason}`]);
+        assertEquals(f.calls.filter((call) => call === "revoke").length, 1);
+        assertEquals(f.calls.filter((call) => call === "transport-close").length, 1);
+        assertEquals(session.signal.aborted, true);
+        assertEquals(f.time.pendingWaitCount, 0);
+      });
+    }
+  }
+
   it("detaches preparation cancellation only on explicit execution acceptance", async () => {
     const preparation = new AbortController();
     const execution = new AbortController();
