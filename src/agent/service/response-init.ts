@@ -4,9 +4,15 @@ const ObjectHasOwn = Object.hasOwn;
 const NativeTypeError = TypeError;
 const ResponseInitFields = ["headers", "status", "statusText"] as const;
 
+interface ResponseInitPrototype {
+  headers?: unknown;
+  status?: unknown;
+  statusText?: unknown;
+}
+
 /** Build explicit response options after inspecting the native dictionary's prototype. */
 export function buildResponseInit(
-  objectPrototype: object,
+  objectPrototype: ResponseInitPrototype,
   status?: number,
   statusText?: string,
 ): ResponseInit {
