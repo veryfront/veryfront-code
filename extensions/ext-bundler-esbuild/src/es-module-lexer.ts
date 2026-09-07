@@ -31,7 +31,7 @@ export class EsModuleLexer implements ModuleLexer {
   }
 
   parse(code: string): readonly ImportSpecifier[] {
-    const [imports] = parse(code);
+    const imports = parse(code)[0];
     return imports as readonly ImportSpecifier[];
   }
 }

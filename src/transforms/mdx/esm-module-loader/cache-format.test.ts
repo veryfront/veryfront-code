@@ -9,6 +9,7 @@ import {
   buildMdxEsmPathCacheKey,
   buildMdxEsmTransformCacheKey,
   buildMdxJsxCacheFileName,
+  buildMdxJsxCacheFileNamePrefix,
   FRAMEWORK_VF_MODULE_CACHE_NAMESPACE,
   MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE,
   MDX_ESM_CACHE_NAMESPACE,
@@ -237,6 +238,23 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       );
       assertEquals(name.startsWith(`jsx-${MDX_ESM_CACHE_NAMESPACE}-`), true);
       assertEquals(name.endsWith(".mjs"), true);
+    });
+
+    it("groups every content variant of one source path under a shared prefix", () => {
+      const path = "fixtures/project/Button.tsx";
+      const prefix = buildMdxJsxCacheFileNamePrefix(path);
+      const first = buildMdxJsxCacheFileName(path, "export const A = 1;");
+      const second = buildMdxJsxCacheFileName(path, "export const A = 2;");
+
+      assertEquals(first.startsWith(prefix), true);
+      assertEquals(second.startsWith(prefix), true);
+      assertEquals(first !== second, true);
+      assertEquals(
+        buildMdxJsxCacheFileName("fixtures/project/Other.tsx", "export const A = 1;")
+          .startsWith(prefix),
+        false,
+        "a different source path must not share the prefix its variants are pruned by",
+      );
     });
 
     it("derives distinct names from distinct paths and source contents", () => {

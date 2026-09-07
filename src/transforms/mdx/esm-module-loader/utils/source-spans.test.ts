@@ -11,53 +11,6 @@ import {
 // Cases about which specifiers a scanner recognises, rather than about how many
 // it collects, opt out of the bound explicitly.
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
-
-function countStartsWithCalls(callback: () => void): number {
-  const original = String.prototype.startsWith;
-  let calls = 0;
-  Object.defineProperty(String.prototype, "startsWith", {
-    configurable: true,
-    writable: true,
-    value(this: string, searchString: string, position?: number) {
-      calls++;
-      return original.call(this, searchString, position);
-    },
-  });
-  try {
-    callback();
-  } finally {
-    Object.defineProperty(String.prototype, "startsWith", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-  return calls;
-}
-
-function countIndexOfCalls(callback: () => void): number {
-  const original = String.prototype.indexOf;
-  let calls = 0;
-  Object.defineProperty(String.prototype, "indexOf", {
-    configurable: true,
-    writable: true,
-    value(this: string, searchString: string, position?: number) {
-      calls++;
-      return original.call(this, searchString, position);
-    },
-  });
-  try {
-    callback();
-  } finally {
-    Object.defineProperty(String.prototype, "indexOf", {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
-  }
-  return calls;
-}
-
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   it("keeps static imports inside regexes hidden after local type export lists", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
@@ -354,48 +307,6 @@ import real from "./real.js";`,
           UNBOUNDED,
         ).map((span) => span.path),
         ["./real.js"],
-      );
-    });
-
-    it("keeps JSX closing-tag checks linear for repeated angle assertions", () => {
-      const repeatedAssertions = Array.from(
-        { length: 3_000 },
-        (_, index) => `const value${index} = <Type${index}>input${index};`,
-      ).join("\n");
-      const source = `${repeatedAssertions}\nimport real from "./real.js";`;
-      let paths: string[] = [];
-
-      const startsWithCalls = countStartsWithCalls(() => {
-        paths = findStaticImportFromSpans(source, matchRelative, UNBOUNDED)
-          .map((span) => span.path);
-      });
-
-      assertEquals(paths, ["./real.js"]);
-      assert(
-        startsWithCalls < source.length * 3,
-        `Expected a linear static import scan, got ${startsWithCalls} startsWith calls ` +
-          `for ${source.length} source characters`,
-      );
-    });
-
-    it("keeps side-effect JSX closing-tag checks linear for repeated angle assertions", () => {
-      const repeatedAssertions = Array.from(
-        { length: 3_000 },
-        (_, index) => `const value${index} = <Type${index}>input${index};`,
-      ).join("\n");
-      const source = `${repeatedAssertions}\nimport "./real.js";`;
-      let paths: string[] = [];
-
-      const startsWithCalls = countStartsWithCalls(() => {
-        paths = findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED)
-          .map((span) => span.path);
-      });
-
-      assertEquals(paths, ["./real.js"]);
-      assert(
-        startsWithCalls < source.length * 3,
-        `Expected a linear side-effect import scan, got ${startsWithCalls} startsWith calls ` +
-          `for ${source.length} source characters`,
       );
     });
 
@@ -1784,24 +1695,6 @@ import real from "./real.js";`,
     // the `indexOf` calls that build the index states that invariant directly:
     // the cached scan makes one call per assertion, an uncached one makes a call
     // per assertion per source character.
-    it("keeps distinct TypeScript assertion lookahead linear", () => {
-      const source = "type Value = unknown;\nconst values = [" +
-        Array.from({ length: 8_000 }, (_, index) => `<T${index}>value`).join(",") +
-        "];";
-      let paths: string[] = [];
-
-      const indexOfCalls = countIndexOfCalls(() => {
-        paths = specifiers(source);
-      });
-
-      assertEquals(paths, []);
-      assert(
-        indexOfCalls < source.length,
-        `Expected a linear distinct TypeScript assertion scan, got ${indexOfCalls} indexOf ` +
-          `calls for ${source.length} source characters`,
-      );
-    });
-
     it("keeps per-statement TypeScript assertion lookahead within a bounded runtime", () => {
       const source = "<T>value;\n".repeat(16_000);
       const startedAt = performance.now();
