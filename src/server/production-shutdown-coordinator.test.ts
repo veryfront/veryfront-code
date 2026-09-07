@@ -360,4 +360,32 @@ describe("production shutdown coordinator", () => {
     ]);
     releaseStop?.();
   });
+
+  it("stops an acquired server before propagating readiness failure", async () => {
+    const events: string[] = [];
+    const readinessError = new Error("readiness failed");
+    let caught: unknown;
+
+    try {
+      await runProductionProcessOwner({
+        start: () =>
+          Promise.resolve({
+            ready: Promise.reject(readinessError),
+            stop: () => {
+              events.push("stop");
+              return Promise.resolve();
+            },
+          }),
+        shutdown: () => Promise.resolve(),
+        flush: () => Promise.resolve(),
+        exit: () => events.push("exit"),
+        registerSignals: () => () => events.push("signals-disposed"),
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, readinessError);
+    assertEquals(events, ["stop", "signals-disposed"]);
+  });
 });

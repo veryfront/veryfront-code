@@ -180,7 +180,14 @@ export async function runProductionProcessOwner(
           if (!shutdownRequested) options.onReady?.();
           return { status: "ready" };
         } catch (error) {
-          return shutdownRequested ? { status: "shutdown" } : { status: "failed", error };
+          if (shutdownRequested) return { status: "shutdown" };
+          try {
+            await server.stop();
+          } catch {
+            // Preserve the readiness failure as the startup result. The stop
+            // attempt still owns every resource it can release.
+          }
+          return { status: "failed", error };
         }
       },
       (error): StartupOutcome =>

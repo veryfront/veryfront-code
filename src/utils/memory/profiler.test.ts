@@ -495,11 +495,12 @@ describe("memory/profiler", () => {
 
     it("rejects misspelled enabled values instead of silently disabling recycle", () => {
       for (const value of ["TRUE", "1", "yes"]) {
-        assertThrows(
+        const error = assertThrows(
           () => getMemoryRecycleConfig(envOf({ MEMORY_RECYCLE_ENABLED: value })),
           Error,
           'must be "true" or "false"',
         );
+        assertEquals((error as Error & { slug?: string }).slug, "invalid-argument");
       }
     });
 

@@ -6,6 +6,7 @@
  **************************/
 
 import { rendererLogger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   getArgs,
   getEnv,
@@ -328,7 +329,9 @@ function parseRequiredPositiveNumber(raw: string | null | undefined, name: strin
   const value = raw?.trim() ?? "";
   const parsed = Number(value);
   if (value === "" || !Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive number when MEMORY_RECYCLE_ENABLED=true`);
+    throw INVALID_ARGUMENT.create({
+      detail: `${name} must be a positive number when MEMORY_RECYCLE_ENABLED=true`,
+    });
   }
   return parsed;
 }
@@ -340,7 +343,9 @@ export function getMemoryRecycleConfig(env: MemoryMonitoringEnv): MemoryRecycleC
     return { enabled: false };
   }
   if (enabled !== "true") {
-    throw new Error('MEMORY_RECYCLE_ENABLED must be "true" or "false" when set');
+    throw INVALID_ARGUMENT.create({
+      detail: 'MEMORY_RECYCLE_ENABLED must be "true" or "false" when set',
+    });
   }
 
   const rssThresholdMB = parseRequiredPositiveNumber(
@@ -352,9 +357,10 @@ export function getMemoryRecycleConfig(env: MemoryMonitoringEnv): MemoryRecycleC
     "MEMORY_RECYCLE_CONSECUTIVE_SAMPLES",
   );
   if (!Number.isInteger(consecutiveSamples)) {
-    throw new Error(
-      "MEMORY_RECYCLE_CONSECUTIVE_SAMPLES must be a positive integer when MEMORY_RECYCLE_ENABLED=true",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "MEMORY_RECYCLE_CONSECUTIVE_SAMPLES must be a positive integer when MEMORY_RECYCLE_ENABLED=true",
+    });
   }
 
   return { enabled: true, rssThresholdMB, consecutiveSamples };
