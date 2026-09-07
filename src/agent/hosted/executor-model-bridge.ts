@@ -1,5 +1,6 @@
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
+import { executorModelFailure, throwExecutorModelFailure } from "./executor-model-errors.ts";
 import type {
   ExecutorChannel,
   ExecutorOperation,
@@ -124,7 +125,11 @@ export function createExecutorModelBroker(options: {
       async handle(input, context) {
         const { modelId } = parseExecutorModelData(getExecutorModelRequestSchema(), input);
         context.signal.throwIfAborted();
-        await getModel(modelId).prepare?.(context.signal);
+        try {
+          await getModel(modelId).prepare?.(context.signal);
+        } catch (error) {
+          return modelFailureOrThrow(error, context);
+        }
         return null;
       },
     }],
@@ -154,13 +159,15 @@ export function createExecutorModelBroker(options: {
       mode: "unary",
       async handle(input, context) {
         const call = parseCall(input, context);
-        const permit = await authorizeDispatch(call, "generate", context);
-        context.signal.throwIfAborted();
-        permit?.assertActive();
-        const result = await call.model.doGenerate({
-          ...call.options,
-          abortSignal: context.signal,
-        });
+        let result;
+        try {
+          const permit = await authorizeDispatch(call, "generate", context);
+          context.signal.throwIfAborted();
+          permit?.assertActive();
+          result = await call.model.doGenerate({ ...call.options, abortSignal: context.signal });
+        } catch (error) {
+          return modelFailureOrThrow(error, context);
+        }
         // Only the neutral result fields leave the broker. Native request and
         // response objects, headers, and transport diagnostics are never copied.
         const data = executorModelJson({
@@ -179,10 +186,16 @@ export function createExecutorModelBroker(options: {
       mode: "stream",
       async *handle(input, context) {
         const call = parseCall(input, context);
-        const permit = await authorizeDispatch(call, "stream", context);
-        context.signal.throwIfAborted();
-        permit?.assertActive();
-        const result = await call.model.doStream({ ...call.options, abortSignal: context.signal });
+        let result;
+        try {
+          const permit = await authorizeDispatch(call, "stream", context);
+          context.signal.throwIfAborted();
+          permit?.assertActive();
+          result = await call.model.doStream({ ...call.options, abortSignal: context.signal });
+        } catch (error) {
+          yield modelFailureOrThrow(error, context);
+          return;
+        }
         const reader = result.stream.getReader();
         // Later reader.cancel() calls do not wait for the first call's provider cleanup.
         let cancellation: Promise<void> | undefined;
@@ -214,10 +227,12 @@ export function createExecutorModelBroker(options: {
               complete = true;
               return;
             }
+            throwProviderStreamError(next.value);
             const value = executorModelJson(next.value);
-            rejectStreamError(value);
             yield { type: "chunk", value };
           }
+        } catch (error) {
+          yield modelFailureOrThrow(error, context);
         } finally {
           context.signal.removeEventListener("abort", cancel);
           if (!complete) await cancel().catch(() => {});
@@ -244,16 +259,34 @@ function modelMetadata(id: string, model: ModelRuntime) {
   };
 }
 
-function rejectStreamError(value: JsonValue, rawEnvelope = false): void {
+function modelFailureOrThrow(error: unknown, context: ExecutorOperationContext) {
+  context.signal.throwIfAborted();
+  const failure = executorModelFailure(error);
+  if (failure) return failure;
+  throw new TypeError("Managed model operation failed");
+}
+
+function throwProviderStreamError(value: unknown, rawEnvelope = false): void {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return;
-  // First-party provider-tool failures are normalized results; inference can
-  // continue with text and final usage. Raw provider errors remain fatal.
+  const type = Object.getOwnPropertyDescriptor(value, "type")?.value;
+  // Normalized provider-tool failures are recoverable results, never transport failures.
+  if (type === "tool-error" && !rawEnvelope) return;
+  const error = Object.getOwnPropertyDescriptor(value, "error");
+  if (type === "error" || error) throw error && "value" in error ? error.value : value;
+  const rawValue = Object.getOwnPropertyDescriptor(value, "rawValue")?.value;
+  if (type === "raw" && rawValue !== undefined) throwProviderStreamError(rawValue, true);
+}
+
+/** Received chunks cannot classify failures or expose peer-supplied diagnostics. */
+function rejectReceivedStreamError(value: JsonValue, rawEnvelope = false): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return;
   if (value.type === "tool-error" && !rawEnvelope) return;
   if (value.type === "error" || Object.hasOwn(value, "error")) {
-    throw new TypeError("Managed model stream failed");
+    throw new TypeError("Invalid managed model stream chunk");
   }
-  // Raw stream support still must not expose a provider's error envelope.
-  if (value.type === "raw" && value.rawValue !== undefined) rejectStreamError(value.rawValue, true);
+  if (value.type === "raw" && value.rawValue !== undefined) {
+    rejectReceivedStreamError(value.rawValue, true);
+  }
 }
 
 /**
@@ -357,12 +390,14 @@ function createExecutorModelRuntime(
       const result = await channel.request("model.prepare", { modelId: id }, {
         signal: combinedSignal,
       });
+      throwExecutorModelFailure(result);
       if (result !== null) throw new TypeError("Invalid managed model preparation result");
     },
     async doGenerate(options: ModelRuntimeCallOptions) {
       const call = makeCall(options);
       assertActive();
       const result = await channel.request("model.generate", call.input, { signal: call.signal });
+      throwExecutorModelFailure(result);
       return parseExecutorModelData(getExecutorModelGenerateResultSchema(), result);
     },
     async doStream(options: ModelRuntimeCallOptions) {
@@ -373,6 +408,7 @@ function createExecutorModelRuntime(
         const first = await iterator.next();
         if (first.done) throw new TypeError("Managed model stream start is missing");
         const start = parseExecutorModelData(getExecutorModelStreamFrameSchema(), first.value);
+        throwExecutorModelFailure(start);
         if (start.type !== "start") throw new TypeError("Invalid managed model stream start");
         const stream = new ReadableStream<unknown>({
           async pull(controller) {
@@ -383,8 +419,9 @@ function createExecutorModelRuntime(
                 return;
               }
               const frame = parseExecutorModelData(getExecutorModelStreamFrameSchema(), next.value);
+              throwExecutorModelFailure(frame);
               if (frame.type !== "chunk") throw new TypeError("Invalid managed model stream chunk");
-              rejectStreamError(frame.value);
+              rejectReceivedStreamError(frame.value);
               controller.enqueue(frame.value);
             } catch (error) {
               controller.error(error);
