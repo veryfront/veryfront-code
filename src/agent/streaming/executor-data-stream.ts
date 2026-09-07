@@ -66,8 +66,7 @@ export async function* readExecutorDataEvents(
             const block = decoder.decode(pending.subarray(0, pendingBytes), { stream: true });
             pendingBytes = 0;
             const event = parseBlock(block.slice(0, -2));
-            terminal ||= event.type === "message-finish" || event.type === "finish" ||
-              event.type === "error";
+            terminal ||= event.type === "message-finish" || event.type === "error";
             yield event;
           } else if (pendingBytes > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES + (byte === 10 ? 1 : 0)) {
             throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
