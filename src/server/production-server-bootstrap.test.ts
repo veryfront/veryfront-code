@@ -43,6 +43,43 @@ function createBootstrap(adapter: RuntimeAdapter, dispose: () => void): Bootstra
 }
 
 describe("production server bootstrap ownership", () => {
+  for (const enabled of [true, false]) {
+    it(`uses supplied bootstrap recycle policy ${enabled} over the obsolete parent policy`, async () => {
+      const parentAdapter = createAdapter();
+      const finalAdapter = createAdapter();
+      for (
+        const [adapter, policyEnabled] of [[parentAdapter, !enabled], [
+          finalAdapter,
+          enabled,
+        ]] as const
+      ) {
+        adapter.env.set?.("MEMORY_RECYCLE_ENABLED", String(policyEnabled));
+        adapter.env.set?.("MEMORY_RECYCLE_RSS_THRESHOLD_MB", "1024");
+        adapter.env.set?.("MEMORY_RECYCLE_CONSECUTIVE_SAMPLES", "2");
+      }
+      let disposeCalls = 0;
+      const bootstrapResult = createBootstrap(finalAdapter, () => {
+        disposeCalls++;
+      });
+      const server = await startProductionServerWithDependencies({
+        projectDir: "/app",
+        port: 0,
+        adapter: parentAdapter,
+        bootstrapResult,
+        unhandledRejectionGuard: false,
+        onMemoryRecycle: () => {},
+      }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) });
+      try {
+        assertEquals(getMemoryMonitoringState().active, enabled);
+      } finally {
+        await server.stop();
+        stopMemoryMonitoring();
+        assertEquals(disposeCalls, 0, "supplied bootstrap remains caller-owned");
+        await bootstrapResult.dispose?.();
+      }
+    });
+  }
+
   it("loads a recycle policy introduced by internally owned bootstrap", async () => {
     const adapter = createAdapter();
     const time = new FakeTime();

@@ -7,6 +7,72 @@ import {
 } from "./production-shutdown-coordinator.ts";
 
 describe("production shutdown coordinator", () => {
+  it("bounds standalone shutdown by its finalization deadline", async () => {
+    const finishShutdown = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const coordinator = createProductionShutdownCoordinator({
+      shutdown: () => {
+        events.push("shutdown");
+        return finishShutdown.promise;
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      finalizationDeadlineMs: () => 0,
+      exit: () => events.push("exit"),
+    });
+
+    coordinator.request("SIGTERM");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        coordinator.completed.then(() => "completed"),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("still waiting"), 50);
+        }),
+      ]);
+      assertEquals(outcome, "completed");
+      assertEquals(events, ["shutdown", "flush", "exit"]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      finishShutdown.resolve();
+      await coordinator.completed;
+    }
+  });
+
+  it("finishes standalone shutdown before flushing when time remains", async () => {
+    const finishShutdown = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const finalizationDeadlineMs = Date.now() + 1_000;
+    let deadlineReads = 0;
+    const coordinator = createProductionShutdownCoordinator({
+      shutdown: async () => {
+        events.push("shutdown");
+        await finishShutdown.promise;
+        events.push("drained");
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      finalizationDeadlineMs: () => {
+        deadlineReads++;
+        return finalizationDeadlineMs;
+      },
+      exit: () => events.push("exit"),
+    });
+
+    coordinator.request("SIGTERM");
+    await Promise.resolve();
+    assertEquals(events, ["shutdown"]);
+
+    finishShutdown.resolve();
+    await coordinator.completed;
+    assertEquals(deadlineReads, 1);
+    assertEquals(events, ["shutdown", "drained", "flush", "exit"]);
+  });
+
   it("bounds a stalled consumer shutdown and aborts pending startup at the deadline", async () => {
     const finishShutdown = Promise.withResolvers<void>();
     let signal: AbortSignal | undefined;
@@ -395,7 +461,7 @@ describe("production shutdown coordinator", () => {
     requestSignal?.();
     await run;
 
-    assertEquals(events, ["shutdown", "stop-late-server", "flush", "exit:0"]);
+    assertEquals(events, ["shutdown", "flush", "stop-late-server", "exit:0"]);
   });
 
   it("awaits a server acquired during flush before exiting", async () => {
@@ -613,5 +679,75 @@ describe("production shutdown coordinator", () => {
 
     assertEquals(calls, 3);
     assertEquals(events, ["exit:0"]);
+  });
+
+  it("joins late server cleanup when a custom finalizer remains active", async () => {
+    const events: string[] = [];
+    const startup = Promise.withResolvers<{
+      ready: Promise<void>;
+      stop: () => Promise<void>;
+    }>();
+    const stopStarted = Promise.withResolvers<void>();
+    const releaseStop = Promise.withResolvers<void>();
+    let requestSignal: (() => void) | undefined;
+    let finalizationPass = 0;
+    let finalizationErrors = 0;
+
+    const run = runProductionProcessOwner({
+      start: () => startup.promise,
+      shutdown: (_reason, _server, abort) => {
+        abort();
+        return Promise.resolve();
+      },
+      flush: () => Promise.resolve(),
+      finalizeBeforeExit: () => {
+        finalizationPass++;
+        events.push(`custom:${finalizationPass}`);
+        if (finalizationPass === 1) {
+          return Promise.reject(new Error("custom finalizer rejected"));
+        }
+        if (finalizationPass === 2) {
+          throw new Error("custom finalizer threw");
+        }
+        if (finalizationPass === 3) {
+          startup.resolve({
+            ready: Promise.resolve(),
+            stop: () => {
+              events.push("stop-start");
+              stopStarted.resolve();
+              return releaseStop.promise.then(() => {
+                events.push("stop-done");
+              });
+            },
+          });
+        }
+        return Promise.resolve();
+      },
+      exit: () => events.push("exit"),
+      onError: () => finalizationErrors++,
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+    });
+
+    requestSignal?.();
+    await stopStarted.promise;
+    const beforeRelease = await Promise.race([
+      run.then(() => "completed"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("waiting"), 0)),
+    ]);
+    assertEquals(beforeRelease, "waiting");
+
+    releaseStop.resolve();
+    await run;
+    assertEquals(finalizationErrors, 2);
+    assertEquals(events, [
+      "custom:1",
+      "custom:2",
+      "custom:3",
+      "stop-start",
+      "stop-done",
+      "exit",
+    ]);
   });
 });

@@ -254,7 +254,7 @@ export function startProductionServerWithDependencies(
         localProjects,
       } = options;
 
-      const baseAdapter = options.adapter ?? (await runtime.get());
+      const baseAdapter = suppliedBootstrap?.adapter ?? options.adapter ?? (await runtime.get());
       let initialOnRecycle = options.onMemoryRecycle;
       if (!suppliedBootstrap && initialOnRecycle) {
         try {

@@ -8,6 +8,7 @@ export interface ProductionShutdownCoordinatorOptions {
   flush: () => Promise<unknown>;
   beforeExit?: () => Promise<unknown>;
   finalizeBeforeExit?: () => Promise<unknown> | undefined;
+  /** Shared absolute deadline for shutdown, flush, and finalization steps. */
   finalizationDeadlineMs?: () => number | undefined;
   exit: (code: number) => void;
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
@@ -106,35 +107,43 @@ export function createProductionShutdownCoordinator(
 
   const completed = (async () => {
     const reason = await reasonPromise;
+    const finalizationDeadlineMs = options.finalizationDeadlineMs?.();
+    const awaitStep = (result: Promise<unknown> | undefined): Promise<void> =>
+      awaitBeforeDeadline(result, finalizationDeadlineMs);
     try {
-      await options.shutdown(reason);
+      await awaitStep(options.shutdown(reason));
     } catch (error) {
       notifyError(error, reason);
     }
 
     try {
-      await awaitBeforeDeadline(options.flush(), options.finalizationDeadlineMs?.());
+      await awaitStep(options.flush());
     } catch (error) {
       notifyError(error, reason);
     }
 
     try {
-      await awaitBeforeDeadline(
-        options.beforeExit?.(),
-        options.finalizationDeadlineMs?.(),
-      );
+      await awaitStep(options.beforeExit?.());
     } catch (error) {
       notifyError(error, reason);
     }
 
     try {
       for (let pass = 0; pass < MAX_FINALIZATION_PASSES; pass++) {
-        const finalization = options.finalizeBeforeExit?.();
+        let finalization: Promise<unknown> | undefined;
+        try {
+          finalization = options.finalizeBeforeExit?.();
+        } catch (error) {
+          notifyError(error, reason);
+          continue;
+        }
         if (!finalization) break;
-        await awaitBeforeDeadline(finalization, options.finalizationDeadlineMs?.());
+        try {
+          await awaitStep(finalization);
+        } catch (error) {
+          notifyError(error, reason);
+        }
       }
-    } catch (error) {
-      notifyError(error, reason);
     } finally {
       options.exit(0);
     }
@@ -175,6 +184,14 @@ export async function runProductionProcessOwner(
   };
   const awaitLateCleanup = (result: Promise<unknown>): Promise<void> =>
     awaitBeforeDeadline(result, shutdownDeadlineMs);
+  const claimLateServerCleanup = (): Promise<void> | undefined => {
+    if (
+      !server || server === serverAtShutdownStart || server === finalizedLateServer ||
+      !shutdownRequested
+    ) return undefined;
+    finalizedLateServer = server;
+    return server.stop();
+  };
   const coordinator = createProductionShutdownCoordinator({
     shutdown: async (reason) => {
       serverAtShutdownStart = server;
@@ -203,16 +220,29 @@ export async function runProductionProcessOwner(
     },
     finalizationDeadlineMs: () => shutdownDeadlineMs,
     finalizeBeforeExit: () => {
-      const customFinalization = options.finalizeBeforeExit?.();
-      if (customFinalization) return customFinalization;
-      if (
-        server && server !== serverAtShutdownStart && server !== finalizedLateServer &&
-        shutdownRequested
-      ) {
-        finalizedLateServer = server;
-        return server.stop();
+      const finalizations: Promise<unknown>[] = [];
+      try {
+        const customFinalization = options.finalizeBeforeExit?.();
+        if (customFinalization) finalizations.push(customFinalization);
+      } catch (error) {
+        finalizations.push(Promise.reject(error));
       }
-      return undefined;
+      const initialLateCleanup = claimLateServerCleanup();
+      if (initialLateCleanup) finalizations.push(initialLateCleanup);
+      if (finalizations.length === 0) return undefined;
+      return Promise.allSettled(finalizations).then(async (initialResults) => {
+        const lateCleanup = claimLateServerCleanup();
+        const results = lateCleanup
+          ? [...initialResults, ...await Promise.allSettled([lateCleanup])]
+          : initialResults;
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : []
+        );
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          throw new AggregateError(failures, "Production shutdown finalization failed");
+        }
+      });
     },
     exit: options.exit,
     onError: options.onError,
@@ -235,6 +265,10 @@ export async function runProductionProcessOwner(
       onMemoryRecycle: () => requestShutdown("memory-pressure"),
     }).then(
       async (startedServer): Promise<StartupOutcome> => {
+        // Stop can block before this path reaches readiness. Observe rejection
+        // immediately while retaining the original promise for normal startup
+        // error propagation below.
+        void startedServer.ready.catch(() => {});
         server = ownServerStop(startedServer);
         try {
           if (shutdownRequested && controller.signal.aborted) {

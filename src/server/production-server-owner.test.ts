@@ -346,7 +346,9 @@ describe("direct production server owner", () => {
     requestSignal?.();
     await run;
 
-    assertEquals(events, ["shutdown", "dispose-late-bootstrap", "flush", "exit:0"]);
+    // With no remaining budget, flushing does not wait for a late bootstrap.
+    // Its disposal is still initiated before the process exits.
+    assertEquals(events, ["shutdown", "flush", "dispose-late-bootstrap", "exit:0"]);
   });
 
   it("does not re-await initial bootstrap disposal after cleanup times out", async () => {
