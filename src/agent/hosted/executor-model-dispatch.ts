@@ -28,22 +28,53 @@ export interface HostedExecutorModelScope {
   readonly assertActive: () => void;
 }
 
+interface HostedModelBrokerInput {
+  resolveModelRuntime: AgentModelRuntimeResolver | undefined;
+  allowedModelIds: ReadonlySet<string>;
+  scope: HostedExecutorModelScope;
+}
+
 /**
  * Hosted model operations require a captured, acknowledging run event sink.
  * Use the durable run sink backed by the trusted root mirror. No handler reads
  * caller AsyncLocalStorage or accepts executor-authored event/run identity.
  * Metadata and preparation check invocation authority but emit no call event.
  */
-export function createHostedExecutorModelBroker(input: {
-  resolveModelRuntime: AgentModelRuntimeResolver | undefined;
-  allowedModelIds: ReadonlySet<string>;
-  scope: HostedExecutorModelScope;
-  runEventSink: AgentRunEventSink | undefined;
-}): ReadonlyMap<string, ExecutorOperation> {
+export function createHostedExecutorModelBroker(
+  input: HostedModelBrokerInput & {
+    runEventSink: AgentRunEventSink | undefined;
+  },
+): ReadonlyMap<string, ExecutorOperation> {
   const sink = input.runEventSink;
   if (typeof sink !== "function") {
     throw new DurableRunEventPersistenceError("Hosted model dispatch requires a run event sink");
   }
+  return createScopedHostedModelBroker(input, async (request, context) => {
+    await acknowledgePersistence(() => sink(createContextEvent(request)), context.signal);
+  });
+}
+
+/**
+ * Broker-selected direct inference after verified preparation found neither a
+ * conversation nor a canonical root. This factory grants no event append
+ * authority. A canonical run missing its writer must use the durable failure
+ * path; executor operation payloads cannot select or change this mode.
+ */
+export function createEphemeralHostedExecutorModelBroker(
+  input: HostedModelBrokerInput & {
+    prepared: { conversationId: string | null | undefined; canonicalRootRun: unknown };
+  },
+): ReadonlyMap<string, ExecutorOperation> {
+  if (input.prepared.conversationId !== null || input.prepared.canonicalRootRun !== null) {
+    throw new TypeError("Ephemeral model dispatch requires verified non-canonical preparation");
+  }
+  return createScopedHostedModelBroker(input);
+}
+
+function createScopedHostedModelBroker(
+  input: HostedModelBrokerInput,
+  persist?: (request: ExecutorModelDispatch, context: ExecutorOperationContext) => Promise<void>,
+): ReadonlyMap<string, ExecutorOperation> {
   const binding = parseExecutorModelData(getExecutorBindingSchema(), input.scope.binding);
   const lifetime = input.scope.signal;
   const assertActive = input.scope.assertActive;
@@ -69,10 +100,9 @@ export function createHostedExecutorModelBroker(input: {
     async beforeModelDispatch(request, context) {
       assertScope(context);
       assertPersistedModelOptions(request);
-      const event = createContextEvent(request);
-      // Resolution is the existing sink contract's persistence acknowledgement.
-      // A sink that only queues writes does not satisfy the hosted contract.
-      await acknowledgePersistence(() => sink(event), context.signal);
+      // Durable callers provide the acknowledging sink. Ephemeral callers
+      // perform the same authority/control checks without fabricating events.
+      if (persist) await persist(request, context);
       assertScope(context);
       return { assertActive: () => assertScope(context) };
     },
