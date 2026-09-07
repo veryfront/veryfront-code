@@ -163,45 +163,53 @@ describe("LayoutApplicator helpers", () => {
     });
   }
 
-  it("loads prepared providers and an MDX app by its original source identity", async () => {
-    const appPath = "/project/components/app.mdx";
-    const adapter = createAdapter({ [appPath]: 'throw new Error("Do not compile this source");' });
-    const App = ({ children }: { children?: React.ReactNode }) =>
-      React.createElement("article", null, children);
-    Object.defineProperty(adapter, "moduleLoader", {
-      value: {
-        importModule: async (reference: RuntimeModuleReference) => {
-          if (reference.kind === "source" && reference.path === appPath) return { default: App };
-          if (reference.kind === "package") {
-            if (reference.specifier === "react") return { default: React };
-            if (reference.specifier === "veryfront/context") return { PageContextProvider };
-            if (reference.specifier === "veryfront/router") return { RouterProvider };
-          }
-          throw new Error("Module was not prepared");
+  for (const extension of ["mdx", "tsx"]) {
+    it(`loads prepared providers and a ${extension} App without reading its source`, async () => {
+      const appPath = `/project/components/app.${extension}`;
+      const adapter = createAdapter({ [appPath]: "unused" });
+      let sourceReads = 0;
+      adapter.fs.readFile = () => {
+        sourceReads++;
+        return Promise.reject(new Error("Prepared App source must not be read"));
+      };
+      const App = ({ children }: { children?: React.ReactNode }) =>
+        React.createElement("article", null, children);
+      Object.defineProperty(adapter, "moduleLoader", {
+        value: {
+          importModule: async (reference: RuntimeModuleReference) => {
+            if (reference.kind === "source" && reference.path === appPath) return { default: App };
+            if (reference.kind === "package") {
+              if (reference.specifier === "react") return { default: React };
+              if (reference.specifier === "veryfront/context") return { PageContextProvider };
+              if (reference.specifier === "veryfront/router") return { RouterProvider };
+            }
+            throw new Error("Module was not prepared");
+          },
         },
-      },
+      });
+      const applicator = new LayoutApplicator({
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "release",
+        adapter,
+        config: { app: `components/app.${extension}` },
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "production",
+        reactVersion: React.version,
+      });
+      const element = await applicator.applyLayouts(
+        React.createElement("main", null, "prepared"),
+        createPageInfo("/project/pages/page.mdx", "page"),
+        undefined,
+        [],
+      );
+      assertEquals(renderToString(element), "<article><main>prepared</main></article>");
+      assertEquals(sourceReads, 0, "prepared imports do not need compiler source bytes");
     });
-    const applicator = new LayoutApplicator({
-      projectDir: "/project",
-      projectId: "project",
-      projectSlug: "project",
-      contentSourceId: "release",
-      adapter,
-      config: { app: "components/app.mdx" },
-      layoutCache: createLayoutComponentCache(),
-      mergedComponents: {},
-      mode: "production",
-      environment: "production",
-      reactVersion: React.version,
-    });
-    const element = await applicator.applyLayouts(
-      React.createElement("main", null, "prepared"),
-      createPageInfo("/project/pages/page.mdx", "page"),
-      undefined,
-      [],
-    );
-    assertEquals(renderToString(element), "<article><main>prepared</main></article>");
-  });
+  }
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);

@@ -443,36 +443,46 @@ export class LayoutApplicator {
 
         try {
           logger.debug("Loading App component from", appPath);
-          const appSource = await this.adapter.fs.readFile(appPath);
-          const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
-
+          const prepared = getRuntimeModuleLoader(this.adapter);
           let App: BundledReact.ComponentType<Record<string, unknown>> | null;
 
-          if (isMdx) {
-            App = await this.loadMdxAppComponent(appSource, appPath);
-          } else {
-            const loadComponentFromSource = await this.getComponentSourceLoader();
-            App = await loadComponentFromSource(
-              appSource,
-              appPath,
-              this.projectDir,
-              this.adapter,
-              {
-                projectId: this.projectId ?? this.projectDir,
-                projectSlug: this.projectSlug,
-                dev: this.mode === "development",
-                mode: this.environment,
-                moduleServerUrl: this.config?.dev?.moduleServerUrl,
-                moduleServerOrigin: this.requestUrl?.origin,
-                contentSourceId: this.contentSourceId,
-                reactVersion: await this.getReactVersion(),
-                dependencyPinningCacheKey: this.dependencyPinningCacheKey,
-                dependencyPinningDependencies: this.dependencyPinningDependencies,
-                dependencyPinningSource: this.dependencyPinningSource,
-                serverExternalPackages: this.config?.build?.serverExternalPackages,
-                signal: this.signal,
-              },
+          if (prepared) {
+            throwIfAborted(this.signal);
+            const module = await awaitAbortable(
+              prepared.importModule({ kind: "source", path: appPath }),
+              this.signal,
             );
+            throwIfAborted(this.signal);
+            App = extractComponent(module, appPath);
+          } else {
+            const appSource = await this.adapter.fs.readFile(appPath);
+            const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
+            if (isMdx) {
+              App = await this.loadMdxAppComponent(appSource, appPath);
+            } else {
+              const loadComponentFromSource = await this.getComponentSourceLoader();
+              App = await loadComponentFromSource(
+                appSource,
+                appPath,
+                this.projectDir,
+                this.adapter,
+                {
+                  projectId: this.projectId ?? this.projectDir,
+                  projectSlug: this.projectSlug,
+                  dev: this.mode === "development",
+                  mode: this.environment,
+                  moduleServerUrl: this.config?.dev?.moduleServerUrl,
+                  moduleServerOrigin: this.requestUrl?.origin,
+                  contentSourceId: this.contentSourceId,
+                  reactVersion: await this.getReactVersion(),
+                  dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+                  dependencyPinningDependencies: this.dependencyPinningDependencies,
+                  dependencyPinningSource: this.dependencyPinningSource,
+                  serverExternalPackages: this.config?.build?.serverExternalPackages,
+                  signal: this.signal,
+                },
+              );
+            }
           }
 
           if (!App) return pageElement;
@@ -496,16 +506,6 @@ export class LayoutApplicator {
     source: string,
     appPath: string,
   ): Promise<BundledReact.ComponentType<Record<string, unknown>> | null> {
-    const prepared = getRuntimeModuleLoader(this.adapter);
-    if (prepared) {
-      throwIfAborted(this.signal);
-      const module = await awaitAbortable(
-        prepared.importModule({ kind: "source", path: appPath }),
-        this.signal,
-      );
-      throwIfAborted(this.signal);
-      return extractComponent(module, appPath);
-    }
     try {
       const body = source.trim().startsWith("---") ? extract(source).body : source;
 
