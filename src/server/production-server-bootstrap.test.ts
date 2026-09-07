@@ -37,6 +37,42 @@ function createBootstrap(adapter: RuntimeAdapter, dispose: () => void): Bootstra
 }
 
 describe("production server bootstrap ownership", () => {
+  it("preserves startup failure when internally owned disposal exceeds the cleanup budget", async () => {
+    const adapter = createAdapter();
+    adapter.env.set?.("SHUTDOWN_CLEANUP_TIMEOUT_MS", "0");
+    const failure = new Error("listener startup failed");
+    adapter.serve = () => Promise.reject(failure);
+    const cleanupStarted = Promise.withResolvers<void>();
+    const finishCleanup = Promise.withResolvers<void>();
+    const run = startProductionServerWithDependencies({
+      projectDir: "/app",
+      port: 0,
+      adapter,
+      unhandledRejectionGuard: false,
+    }, {
+      bootstrap: () =>
+        Promise.resolve(createBootstrap(adapter, () => {
+          cleanupStarted.resolve();
+          return finishCleanup.promise;
+        })),
+    }).then(() => undefined, (error: unknown) => error);
+    await cleanupStarted.promise;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        run,
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("still waiting"), 50);
+        }),
+      ]);
+      assertEquals(outcome, failure);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      finishCleanup.resolve();
+      await run;
+    }
+  });
+
   it("disposes an internally owned bootstrap exactly once when stopped", async () => {
     const adapter = createAdapter();
     let disposeCalls = 0;

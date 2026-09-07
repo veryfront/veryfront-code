@@ -5,6 +5,49 @@ import type { BootstrapResult } from "./bootstrap.ts";
 import { runDirectProductionServer } from "./production-server.ts";
 
 describe("direct production server owner", () => {
+  it("preserves startup failure when bootstrap disposal hangs past its cleanup budget", async () => {
+    const adapter = createMockAdapter();
+    adapter.env.set?.("SHUTDOWN_CLEANUP_TIMEOUT_MS", "0");
+    const failure = new Error("server startup failed");
+    const cleanupStarted = Promise.withResolvers<void>();
+    const finishCleanup = Promise.withResolvers<void>();
+    const run = runDirectProductionServer({
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(adapter),
+      bootstrap: () =>
+        Promise.resolve({
+          adapter,
+          config: {},
+          usingFSAdapter: false,
+          extensionLoader: {} as BootstrapResult["extensionLoader"],
+          dispose: () => {
+            cleanupStarted.resolve();
+            return finishCleanup.promise;
+          },
+        }),
+      startServer: () => Promise.reject(failure),
+      registerSignals: () => {},
+      flush: () => Promise.resolve(),
+      captureError: () => {},
+      exit: () => {},
+    }).then(() => undefined, (error: unknown) => error);
+    await cleanupStarted.promise;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        run,
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("still waiting"), 50);
+        }),
+      ]);
+      assertEquals(outcome, failure);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      finishCleanup.resolve();
+      await run;
+    }
+  });
+
   it("uses shutdown timeouts loaded by project bootstrap", async () => {
     const adapter = createMockAdapter();
     let signalHandler: ((signal: "SIGINT" | "SIGTERM") => void | Promise<void>) | undefined;

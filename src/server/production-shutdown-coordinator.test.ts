@@ -6,6 +6,42 @@ import {
 } from "./production-shutdown-coordinator.ts";
 
 describe("production shutdown coordinator", () => {
+  it("propagates readiness failure when cleanup cannot finish within its budget", async () => {
+    const failure = new Error("readiness failed");
+    const cleanupStarted = Promise.withResolvers<void>();
+    const finishCleanup = Promise.withResolvers<void>();
+    const run = runProductionProcessOwner({
+      start: () =>
+        Promise.resolve({
+          ready: Promise.reject(failure),
+          stop: () => {
+            cleanupStarted.resolve();
+            return finishCleanup.promise;
+          },
+        }),
+      shutdown: () => Promise.resolve(),
+      shutdownTimeoutMs: 0,
+      registerSignals: () => {},
+      flush: () => Promise.resolve(),
+      exit: () => {},
+    }).then(() => undefined, (error: unknown) => error);
+    await cleanupStarted.promise;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        run,
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve("still waiting"), 50);
+        }),
+      ]);
+      assertEquals(outcome, failure);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      finishCleanup.resolve();
+      await run;
+    }
+  });
+
   it("drains admitted work while the outer startup handle is still pending", async () => {
     const events: string[] = [];
     const startup = Promise.withResolvers<{ ready: Promise<void>; stop: () => Promise<void> }>();

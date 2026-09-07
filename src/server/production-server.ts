@@ -45,7 +45,10 @@ import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts"
 import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
 import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { runProductionProcessOwner } from "./production-shutdown-coordinator.ts";
+import {
+  awaitBeforeDeadline,
+  runProductionProcessOwner,
+} from "./production-shutdown-coordinator.ts";
 import { isServerShuttingDown } from "./shutdown-state.ts";
 
 const serverLog = logger.component("server");
@@ -419,7 +422,12 @@ export function startProductionServerWithDependencies(
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
         rejectionGuard?.dispose();
         try {
-          await disposeOwnedBootstrap();
+          await awaitBeforeDeadline(
+            disposeOwnedBootstrap(),
+            Date.now() + parseShutdownCleanupTimeoutMs(
+              baseAdapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+            ),
+          );
         } catch (disposeError) {
           logger.warn("Failed to dispose production bootstrap after startup error", {
             error: disposeError,
@@ -529,7 +537,10 @@ export async function runDirectProductionServer(
         };
       } catch (error) {
         try {
-          await disposeBootstrap();
+          await awaitBeforeDeadline(
+            disposeBootstrap(),
+            Date.now() + (cleanupTimeoutMs ?? DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS),
+          );
         } catch {
           // Preserve the server startup failure as the process-owner result.
         }

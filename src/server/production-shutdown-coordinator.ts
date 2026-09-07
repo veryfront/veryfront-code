@@ -45,7 +45,8 @@ export interface ProductionProcessOwnerOptions {
   shutdownTimeoutMs?: number | (() => number);
 }
 
-async function awaitBeforeDeadline(
+/** @internal Await owned-resource cleanup without extending its absolute deadline. */
+export async function awaitBeforeDeadline(
   result: Promise<unknown> | undefined,
   deadlineMs: number | undefined,
 ): Promise<void> {
@@ -235,7 +236,7 @@ export async function runProductionProcessOwner(
         } catch (error) {
           if (shutdownRequested) return { status: "shutdown" };
           try {
-            await server.stop();
+            await awaitBeforeDeadline(server.stop(), Date.now() + resolveShutdownTimeoutMs());
           } catch {
             // Preserve the readiness failure as the startup result. The stop
             // attempt still owns every resource it can release.
