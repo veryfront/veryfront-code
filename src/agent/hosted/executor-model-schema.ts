@@ -1,6 +1,7 @@
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { getExecutorModelFailureSchema } from "./executor-model-errors.ts";
 
 const MAX_MODELS = 128;
 const MAX_ITEMS = 1000;
@@ -240,6 +241,7 @@ export const getExecutorModelGenerateResultSchema = defineSchema((v) =>
 
 export const getExecutorModelStreamFrameSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
+    getExecutorModelFailureSchema(),
     v.object({
       type: v.literal("start"),
       warnings: v.array(getJsonValueSchema()).max(MAX_ITEMS).optional(),
