@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -80,6 +80,59 @@ async function request(discovery: ReturnType<typeof owner>, name: string, value:
 }
 
 describe("isolated executor local project discovery", () => {
+  for (const root of ["agents", "crew", "tools"]) {
+    it(`rejects an outside symlink used as the ${root} discovery root before loading modules`, async () => {
+      const p = await project();
+      const outside = await mkdtemp(join(tmpdir(), "vf-executor-outside-root-"));
+      const marker = join(outside, "loaded");
+      const discovery = owner(p.dir, "writer");
+      try {
+        if (root === "agents") {
+          await writeFile(join(p.dir, "veryfront.config.ts"), "export default {};");
+        }
+        if (root === "crew") await rm(join(p.dir, "crew"), { recursive: true });
+        await writeFile(
+          join(outside, "writer.md"),
+          "---\nname: Outside\n---\n\nOutside metadata.\n",
+        );
+        await writeFile(
+          join(outside, "load.ts"),
+          `import { writeFileSync } from "node:fs"; writeFileSync(${
+            JSON.stringify(marker)
+          }, "loaded"); export default {};`,
+        );
+        await symlink(outside, join(p.dir, root));
+        assertEquals(await request(discovery, "discovery.describe"), {
+          ok: false,
+          code: "CONFIG_INVALID",
+        });
+        assertEquals(existsSync(marker), false);
+        await discovery.settled;
+      } finally {
+        await discovery.close();
+        await p.cleanup();
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("retains discovery roots whose symlinks resolve inside the bound project", async () => {
+    const p = await project();
+    const discovery = owner(p.dir, "writer");
+    try {
+      await rename(join(p.dir, "crew"), join(p.dir, "definitions"));
+      await symlink(join(p.dir, "definitions"), join(p.dir, "crew"));
+      const result = getExecutorDiscoveryResultSchema().parse(
+        await request(discovery, "discovery.describe"),
+      );
+      assert(result.ok);
+      assertEquals(result.value.definition.id, "writer");
+    } finally {
+      await discovery.close();
+      await p.cleanup();
+    }
+  });
+
   it("loads configured code and markdown only after an operation and retains executable state locally", async () => {
     const p = await project();
     const discovery = owner(p.dir, "writer");
