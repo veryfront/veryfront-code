@@ -3,7 +3,10 @@ import type {
   RuntimeMetadata,
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
-import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
+import {
+  rejectsOpenAISamplingParams,
+  resolveOpenAIReasoningConfig,
+} from "#veryfront/provider/shared/openai-reasoning.ts";
 import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
@@ -43,7 +46,44 @@ export function buildModelCallContextRequest(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequest | undefined {
-  return buildModelCallRequest(options, resolvePersistedReasoning(model, options));
+  const reasoning = resolvePersistedReasoning(model, options);
+  return buildModelCallRequest(resolvePersistedSampling(model, options, reasoning), reasoning);
+}
+
+function resolvePersistedSampling(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+  reasoning: RuntimeReasoningOption | undefined,
+): ModelCallRequestSource {
+  if (resolveModelCallProvider(model) !== "openai" || typeof model.modelId !== "string") {
+    return options;
+  }
+  const providerName = model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
+  const providerOptions = readProviderOptions(
+    options.providerOptions as Record<string, unknown> | undefined,
+    ...(providerName === "openai" ? ["openai-compatible"] : []),
+    "openai",
+    providerName,
+  );
+  const dropSampling = reasoning?.enabled === true || rejectsOpenAISamplingParams(model.modelId);
+  const effective = { ...options };
+  for (
+    const [field, nativeField] of [
+      ["temperature", "temperature"],
+      ["topP", "top_p"],
+      ["presencePenalty", "presence_penalty"],
+      ["frequencyPenalty", "frequency_penalty"],
+    ] as const
+  ) {
+    // Native options merge after neutral filtering in both OpenAI builders.
+    const value = ObjectHasOwn(providerOptions, nativeField)
+      ? providerOptions[nativeField]
+      : dropSampling
+      ? undefined
+      : options[field];
+    effective[field] = typeof value === "number" ? value : undefined;
+  }
+  return effective;
 }
 
 function buildModelCallRequest(
