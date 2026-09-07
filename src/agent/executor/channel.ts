@@ -66,6 +66,8 @@ export interface ExecutorChannel {
   readonly ready: Promise<void>;
   /** Resolves on closure; the fixed diagnostic never includes transport or handler error text. */
   readonly closed: Promise<Error>;
+  /** Resolves after closure and actual handler/owned transport cleanup. Keep admission until this settles. */
+  readonly settled: Promise<void>;
   readonly signal: AbortSignal;
   request(operation: string, input: JsonValue, options?: ExecutorCallOptions): Promise<JsonValue>;
   /** Single consumer. Concurrent next() calls reject without adding a waiter. */
@@ -150,12 +152,17 @@ class Channel implements ExecutorChannel {
   readonly #controller = new AbortController();
   readonly #ready = Promise.withResolvers<void>();
   readonly #closed = Promise.withResolvers<Error>();
+  readonly #settled = Promise.withResolvers<void>();
   readonly #outgoing = new Set<OutgoingCall>();
   readonly #outgoingById = new Map<number, OutgoingCall>();
   readonly #incoming = new Map<number, IncomingCall>();
   readonly #writes: { bytes: Uint8Array; done: Deferred<void> }[] = [];
   #queuedBytes = 0;
   #writing = false;
+  #activeHandlers = 0;
+  #readLoopDone = false;
+  #readRetired = false;
+  #writeRetired = false;
   #sendSequence = 0;
   #receiveSequence = 0;
   #nextId = 0;
@@ -184,7 +191,10 @@ class Channel implements ExecutorChannel {
     // Readiness remains rejectable for callers that await it, even when nobody observes it yet.
     void this.ready.catch(() => {});
     this.#control({ type: "hello" });
-    void this.#receive();
+    void this.#receive().finally(() => {
+      this.#readLoopDone = true;
+      this.#settle();
+    });
   }
 
   get ready(): Promise<void> {
@@ -192,6 +202,9 @@ class Channel implements ExecutorChannel {
   }
   get closed(): Promise<Error> {
     return this.#closed.promise;
+  }
+  get settled(): Promise<void> {
+    return this.#settled.promise;
   }
   get signal(): AbortSignal {
     return this.#controller.signal;
@@ -534,7 +547,13 @@ class Channel implements ExecutorChannel {
     };
     this.#incoming.set(call.id, call);
     call.timer = setTimeout(() => this.#abortIncoming(call, "deadline"), timeout);
-    void this.#run(call, message, call.deadline);
+    this.#activeHandlers++;
+    void this.#run(call, message, call.deadline).catch(() => {
+      this.#fail("Executor handler cleanup failed");
+    }).finally(() => {
+      this.#activeHandlers--;
+      this.#settle();
+    });
   }
 
   async #run(
@@ -671,6 +690,7 @@ class Channel implements ExecutorChannel {
       this.#fail("Executor channel write failed");
     } finally {
       this.#writing = false;
+      this.#settle();
     }
   }
 
@@ -728,8 +748,22 @@ class Channel implements ExecutorChannel {
     for (const entry of this.#writes) entry.done.reject(error);
     this.#writes.length = 0;
     this.#queuedBytes = 0;
-    void this.#reader.cancel(error).catch(() => {});
-    void this.#writer.abort(error).catch(() => {}).finally(() => this.#writer.releaseLock());
+    void this.#reader.cancel(error).catch(() => {}).finally(() => {
+      this.#readRetired = true;
+      this.#settle();
+    });
+    void this.#writer.abort(error).catch(() => {}).finally(() => {
+      this.#writer.releaseLock();
+      this.#writeRetired = true;
+      this.#settle();
+    });
     this.#closed.resolve(error);
+  }
+
+  #settle(): void {
+    if (
+      this.#error && this.#activeHandlers === 0 && !this.#writing &&
+      this.#readLoopDone && this.#readRetired && this.#writeRetired
+    ) this.#settled.resolve();
   }
 }
