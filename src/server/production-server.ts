@@ -24,7 +24,10 @@ import {
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import {
+  DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS,
+  DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
   gracefullyShutdownProductionServer,
+  parseShutdownCleanupTimeoutMs,
   parseShutdownDrainTimeoutMs,
 } from "./graceful-shutdown.ts";
 import {
@@ -438,6 +441,7 @@ export async function runDirectProductionServer(
   let finalizedLateBootstrap: BootstrapResult | undefined;
   let bootstrapDisposal: Promise<void> | undefined;
   let drainTimeoutMs: number | undefined;
+  let cleanupTimeoutMs: number | undefined;
   const disposeBootstrap = (): Promise<void> => {
     if (!bootstrap) return Promise.resolve();
     bootstrapDisposal ??= Promise.resolve().then(() => bootstrap?.dispose?.());
@@ -473,15 +477,19 @@ export async function runDirectProductionServer(
         adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
       );
       const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
-      bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
-      if (signal.aborted) {
-        await disposeBootstrap();
-        signal.throwIfAborted();
-      }
       drainTimeoutMs = parseShutdownDrainTimeoutMs(
         adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
       );
-
+      cleanupTimeoutMs = parseShutdownCleanupTimeoutMs(
+        adapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+      );
+      bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
+      if (signal.aborted) {
+        // Begin releasing a bootstrap acquired after shutdown, but leave the
+        // process owner to join it only within the remaining shutdown budget.
+        void disposeBootstrap().catch(() => {});
+        signal.throwIfAborted();
+      }
       try {
         const server = await (dependencies.startServer ?? startProductionServer)({
           projectDir,
@@ -521,6 +529,9 @@ export async function runDirectProductionServer(
         throw error;
       }
     },
+    shutdownTimeoutMs: () =>
+      (drainTimeoutMs ?? DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS) +
+      (cleanupTimeoutMs ?? DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS),
     shutdown: async (reason, server, abort) => {
       bootstrapAtShutdownStart = bootstrap;
       await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
@@ -531,9 +542,8 @@ export async function runDirectProductionServer(
         stop: server?.stop ?? (() => Promise.resolve()),
         logger,
       });
-      // Bootstrap can finish while graceful shutdown is already running. Its
-      // dynamic owner releases it here if the earlier cleanup step saw none.
-      if (bootstrap && bootstrap !== bootstrapAtShutdownStart) await disposeBootstrap();
+      // A bootstrap acquired after this snapshot is joined by the process
+      // owner's deadline-aware pre-exit finalization.
     },
     flush: dependencies.flush,
     beforeExit: () =>

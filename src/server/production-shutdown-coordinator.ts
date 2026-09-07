@@ -1,11 +1,13 @@
 export type ProductionShutdownReason = "SIGINT" | "SIGTERM" | "memory-pressure";
 const MAX_FINALIZATION_PASSES = 3;
+const DEFAULT_PROCESS_SHUTDOWN_TIMEOUT_MS = 29_000;
 
 export interface ProductionShutdownCoordinatorOptions {
   shutdown: (reason: ProductionShutdownReason) => Promise<void>;
   flush: () => Promise<unknown>;
   beforeExit?: () => Promise<unknown>;
   finalizeBeforeExit?: () => Promise<unknown> | undefined;
+  finalizationDeadlineMs?: () => number | undefined;
   exit: (code: number) => void;
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
 }
@@ -39,6 +41,37 @@ export interface ProductionProcessOwnerOptions {
   onError?: (error: unknown, reason: ProductionShutdownReason) => void;
   beforeExit?: () => Promise<unknown>;
   finalizeBeforeExit?: () => Promise<unknown> | undefined;
+  /** Total drain and cleanup budget from the first shutdown request. */
+  shutdownTimeoutMs?: number | (() => number);
+}
+
+async function awaitBeforeDeadline(
+  result: Promise<unknown> | undefined,
+  deadlineMs: number | undefined,
+): Promise<void> {
+  if (!result) return;
+  if (deadlineMs === undefined) {
+    await result;
+    return;
+  }
+
+  const remainingMs = Math.max(0, deadlineMs - Date.now());
+  if (remainingMs === 0) {
+    void result.catch(() => {});
+    return;
+  }
+
+  let timeoutId: number | undefined;
+  try {
+    await Promise.race([
+      result,
+      new Promise<void>((resolve) => {
+        timeoutId = setTimeout(resolve, remainingMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
 }
 
 function ownServerStop(server: OwnedProductionServer): OwnedProductionServer {
@@ -84,7 +117,10 @@ export function createProductionShutdownCoordinator(
     }
 
     try {
-      await options.beforeExit?.();
+      await awaitBeforeDeadline(
+        options.beforeExit?.(),
+        options.finalizationDeadlineMs?.(),
+      );
     } catch (error) {
       notifyError(error, reason);
     }
@@ -93,7 +129,7 @@ export function createProductionShutdownCoordinator(
       for (let pass = 0; pass < MAX_FINALIZATION_PASSES; pass++) {
         const finalization = options.finalizeBeforeExit?.();
         if (!finalization) break;
-        await finalization;
+        await awaitBeforeDeadline(finalization, options.finalizationDeadlineMs?.());
       }
     } catch (error) {
       notifyError(error, reason);
@@ -126,6 +162,17 @@ export async function runProductionProcessOwner(
   let serverAtShutdownStart: OwnedProductionServer | undefined;
   let finalizedLateServer: OwnedProductionServer | undefined;
   let shutdownRequested = false;
+  let shutdownDeadlineMs: number | undefined;
+  const resolveShutdownTimeoutMs = (): number => {
+    const configured = typeof options.shutdownTimeoutMs === "function"
+      ? options.shutdownTimeoutMs()
+      : options.shutdownTimeoutMs;
+    return Number.isInteger(configured) && (configured ?? -1) >= 0
+      ? configured ?? DEFAULT_PROCESS_SHUTDOWN_TIMEOUT_MS
+      : DEFAULT_PROCESS_SHUTDOWN_TIMEOUT_MS;
+  };
+  const awaitLateCleanup = (result: Promise<unknown>): Promise<void> =>
+    awaitBeforeDeadline(result, shutdownDeadlineMs);
   const coordinator = createProductionShutdownCoordinator({
     shutdown: async (reason) => {
       serverAtShutdownStart = server;
@@ -135,13 +182,16 @@ export async function runProductionProcessOwner(
       await options.shutdown(reason, serverAtShutdownStart, () => controller.abort());
       // Startup may settle while shutdown is draining. Its handle was not part
       // of the initial cleanup snapshot, so stop it before telemetry flush/exit.
-      if (!serverAtShutdownStart && server) await server.stop();
+      if (!serverAtShutdownStart && server) await awaitLateCleanup(server.stop());
     },
     flush: options.flush,
     beforeExit: async () => {
-      if (server && server !== serverAtShutdownStart && shutdownRequested) await server.stop();
+      if (server && server !== serverAtShutdownStart && shutdownRequested) {
+        await awaitLateCleanup(server.stop());
+      }
       await options.beforeExit?.();
     },
+    finalizationDeadlineMs: () => shutdownDeadlineMs,
     finalizeBeforeExit: () => {
       const customFinalization = options.finalizeBeforeExit?.();
       if (customFinalization) return customFinalization;
@@ -159,6 +209,7 @@ export async function runProductionProcessOwner(
   });
 
   const requestShutdown = (reason: ProductionShutdownReason): void => {
+    shutdownDeadlineMs ??= Date.now() + resolveShutdownTimeoutMs();
     shutdownRequested = true;
     coordinator.request(reason);
   };
@@ -176,7 +227,7 @@ export async function runProductionProcessOwner(
       async (startedServer): Promise<StartupOutcome> => {
         server = ownServerStop(startedServer);
         try {
-          if (shutdownRequested) await server.stop();
+          if (shutdownRequested) await awaitLateCleanup(server.stop());
           await server.ready;
           if (!shutdownRequested) options.onReady?.();
           return { status: "ready" };

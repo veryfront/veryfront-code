@@ -1,5 +1,9 @@
-import { cwd } from "veryfront/platform";
+import { cwd, getEnv } from "veryfront/platform";
 import { gracefullyShutdownProductionServer, runProductionProcessOwner } from "veryfront/server";
+import {
+  parseShutdownCleanupTimeoutMs,
+  parseShutdownDrainTimeoutMs,
+} from "#veryfront/server/graceful-shutdown.ts";
 import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
@@ -251,6 +255,9 @@ export async function runProductionServer(
     });
 
   await runProductionProcessOwner({
+    shutdownTimeoutMs: () =>
+      parseShutdownDrainTimeoutMs(getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS")) +
+      parseShutdownCleanupTimeoutMs(getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS")),
     start: ({ signal, onMemoryRecycle }) =>
       runProductionStartupWithErrorReporting(
         async () => {

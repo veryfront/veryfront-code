@@ -205,6 +205,62 @@ describe("direct production server owner", () => {
     ]);
   });
 
+  it("exits when a bootstrap acquired during shutdown does not dispose before the deadline", async () => {
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    adapter.env.set?.("SHUTDOWN_DRAIN_TIMEOUT_MS", "0");
+    adapter.env.set?.("SHUTDOWN_CLEANUP_TIMEOUT_MS", "0");
+    let requestSignal: (() => void) | undefined;
+    let resolveBootstrap: ((value: BootstrapResult) => void) | undefined;
+    let markBootstrapStarted: (() => void) | undefined;
+    const bootstrapStarted = new Promise<void>((resolve) => {
+      markBootstrapStarted = resolve;
+    });
+
+    const run = runDirectProductionServer({
+      initializeErrorReporting: () => Promise.resolve(),
+      initializeRuntime: () => Promise.resolve(),
+      getAdapter: () => Promise.resolve(adapter),
+      bootstrap: () => {
+        markBootstrapStarted?.();
+        return new Promise<BootstrapResult>((resolve) => {
+          resolveBootstrap = resolve;
+        });
+      },
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+      gracefullyShutdown: async (options) => {
+        events.push("shutdown");
+        options.abort();
+        resolveBootstrap?.({
+          adapter,
+          config: {},
+          usingFSAdapter: false,
+          extensionLoader: {} as BootstrapResult["extensionLoader"],
+          dispose: () => {
+            events.push("dispose-late-bootstrap");
+            return new Promise<void>(() => {});
+          },
+        });
+        await Promise.resolve();
+        return true;
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      captureError: () => events.push("error"),
+      exit: (code) => events.push(`exit:${code}`),
+    });
+
+    await bootstrapStarted;
+    requestSignal?.();
+    await run;
+
+    assertEquals(events, ["shutdown", "dispose-late-bootstrap", "flush", "exit:0"]);
+  });
+
   it("does not re-await initial bootstrap disposal after cleanup times out", async () => {
     const events: string[] = [];
     const adapter = createMockAdapter();

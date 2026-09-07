@@ -192,6 +192,46 @@ describe("production shutdown coordinator", () => {
     ]);
   });
 
+  it("exits when a server acquired during shutdown does not stop before the deadline", async () => {
+    const events: string[] = [];
+    let requestSignal: (() => void) | undefined;
+    let resumeStartup: (() => void) | undefined;
+
+    const run = runProductionProcessOwner({
+      start: () =>
+        new Promise((resolve) => {
+          resumeStartup = () =>
+            resolve({
+              ready: Promise.resolve(),
+              stop: () => {
+                events.push("stop-late-server");
+                return new Promise<void>(() => {});
+              },
+            });
+        }),
+      shutdown: async (_reason, _server, abort) => {
+        events.push("shutdown");
+        abort();
+        resumeStartup?.();
+        await Promise.resolve();
+      },
+      shutdownTimeoutMs: 0,
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      exit: (code) => events.push(`exit:${code}`),
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+    });
+
+    requestSignal?.();
+    await run;
+
+    assertEquals(events, ["shutdown", "stop-late-server", "flush", "exit:0"]);
+  });
+
   it("awaits a server acquired during flush before exiting", async () => {
     const events: string[] = [];
     let requestSignal: (() => void) | undefined;
