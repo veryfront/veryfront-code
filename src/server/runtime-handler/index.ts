@@ -47,6 +47,8 @@ import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { isPlatformLivenessProbe } from "#veryfront/security/http/platform-liveness-probe.ts";
+import { isServerShuttingDown } from "../shutdown-state.ts";
+import { buildRuntimeShuttingDownResponse } from "../handlers/request/runtime-shutdown-response.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
@@ -506,6 +508,11 @@ export function createVeryfrontHandler(
 
   const handler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    // Stop admission before project resolution can load more tenant code.
+    // Existing response bodies keep draining; kubelet probes remain reachable.
+    if (isServerShuttingDown() && !isPlatformLivenessProbe(req.method, url.pathname)) {
+      return buildRuntimeShuttingDownResponse();
+    }
     const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
 
     // Fast path for monitoring endpoints
@@ -573,6 +580,12 @@ export function createVeryfrontHandler(
       url,
       isProxyMode,
     });
+    // Shutdown may begin while identity preparation is awaiting I/O. Do not
+    // admit that request after the drain has already inspected the tracker.
+    if (isServerShuttingDown()) {
+      endRequestLifecycle(lifecycle);
+      return buildRuntimeShuttingDownResponse();
+    }
     const { headers, requestContext: reqCtx } = preparedRequest;
     const { proxyTrusted } = preparedRequest.proxyTrust;
 

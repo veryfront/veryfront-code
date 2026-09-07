@@ -118,25 +118,34 @@ export function logInfo(message: string): void {
 
 export function registerTerminationSignals(
   handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
-): void {
+): () => void {
   const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
+  const disposers: Array<() => void> = [];
 
-  for (const signal of signals) {
-    onSignal(signal, () => {
-      try {
-        const result = handler(signal);
-        if (result && typeof (result as PromiseLike<void>).then === "function") {
-          void Promise.resolve(result).catch((error) => {
-            cliLogger.error(`Unhandled error while handling ${signal}:`, error);
-            exitProcess(1);
-          });
+  try {
+    for (const signal of signals) {
+      disposers.push(onSignal(signal, () => {
+        try {
+          const result = handler(signal);
+          if (result && typeof (result as PromiseLike<void>).then === "function") {
+            void Promise.resolve(result).catch((error) => {
+              cliLogger.error(`Unhandled error while handling ${signal}:`, error);
+              exitProcess(1);
+            });
+          }
+        } catch (error) {
+          cliLogger.error(`Unhandled error while handling ${signal}:`, error);
+          exitProcess(1);
         }
-      } catch (error) {
-        cliLogger.error(`Unhandled error while handling ${signal}:`, error);
-        exitProcess(1);
-      }
-    });
+      }));
+    }
+  } catch (error) {
+    for (const dispose of disposers) dispose();
+    throw error;
   }
+  return () => {
+    for (const dispose of disposers) dispose();
+  };
 }
 
 let _verboseMode = false;

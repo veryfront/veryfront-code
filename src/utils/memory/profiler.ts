@@ -87,6 +87,35 @@ export interface MemoryMonitoringConfig {
   intervalMs: number;
 }
 
+export type MemoryRecycleConfig =
+  | { enabled: false }
+  | {
+    enabled: true;
+    rssThresholdMB: number;
+    consecutiveSamples: number;
+  };
+
+export interface MemoryRecycleState {
+  consecutiveSamples: number;
+  notified: boolean;
+}
+
+export interface MemoryRecycleEvent {
+  rssMB: number;
+  rssThresholdMB: number;
+  consecutiveSamples: number;
+}
+
+export interface MemoryRecycleEvaluation {
+  state: MemoryRecycleState;
+  shouldNotify: boolean;
+}
+
+export interface MemoryMonitoringOptions {
+  recycle?: MemoryRecycleConfig;
+  onRecycle?: (event: MemoryRecycleEvent) => void | Promise<void>;
+}
+
 export interface MemoryMonitoringState {
   active: boolean;
   intervalMs: number | undefined;
@@ -295,6 +324,58 @@ export function getMemoryMonitoringConfig(env: MemoryMonitoringEnv): MemoryMonit
   return { enabled, intervalMs };
 }
 
+function parseRequiredPositiveNumber(raw: string | null | undefined, name: string): number {
+  const value = raw?.trim() ?? "";
+  const parsed = Number(value);
+  if (value === "" || !Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number when MEMORY_RECYCLE_ENABLED=true`);
+  }
+  return parsed;
+}
+
+/** Resolve the process-owner RSS recycle policy. The policy is off unless explicitly enabled. */
+export function getMemoryRecycleConfig(env: MemoryMonitoringEnv): MemoryRecycleConfig {
+  if (env.get("MEMORY_RECYCLE_ENABLED") !== "true") return { enabled: false };
+
+  const rssThresholdMB = parseRequiredPositiveNumber(
+    env.get("MEMORY_RECYCLE_RSS_THRESHOLD_MB"),
+    "MEMORY_RECYCLE_RSS_THRESHOLD_MB",
+  );
+  const consecutiveSamples = parseRequiredPositiveNumber(
+    env.get("MEMORY_RECYCLE_CONSECUTIVE_SAMPLES"),
+    "MEMORY_RECYCLE_CONSECUTIVE_SAMPLES",
+  );
+  if (!Number.isInteger(consecutiveSamples)) {
+    throw new Error(
+      "MEMORY_RECYCLE_CONSECUTIVE_SAMPLES must be a positive integer when MEMORY_RECYCLE_ENABLED=true",
+    );
+  }
+
+  return { enabled: true, rssThresholdMB, consecutiveSamples };
+}
+
+export function getMemoryRecycleEvaluation(
+  rssMB: number,
+  config: MemoryRecycleConfig,
+  state: MemoryRecycleState,
+): MemoryRecycleEvaluation {
+  if (!config.enabled || state.notified) return { state, shouldNotify: false };
+
+  if (rssMB < config.rssThresholdMB) {
+    return {
+      state: { consecutiveSamples: 0, notified: false },
+      shouldNotify: false,
+    };
+  }
+
+  const consecutiveSamples = state.consecutiveSamples + 1;
+  const shouldNotify = consecutiveSamples >= config.consecutiveSamples;
+  return {
+    state: { consecutiveSamples, notified: shouldNotify },
+    shouldNotify,
+  };
+}
+
 function roundMemoryMB(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -372,7 +453,10 @@ export async function forceGC(): Promise<boolean> {
   }
 }
 
-export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS): void {
+export function startMemoryMonitoring(
+  intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
+  options: MemoryMonitoringOptions = {},
+): void {
   if (memoryCheckInterval) clearInterval(memoryCheckInterval);
 
   logger.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
@@ -380,11 +464,28 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
   const rapidGrowthState = getInitialRapidHeapGrowthState(getHeapStats().usedHeapSizeMB);
   lastHeapUsed = rapidGrowthState.lastHeapUsedMB;
   pendingRapidHeapGrowth = rapidGrowthState.pending;
+  let recycleState: MemoryRecycleState = { consecutiveSamples: 0, notified: false };
 
   memoryCheckInterval = setInterval(() => {
     const snapshot = getMemorySnapshot();
     const { heap } = snapshot;
     const monitoringContext = getMemoryMonitoringLogContext(snapshot);
+
+    if (options.recycle?.enabled && options.onRecycle && heap.rss !== undefined) {
+      const evaluation = getMemoryRecycleEvaluation(heap.rss, options.recycle, recycleState);
+      recycleState = evaluation.state;
+      if (evaluation.shouldNotify) {
+        const event: MemoryRecycleEvent = {
+          rssMB: heap.rss,
+          rssThresholdMB: options.recycle.rssThresholdMB,
+          consecutiveSamples: recycleState.consecutiveSamples,
+        };
+        logger.warn("RSS recycle threshold reached", event);
+        void Promise.resolve()
+          .then(() => options.onRecycle?.(event))
+          .catch((error) => logger.warn("Memory recycle callback failed", { error }));
+      }
+    }
 
     logger.info("Memory status", monitoringContext);
 
@@ -420,12 +521,19 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
   }, intervalMs);
 }
 
-export function startConfiguredMemoryMonitoring(env: MemoryMonitoringEnv): MemoryMonitoringConfig {
+export function startConfiguredMemoryMonitoring(
+  env: MemoryMonitoringEnv,
+  options: Pick<MemoryMonitoringOptions, "onRecycle"> = {},
+): MemoryMonitoringConfig {
   const config = getMemoryMonitoringConfig(env);
-  if (!config.enabled) return config;
+  const recycle = options.onRecycle ? getMemoryRecycleConfig(env) : { enabled: false } as const;
+  if (!config.enabled && !recycle.enabled) return config;
 
-  startMemoryMonitoring(config.intervalMs);
-  logger.info("Memory monitoring enabled", { intervalMs: config.intervalMs });
+  startMemoryMonitoring(config.intervalMs, { recycle, onRecycle: options.onRecycle });
+  logger.info("Memory monitoring enabled", {
+    intervalMs: config.intervalMs,
+    recycleEnabled: recycle.enabled,
+  });
 
   const initialSnapshot = getMemorySnapshot();
   logger.info("Initial memory state", {
@@ -434,7 +542,7 @@ export function startConfiguredMemoryMonitoring(env: MemoryMonitoringEnv): Memor
     cacheCount: initialSnapshot.caches.length,
   });
 
-  return config;
+  return config.enabled ? config : { ...config, enabled: true };
 }
 
 export function stopMemoryMonitoring(): void {

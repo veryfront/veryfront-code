@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { withEnv } from "#veryfront/testing";
 import {
@@ -16,9 +17,12 @@ import {
   getMemoryMonitoringConfig,
   getMemoryMonitoringLogContext,
   getMemoryMonitoringState,
+  getMemoryRecycleConfig,
+  getMemoryRecycleEvaluation,
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
   type MemoryMonitoringEnv,
+  type MemoryRecycleState,
   registerCache,
   resolveEffectiveHeapLimitMB,
   setHeapWarningThreshold,
@@ -471,6 +475,152 @@ describe("memory/profiler", () => {
         { active: false, intervalMs: undefined },
         "the disabled path must not install a monitoring interval",
       );
+    });
+  });
+
+  describe("memory recycle policy", () => {
+    const envOf = (values: Record<string, string>): MemoryMonitoringEnv => ({
+      get: (key: string) => values[key],
+    });
+
+    it("is disabled when omitted", () => {
+      assertEquals(getMemoryRecycleConfig(envOf({})), { enabled: false });
+    });
+
+    it("requires a positive RSS threshold and consecutive sample count when enabled", () => {
+      assertEquals(
+        getMemoryRecycleConfig(envOf({
+          MEMORY_RECYCLE_ENABLED: "true",
+          MEMORY_RECYCLE_RSS_THRESHOLD_MB: "3584",
+          MEMORY_RECYCLE_CONSECUTIVE_SAMPLES: "3",
+        })),
+        { enabled: true, rssThresholdMB: 3584, consecutiveSamples: 3 },
+      );
+
+      for (
+        const values of [
+          { MEMORY_RECYCLE_ENABLED: "true" },
+          { MEMORY_RECYCLE_ENABLED: "true", MEMORY_RECYCLE_RSS_THRESHOLD_MB: "0" },
+          { MEMORY_RECYCLE_ENABLED: "true", MEMORY_RECYCLE_RSS_THRESHOLD_MB: "nope" },
+          {
+            MEMORY_RECYCLE_ENABLED: "true",
+            MEMORY_RECYCLE_RSS_THRESHOLD_MB: "3584",
+            MEMORY_RECYCLE_CONSECUTIVE_SAMPLES: "0",
+          },
+        ]
+      ) {
+        let threw = false;
+        try {
+          getMemoryRecycleConfig(envOf(values));
+        } catch {
+          threw = true;
+        }
+        assertEquals(
+          threw,
+          true,
+          `expected invalid recycle config to fail: ${JSON.stringify(values)}`,
+        );
+      }
+    });
+
+    it("debounces a spike, resets below threshold, and fires only after consecutive samples", () => {
+      const config = { enabled: true as const, rssThresholdMB: 100, consecutiveSamples: 2 };
+      let state: MemoryRecycleState = { consecutiveSamples: 0, notified: false };
+
+      let result = getMemoryRecycleEvaluation(101, config, state);
+      assertEquals(result, {
+        state: { consecutiveSamples: 1, notified: false },
+        shouldNotify: false,
+      });
+      state = result.state;
+
+      result = getMemoryRecycleEvaluation(99, config, state);
+      assertEquals(result, {
+        state: { consecutiveSamples: 0, notified: false },
+        shouldNotify: false,
+      });
+      state = result.state;
+
+      result = getMemoryRecycleEvaluation(100, config, state);
+      state = result.state;
+      result = getMemoryRecycleEvaluation(110, config, state);
+      assertEquals(result, {
+        state: { consecutiveSamples: 2, notified: true },
+        shouldNotify: true,
+      });
+
+      assertEquals(getMemoryRecycleEvaluation(120, config, result.state), {
+        state: { consecutiveSamples: 2, notified: true },
+        shouldNotify: false,
+      });
+    });
+
+    it("invokes a failing recycle callback only once and keeps the monitor stoppable", async () => {
+      const time = new FakeTime();
+      let calls = 0;
+      try {
+        startMemoryMonitoring(10, {
+          recycle: { enabled: true, rssThresholdMB: 0.01, consecutiveSamples: 2 },
+          onRecycle: () => {
+            calls += 1;
+            throw new Error("expected callback failure");
+          },
+        });
+
+        await time.tickAsync(50);
+        assertEquals(calls, 1);
+        stopMemoryMonitoring();
+        assertEquals(getMemoryMonitoringState(), { active: false, intervalMs: undefined });
+      } finally {
+        time.restore();
+      }
+    });
+
+    it("does not opt an embedded caller into process recycle", () => {
+      const config = startConfiguredMemoryMonitoring(envOf({
+        MEMORY_RECYCLE_ENABLED: "true",
+        MEMORY_RECYCLE_RSS_THRESHOLD_MB: "100",
+        MEMORY_RECYCLE_CONSECUTIVE_SAMPLES: "2",
+      }));
+
+      assertEquals(config.enabled, false);
+      assertEquals(getMemoryMonitoringState(), { active: false, intervalMs: undefined });
+    });
+
+    it("fails owner startup for an invalid explicitly enabled policy", () => {
+      assertThrows(
+        () =>
+          startConfiguredMemoryMonitoring(envOf({ MEMORY_RECYCLE_ENABLED: "true" }), {
+            onRecycle: () => {},
+          }),
+        Error,
+        "MEMORY_RECYCLE_RSS_THRESHOLD_MB",
+      );
+      assertEquals(getMemoryMonitoringState(), { active: false, intervalMs: undefined });
+    });
+
+    it("reports ownership when recycle alone starts the monitor", () => {
+      const config = startConfiguredMemoryMonitoring(
+        envOf({
+          MEMORY_RECYCLE_ENABLED: "true",
+          MEMORY_RECYCLE_RSS_THRESHOLD_MB: "100",
+          MEMORY_RECYCLE_CONSECUTIVE_SAMPLES: "2",
+          MEMORY_MONITORING_INTERVAL_MS: "60000",
+        }),
+        { onRecycle: () => {} },
+      );
+
+      assertEquals(config, { enabled: true, intervalMs: 60_000 });
+      assertEquals(getMemoryMonitoringState(), { active: true, intervalMs: 60_000 });
+    });
+
+    it("does not claim an existing monitor when this caller is disabled", () => {
+      startMemoryMonitoring(60_000);
+
+      const config = startConfiguredMemoryMonitoring(envOf({}));
+
+      assertEquals(config.enabled, false);
+      assertEquals(getMemoryMonitoringState(), { active: true, intervalMs: 60_000 });
     });
   });
 });

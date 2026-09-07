@@ -4,10 +4,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
-import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
+import { cwd, exit, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
+  type MemoryRecycleEvent,
   startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
@@ -41,6 +42,7 @@ import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts"
 import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
 import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { runProductionProcessOwner } from "./production-shutdown-coordinator.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -176,6 +178,11 @@ export interface StartProductionServerOptions extends ServerOptions {
    * masked. Rejections are reported at error level either way.
    */
   unhandledRejectionGuard?: boolean;
+  /**
+   * Process-owner callback for an explicitly enabled RSS recycle policy.
+   * Embedded callers must omit this so the server never terminates its host.
+   */
+  onMemoryRecycle?: (event: MemoryRecycleEvent) => void | Promise<void>;
 }
 
 /** Starts production server. */
@@ -207,7 +214,9 @@ export function startProductionServer(
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
-      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
+      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env, {
+        onRecycle: options.onMemoryRecycle,
+      });
       const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
       // Installed before bootstrap so a rejection during startup is contained
       // too. This process serves every project on the pod, so one dropped
@@ -441,7 +450,6 @@ if (import.meta.main) {
 
     const adapter = await runtime.get();
 
-    const shutdownController = new AbortController();
     const projectDir = cwd();
     const port = Number(
       adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
@@ -452,53 +460,55 @@ if (import.meta.main) {
 
     const bootstrap = await bootstrapProd(projectDir, adapter);
 
-    const server = await startProductionServer({
-      projectDir,
-      port,
-      bindAddress,
-      debug: isDebugEnabled(adapter.env),
-      adapter, // Pass adapter to avoid re-detection
-      bootstrapResult: bootstrap,
-      signal: shutdownController.signal,
-    });
-
-    // Wait for server to be fully ready before accepting traffic
-    // This prevents K8s readiness probe from passing too early
-    // Note: setServerInitialized(true) is called inside ready promise
-    await server.ready;
-    logger.info("Server fully initialized, ready to accept traffic");
-
     // Graceful shutdown for direct CLI execution (e.g., deno run)
     // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
     const drainTimeoutMs = parseShutdownDrainTimeoutMs(
       adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
     );
 
-    let shuttingDown = false;
-    const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-
-      await gracefullyShutdownProductionServer({
-        signal,
-        drainTimeoutMs,
-        abort: () => shutdownController.abort(),
-        dispose: bootstrap.dispose,
-        stop: server.stop,
-        logger,
-      });
-      await flushApplicationErrors();
-    };
-
-    const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
-      void shutdown(signal).catch((error) => {
+    await runProductionProcessOwner({
+      start: ({ signal, onMemoryRecycle }) =>
+        startProductionServer({
+          projectDir,
+          port,
+          bindAddress,
+          debug: isDebugEnabled(adapter.env),
+          adapter, // Pass adapter to avoid re-detection
+          bootstrapResult: bootstrap,
+          signal,
+          onMemoryRecycle,
+        }),
+      shutdown: async (reason, server, abort) => {
+        await gracefullyShutdownProductionServer({
+          signal: reason,
+          drainTimeoutMs,
+          abort,
+          dispose: bootstrap.dispose,
+          stop: server?.stop ?? (() => Promise.resolve()),
+          logger,
+        });
+      },
+      flush: flushApplicationErrors,
+      exit,
+      registerSignals: (handler) => {
+        const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));
+        try {
+          const disposeTerminate = onSignal("SIGTERM", () => handler("SIGTERM"));
+          return () => {
+            disposeInterrupt();
+            disposeTerminate();
+          };
+        } catch (error) {
+          disposeInterrupt();
+          throw error;
+        }
+      },
+      onReady: () => logger.info("Server fully initialized, ready to accept traffic"),
+      onError: (error, reason) => {
         captureApplicationError(error, { boundary: "process.shutdown" });
-        logger.warn("Unhandled error while shutting down production server", { signal, error });
-      });
-    };
-
-    onSignal("SIGINT", () => handleSignal("SIGINT"));
-    onSignal("SIGTERM", () => handleSignal("SIGTERM"));
+        logger.warn("Unhandled error while shutting down production server", { reason, error });
+      },
+    });
   } catch (e) {
     captureApplicationError(e, { boundary: "process.startup" });
     logger.error("Failed to start production server:", e);

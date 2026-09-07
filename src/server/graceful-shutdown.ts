@@ -3,6 +3,8 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import { requestTracker } from "./runtime-handler/request-tracker.ts";
 import { markServerShuttingDown } from "./shutdown-state.ts";
+import type { ProductionShutdownReason } from "./production-shutdown-coordinator.ts";
+import { stopMemoryMonitoring } from "#veryfront/utils/memory/profiler.ts";
 
 /** Default drain timeout leaves headroom under Kubernetes' default 30 second grace period. */
 export const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
@@ -23,8 +25,8 @@ interface GracefulShutdownRequestTracker {
  * instances or requests.
  */
 export interface GracefulProductionShutdownOptions {
-  /** Operating-system signal that initiated shutdown. */
-  signal: "SIGINT" | "SIGTERM";
+  /** Process-owner reason that initiated shutdown. */
+  signal: ProductionShutdownReason;
   /** Maximum drain time. Defaults to SHUTDOWN_DRAIN_TIMEOUT_MS or 25 seconds. */
   drainTimeoutMs?: number;
   /** Total time allowed for cleanup after draining. Defaults to 4 seconds. */
@@ -211,12 +213,15 @@ export async function gracefullyShutdownProductionServerWithDependencies(
  * Enter lame-duck mode, mark readiness false, drain tracked requests and SSE
  * response bodies, and stop a production server process.
  *
- * This is a one-shot, process-level lifecycle. Call it once from a SIGINT or
- * SIGTERM handler. The function returns `true` when every tracked request drains
+ * This is a one-shot, process-level lifecycle. Call it once from the process
+ * owner's shutdown coordinator. The function returns `true` when every tracked request drains
  * before the timeout and `false` when cleanup continues after the timeout.
  */
 export function gracefullyShutdownProductionServer(
   options: GracefulProductionShutdownOptions,
 ): Promise<boolean> {
+  // Startup may not have returned its server handle yet, so shutdown cannot
+  // rely on ServerHandle.stop() to release the process-wide sampler.
+  stopMemoryMonitoring();
   return gracefullyShutdownProductionServerWithDependencies(options, defaultDependencies);
 }

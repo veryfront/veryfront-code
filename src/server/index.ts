@@ -62,6 +62,14 @@ export {
   type GracefulProductionShutdownOptions,
 } from "./graceful-shutdown.ts";
 export {
+  createProductionShutdownCoordinator,
+  type OwnedProductionServer,
+  type ProductionProcessOwnerOptions,
+  type ProductionShutdownCoordinator,
+  type ProductionShutdownReason,
+  runProductionProcessOwner,
+} from "./production-shutdown-coordinator.ts";
+export {
   createVeryfrontServer,
   type CreateVeryfrontServerOptions,
   type NodeVeryfrontServiceServer,
