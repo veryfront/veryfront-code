@@ -26,12 +26,20 @@ export const getHostedExecutorSourceSchema = defineSchema((v) =>
   ])
 );
 
+/** Trusted source owner, independent of the invocation's application project. */
+export const getHostedExecutorOwnerSchema = defineSchema((v) =>
+  v.discriminatedUnion("scopeKind", [
+    v.object({ scopeKind: v.literal("global"), serviceName: v.string().min(1).max(128) }).strict(),
+    v.object({ scopeKind: v.literal("project"), projectId: getIdentifierSchema() }).strict(),
+  ])
+);
+
 /** The control plane injects authenticated brokerInstanceId; callers cannot submit it here. */
 export const getHostedExecutorAllocationRequestSchema = defineSchema((v) =>
   v.object({
     allocationId: getAllocationIdSchema(),
     invocationId: getAllocationIdSchema(),
-    projectId: getIdentifierSchema(),
+    owner: getHostedExecutorOwnerSchema(),
     source: getHostedExecutorSourceSchema(),
     requestedAt: getTimestampSchema(),
     prepareDeadlineAt: getTimestampSchema(),
@@ -48,7 +56,7 @@ export const getHostedExecutorBindingSchema = defineSchema((v) =>
     generation: v.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     invocationId: getAllocationIdSchema(),
     brokerInstanceId: getIdentifierSchema(),
-    projectId: getIdentifierSchema(),
+    owner: getHostedExecutorOwnerSchema(),
     source: getHostedExecutorSourceSchema(),
   }).strict()
 );
@@ -96,6 +104,7 @@ const getAllocationBindingEnvelopeSchema = defineSchema((v) =>
 export type HostedExecutorAllocationRequest = InferSchema<
   ReturnType<typeof getHostedExecutorAllocationRequestSchema>
 >;
+export type HostedExecutorOwner = InferSchema<ReturnType<typeof getHostedExecutorOwnerSchema>>;
 export type HostedExecutorBinding = InferSchema<ReturnType<typeof getHostedExecutorBindingSchema>>;
 export type HostedExecutorAllocation = InferSchema<
   ReturnType<typeof getHostedExecutorAllocationSchema>
@@ -118,7 +127,21 @@ export function parseHostedExecutorData<T>(schema: Schema<T>, value: unknown): T
 /** Capture only an exact validated identity, even when the remaining view is invalid. */
 export function readHostedExecutorBinding(value: unknown): HostedExecutorBinding {
   const { binding } = parseHostedExecutorData(getAllocationBindingEnvelopeSchema(), value);
-  return Object.freeze({ ...binding, source: Object.freeze(binding.source) });
+  return Object.freeze({
+    ...binding,
+    owner: Object.freeze(binding.owner),
+    source: Object.freeze(binding.source),
+  });
+}
+
+export function sameHostedExecutorOwner(
+  actual: HostedExecutorOwner,
+  expected: HostedExecutorOwner,
+): boolean {
+  return actual.scopeKind === "global" && expected.scopeKind === "global"
+    ? actual.serviceName === expected.serviceName
+    : actual.scopeKind === "project" && expected.scopeKind === "project" &&
+      actual.projectId === expected.projectId;
 }
 
 export function sameHostedExecutorBinding(
@@ -129,6 +152,6 @@ export function sameHostedExecutorBinding(
     actual.generation === expected.generation &&
     actual.invocationId === expected.invocationId &&
     actual.brokerInstanceId === expected.brokerInstanceId &&
-    actual.projectId === expected.projectId &&
+    sameHostedExecutorOwner(actual.owner, expected.owner) &&
     verifyHostedRuntimeSourceBinding(expected.source, actual.source) === undefined;
 }
