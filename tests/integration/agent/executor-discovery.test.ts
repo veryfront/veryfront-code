@@ -10,6 +10,7 @@ import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import {
+  EXECUTOR_DISCOVERY_MAX_AGENTS,
   ExecutorDiscoveryError,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoveryResultSchema,
@@ -255,6 +256,49 @@ describe("isolated executor local project discovery", () => {
       }
     });
   }
+
+  it("keeps cached agents available when markdown descriptions reach capacity", async () => {
+    const p = await project();
+    const discovery = owner(p.dir, "agent-0");
+    try {
+      await writeFile(
+        join(p.dir, "veryfront.config.ts"),
+        "export default { ai: { agents: { discovery: { enabled: false } } } };",
+      );
+      await mkdir(join(p.dir, "agents"));
+      for (let index = 0; index <= EXECUTOR_DISCOVERY_MAX_AGENTS; index++) {
+        await writeFile(
+          join(p.dir, "agents", `agent-${index}.md`),
+          `---\nname: Agent ${index}\n---\n\nSynthetic instructions ${index}.\n`,
+        );
+      }
+      for (let index = 0; index < EXECUTOR_DISCOVERY_MAX_AGENTS; index++) {
+        const result = getExecutorAgentDescribeResultSchema().parse(
+          await request(discovery, "agent.describe", { agentId: `agent-${index}` }),
+        );
+        assert(result.ok);
+        assertEquals(result.value.definition.id, `agent-${index}`);
+      }
+      assertEquals(
+        await request(discovery, "agent.describe", {
+          agentId: `agent-${EXECUTOR_DISCOVERY_MAX_AGENTS}`,
+        }),
+        { ok: false, code: "EXECUTOR_DISCOVERY_BUSY" },
+      );
+      assertEquals(discovery.signal.aborted, false);
+      const cached = getExecutorDiscoveryResultSchema().parse(
+        await request(discovery, "discovery.describe"),
+      );
+      assert(cached.ok);
+      assertEquals(cached.value.definition.id, "agent-0");
+      assertEquals(cached.value.definition.instructions.trim(), "Synthetic instructions 0.");
+      assertEquals(cached.value.candidates, { codeAgentIds: [], markdownAgentIds: [] });
+      assertEquals(discovery.getRuntime().agents.size, 0);
+    } finally {
+      await discovery.close();
+      await p.cleanup();
+    }
+  });
 
   it("keeps markdown fallback inside the bound source, including symlink targets", async () => {
     const p = await project();
