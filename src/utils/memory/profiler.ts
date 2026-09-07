@@ -6,7 +6,7 @@
  **************************/
 
 import { rendererLogger } from "#veryfront/utils";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import {
   getArgs,
   getEnv,
