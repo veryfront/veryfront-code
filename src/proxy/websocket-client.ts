@@ -74,6 +74,8 @@ export class UpstreamWebSocket {
   #reader: ReadableStreamDefaultReader<string | Uint8Array> | null = null;
   #readyState: number = WebSocket.CONNECTING;
   #writes: Promise<void> = Promise.resolve();
+  #opening: Promise<void>;
+  #reading: Promise<void> = Promise.resolve();
   #settled = false;
 
   onopen: ((event: Event) => void) | null = null;
@@ -83,7 +85,7 @@ export class UpstreamWebSocket {
 
   constructor(url: URL | string, headers: Headers, factory: UpstreamWebSocketStreamFactory) {
     this.#stream = factory(url.toString(), { headers: [...headers] });
-    this.#stream.opened.then(
+    this.#opening = this.#stream.opened.then(
       (connection) => this.#open(connection),
       (error: unknown) => this.#fail(error),
     );
@@ -124,16 +126,16 @@ export class UpstreamWebSocket {
     }
   }
 
-  #open(connection: UpstreamWebSocketConnection): void {
+  async #open(connection: UpstreamWebSocketConnection): Promise<void> {
     if (this.#readyState !== WebSocket.CONNECTING) {
       // Closed while connecting; drop the connection we just inherited.
-      connection.readable.cancel().catch(() => {});
+      await connection.readable.cancel().catch(() => {});
       return;
     }
     this.#writer = connection.writable.getWriter();
     this.#readyState = WebSocket.OPEN;
     this.onopen?.(new Event("open"));
-    this.#pump(connection.readable);
+    this.#reading = this.#pump(connection.readable);
   }
 
   async #pump(readable: ReadableStream<string | Uint8Array>): Promise<void> {
@@ -157,18 +159,22 @@ export class UpstreamWebSocket {
     if (this.#settled) return;
     const message = error instanceof Error ? error.message : String(error);
     this.onerror?.(new ErrorEvent("error", { message }));
-    this.#close(1006, message, false);
+    void this.#close(1006, message, false);
   }
 
-  #close(code: number, reason: string, wasClean: boolean): void {
+  async #close(code: number, reason: string, wasClean: boolean): Promise<void> {
     if (this.#settled) return;
     this.#settled = true;
+    this.#readyState = WebSocket.CLOSING;
+    // A late opened connection owns cancellation too. Neither the close event
+    // nor reader.cancel() alone establishes that the receive pump has finished.
+    await this.#opening;
+    await this.#reader?.cancel().catch(() => {});
+    await this.#reading;
+    await this.#writes;
+    this.#writer?.releaseLock();
+    this.#writer = null;
     this.#readyState = WebSocket.CLOSED;
-    // Settle the read still pending on the socket. Closing the stream resolves
-    // `closed` and fires this handler, but it does not settle a `read()` that is
-    // already awaiting the next frame, so the operation would outlive the
-    // connection it belongs to.
-    this.#reader?.cancel().catch(() => {});
     this.onclose?.(new CloseEvent("close", { code, reason, wasClean }));
   }
 }
