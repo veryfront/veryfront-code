@@ -1,4 +1,6 @@
+import { realpath } from "node:fs/promises";
 import { clearConfigCache, getConfig } from "#veryfront/config";
+import { bindExecutorDiscoveryRoots } from "#veryfront/agent/hosted/executor-discovery-roots.ts";
 import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
@@ -28,14 +30,16 @@ export function createNodeExecutorDiscoveryBackend(
       activeOwner = owner;
       claimed = true;
       const config = await getConfig(input.projectDir, nodeAdapter, { cacheKey: input.cacheKey });
+      const projectDir = await realpath(input.projectDir);
+      const boundConfig = await bindExecutorDiscoveryRoots(projectDir, config, realpath);
       signal.throwIfAborted();
       return discoverProjectAgentRuntime({
-        projectDir: input.projectDir,
+        projectDir,
         cacheKey: input.cacheKey,
         adapter: nodeAdapter,
         // Application storage configuration does not select the executor's
         // source filesystem. Preserve discovery paths/policy in a local copy.
-        config: { ...config, fs: { type: "local" } },
+        config: boundConfig,
         allowHostProjectCodeExecution: true,
       });
     },
