@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -9,7 +10,10 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  clearReactVersionCache,
+  createDependencyPinningSource,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import {
   BrowserModuleBundleError,
   bundleBrowserModule,
@@ -24,6 +28,46 @@ describe(
     afterEach(async () => {
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
+    });
+
+    it("does not expose the snapshot store while wrapping a tracked source", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const originalFreeze = Object.freeze;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/app/page.ts", "export const value = 1;");
+      const source = createDependencyPinningSource({
+        projectDir: "/project",
+        projectId: "test-project",
+        adapter,
+        isLocalProject: false,
+        snapshotStore: createDependencySnapshotStoreHandle({
+          publish: () => Promise.reject(new Error("unavailable")),
+          read: () => Promise.reject(new Error("unavailable")),
+        }),
+      });
+      let exposed = false;
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        Object.freeze = ((value: unknown) => {
+          if (value !== null && typeof value === "object" && "snapshotStore" in value) {
+            exposed = true;
+          }
+          return originalFreeze(value);
+        }) as typeof Object.freeze;
+        await assertRejects(() =>
+          bundleBrowserModule("/project/app/page.ts", {
+            adapter,
+            projectDir: "/project",
+            dependencyPinningSource: source,
+            requestedDependencyPinningCacheKey: "on:54uvgwr2ih7p",
+          })
+        );
+      } finally {
+        Object.freeze = originalFreeze;
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
+      assertEquals(exposed, false);
     });
 
     it("does not expose the project path through dependency module identities", async () => {

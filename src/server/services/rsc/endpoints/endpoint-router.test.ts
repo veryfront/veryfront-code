@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -58,6 +59,62 @@ async function withAllowedRscActions<T>(run: () => Promise<T>): Promise<T> {
 }
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
+  for (const endpoint of ["action", "page", "page/example"]) {
+    it(`returns uncached 503 for a storage failure in ${endpoint}`, async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        const adapter = {
+          ...createMockAdapter(),
+          dependencySnapshotStore: createDependencySnapshotStoreHandle({
+            publish: () => Promise.reject(new Error("unavailable")),
+            read: () => Promise.reject(new Error("unavailable")),
+          }),
+        };
+        const pathname = `/_veryfront/rsc/${endpoint}`;
+        const response = await handleRSCEndpoint(makeParams({
+          pathname,
+          adapter,
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          req: new Request(`http://localhost${pathname}`, {
+            method: endpoint === "action" ? "POST" : "GET",
+            headers: { [RSC_DEPENDENCY_PINNING_HEADER]: "on:54uvgwr2ih7p" },
+          }),
+        }));
+        assertEquals(response?.status, 503);
+        assertEquals(response?.headers.get("cache-control"), "no-store");
+        await response?.body?.cancel();
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      }
+    });
+  }
+  it("preserves unavailable shared history on RSC navigation as uncached 503", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const adapter = {
+        ...createMockAdapter(),
+        dependencySnapshotStore: createDependencySnapshotStoreHandle({
+          publish: () => Promise.reject(new Error("unavailable")),
+          read: () => Promise.reject(new Error("unavailable")),
+        }),
+      };
+      const pathname = "/_veryfront/rsc/module";
+      const response = await handleRSCEndpoint(makeParams({
+        pathname,
+        adapter,
+        config: rscEnabledConfig,
+        req: new Request(`http://localhost${pathname}?rel=app/page.ts&pins=on%3A54uvgwr2ih7p`),
+      }));
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      await response?.body?.cancel();
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+    }
+  });
   afterEach(async () => {
     resetBrowserModuleEndpointStateForTesting();
     const esbuild = await import("veryfront/extensions/bundler");

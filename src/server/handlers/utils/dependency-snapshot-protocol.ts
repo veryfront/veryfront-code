@@ -15,6 +15,8 @@
  */
 import type { HandlerContext } from "../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 import {
   type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
@@ -155,6 +157,26 @@ export function snapshotConflictResponse(
   applySnapshotResponseHeaders(prepared.headers);
   if (req.method === "HEAD") return prepared.build(null, 409);
   return prepared.text(SNAPSHOT_CONFLICT_BODY, 409);
+}
+
+/** Storage failures cannot be treated as missing history or cached success. */
+export function snapshotStoreFailureResponse(
+  error: unknown,
+  builder: ResponseBuilder,
+  req: Request,
+  securityConfig: HandlerContext["securityConfig"],
+): Response | undefined {
+  if (
+    !(error instanceof VeryfrontError) || error.slug !== DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug
+  ) {
+    return undefined;
+  }
+  const prepared = builder.withCORS(req, securityConfig?.cors)
+    .withSecurity(securityConfig ?? undefined, req).withCache("no-store");
+  applySnapshotResponseHeaders(prepared.headers);
+  return req.method === "HEAD"
+    ? prepared.build(null, 503)
+    : prepared.text("Dependency snapshot storage is unavailable", 503);
 }
 
 /** Copy a response with the snapshot headers applied. */

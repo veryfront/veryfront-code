@@ -5,7 +5,20 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
-import { hashString } from "#veryfront/cache/hash.ts";
+import { DependencySnapshotRegistry } from "./dependency-snapshot-registry.ts";
+import {
+  createDependencyPinningSnapshot,
+  type DependencyPinningSnapshot,
+  freezeConfiguredVersions,
+  hashDependencyPins,
+} from "./dependency-snapshot.ts";
+import {
+  captureDependencySnapshotStore,
+  type DependencySnapshotStore,
+  type DependencySnapshotStoreHandle,
+  resolveDependencySnapshotStoreHandle,
+} from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
+export type { DependencyPinningSnapshot } from "./dependency-snapshot.ts";
 import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 import type {
   FileInfo,
@@ -56,7 +69,7 @@ const pendingDependencyVersionReads = new Map<
 let dependencyVersionReadOperations = 0;
 const DEPENDENCY_VERSION_CACHE_MAX_ENTRIES = 256;
 const CURRENT_DEPENDENCY_SNAPSHOT_MAX_ENTRIES = 256;
-const DEPENDENCY_SNAPSHOT_MAX_ENTRIES = 4_096;
+const activeSnapshotCaptures = new Map<string, { metadata?: DependencyVersionsResult }>();
 
 function trimCurrentDependencyPinningKeys(): void {
   while (currentDependencyPinningKeys.size > CURRENT_DEPENDENCY_SNAPSHOT_MAX_ENTRIES) {
@@ -87,6 +100,7 @@ function trimDependencyVersionCache(): void {
       }
       dependencyVersionCache.delete(cacheIdentity);
       currentDependencyPinningKeys.delete(cacheIdentity);
+      activeSnapshotCaptures.delete(cacheIdentity);
       evicted = true;
       break;
     }
@@ -115,15 +129,6 @@ function getDependencyVersionCache(
   dependencyVersionCache.delete(cacheIdentity);
   dependencyVersionCache.set(cacheIdentity, cached);
   return cached;
-}
-
-export interface DependencyPinningSnapshot {
-  readonly cacheKey: string;
-  readonly dependencies?: Readonly<Record<string, string>>;
-  readonly configuredVersions?: Readonly<{
-    react?: Readonly<{ declaration: string; effective: string }>;
-    veryfront?: Readonly<{ declaration: string; effective: string }>;
-  }>;
 }
 
 export type DependencyWritebackTarget =
@@ -188,6 +193,7 @@ export type DependencyPinningSourceInput =
   | DependencyPinningSource;
 
 export interface CreateDependencyPinningSourceOptions {
+  readonly snapshotStore?: DependencySnapshotStoreHandle;
   projectDir: string;
   adapter?: RuntimeAdapter;
   projectId?: string | null;
@@ -225,7 +231,8 @@ export function createDependencyPinningSource(
     ? `release:${options.releaseId}`
     : `branch:${options.branch ?? "main"}`;
 
-  return {
+  const snapshotStore = getSourceSnapshotStore(options);
+  const source: DependencyPinningSource = {
     projectDir: options.projectDir,
     projectId: options.projectId,
     config: options.config,
@@ -236,16 +243,107 @@ export function createDependencyPinningSource(
       ? Object.freeze({ ...options.dependencyWritebackTarget })
       : undefined,
     dependencyWritebackToken: options.dependencyWritebackToken,
-    ...(adapterFs
-      ? {
-        fs: adapterFs,
-        cacheNamespace: JSON.stringify([projectKey, contentKey]),
-      }
+    ...(adapterFs ? { fs: adapterFs } : {}),
+    ...(adapterFs || snapshotStore
+      ? { cacheNamespace: JSON.stringify([projectKey, contentKey]) }
       : {}),
   };
+  if (snapshotStore) snapshotApply(snapshotWeakSet, sourceSnapshotStores, [source, snapshotStore]);
+  return snapshotFreeze(source);
 }
 
-const dependencyPinningSnapshots = new Map<string, DependencyPinningSnapshot>();
+let localSnapshotRegistry = new DependencySnapshotRegistry();
+let sharedSnapshotRegistries = new WeakMap<DependencySnapshotStore, DependencySnapshotRegistry>();
+const sourceSnapshotStores = new WeakMap<DependencyPinningSource, DependencySnapshotStore>();
+const adapterSnapshotStores = new WeakMap<
+  RuntimeAdapter,
+  { store: DependencySnapshotStore | undefined }
+>();
+const snapshotApply = Reflect.apply;
+const snapshotGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const snapshotWeakGet = WeakMap.prototype.get;
+const snapshotWeakSet = WeakMap.prototype.set;
+const snapshotHasOwn = Object.hasOwn;
+const snapshotFreeze = Object.freeze;
+
+/** Rebind tracked filesystem reads without exposing the private host store association. */
+export function withDependencyPinningSourceFileSystem(
+  source: DependencyPinningSourceInput,
+  projectDir: string,
+  fs: NonNullable<DependencyPinningSource["fs"]>,
+): DependencyPinningSource {
+  const original = typeof source === "object" && source !== null ? source : undefined;
+  const result = snapshotFreeze({
+    ...original,
+    projectDir: original ? original.projectDir : typeof source === "string" ? source : projectDir,
+    fs,
+  });
+  const store = original && snapshotApply(snapshotWeakGet, sourceSnapshotStores, [original]);
+  if (store) snapshotApply(snapshotWeakSet, sourceSnapshotStores, [result, store]);
+  return result;
+}
+
+function ownSnapshotStore(
+  value: object,
+  key: "snapshotStore" | "dependencySnapshotStore",
+): unknown {
+  const descriptor = snapshotGetOwnPropertyDescriptor(value, key);
+  if (descriptor && !snapshotHasOwn(descriptor, "value")) {
+    throw new TypeError("Dependency snapshot store must be an own data property");
+  }
+  return descriptor?.value;
+}
+
+function getSourceSnapshotStore(
+  options: CreateDependencyPinningSourceOptions,
+): DependencySnapshotStore | undefined {
+  const explicitHandle = ownSnapshotStore(options, "snapshotStore");
+  const store =
+    (explicitHandle === undefined
+      ? undefined
+      : resolveDependencySnapshotStoreHandle(explicitHandle)) ??
+      (options.adapter ? getAdapterSnapshotStore(options.adapter) : undefined);
+  return store === undefined ? undefined : captureDependencySnapshotStore(store);
+}
+
+function getAdapterSnapshotStore(adapter: RuntimeAdapter): DependencySnapshotStore | undefined {
+  const prior = snapshotApply(snapshotWeakGet, adapterSnapshotStores, [adapter]) as {
+    store: DependencySnapshotStore | undefined;
+  } | undefined;
+  if (prior) return prior.store;
+  const handle = ownSnapshotStore(adapter, "dependencySnapshotStore");
+  const store = handle === undefined ? undefined : resolveDependencySnapshotStoreHandle(handle);
+  // Capture absence too. Later project callbacks cannot add or replace host
+  // storage through an adapter reference encountered in renderer state.
+  snapshotApply(snapshotWeakSet, adapterSnapshotStores, [adapter, { store }]);
+  return store;
+}
+
+function snapshotRegistry(source: DependencyPinningSourceInput): DependencySnapshotRegistry {
+  const store = typeof source === "object" && source !== null
+    ? snapshotApply(snapshotWeakGet, sourceSnapshotStores, [source]) as
+      | DependencySnapshotStore
+      | undefined
+    : undefined;
+  if (!store) return localSnapshotRegistry;
+  const captured = captureDependencySnapshotStore(store);
+  let registry = snapshotApply(snapshotWeakGet, sharedSnapshotRegistries, [captured]) as
+    | DependencySnapshotRegistry
+    | undefined;
+  if (!registry) {
+    registry = new DependencySnapshotRegistry({ store: captured });
+    snapshotApply(snapshotWeakSet, sharedSnapshotRegistries, [captured, registry]);
+  }
+  return registry;
+}
+
+function snapshotHistoryIdentity(source: DependencyPinningSourceInput): string {
+  // Hosted source identity excludes pod-local mount paths. Store-less/local
+  // sources preserve directory scoping; replicated embedders supply project identity.
+  return typeof source === "object" && source !== null && source.cacheNamespace
+    ? source.cacheNamespace
+    : normalizeDependencyPinningSource(source).cacheIdentity;
+}
 const FLAG_OFF_DEPENDENCY_SNAPSHOT: DependencyPinningSnapshot = Object.freeze({
   cacheKey: "off",
 });
@@ -282,7 +380,10 @@ export function stripSemverRange(version: string): string {
  */
 export function clearReactVersionCache(): void {
   dependencyVersionCache.clear();
-  dependencyPinningSnapshots.clear();
+  localSnapshotRegistry.clear();
+  localSnapshotRegistry = new DependencySnapshotRegistry();
+  sharedSnapshotRegistries = new WeakMap();
+  activeSnapshotCaptures.clear();
   currentDependencyPinningKeys.clear();
 }
 
@@ -322,9 +423,9 @@ export function getProjectDependenciesSync(
   const normalized = normalizeDependencyPinningSource(source);
   if (!normalized.packageJsonPath) return undefined;
   if (expectedCacheKey) {
-    return dependencyPinningSnapshots.get(
-      dependencySnapshotKey(normalized.cacheIdentity, expectedCacheKey),
-    )?.dependencies as Record<string, string> | undefined;
+    return getDependencyPinningSnapshotSync(source, expectedCacheKey)?.dependencies as
+      | Record<string, string>
+      | undefined;
   }
   return getDependencyVersionCache(normalized.cacheIdentity)?.dependencies;
 }
@@ -378,22 +479,6 @@ function normalizeDependencyPinningSource(
   };
 }
 
-function hashDependencyPins(
-  dependencies: Readonly<Record<string, string>>,
-  configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
-): string {
-  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
-    left.localeCompare(right)
-  );
-  if (!configuredVersions?.react && !configuredVersions?.veryfront) {
-    return hashString(JSON.stringify(sortedEntries));
-  }
-  return hashString(JSON.stringify({
-    dependencies: sortedEntries,
-    configuredVersions,
-  }));
-}
-
 function dependencyMapsEqual(
   left: Readonly<Record<string, string>>,
   right: Readonly<Record<string, string>>,
@@ -419,58 +504,13 @@ function copyDependencyMap(
   return result;
 }
 
-function dependencySnapshotKey(cacheIdentity: string, cacheKey: string): string {
-  return `${cacheIdentity}\0${cacheKey}`;
-}
-
-function freezeConfiguredVersions(
-  configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
-): DependencyPinningSnapshot["configuredVersions"] {
-  return configuredVersions
-    ? Object.freeze({
-      ...(configuredVersions.react
-        ? { react: Object.freeze({ ...configuredVersions.react }) }
-        : {}),
-      ...(configuredVersions.veryfront
-        ? { veryfront: Object.freeze({ ...configuredVersions.veryfront }) }
-        : {}),
-    })
-    : undefined;
-}
-
-function rememberDependencyPinningSnapshot(
-  cacheIdentity: string,
-  cacheKey: string,
-  dependencies?: Record<string, string>,
-  configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
-): DependencyPinningSnapshot {
-  const snapshot: DependencyPinningSnapshot = Object.freeze({
-    cacheKey,
-    dependencies: dependencies ? Object.freeze(copyDependencyMap(dependencies)) : undefined,
-    configuredVersions: freezeConfiguredVersions(configuredVersions),
-  });
-  const key = dependencySnapshotKey(cacheIdentity, cacheKey);
-  if (
-    !dependencyPinningSnapshots.has(key) &&
-    dependencyPinningSnapshots.size >= DEPENDENCY_SNAPSHOT_MAX_ENTRIES
-  ) {
-    const oldest = dependencyPinningSnapshots.keys().next().value;
-    if (oldest !== undefined) dependencyPinningSnapshots.delete(oldest);
-  }
-  dependencyPinningSnapshots.set(key, snapshot);
-  return snapshot;
-}
-
 function getDependencyPinningSnapshotSync(
   source: DependencyPinningSourceInput,
   cacheKey: string,
 ): DependencyPinningSnapshot | undefined {
   if (cacheKey === "off") return FLAG_OFF_DEPENDENCY_SNAPSHOT;
   if (cacheKey === "on:unknown") return undefined;
-  const normalized = normalizeDependencyPinningSource(source);
-  return dependencyPinningSnapshots.get(
-    dependencySnapshotKey(normalized.cacheIdentity, cacheKey),
-  );
+  return snapshotRegistry(source).peek(snapshotHistoryIdentity(source), cacheKey);
 }
 
 /**
@@ -510,9 +550,8 @@ export function isCurrentDependencyPinningSnapshot(
 /**
  * Resolve an optional URL/request snapshot token. Remembered historical
  * snapshots take the synchronous fast path so a module graph does not stat
- * package.json once per child request. A miss performs one current read to
- * support fresh processes, then fails closed if the requested history is not
- * available locally.
+ * package.json once per child request. A miss checks shared history, then current
+ * metadata. Resolution never substitutes new dependencies for an old key.
  */
 export async function resolveRequestedDependencyPinningSnapshot(
   source: DependencyPinningSourceInput,
@@ -525,6 +564,12 @@ export async function resolveRequestedDependencyPinningSnapshot(
       requestedCacheKey,
     );
     if (remembered) return remembered;
+    if (!isCanonicalDependencyPinningCacheKey(requestedCacheKey)) return undefined;
+    const shared = await snapshotRegistry(source).find(
+      snapshotHistoryIdentity(source),
+      requestedCacheKey,
+    );
+    if (shared) return shared;
   }
 
   const current = await getDependencyPinningSnapshot(source);
@@ -644,28 +689,36 @@ export async function getDependencyPinningSnapshot(
     return Object.freeze({ cacheKey: "on:no-project" });
   }
 
-  // An in-progress refresh must not leave the previous snapshot authorized.
+  // Publication can await storage. A slower capture must not replace newer
+  // package state as the authority for background dependency writeback.
+  const capture: { metadata?: DependencyVersionsResult } = {};
+  activeSnapshotCaptures.set(normalized.cacheIdentity, capture);
   currentDependencyPinningKeys.delete(normalized.cacheIdentity);
-  const result = await readProjectDependencyVersions(source);
-  if (result.dependencyState === "unknown") {
-    currentDependencyPinningKeys.delete(normalized.cacheIdentity);
-    return Object.freeze({ cacheKey: "on:unknown" });
+  try {
+    const result = await readProjectDependencyVersions(source);
+    if (result.dependencyState === "unknown") {
+      return Object.freeze({ cacheKey: "on:unknown" });
+    }
+    const configuredVersions = captureConfiguredVersions(normalized.config);
+    const dependencies = applyConfiguredDependencyOverrides(
+      result.dependencies ?? {},
+      configuredVersions,
+    );
+    const cacheKey = `on:${hashDependencyPins(dependencies, configuredVersions)}`;
+    const snapshot = createDependencyPinningSnapshot(cacheKey, dependencies, configuredVersions);
+    await snapshotRegistry(source).remember(snapshotHistoryIdentity(source), snapshot);
+    if (
+      activeSnapshotCaptures.get(normalized.cacheIdentity) === capture &&
+      capture.metadata === result
+    ) {
+      setCurrentDependencyPinningKey(normalized.cacheIdentity, cacheKey);
+    }
+    return snapshot;
+  } finally {
+    if (activeSnapshotCaptures.get(normalized.cacheIdentity) === capture) {
+      activeSnapshotCaptures.delete(normalized.cacheIdentity);
+    }
   }
-  const configuredVersions = captureConfiguredVersions(normalized.config);
-  const dependencies = applyConfiguredDependencyOverrides(
-    result.dependencies ?? {},
-    configuredVersions,
-  );
-  const pinHash = hashDependencyPins(dependencies, configuredVersions);
-  const cacheKey = `on:${pinHash}`;
-  const snapshot = rememberDependencyPinningSnapshot(
-    normalized.cacheIdentity,
-    cacheKey,
-    dependencies,
-    configuredVersions,
-  );
-  setCurrentDependencyPinningKey(normalized.cacheIdentity, cacheKey);
-  return snapshot;
 }
 
 function getMtimeMs(mtime: Date | null | undefined): number | null {
@@ -713,10 +766,19 @@ export async function readProjectDependencyVersions(
   const pending = pendingDependencyVersionReads.get(pendingKey);
   if (pending) return pending;
 
+  // A raw metadata refresh also supersedes an in-flight publication. Track its
+  // result on the active capture without retaining another per-project cache.
+  const activeCapture = activeSnapshotCaptures.get(normalized.cacheIdentity);
+  if (activeCapture) activeCapture.metadata = undefined;
+
   const read = readProjectDependencyVersionsUncoalesced(
     normalized,
     pinningOn,
-  )
+  ).then((result) => {
+    const capture = activeSnapshotCaptures.get(normalized.cacheIdentity);
+    if (capture) capture.metadata = result;
+    return result;
+  })
     .finally(() => {
       if (pendingDependencyVersionReads.get(pendingKey) === read) {
         pendingDependencyVersionReads.delete(pendingKey);

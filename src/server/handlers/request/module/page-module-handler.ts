@@ -11,6 +11,7 @@ import {
   readSnapshotQuery,
   resolveSnapshotForRequest,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
   stripSnapshotQuery,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 
@@ -86,6 +87,13 @@ export function handlePageModule(
           builder.withCache(cacheMode).withETag(etag).javascript(code, 200),
         );
       } catch (error) {
+        const unavailable = snapshotStoreFailureResponse(
+          error,
+          createResponseBuilder(ctx),
+          req,
+          ctx.securityConfig,
+        );
+        if (unavailable) return respond(unavailable);
         if (isPageModuleNotFound(error)) {
           return respond(
             ResponseBuilder.error(404, "Module not found", req, {
