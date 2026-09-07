@@ -548,7 +548,7 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
               mtime: null,
             });
           }
-          return Promise.reject(new Error("not found"));
+          return Promise.reject(Object.assign(new Error("Missing file"), { code: "ENOENT" }));
         },
       });
       const ctx = makeCtx({ adapter });
