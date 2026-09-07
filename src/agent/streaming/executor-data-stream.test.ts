@@ -23,12 +23,47 @@ async function collect(stream: ReadableStream<Uint8Array>) {
 }
 
 describe("executor runtime data stream validation", () => {
+  it("accepts an exact-limit event with its separator split across chunks", async () => {
+    const prefix = 'data: {"type":"text-delta","delta":"';
+    const suffix = '"}';
+    const delta = "x".repeat(EXECUTOR_AGENT_MAX_PAYLOAD_BYTES - prefix.length - suffix.length);
+    const body = new TextEncoder().encode(prefix + delta + suffix);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body);
+        controller.enqueue(new Uint8Array([10]));
+        controller.enqueue(new TextEncoder().encode('\ndata: {"type":"message-finish"}\n\n'));
+        controller.close();
+      },
+    });
+    assertEquals(await collect(stream), [{ type: "text-delta", delta }, {
+      type: "message-finish",
+    }]);
+  });
+
   it("reassembles split UTF-8 and coalesced events without changing text", async () => {
     const events: JsonValue[] = [{ type: "text-delta", delta: "Synthetic å🙂\ntext" }, {
       type: "message-finish",
     }];
     const bytes = new TextEncoder().encode(
       events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+    );
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset === bytes.length) controller.close();
+        else controller.enqueue(bytes.subarray(offset, ++offset));
+      },
+    });
+    assertEquals(await collect(stream), events);
+  });
+
+  it("reads a large event one byte at a time across buffer growth and UTF-8 boundaries", async () => {
+    const events: JsonValue[] = [{ type: "text-delta", delta: "x".repeat(32_768) + "å🙂" }, {
+      type: "message-finish",
+    }];
+    const bytes = new TextEncoder().encode(
+      "\uFEFF" + events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
     );
     let offset = 0;
     const stream = new ReadableStream<Uint8Array>({
