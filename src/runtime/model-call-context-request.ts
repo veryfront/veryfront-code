@@ -4,10 +4,14 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
+import {
+  resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
+  resolveVeryfrontCloudOpenAITransport,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { ModelCallRequest } from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<RuntimeMetadata, "modelId" | "provider" | "modelProvider">;
-type ModelCallRequestSource = Pick<ModelRuntimeCallOptions, keyof ModelCallRequest> & {
+type ModelCallRequestSource = Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools"> & {
   providerOptions?: unknown;
 };
 
@@ -84,6 +88,15 @@ function resolvePersistedReasoning(
 ): RuntimeReasoningOption | undefined {
   const modelProvider = resolveModelCallProvider(model);
   if (modelProvider === "openai" && typeof model.modelId === "string") {
+    const catalogId = `openai/${model.modelId}`;
+    if (
+      model.provider === "veryfront-cloud" &&
+      resolveVeryfrontCloudOpenAITransport(catalogId) === "chat-completions" &&
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false &&
+      options.tools?.some((tool) => tool.type === "function")
+    ) {
+      return { enabled: false };
+    }
     const reasoning = resolveOpenAIReasoningConfig(model.modelId, modelProvider, options.reasoning);
     return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
   }
