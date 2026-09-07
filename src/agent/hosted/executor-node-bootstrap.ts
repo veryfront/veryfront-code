@@ -18,6 +18,7 @@ type BootstrapVariable =
   | "VERYFRONT_EXECUTOR_GENERATION"
   | "VERYFRONT_EXECUTOR_INVOCATION_ID"
   | "VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS"
+  | "VERYFRONT_EXECUTOR_HARD_DEADLINE_AT"
   | "PORT";
 
 /** Fixed operator-owned input boundary. No environment enumeration or forwarding. */
@@ -52,16 +53,19 @@ function readBootstrap(environment: ExecutorBootstrapEnvironment) {
     const generation = environment.get("VERYFRONT_EXECUTOR_GENERATION");
     const invocationId = environment.get("VERYFRONT_EXECUTOR_INVOCATION_ID");
     const seconds = environment.get("VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS");
+    const hardDeadlineAt = environment.get("VERYFRONT_EXECUTOR_HARD_DEADLINE_AT");
     const port = environment.get("PORT");
     if (
       typeof allocationId !== "string" || allocationId.length !== 36 || !UUID.test(allocationId) ||
       typeof invocationId !== "string" || invocationId.length !== 36 || !UUID.test(invocationId) ||
       !canonicalPositiveInteger(generation, Number.MAX_SAFE_INTEGER) ||
-      !canonicalPositiveInteger(seconds, 86_400) || port !== "8081"
+      !canonicalPositiveInteger(seconds, 86_400) ||
+      !canonicalPositiveInteger(hardDeadlineAt, Number.MAX_SAFE_INTEGER) || port !== "8081"
     ) throw new Error();
     return {
       binding: Object.freeze({ allocationId, generation: Number(generation), invocationId }),
       lifetimeMs: Number(seconds) * 1_000,
+      hardDeadlineAt: Number(hardDeadlineAt),
     };
   } catch {
     throw new TypeError("Invalid executor bootstrap environment");
@@ -75,31 +79,39 @@ function canonicalPositiveInteger(value: unknown, maximum: number): value is str
 }
 
 /** Read at most 33 bytes, including one byte that detects an oversized key. */
-async function readFixedChannelKey(signal: AbortSignal): Promise<Uint8Array> {
+async function readFixedChannelKey(
+  signal: AbortSignal,
+  remaining: () => number,
+): Promise<Uint8Array> {
   const bytes = new Uint8Array(33);
   let file: Awaited<ReturnType<typeof open>> | undefined;
   let offset = 0;
   let failed = false;
-  try {
+  const assertActive = () => {
     signal.throwIfAborted();
+    remaining();
+  };
+  try {
+    assertActive();
     // Secret volume paths contain Kubernetes-managed symlinks. Open only this
     // fixed path; nonblocking open plus fstat rejects non-regular files safely.
     file = await open(
       "/var/run/veryfront-executor/channel-key",
       constants.O_RDONLY | constants.O_NONBLOCK,
     );
-    signal.throwIfAborted();
+    assertActive();
     const stat = await file.stat();
+    assertActive();
     if (!stat.isFile() || (stat.mode & 0o777) !== 0o440 || stat.gid !== 1000) {
       throw new Error();
     }
     while (offset < bytes.byteLength) {
-      signal.throwIfAborted();
+      assertActive();
       const { bytesRead } = await file.read(bytes, offset, bytes.byteLength - offset, offset);
       if (!bytesRead) break;
       offset += bytesRead;
     }
-    signal.throwIfAborted();
+    assertActive();
   } catch {
     failed = true;
   } finally {
@@ -120,7 +132,9 @@ async function readFixedChannelKey(signal: AbortSignal): Promise<Uint8Array> {
  * Start the fixed Node executor endpoint before importing any project code.
  * The trusted entrypoint must first register its first-party SchemaValidator.
  * This helper does not load an app, environment files, or project extensions.
- * The workload lifetime is independent of stricter broker lease or grant limits.
+ * The earlier workload or allocation deadline bounds startup and channel I/O.
+ * Timer-driven closure is cooperative, not kernel process termination under a
+ * blocked event loop. Live authority and the reaper fence remain broker-owned.
  */
 export async function startExecutorNodeBootstrap(
   options: ExecutorNodeBootstrapOptions,
@@ -129,15 +143,23 @@ export async function startExecutorNodeBootstrap(
     "Deno" in globalThis || "Bun" in globalThis || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
-  const { binding, lifetimeMs } = readBootstrap(
+  const startedAt = Date.now();
+  const { binding, lifetimeMs, hardDeadlineAt } = readBootstrap(
     options.environment ?? { get: (name) => process.env[name] },
   );
+  const deadline = Math.min(startedAt + lifetimeMs, hardDeadlineAt);
+  const remaining = () => {
+    const value = deadline - Date.now();
+    if (value <= 0) throw new Error("Executor bootstrap deadline exceeded");
+    return value;
+  };
+  remaining();
   if (!tryResolve("SchemaValidator")) {
     throw new Error("Executor bootstrap requires a registered schema validator");
   }
   if (!options.operations) throw new TypeError("Executor bootstrap requires registered operations");
   const operations = new Map(options.operations);
-  const deadline = Date.now() + lifetimeMs;
+  const lifetimeRemaining = remaining();
   const authority = new AbortController();
   const ready = Promise.withResolvers<ExecutorChannel>();
   const closed = Promise.withResolvers<never>();
@@ -164,24 +186,22 @@ export async function startExecutorNodeBootstrap(
   const abort = () => stop(new Error("Executor bootstrap aborted"));
   const lifetimeTimer = setTimeout(
     () => stop(new Error("Executor bootstrap deadline exceeded")),
-    lifetimeMs,
+    lifetimeRemaining,
   );
   const keyTimer = setTimeout(
     () => stop(new Error("Executor bootstrap key read deadline exceeded")),
-    Math.min(lifetimeMs, 5_000),
+    Math.min(lifetimeRemaining, 5_000),
   );
   options.signal?.addEventListener("abort", abort, { once: true });
-  const remaining = () => {
-    const value = deadline - Date.now();
-    if (value <= 0) throw new Error("Executor bootstrap deadline exceeded");
-    return value;
-  };
   try {
     if (options.signal?.aborted) abort();
     if (failure) throw failure;
-    const reading = Promise.resolve().then(() =>
-      (options.readKey ?? readFixedChannelKey)(authority.signal)
-    ).then((bytes) => {
+    const reading = Promise.resolve().then(() => {
+      remaining();
+      return options.readKey
+        ? options.readKey(authority.signal)
+        : readFixedChannelKey(authority.signal, remaining);
+    }).then((bytes) => {
       if (!(bytes instanceof Uint8Array)) {
         throw new Error("Executor bootstrap requires exactly 32 key bytes");
       }
@@ -190,10 +210,12 @@ export async function startExecutorNodeBootstrap(
         throw failure;
       }
       key = bytes;
+      remaining();
       if (key.byteLength !== 32) {
         throw new Error("Executor bootstrap requires exactly 32 key bytes");
       }
     }, () => {
+      remaining();
       throw new Error("Executor bootstrap key read failed");
     });
     await Promise.race([reading, closed.promise]);
@@ -213,27 +235,49 @@ export async function startExecutorNodeBootstrap(
     try {
       listener = await listening;
     } catch {
+      remaining();
       throw new Error("Executor bootstrap could not bind port 8081");
     }
     if (failure) {
       listener.close();
       throw failure;
     }
+    remaining();
     void listener.connection.then(async (transport) => {
       if (failure) {
         transport.close();
         return;
       }
+      const channelLifetime = remaining();
       channel = createExecutorChannel({
         binding,
         transport,
         operations,
-        defaultTimeoutMs: remaining(),
+        defaultTimeoutMs: channelLifetime,
+        handshakeTimeoutMs: Math.min(5_000, channelLifetime),
+        cancellationTimeoutMs: Math.min(5_000, channelLifetime),
       });
-      void channel.closed.then(() => stop(new Error("Executor bootstrap channel closed")));
+      void channel.closed.then(() =>
+        stop(
+          new Error(
+            Date.now() >= deadline
+              ? "Executor bootstrap deadline exceeded"
+              : "Executor bootstrap channel closed",
+          ),
+        )
+      );
       await channel.ready;
+      remaining();
       if (!failure) ready.resolve(channel);
-    }).catch(() => stop(new Error("Executor bootstrap channel setup failed")));
+    }).catch(() =>
+      stop(
+        new Error(
+          Date.now() >= deadline
+            ? "Executor bootstrap deadline exceeded"
+            : "Executor bootstrap channel setup failed",
+        ),
+      )
+    );
     return {
       address: listener.address,
       ready: ready.promise,

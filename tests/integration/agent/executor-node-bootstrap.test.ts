@@ -28,6 +28,7 @@ const values: Record<string, string> = {
   VERYFRONT_EXECUTOR_GENERATION: "1",
   VERYFRONT_EXECUTOR_INVOCATION_ID: binding.invocationId,
   VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: "60",
+  VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(Date.now() + 120_000),
   PORT: "8081",
 };
 const environment = (
@@ -97,21 +98,26 @@ if (typeof Deno !== "undefined") {
         ...["0", "01", "+1", "1.0", "1e2", "86401"].map((value) => ({
           VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: value,
         })),
+        ...["0", "01", "+1", "1.0", "1e12", " 1", "1\n", "9007199254740992"].map((value) => ({
+          VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: value,
+        })),
         { PORT: "0" },
         { PORT: "8080" },
         { PORT: "08081" },
       );
       for (const invalidValues of invalid) {
         await assertRejects(
-          () =>
-            startExecutorNodeBootstrap({
+          async () => {
+            const unexpected = await startExecutorNodeBootstrap({
               operations,
               environment: environment(invalidValues),
               readKey: () => {
                 reads++;
                 return Promise.resolve(randomBytes(32));
               },
-            }),
+            });
+            unexpected.close();
+          },
           TypeError,
           "Invalid executor bootstrap environment",
         );
@@ -141,6 +147,58 @@ if (typeof Deno !== "undefined") {
       } finally {
         register("SchemaValidator", validator);
       }
+    });
+
+    it("rejects an expired allocation before key I/O", async () => {
+      let reads = 0;
+      try {
+        await assertRejects(
+          async () => {
+            const unexpected = await startExecutorNodeBootstrap({
+              operations,
+              environment: environment({
+                VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(Date.now() - 1),
+              }),
+              readKey: () => {
+                reads++;
+                return Promise.resolve(randomBytes(32));
+              },
+            });
+            unexpected.close();
+          },
+          Error,
+          "Executor bootstrap deadline exceeded",
+        );
+        assertEquals(reads, 0);
+      } finally {
+        await setImmediate();
+      }
+    });
+
+    it("expires during delayed key acquisition and wipes the late key", async () => {
+      const completed = Promise.withResolvers<void>();
+      const bytes = randomBytes(32);
+      await assertRejects(
+        async () => {
+          const unexpected = await startExecutorNodeBootstrap({
+            operations,
+            environment: environment({
+              VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(Date.now() + 30),
+            }),
+            readKey: async () => {
+              await new Promise<void>((resolve) => setTimeout(resolve, 60));
+              completed.resolve();
+              return bytes;
+            },
+          });
+          unexpected.close();
+        },
+        Error,
+        "Executor bootstrap deadline exceeded",
+      );
+      await completed.promise;
+      await setImmediate();
+      assert(bytes.every((byte) => byte === 0));
     });
 
     it("rejects short or oversized keys, wipes them, and sanitizes reader errors", async () => {
@@ -393,6 +451,71 @@ if (typeof Deno !== "undefined") {
         await assertRejects(() => bootstrap.ready, Error, "Executor bootstrap deadline exceeded");
       } finally {
         bootstrap.close();
+        await setImmediate();
+      }
+    });
+
+    it("limits authenticated channel readiness to the absolute allocation deadline", async () => {
+      const key = randomBytes(32);
+      const bootstrap = await startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(Date.now() + 100) }),
+        readKey: () => Promise.resolve(new Uint8Array(key)),
+      });
+      const transport = await connectExecutorTransport({
+        podIp: "127.0.0.1",
+        port: 8081,
+        key,
+        binding,
+        timeoutMs: 1_000,
+      });
+      const watchdog = setTimeout(() => bootstrap.close(), 500);
+      try {
+        await assertRejects(() => bootstrap.ready, Error, "Executor bootstrap deadline exceeded");
+        await assertRejects(async () => {
+          const reader = transport.readable.getReader();
+          try {
+            while (!(await reader.read()).done) { /* Drain the server hello before closure. */ }
+          } finally {
+            reader.releaseLock();
+          }
+        }, Error);
+      } finally {
+        clearTimeout(watchdog);
+        bootstrap.close();
+        transport.close();
+        key.fill(0);
+        await setImmediate();
+      }
+    });
+
+    it("caps channel calls and closes attached I/O at the allocation deadline", async () => {
+      const key = randomBytes(32);
+      const hardDeadlineAt = Date.now() + 200;
+      const bootstrap = await startExecutorNodeBootstrap({
+        operations,
+        environment: environment({ VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(hardDeadlineAt) }),
+        readKey: () => Promise.resolve(new Uint8Array(key)),
+      });
+      const caller = await connectCaller(8081, key);
+      let watchdogUsed = false;
+      const watchdog = setTimeout(() => {
+        watchdogUsed = true;
+        bootstrap.close();
+      }, 500);
+      try {
+        const server = await bootstrap.ready;
+        const remaining = await caller.request("remaining", {}, { timeoutMs: 45_000 });
+        assert(typeof remaining === "number" && remaining <= 200);
+        await Promise.all([caller.closed, server.closed]);
+        assertEquals(caller.signal.aborted, true);
+        assertEquals(server.signal.aborted, true);
+        assertEquals(watchdogUsed, false);
+      } finally {
+        clearTimeout(watchdog);
+        bootstrap.close();
+        caller.close();
+        key.fill(0);
         await setImmediate();
       }
     });
