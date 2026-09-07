@@ -17,6 +17,33 @@ const assistant = agent({
 });
 
 describe("agent/agent-service", () => {
+  it("rejects unsafe response options without invoking inherited accessors", async () => {
+    const runtime = defineAgentService({ serviceName: "response-policy", agent: assistant })
+      .createRuntime();
+    const request = new Request("http://localhost/liveness");
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "headers");
+    let accessorCalls = 0;
+    Object.defineProperty(Object.prototype, "headers", {
+      configurable: true,
+      get() {
+        accessorCalls++;
+        return {};
+      },
+    });
+    try {
+      await assertRejects(
+        () => runtime.fetch(request),
+        TypeError,
+        "Cannot construct a response with inherited option accessors",
+      );
+    } finally {
+      if (original) Object.defineProperty(Object.prototype, "headers", original);
+      else Reflect.deleteProperty(Object.prototype, "headers");
+    }
+    assertEquals(accessorCalls, 0);
+    assertEquals(await (await runtime.fetch(request)).text(), "OK");
+  });
+
   it("exports a typed contract surface for future hosted service adoption", () => {
     const durableRunSink: DurableRunSink<
       { requestId: string },
