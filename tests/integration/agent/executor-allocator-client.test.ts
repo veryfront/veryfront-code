@@ -17,7 +17,7 @@ import { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/exe
 const requestData = {
   allocationId: "00000000-0000-4000-8000-000000000001",
   invocationId: "00000000-0000-4000-8000-000000000002",
-  projectId: "project-1",
+  owner: { scopeKind: "project" as const, projectId: "project-1" },
   source: { type: "release" as const, releaseId: "release-1" },
   requestedAt: 1000,
   prepareDeadlineAt: 2000,
@@ -27,7 +27,7 @@ const view = {
   binding: {
     allocationId: requestData.allocationId,
     invocationId: requestData.invocationId,
-    projectId: requestData.projectId,
+    owner: requestData.owner,
     source: requestData.source,
     brokerInstanceId: "00000000-0000-4000-8000-000000000003",
     generation: 1,
@@ -151,6 +151,7 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
         return;
       }
       const child = spawn(process.execPath, [
+        ...(process.sourceMapsEnabled ? ["--enable-source-maps"] : []),
         "--import",
         "./tests/node/resolver.mjs",
         "--test",
@@ -208,6 +209,7 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
         const pending = client.allocate(original, { channelKey: key }, signal());
         key.fill(0);
         original.source.releaseId = "changed";
+        original.owner.projectId = "changed-project";
         token.resolve("synthetic-initial");
         assertEquals(await pending, view);
         assertEquals(await client.observe(view.binding, signal()), view);
@@ -224,6 +226,51 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
         await close(server);
       }
     });
+
+    for (
+      const owner of [
+        { scopeKind: "global" as const, serviceName: "@example/agent" },
+        { scopeKind: "project" as const, projectId: "synthetic-project" },
+      ]
+    ) {
+      it(`preserves exact ${owner.scopeKind} owner through every allocator operation`, async () => {
+        const allocationRequest = { ...requestData, owner };
+        const binding = { ...view.binding, owner };
+        const calls: { url?: string; body: unknown }[] = [];
+        const server = createServer(tls, async (request, response) => {
+          calls.push({ url: request.url, body: await body(request) });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ...view, binding }));
+        });
+        const client = createHostedExecutorAllocatorClient({
+          baseUrl: await listen(server),
+          ca: tls.cert,
+          readBrokerToken: () => Promise.resolve("synthetic-token"),
+        });
+        const key = new Uint8Array(32).fill(42);
+        try {
+          await client.allocate(allocationRequest, { channelKey: key }, signal());
+          await client.observe(binding, signal());
+          await client.renew(binding, signal());
+          await client.release(binding, "completed", signal());
+          assertEquals(calls, [
+            {
+              url: "/agent-executors/allocate",
+              body: {
+                request: allocationRequest,
+                channelKey: Buffer.alloc(32, 42).toString("base64"),
+              },
+            },
+            { url: "/agent-executors/observe", body: { binding } },
+            { url: "/agent-executors/renew", body: { binding } },
+            { url: "/agent-executors/release", body: { binding, reason: "completed" } },
+          ]);
+        } finally {
+          key.fill(0);
+          await close(server);
+        }
+      });
+    }
 
     it("rejects untrusted TLS and never follows redirects or replays failed POSTs", async () => {
       let requests = 0;
