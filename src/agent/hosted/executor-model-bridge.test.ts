@@ -55,7 +55,10 @@ function stubModel(
   };
 }
 
-function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
+function pair(
+  operations: ReadonlyMap<string, ExecutorOperation>,
+  options: { maxConcurrentCalls?: number; brokerCancellationTimeoutMs?: number } = {},
+) {
   const forward = new TransformStream<Uint8Array, Uint8Array>();
   const backward = new TransformStream<Uint8Array, Uint8Array>();
   const binding = {
@@ -65,10 +68,13 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
   };
   const caller = createExecutorChannel({
     binding,
+    maxConcurrentCalls: options.maxConcurrentCalls,
     transport: { readable: backward.readable, writable: forward.writable },
   });
   const broker = createExecutorChannel({
     binding,
+    maxConcurrentCalls: options.maxConcurrentCalls,
+    cancellationTimeoutMs: options.brokerCancellationTimeoutMs,
     transport: { readable: forward.readable, writable: backward.writable },
     operations,
   });
@@ -82,12 +88,13 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
   };
 }
 
-async function connected(model = stubModel()) {
+async function connected(model = stubModel(), options: Parameters<typeof pair>[1] = {}) {
   const channels = pair(
     createExecutorModelBroker({
       allowedModelIds,
       resolveModelRuntime: (id) => id === modelId ? model : undefined,
     }),
+    options,
   );
   const resolver = await createExecutorModelRuntimeResolver({
     channel: channels.caller,
@@ -707,6 +714,95 @@ describe("executor managed model bridge", () => {
       assertEquals(cancelled, true);
     } finally {
       await streaming.close();
+    }
+  });
+
+  it("retains admission until asynchronous provider stream cleanup settles", async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const cancelStarted = Promise.withResolvers<void>();
+    let cancelCalls = 0;
+    let cancellationSettled = false;
+    let cancellation: Promise<void> | undefined;
+    const channels = await connected(
+      stubModel({
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              cancel() {
+                cancelCalls++;
+                cancelStarted.resolve();
+                return cleanup.promise;
+              },
+            }, { highWaterMark: 0 }),
+          }),
+      }),
+      { maxConcurrentCalls: 1 },
+    );
+    try {
+      const { stream } = await channels.proxy.doStream({ prompt });
+      cancellation = stream.cancel();
+      void cancellation.then(
+        () => cancellationSettled = true,
+        () => cancellationSettled = true,
+      );
+      await cancelStarted.promise;
+      await tick();
+      assertEquals(cancellationSettled, false);
+      await assertRejects(
+        async () => await channels.proxy.doGenerate({ prompt }),
+        Error,
+        "concurrent call limit",
+      );
+      cleanup.resolve();
+      await cancellation;
+      assertEquals(cancelCalls, 1);
+      assertEquals(
+        await channels.proxy.doGenerate({ prompt }),
+        await stubModel().doGenerate({ prompt }),
+      );
+    } finally {
+      cleanup.resolve();
+      await cancellation?.catch(() => {});
+      await channels.close();
+    }
+  });
+
+  it("enforces the cancellation deadline while provider stream cleanup remains pending", async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const cancelStarted = Promise.withResolvers<void>();
+    let cancellation: Promise<void> | undefined;
+    const channels = await connected(
+      stubModel({
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              cancel() {
+                cancelStarted.resolve();
+                return cleanup.promise;
+              },
+            }, { highWaterMark: 0 }),
+          }),
+      }),
+      { maxConcurrentCalls: 1, brokerCancellationTimeoutMs: 20 },
+    );
+    try {
+      const { stream } = await channels.proxy.doStream({ prompt });
+      cancellation = stream.cancel();
+      void cancellation.catch(() => {});
+      await cancelStarted.promise;
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      assertEquals(channels.broker.signal.aborted, true);
+      assertEquals(
+        (await channels.broker.closed).message,
+        "Executor handler cancellation deadline exceeded",
+      );
+      await assertRejects(async () => await cancellation, Error, "Executor");
+      assertEquals(channels.caller.signal.aborted, true);
+    } finally {
+      // The provider does not finish during the deadline; release the fixture only during teardown.
+      cleanup.resolve();
+      await cancellation?.catch(() => {});
+      await channels.close();
     }
   });
 

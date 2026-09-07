@@ -99,8 +99,14 @@ export function createExecutorModelBroker(options: {
         const call = parseCall(input, context);
         const result = await call.model.doStream(call.options);
         const reader = result.stream.getReader();
+        // Later reader.cancel() calls do not wait for the first call's provider cleanup.
+        let cancellation: Promise<void> | undefined;
         const cancel = () => {
-          void reader.cancel().catch(() => {});
+          if (!cancellation) {
+            cancellation = reader.cancel();
+            void cancellation.catch(() => {});
+          }
+          return cancellation;
         };
         context.signal.addEventListener("abort", cancel, { once: true });
         let complete = false;
@@ -129,7 +135,7 @@ export function createExecutorModelBroker(options: {
           }
         } finally {
           context.signal.removeEventListener("abort", cancel);
-          if (!complete) await reader.cancel().catch(() => {});
+          if (!complete) await cancel().catch(() => {});
           reader.releaseLock();
         }
       },
