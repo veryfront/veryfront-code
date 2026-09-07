@@ -126,6 +126,9 @@ export async function runProductionProcessOwner(
     beforeExit: async () => {
       if (server && shutdownRequested) await server.stop();
       await options.beforeExit?.();
+      // The custom hook can yield while startup publishes its handle. This is
+      // the final asynchronous fence before exit, so recheck after that yield.
+      if (server && shutdownRequested) await server.stop();
     },
     exit: options.exit,
     onError: options.onError,

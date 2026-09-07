@@ -251,4 +251,64 @@ describe("production shutdown coordinator", () => {
       "signals-disposed",
     ]);
   });
+
+  it("rechecks late server ownership after the pre-exit hook yields", async () => {
+    const events: string[] = [];
+    let requestSignal: (() => void) | undefined;
+    let resumeStartup: (() => void) | undefined;
+
+    const run = runProductionProcessOwner({
+      start: ({ signal }) =>
+        new Promise((resolve) => {
+          resumeStartup = () => {
+            events.push(`startup-resumed:aborted=${signal.aborted}`);
+            resolve({
+              ready: Promise.resolve(),
+              stop: () => {
+                events.push("stop-start");
+                return new Promise<void>((resolveStop) => {
+                  setTimeout(() => {
+                    events.push("stop-done");
+                    resolveStop();
+                  }, 0);
+                });
+              },
+            });
+          };
+        }),
+      shutdown: (_reason, server, abort) => {
+        events.push(`shutdown:server=${server ? "yes" : "no"}`);
+        abort();
+        return Promise.resolve();
+      },
+      flush: () => {
+        events.push("flush-start");
+        return new Promise<void>((resolveFlush) => {
+          queueMicrotask(() => {
+            events.push("flush-resolve");
+            resolveFlush();
+            resumeStartup?.();
+          });
+        });
+      },
+      beforeExit: () => Promise.resolve(),
+      exit: (code) => events.push(`exit:${code}`),
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+    });
+
+    requestSignal?.();
+    await run;
+
+    assertEquals(events, [
+      "shutdown:server=no",
+      "flush-start",
+      "flush-resolve",
+      "startup-resumed:aborted=true",
+      "stop-start",
+      "stop-done",
+      "exit:0",
+    ]);
+  });
 });
