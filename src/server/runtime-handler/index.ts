@@ -51,7 +51,7 @@ import { isServerShuttingDown } from "../shutdown-state.ts";
 import { buildRuntimeShuttingDownResponse } from "../handlers/request/runtime-shutdown-response.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
-import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
+import { HealthHandler, setServerInitialized } from "../handlers/monitoring/health.handler.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.handler.ts";
 import {
   finalizeRequestProfiling,
@@ -493,6 +493,7 @@ export function createVeryfrontHandler(
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
+  const shutdownProbeHandler = new HealthHandler();
 
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
     logger.error("API handler initialization failed", {
@@ -510,8 +511,20 @@ export function createVeryfrontHandler(
     const url = new URL(req.url);
     // Stop admission before project resolution can load more tenant code.
     // Existing response bodies keep draining; kubelet probes remain reachable.
-    if (isServerShuttingDown() && !isPlatformLivenessProbe(req.method, url.pathname)) {
-      return buildRuntimeShuttingDownResponse();
+    if (isServerShuttingDown()) {
+      if (!isPlatformLivenessProbe(req.method, url.pathname)) {
+        return buildRuntimeShuttingDownResponse();
+      }
+
+      // Shutdown probes must not join API or security initialization: those
+      // promises may still be pending when a signal arrives. Force readiness
+      // down, then use the framework health handler for its fixed responses.
+      setServerInitialized(false);
+      const result = await shutdownProbeHandler.handle(
+        req,
+        buildMinimalContext(projectDir, adapter, null, isDebugEnabled(), config),
+      );
+      return result.response ?? buildRuntimeShuttingDownResponse();
     }
     const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
 

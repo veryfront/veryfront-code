@@ -7,6 +7,32 @@ import {
 } from "./production-shutdown-coordinator.ts";
 
 describe("production shutdown coordinator", () => {
+  it("still shuts down and exits when the deadline resolver throws", async () => {
+    const failure = new Error("deadline unavailable");
+    const events: string[] = [];
+    const coordinator = createProductionShutdownCoordinator({
+      finalizationDeadlineMs: () => {
+        throw failure;
+      },
+      shutdown: () => {
+        events.push("shutdown");
+        return new Promise(() => {});
+      },
+      flush: () => {
+        events.push("flush");
+        return Promise.resolve();
+      },
+      exit: () => events.push("exit"),
+      onError: (error) => {
+        assertEquals(error, failure);
+        events.push("error");
+      },
+    });
+    coordinator.request("SIGTERM");
+    await coordinator.completed;
+    assertEquals(events, ["error", "shutdown", "flush", "exit"]);
+  });
+
   it("bounds standalone shutdown by its finalization deadline", async () => {
     const finishShutdown = Promise.withResolvers<void>();
     const events: string[] = [];
@@ -116,6 +142,44 @@ describe("production shutdown coordinator", () => {
       finishShutdown.resolve();
       await run;
     }
+  });
+
+  it("still requests shutdown when the owner timeout resolver throws", async () => {
+    const failure = new Error("shutdown timeout unavailable");
+    const errors: unknown[] = [];
+    let requestSignal: (() => void) | undefined;
+    let timeoutReads = 0;
+    const run = runProductionProcessOwner({
+      start: () => new Promise(() => {}),
+      shutdown: (_reason, _server, abort) => {
+        abort();
+        return Promise.resolve();
+      },
+      shutdownTimeoutMs: () => {
+        timeoutReads++;
+        if (timeoutReads === 1) throw failure;
+        return 0;
+      },
+      registerSignals: (handler) => {
+        requestSignal = () => handler("SIGTERM");
+      },
+      flush: () => Promise.resolve(),
+      exit: () => {},
+      onError: (error) => errors.push(error),
+    });
+
+    let signalError: unknown;
+    try {
+      requestSignal?.();
+    } catch (error) {
+      signalError = error;
+      requestSignal?.();
+    }
+    await run;
+
+    assertEquals(signalError, undefined);
+    assertEquals(timeoutReads, 1);
+    assertEquals(errors, [failure]);
   });
 
   it("propagates readiness failure when cleanup cannot finish within its budget", async () => {
@@ -661,6 +725,40 @@ describe("production shutdown coordinator", () => {
     assertEquals(events, ["stop", "signals-disposed"]);
   });
 
+  it("preserves readiness failure when its cleanup timeout resolver throws", async () => {
+    const readinessError = new Error("readiness failed");
+    let stopped = 0;
+    let timeoutReads = 0;
+    let caught: unknown;
+
+    try {
+      await runProductionProcessOwner({
+        start: () =>
+          Promise.resolve({
+            ready: Promise.reject(readinessError),
+            stop: () => {
+              stopped++;
+              return Promise.resolve();
+            },
+          }),
+        shutdown: () => Promise.resolve(),
+        shutdownTimeoutMs: () => {
+          timeoutReads++;
+          throw new Error("cleanup timeout unavailable");
+        },
+        flush: () => Promise.resolve(),
+        exit: () => {},
+        registerSignals: () => {},
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, readinessError);
+    assertEquals(stopped, 1);
+    assertEquals(timeoutReads, 1);
+  });
+
   it("bounds a finalizer that always returns a completed promise", async () => {
     const events: string[] = [];
     let calls = 0;
@@ -694,7 +792,13 @@ describe("production shutdown coordinator", () => {
     let finalizationErrors = 0;
 
     const run = runProductionProcessOwner({
-      start: () => startup.promise,
+      start: async () => {
+        const startedServer = await startup.promise;
+        // Cross a second startup continuation after the third and final
+        // custom finalizer has already completed its own ownership recheck.
+        await Promise.resolve();
+        return startedServer;
+      },
       shutdown: (_reason, _server, abort) => {
         abort();
         return Promise.resolve();

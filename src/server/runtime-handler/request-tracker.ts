@@ -340,7 +340,10 @@ class RequestTracker {
         });
       }
 
-      await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
+      const remainingMs = Math.max(0, timeoutMs - (Date.now() - startTime));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(pollIntervalMs, remainingMs))
+      );
     }
 
     logger.info("All requests drained successfully", {

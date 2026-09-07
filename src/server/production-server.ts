@@ -391,6 +391,11 @@ export function startProductionServerWithDependencies(
         const handler = requestInterceptor
           ? Object.assign(
             async (req: Request) => {
+              // Admission closes before caller-owned interception so a draining
+              // process cannot start more proxy I/O or allocate transformed
+              // request state. The core handler still owns the fixed probe
+              // responses and the standard shutdown response.
+              if (isServerShuttingDown()) return coreHandler(req);
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
               if (isWebSocketUpgrade) return coreHandler(req);
               return coreHandler(await runRequestInterceptor(req, requestInterceptor));

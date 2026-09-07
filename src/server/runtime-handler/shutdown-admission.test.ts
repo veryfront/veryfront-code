@@ -15,6 +15,19 @@ function createHandler() {
   });
 }
 
+function createHandlerWithStalledInitialization() {
+  const adapter = createMockAdapter();
+  const exists = Promise.withResolvers<boolean>();
+  adapter.fs.exists = () => exists.promise;
+  return {
+    exists,
+    handler: createVeryfrontHandler("/shutdown-admission", adapter, {
+      projectDir: "/shutdown-admission",
+      config: { fs: { veryfront: { proxyMode: false } } } as VeryfrontConfig,
+    }),
+  };
+}
+
 describe("runtime shutdown admission", () => {
   afterEach(() => {
     __resetServerShuttingDownForTests();
@@ -86,6 +99,27 @@ describe("runtime shutdown admission", () => {
       const response = await handler(new Request(`http://localhost${path}`, { method }));
       assertEquals(response.status, 503);
       assertEquals((await response.json()).code, "RUNTIME_SHUTTING_DOWN");
+    }
+  });
+
+  it("answers kubelet probes during drain without waiting for stalled initialization", async () => {
+    const { exists, handler } = createHandlerWithStalledInitialization();
+    markServerShuttingDown();
+    setServerInitialized(false);
+
+    try {
+      const [health, readiness] = await Promise.all([
+        handler(new Request("http://localhost/healthz")),
+        handler(new Request("http://localhost/readyz")),
+      ]);
+
+      assertEquals(health.status, 200);
+      assertEquals(readiness.status, 503);
+      await health.body?.cancel();
+      await readiness.body?.cancel();
+    } finally {
+      exists.resolve(false);
+      await handler.ready;
     }
   });
 

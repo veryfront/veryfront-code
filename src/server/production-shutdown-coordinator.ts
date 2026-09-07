@@ -8,6 +8,8 @@ export interface ProductionShutdownCoordinatorOptions {
   flush: () => Promise<unknown>;
   beforeExit?: () => Promise<unknown>;
   finalizeBeforeExit?: () => Promise<unknown> | undefined;
+  /** @internal Final owned-resource check immediately before process exit. */
+  finalizeOwnedBeforeExit?: () => Promise<unknown> | undefined;
   /** Shared absolute deadline for shutdown, flush, and finalization steps. */
   finalizationDeadlineMs?: () => number | undefined;
   exit: (code: number) => void;
@@ -107,7 +109,14 @@ export function createProductionShutdownCoordinator(
 
   const completed = (async () => {
     const reason = await reasonPromise;
-    const finalizationDeadlineMs = options.finalizationDeadlineMs?.();
+    let finalizationDeadlineMs: number | undefined;
+    try {
+      finalizationDeadlineMs = options.finalizationDeadlineMs?.();
+    } catch (error) {
+      notifyError(error, reason);
+      // A broken deadline resolver must not prevent cleanup and process exit.
+      finalizationDeadlineMs = Date.now();
+    }
     const awaitStep = (result: Promise<unknown> | undefined): Promise<void> =>
       awaitBeforeDeadline(result, finalizationDeadlineMs);
     try {
@@ -145,6 +154,12 @@ export function createProductionShutdownCoordinator(
         }
       }
     } finally {
+      try {
+        const ownedFinalization = options.finalizeOwnedBeforeExit?.();
+        if (ownedFinalization) await awaitStep(ownedFinalization);
+      } catch (error) {
+        notifyError(error, reason);
+      }
       options.exit(0);
     }
   })();
@@ -174,10 +189,22 @@ export async function runProductionProcessOwner(
   let finalizedLateServer: OwnedProductionServer | undefined;
   let shutdownRequested = false;
   let shutdownDeadlineMs: number | undefined;
-  const resolveShutdownTimeoutMs = (): number => {
-    const configured = typeof options.shutdownTimeoutMs === "function"
-      ? options.shutdownTimeoutMs()
-      : options.shutdownTimeoutMs;
+  const resolveShutdownTimeoutMs = (reason?: ProductionShutdownReason): number => {
+    let configured: number | undefined;
+    try {
+      configured = typeof options.shutdownTimeoutMs === "function"
+        ? options.shutdownTimeoutMs()
+        : options.shutdownTimeoutMs;
+    } catch (error) {
+      if (reason) {
+        try {
+          options.onError?.(error, reason);
+        } catch {
+          // Diagnostics must not prevent a fail-closed shutdown request.
+        }
+      }
+      return 0;
+    }
     return Number.isInteger(configured) && (configured ?? -1) >= 0
       ? configured ?? DEFAULT_PROCESS_SHUTDOWN_TIMEOUT_MS
       : DEFAULT_PROCESS_SHUTDOWN_TIMEOUT_MS;
@@ -244,12 +271,15 @@ export async function runProductionProcessOwner(
         }
       });
     },
+    finalizeOwnedBeforeExit: claimLateServerCleanup,
     exit: options.exit,
     onError: options.onError,
   });
 
   const requestShutdown = (reason: ProductionShutdownReason): void => {
-    shutdownDeadlineMs ??= Date.now() + resolveShutdownTimeoutMs();
+    if (shutdownDeadlineMs === undefined) {
+      shutdownDeadlineMs = Date.now() + resolveShutdownTimeoutMs(reason);
+    }
     shutdownRequested = true;
     coordinator.request(reason);
   };
