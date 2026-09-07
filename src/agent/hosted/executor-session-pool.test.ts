@@ -51,7 +51,7 @@ const sessionOptions: HostedExecutorSessionOptions = {
   request: {
     allocationId: "11111111-1111-4111-8111-111111111111",
     invocationId: "22222222-2222-4222-8222-222222222222",
-    projectId: "project-test",
+    owner: { scopeKind: "project", projectId: "project-test" },
     source: { type: "release", releaseId: "release-test" },
     requestedAt: 1000,
     prepareDeadlineAt: 2000,
@@ -411,7 +411,7 @@ describe("hosted executor session pool", () => {
       binding: {
         allocationId: sessionOptions.request.allocationId,
         invocationId: sessionOptions.request.invocationId,
-        projectId: sessionOptions.request.projectId,
+        owner: sessionOptions.request.owner,
         source: sessionOptions.request.source,
         generation: 1,
         brokerInstanceId: sessionOptions.expectedBrokerInstanceId,
