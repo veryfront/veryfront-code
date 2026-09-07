@@ -1,6 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { PERMISSION_DENIED } from "#veryfront/errors";
+import { PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
@@ -303,6 +303,59 @@ it("agent service routes redact mutable AG-UI setup error titles", async () => {
   assertEquals(output.includes(privateValue), false);
   assertStringIncludes(output, '"message":"Synthetic setup failure: Bearer [REDACTED]"');
   assertStringIncludes(output, '"code":"PERMISSION_DENIED"');
+});
+
+for (
+  const [kind, slug] of [
+    ["credentials", "Bearer synthetic-private-credential"],
+    ["host", "https://private-service.example.test/failure"],
+    ["path", "/synthetic-private-project/workspace/failure"],
+    ["custom identifier", "synthetic-private-identifier"],
+    ["oversized identifier", "synthetic".repeat(100)],
+  ] as const
+) {
+  it(`agent service routes suppress ${kind} in setup error slugs`, async () => {
+    const error = PERMISSION_DENIED.create();
+    error.slug = slug;
+    const { routeSet } = createRouteSet({
+      prepareExecution: () => Promise.reject(error),
+    });
+    const response = await routeSet.handleAgUiRequest(
+      createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+    );
+
+    assertEquals(response.status, 403);
+    const output = await response.text();
+    assertStringIncludes(output, '"code":"EXTERNAL_SERVICE_ERROR"');
+    assertStringIncludes(output, '"message":"File/resource permission denied"');
+  });
+}
+
+it("agent service routes preserve curated model setup error codes", async () => {
+  for (
+    const [slug, code, status] of [
+      ["rate-limited", "RATE_LIMITED", 429],
+      ["overloaded-error", "OVERLOADED_ERROR", 503],
+      ["context-length-exceeded", "CONTEXT_LENGTH_EXCEEDED", 413],
+      ["ai-provider-billing-error", "AI_PROVIDER_BILLING_ERROR", 502],
+    ] as const
+  ) {
+    const error = new VeryfrontError("Synthetic model failure", {
+      slug,
+      category: "AGENT",
+      status,
+      title: "Synthetic model failure",
+    });
+    const { routeSet } = createRouteSet({
+      prepareExecution: () => Promise.reject(error),
+    });
+    const response = await routeSet.handleAgUiRequest(
+      createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+    );
+
+    assertEquals(response.status, status);
+    assertStringIncludes(await response.text(), `"code":"${code}"`);
+  }
 });
 
 Deno.test("agent service routes ignore client-controlled AG-UI target agent ids", async () => {
