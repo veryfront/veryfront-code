@@ -8,6 +8,7 @@ import {
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
+import { buildOpenAIResponsesRequest } from "../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 
 const prompt: ModelRuntimeCallOptions["prompt"] = [{
   role: "user",
@@ -22,6 +23,13 @@ const nativeTools = [{
   type: "function",
   function: { name: "lookup", parameters: { type: "object", properties: {} } },
 }];
+const sampling = { temperature: 0.4, topP: 0.8, presencePenalty: 0.3, frequencyPenalty: 0.1 };
+const samplingFields = [
+  ["temperature", "temperature"],
+  ["topP", "top_p"],
+  ["presencePenalty", "presence_penalty"],
+  ["frequencyPenalty", "frequency_penalty"],
+] as const;
 
 describe("model call request projection", () => {
   for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
@@ -157,6 +165,139 @@ describe("model call request projection", () => {
         })?.reasoning,
         { enabled: true, effort: "high" },
       );
+    }
+  });
+
+  it("omits neutral sampling controls that both OpenAI builders reject", () => {
+    for (const modelId of ["gpt-5.4", "gpt-5.5", "o3"]) {
+      for (
+        const reasoning of [undefined, { enabled: false }, {
+          enabled: true,
+          effort: "max",
+        }] as const
+      ) {
+        const options: ModelRuntimeCallOptions = { prompt, tools, ...sampling, reasoning };
+        const projected = buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider: "openai",
+          modelId,
+        }, options);
+        for (const stream of [false, true]) {
+          const bodies = [
+            buildOpenAIChatRequest(
+              modelId,
+              "veryfront-cloud",
+              options,
+              stream,
+              createWarningCollector(),
+              {
+                reasoningWithFunctionTools: resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
+                  `openai/${modelId}`,
+                ),
+              },
+            ),
+            buildOpenAIResponsesRequest(
+              modelId,
+              "veryfront-cloud",
+              options,
+              stream,
+              createWarningCollector(),
+            ),
+          ];
+          for (const body of bodies) {
+            for (const [field, nativeField] of samplingFields) {
+              assertEquals((body as Record<string, unknown>)[nativeField], undefined);
+              assertEquals(projected?.[field], (body as Record<string, unknown>)[nativeField]);
+              assertEquals(Object.hasOwn(projected ?? {}, field), false);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("omits sampling when reasoning is explicitly enabled on a nonreasoning model", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      ...sampling,
+      reasoning: { enabled: true, effort: "high" },
+    };
+    const projected = buildModelCallContextRequest(
+      { provider: "openai", modelId: "gpt-4o" },
+      options,
+    );
+    for (const stream of [false, true]) {
+      for (const build of [buildOpenAIChatRequest, buildOpenAIResponsesRequest]) {
+        const body = build("gpt-4o", "openai", options, stream, createWarningCollector());
+        for (const [field, nativeField] of samplingFields) {
+          assertEquals((body as Record<string, unknown>)[nativeField], undefined);
+          assertEquals(projected?.[field], (body as Record<string, unknown>)[nativeField]);
+        }
+      }
+    }
+  });
+
+  it("retains regular OpenAI Chat sampling and leaves Anthropic and Google controls unchanged", () => {
+    for (const reasoning of [undefined, { enabled: false }]) {
+      const options = { prompt, ...sampling, reasoning };
+      const projected = buildModelCallContextRequest(
+        { provider: "openai", modelId: "gpt-4o" },
+        options,
+      );
+      for (const stream of [false, true]) {
+        const body = buildOpenAIChatRequest(
+          "gpt-4o",
+          "openai",
+          options,
+          stream,
+          createWarningCollector(),
+        );
+        for (const [field, nativeField] of samplingFields) {
+          assertEquals(projected?.[field], sampling[field]);
+          assertEquals(projected?.[field], (body as Record<string, unknown>)[nativeField]);
+        }
+      }
+    }
+    for (const provider of ["anthropic", "google"]) {
+      assertEquals(
+        buildModelCallContextRequest({ provider, modelId: "synthetic" }, sampling),
+        sampling,
+      );
+    }
+  });
+
+  it("projects numeric native sampling overrides after neutral sampling is dropped", () => {
+    const expected = { temperature: 0, topP: 0.6, presencePenalty: -0.2, frequencyPenalty: 0.5 };
+    for (const provider of ["openai", "veryfront-cloud"]) {
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        tools,
+        ...sampling,
+        providerOptions: {
+          "openai-compatible": { temperature: 1 },
+          openai: { temperature: 0.9, top_p: 0.6, presence_penalty: -0.2, frequency_penalty: 0.5 },
+          [provider]: {
+            temperature: 0,
+            top_p: 0.6,
+            presence_penalty: -0.2,
+            frequency_penalty: 0.5,
+          },
+        },
+      };
+      const projected = buildModelCallContextRequest({
+        provider,
+        modelProvider: "openai",
+        modelId: "gpt-5.5",
+      }, options);
+      for (const stream of [false, true]) {
+        for (const build of [buildOpenAIChatRequest, buildOpenAIResponsesRequest]) {
+          const body = build("gpt-5.5", provider, options, stream, createWarningCollector());
+          for (const [field, nativeField] of samplingFields) {
+            assertEquals((body as Record<string, unknown>)[nativeField], expected[field]);
+            assertEquals(projected?.[field], (body as Record<string, unknown>)[nativeField]);
+          }
+        }
+      }
     }
   });
 });
