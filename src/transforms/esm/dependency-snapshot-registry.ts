@@ -2,7 +2,6 @@ import type { DependencySnapshotStore } from "#veryfront/platform/adapters/depen
 import { captureDependencySnapshotStore } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
-import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 import {
   decodeDependencySnapshot,
@@ -31,6 +30,15 @@ interface RegistryOptions {
 const nativeNow = Date.now;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
+const NativeAbortController = AbortController;
+const NativePromise = Promise;
+const promiseThen = Promise.prototype.then;
+const ready = new NativePromise<void>((resolve) => resolve());
+const scheduleTimeout = globalThis.setTimeout;
+const cancelTimeout = globalThis.clearTimeout;
+const abortController = NativeAbortController.prototype.abort;
+const controllerSignal = getOwnPropertyDescriptor(NativeAbortController.prototype, "signal")!.get!;
+const apply = Reflect.apply;
 function option<K extends keyof RegistryOptions>(
   options: RegistryOptions,
   key: K,
@@ -174,25 +182,43 @@ export class DependencySnapshotRegistry {
   ): Promise<T> {
     let pending = this.pending.get(key);
     if (pending && pending.value !== value) throw this.unavailable();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(this.unavailable()), this.timeoutMs);
     try {
       if (!pending) {
         if (this.pending.size >= 64) throw this.unavailable();
-        const promise = Promise.resolve().then(() => run(controller.signal));
+        const controller = new NativeAbortController();
+        const signal = apply(controllerSignal, controller, []) as AbortSignal;
+        const producer = apply(promiseThen, ready, [() => run(signal)]) as Promise<T>;
+        const promise = new NativePromise<T>((resolve, reject) => {
+          const timer = scheduleTimeout(() => {
+            const error = this.unavailable();
+            reject(error);
+            try {
+              apply(abortController, controller, [error]);
+            } catch { /* Caller rejection does not depend on cooperative cancellation. */ }
+          }, this.timeoutMs);
+          const release = () => {
+            cancelTimeout(timer);
+            if (this.pending.get(key)?.promise === promise) this.pending.delete(key);
+          };
+          void apply(promiseThen, producer, [
+            (result: T) => {
+              release();
+              resolve(result);
+            },
+            (error: unknown) => {
+              release();
+              reject(error);
+            },
+          ]);
+        });
+        // Coalesced callers share the deadline, including its settled rejection.
+        // Non-cooperative producers remain admitted until they actually settle.
         pending = { value, promise };
         this.pending.set(key, pending);
-        // Keep timed-out, non-cooperative work admitted until its producer settles.
-        const release = () => {
-          if (this.pending.get(key)?.promise === promise) this.pending.delete(key);
-        };
-        void promise.then(release, release);
       }
-      return await awaitAbortable(pending.promise as Promise<T>, controller.signal);
+      return await pending.promise as T;
     } catch {
       throw this.unavailable();
-    } finally {
-      clearTimeout(timer);
     }
   }
 
