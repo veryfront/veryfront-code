@@ -3,6 +3,15 @@ import {
   ProviderOverloadedError,
   ProviderQuotaError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  AI_PROVIDER_BILLING_ERROR,
+  AI_PROVIDER_SPEND_LIMIT_ERROR,
+  AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
+  MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
+  OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
+  PROJECT_SCHEMA_ERROR,
+  registeredProviderFailure,
+} from "./provider-error-registry.ts";
 export { safeJsonParse };
 export type { SafeJsonParseResult } from "#veryfront/utils/json.ts";
 
@@ -16,47 +25,6 @@ export interface ParsedProviderError {
 const DEFAULT_EXTERNAL_SERVICE_ERROR = {
   code: "EXTERNAL_SERVICE_ERROR",
   message: "LLM provider service error",
-} as const;
-
-const PROJECT_SCHEMA_ERROR = {
-  code: "PROJECT_SCHEMA_ERROR",
-  message:
-    "Project code has an invalid Veryfront schema. Update the schema to use defineSchema(), then run the agent again.",
-} as const;
-
-const MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR = {
-  code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
-  message:
-    "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
-} as const;
-
-const OUTPUT_SCHEMA_NOT_CLOSED_ERROR = {
-  code: "OUTPUT_SCHEMA_NOT_CLOSED",
-  message:
-    "The provider rejected the output schema because an object in it allows additional properties. " +
-    "Set additionalProperties: false on that object -- add .strict() if the outputSchema was " +
-    "built with defineSchema(), or set the property directly on a raw JSON Schema.",
-} as const;
-
-const AI_PROVIDER_SPEND_LIMIT_ERROR = {
-  code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
-  message:
-    "The AI provider spend limit has been reached. Try again later or ask an administrator to raise the AI provider spend limit.",
-  status: 402,
-} as const;
-
-const AI_PROVIDER_WORKSPACE_LIMIT_ERROR = {
-  code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
-  message:
-    "The AI provider workspace API usage limit has been reached. Wait for the limit to reset, or ask an administrator to raise the workspace limit.",
-  status: 502,
-} as const;
-
-const AI_PROVIDER_BILLING_ERROR = {
-  code: "AI_PROVIDER_BILLING_ERROR",
-  message:
-    "The configured AI provider account cannot process this request. Try a different model, or ask an administrator to check provider billing.",
-  status: 502,
 } as const;
 
 const MAX_PROVIDER_ERROR_DEPTH = 64;
@@ -482,6 +450,9 @@ function parseProviderErrorInner(
   if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
     return DEFAULT_EXTERNAL_SERVICE_ERROR;
   }
+
+  const registered = registeredProviderFailure(error);
+  if (registered) return registered;
 
   if (error instanceof ProviderQuotaError) {
     return AI_PROVIDER_BILLING_ERROR;

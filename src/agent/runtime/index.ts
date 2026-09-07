@@ -3760,11 +3760,12 @@ export class AgentRuntime {
       });
       attachProviderMetadata(
         assistantMessage,
-        reconcileSuppressedProviderMetadata(
+        await reconcileSuppressedProviderMetadata(
           languageModel,
           state.providerMetadata,
           state.suppressedToolCalls,
           state.toolCalls.size > 0,
+          abortSignal,
         ),
       );
 
@@ -4460,7 +4461,8 @@ export class AgentRuntime {
 type ProviderMetadataReconciler = (input: {
   providerMetadata: Record<string, unknown>;
   suppressedToolCalls: readonly { id: string; name: string }[];
-}) => Record<string, unknown> | undefined;
+  abortSignal?: AbortSignal;
+}) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 
 /**
  * Best-effort structured-output parse for the max-steps exit.
@@ -4508,12 +4510,14 @@ function getFinalAssistantText(messages: Message[]): string {
   return "";
 }
 
-function reconcileSuppressedProviderMetadata(
+async function reconcileSuppressedProviderMetadata(
   modelRuntime: ModelRuntime,
   providerMetadata: Record<string, unknown> | undefined,
   suppressedToolCalls: readonly { id: string; name: string }[],
   hasSurvivingToolCalls: boolean,
-): Record<string, unknown> | undefined {
+  abortSignal?: AbortSignal,
+): Promise<Record<string, unknown> | undefined> {
+  throwIfAborted(abortSignal);
   if (providerMetadata === undefined || suppressedToolCalls.length === 0) {
     return providerMetadata;
   }
@@ -4523,10 +4527,12 @@ function reconcileSuppressedProviderMetadata(
     return undefined;
   }
 
-  const reconciled = (reconcile as ProviderMetadataReconciler).call(modelRuntime, {
+  const reconciled = await (reconcile as ProviderMetadataReconciler).call(modelRuntime, {
     providerMetadata,
     suppressedToolCalls,
+    abortSignal,
   });
+  throwIfAborted(abortSignal);
   if (reconciled === undefined) {
     if (!hasSurvivingToolCalls) {
       return undefined;
