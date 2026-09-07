@@ -174,7 +174,7 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
 
 describe("hosted executor session", () => {
   it("owns a global metadata session without any application project", async () => {
-    const owner: HostedExecutorOwner = { scopeKind: "global", serviceName: "platform-agent" };
+    const owner: HostedExecutorOwner = { scopeKind: "global", serviceName: "@example/agent" };
     const f = fixture({ request: { ...request, owner } });
     const session = f.start();
     const channel = await session.ready;
