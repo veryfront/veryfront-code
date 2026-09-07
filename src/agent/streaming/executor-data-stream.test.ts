@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
