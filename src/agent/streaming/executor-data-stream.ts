@@ -5,6 +5,8 @@ import {
 } from "../hosted/executor-agent-schema.ts";
 import { parseExecutorDataEvent } from "./executor-data-schema.ts";
 
+const textEncoder = new TextEncoder();
+
 /** @internal Strict bounded SSE reader for the executor's runtime stream. */
 export async function* readExecutorDataEvents(
   stream: ReadableStream<Uint8Array>,
@@ -43,7 +45,7 @@ export async function* readExecutorDataEvents(
         while ((separator = pending.indexOf("\n\n")) !== -1) {
           const block = pending.slice(0, separator);
           pending = pending.slice(separator + 2);
-          if (new TextEncoder().encode(block).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES) {
+          if (textEncoder.encode(block).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES) {
             throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
           }
           const lines = block.split("\n");
@@ -57,7 +59,7 @@ export async function* readExecutorDataEvents(
             event.type === "error";
           yield event;
         }
-        if (new TextEncoder().encode(pending).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES) {
+        if (textEncoder.encode(pending).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES) {
           throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
         }
       }
