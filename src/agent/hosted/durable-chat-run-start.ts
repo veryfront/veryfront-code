@@ -1,6 +1,7 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
 import {
   compactHistoricalUiMessageToolInputs,
   type HistoricalToolInputCompactionDiagnostic,
@@ -108,8 +109,8 @@ export function classifyHostedChatSetupError(
     return {
       code: snapshot.slug.toUpperCase().replaceAll("-", "_"),
       status: snapshot.status,
-      // The registry title is stable; request/provider details stay out of SSE.
-      message: snapshot.title,
+      // Error titles can be customized after registration.
+      message: sanitizeBoundedDiagnosticText(snapshot.title),
     };
   }
 
