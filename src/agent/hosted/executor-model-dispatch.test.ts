@@ -261,11 +261,15 @@ describe("hosted executor model dispatch", () => {
     }
   });
 
-  it("rejects gateway thinking overrides that the canonical durable projection does not represent", async () => {
+  it("rejects gateway thinking overrides before capture or dispatch", async () => {
     let events = 0;
     let dispatches = 0;
     const channels = pair(createHostedExecutorModelBroker({
-      grant: grant(),
+      // Leave budget available so this case reaches the provider-override gate.
+      grant: {
+        ...grant(),
+        models: new Map([[modelId, { maxOutputTokens: 8192, providerTools: [] }]]),
+      },
       allowedModelIds,
       scope: scope(),
       runEventSink: () => {
