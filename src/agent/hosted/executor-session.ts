@@ -2,19 +2,19 @@ import {
   createExecutorChannel,
   type ExecutorChannel,
   type ExecutorOperation,
-} from "../executor/channel.ts";
-import { EXECUTOR_MAX_TIMEOUT_MS } from "../executor/protocol.ts";
-import { performanceMonotonicClock } from "../streaming/lifecycle/clock.ts";
-import type { MonotonicClock } from "../streaming/lifecycle/types.ts";
+} from "#veryfront/agent/executor/channel.ts";
+import { EXECUTOR_MAX_TIMEOUT_MS } from "#veryfront/agent/executor/protocol.ts";
+import { performanceMonotonicClock } from "#veryfront/agent/streaming/lifecycle/clock.ts";
+import type { MonotonicClock } from "#veryfront/agent/streaming/lifecycle/types.ts";
 import {
   type AbsoluteDeadlineTimer,
   createClockDeadlineTimer,
-} from "../streaming/lifecycle/deadlines.ts";
+} from "#veryfront/agent/streaming/lifecycle/deadlines.ts";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import type {
   ConnectExecutorTransportOptions,
   ExecutorNodeTransport,
-} from "./executor-node-transport.ts";
+} from "#veryfront/agent/hosted/executor-node-transport.ts";
 import {
   getHostedExecutorAllocationRequestSchema,
   getHostedExecutorAllocationSchema,
@@ -26,7 +26,7 @@ import {
   parseHostedExecutorData,
   readHostedExecutorBinding,
   sameHostedExecutorBinding,
-} from "./executor-session-schema.ts";
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
 
 /** Trusted authenticated client. No HTTP envelopes, service credentials, or endpoint selection. */
 export interface HostedExecutorAllocatorClient {

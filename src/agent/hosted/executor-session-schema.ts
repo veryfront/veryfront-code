@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
+import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 
 const getIdentifierSchema = defineSchema((v) =>
   v.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)

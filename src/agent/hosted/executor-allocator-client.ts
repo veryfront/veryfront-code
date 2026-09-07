@@ -2,12 +2,12 @@ import { Buffer } from "node:buffer";
 import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import process from "node:process";
-import type { HostedExecutorAllocatorClient } from "./executor-session.ts";
+import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
 import {
   getHostedExecutorAllocationRequestSchema,
   getHostedExecutorBindingSchema,
   parseHostedExecutorData,
-} from "./executor-session-schema.ts";
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
 
 const MAX_BYTES = 32 * 1024;
 const failure = () => new Error("Executor allocator request failed");
