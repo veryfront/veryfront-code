@@ -29,7 +29,7 @@ export const getHostedExecutorSourceSchema = defineSchema((v) =>
 /** Trusted source owner, independent of the invocation's application project. */
 export const getHostedExecutorOwnerSchema = defineSchema((v) =>
   v.discriminatedUnion("scopeKind", [
-    v.object({ scopeKind: v.literal("global"), serviceName: getIdentifierSchema() }).strict(),
+    v.object({ scopeKind: v.literal("global"), serviceName: v.string().min(1).max(128) }).strict(),
     v.object({ scopeKind: v.literal("project"), projectId: getIdentifierSchema() }).strict(),
   ])
 );
