@@ -9,6 +9,7 @@ import {
 } from "../adapters/file-system-capabilities.ts";
 import { isProxyWithoutHooks } from "./error-introspection.ts";
 import { isNotFoundError } from "./not-found-error.ts";
+import { primordialPromiseAll, primordialPromiseCatch } from "./primordials/promise.ts";
 
 export { isNotFoundError };
 
@@ -19,8 +20,22 @@ const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "EOPNOTSUPP",
 ]);
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const reflectApply = Reflect.apply;
+
+function createDataDescriptor<T>(
+  value: T,
+  enumerable: boolean,
+): PropertyDescriptor {
+  const descriptor = createObject(null) as PropertyDescriptor;
+  descriptor.configurable = false;
+  descriptor.enumerable = enumerable;
+  descriptor.value = value;
+  descriptor.writable = false;
+  return descriptor;
+}
 
 function hasOwnDataValue(
   value: object,
@@ -108,6 +123,8 @@ export interface FileSystem {
   makeTempDir(options?: { prefix?: string }): Promise<string>;
   /** Change permissions, rejecting operational failures. */
   chmod(path: string, mode: number): Promise<void>;
+  /** Update access and modification times, rejecting operational failures. */
+  utime?(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 interface NodeFsPromises {
@@ -153,6 +170,7 @@ interface NodeFsPromises {
   rmdir(path: string): Promise<void>;
   mkdtemp(prefix: string): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
+  utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -174,11 +192,14 @@ class NodeFileSystem implements FileSystem {
       );
     }
 
-    const [fsModule, osModule, pathModule] = await Promise.all([
+    const modules = await primordialPromiseAll([
       import("node:fs/promises"),
       import("node:os"),
       import("node:path"),
     ]);
+    const fsModule = modules[0]!;
+    const osModule = modules[1]!;
+    const pathModule = modules[2]!;
 
     this.fs = fsModule as NodeFsPromises;
     this.os = osModule;
@@ -203,12 +224,12 @@ class NodeFileSystem implements FileSystem {
 
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
-    return this.getFs().readFile(path, { encoding: "utf8" }) as Promise<string>;
+    return await (this.getFs().readFile(path, { encoding: "utf8" }) as Promise<string>);
   }
 
   async readFile(path: string): Promise<Uint8Array> {
     await this.ensureInitialized();
-    return this.getFs().readFile(path) as Promise<Uint8Array>;
+    return await (this.getFs().readFile(path) as Promise<Uint8Array>);
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
@@ -287,7 +308,8 @@ class NodeFileSystem implements FileSystem {
   }> {
     await this.ensureInitialized();
     const entries = await this.getFs().readdir(path, { withFileTypes: true });
-    for (const entry of entries) {
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index]!;
       yield {
         name: entry.name,
         isFile: entry.isFile(),
@@ -307,7 +329,7 @@ class NodeFileSystem implements FileSystem {
       // refuses one, and refuses it with a different code on Node (ERR_FS_EISDIR)
       // than on Bun (EFAULT). Ask the filesystem instead of reading the code.
       if (recursive) throw error;
-      const info = await this.getFs().lstat(path).catch(() => undefined);
+      const info = await primordialPromiseCatch(this.getFs().lstat(path), () => undefined);
       if (!info?.isDirectory()) throw error;
       await this.getFs().rmdir(path);
     }
@@ -334,6 +356,11 @@ class NodeFileSystem implements FileSystem {
       }
       throw error;
     }
+  }
+
+  async utime(path: string, atime: Date, mtime: Date): Promise<void> {
+    await this.ensureInitialized();
+    await this.getFs().utimes(path, atime, mtime);
   }
 }
 
@@ -443,6 +470,10 @@ class DenoFileSystem implements FileSystem {
       throw error;
     }
   }
+
+  async utime(path: string, atime: Date, mtime: Date): Promise<void> {
+    await denoGlobal().utime(path, atime, mtime);
+  }
 }
 
 /** Create the runtime-native filesystem implementation. */
@@ -452,45 +483,60 @@ export function createFileSystem(): FileSystem {
     | Promise<import("../adapters/base.ts").FileSystemAdapter>
     | undefined;
   const loadSemanticAdapter = () =>
-    semanticAdapter ??= isDeno
-      ? import("../adapters/runtime/deno/filesystem-adapter.ts")
-        .then(({ DenoFileSystemAdapter }) => new DenoFileSystemAdapter())
-      : import("../adapters/runtime/shared/node-filesystem-adapter.ts")
-        .then(({ NodeCompatibleFileSystemAdapter }) => new NodeCompatibleFileSystemAdapter());
-
-  Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
-    value: async (
-      path: string,
-      containmentRoot: string,
-      byteLimit: number,
-    ) => {
-      const snapshotReader = captureSnapshotReadCapability(
-        await loadSemanticAdapter(),
-        "Native filesystem adapter",
-      );
-      if (snapshotReader === undefined) {
-        throw new DOMException(
-          "Native filesystem adapter does not support snapshot reads",
-          "NotSupportedError",
+    semanticAdapter ??= (async () => {
+      if (isDeno) {
+        const { DenoFileSystemAdapter } = await import(
+          "../adapters/runtime/deno/filesystem-adapter.ts"
         );
+        return new DenoFileSystemAdapter();
       }
-      return await snapshotReader.read(path, containmentRoot, byteLimit);
-    },
-    enumerable: true,
-  });
-  Object.defineProperty(fileSystem, "createFileBytesExclusive", {
-    value: async (path: string, content: Uint8Array) => {
-      const exclusiveCreator = captureExclusiveCreateCapability(
-        await loadSemanticAdapter(),
-        "Native filesystem adapter",
+      const { NodeCompatibleFileSystemAdapter } = await import(
+        "../adapters/runtime/shared/node-filesystem-adapter.ts"
       );
-      if (exclusiveCreator === undefined) {
-        throw new Error("Native filesystem adapter does not support exclusive creates");
-      }
-      await exclusiveCreator.create(path, content);
-    },
-    enumerable: true,
-  });
+      return new NodeCompatibleFileSystemAdapter();
+    })();
+
+  defineProperty(
+    fileSystem,
+    "readFileSnapshotWithinLimit",
+    createDataDescriptor(
+      async (
+        path: string,
+        containmentRoot: string,
+        byteLimit: number,
+      ) => {
+        const snapshotReader = captureSnapshotReadCapability(
+          await loadSemanticAdapter(),
+          "Native filesystem adapter",
+        );
+        if (snapshotReader === undefined) {
+          throw new DOMException(
+            "Native filesystem adapter does not support snapshot reads",
+            "NotSupportedError",
+          );
+        }
+        return await snapshotReader.read(path, containmentRoot, byteLimit);
+      },
+      true,
+    ),
+  );
+  defineProperty(
+    fileSystem,
+    "createFileBytesExclusive",
+    createDataDescriptor(
+      async (path: string, content: Uint8Array) => {
+        const exclusiveCreator = captureExclusiveCreateCapability(
+          await loadSemanticAdapter(),
+          "Native filesystem adapter",
+        );
+        if (exclusiveCreator === undefined) {
+          throw new Error("Native filesystem adapter does not support exclusive creates");
+        }
+        await exclusiveCreator.create(path, content);
+      },
+      true,
+    ),
+  );
   return fileSystem;
 }
 

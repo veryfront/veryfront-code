@@ -1,10 +1,26 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ImportSpecifier, ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
+import {
+  primordialArrayMap,
+  primordialArrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import { primordialPromiseResolve } from "#veryfront/platform/compat/primordials/promise.ts";
 
 export type { ImportSpecifier };
 
 const logger = baseLogger.component("es-module-lexer");
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicString = String;
+const MathMax = Math.max;
+const NumberParseInt = Number.parseInt;
+const MapPrototypeForEach = Map.prototype.forEach;
+const MapPrototypeSet = Map.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
 
 let initPromise: Promise<void> | null = null;
 
@@ -24,21 +40,71 @@ const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
 // Placeholders are session-local (never written to disk) so uniqueness only
 // needs to hold for the lifetime of a single parse call.
 const VFURL_PLACEHOLDER_PREFIX = "__VF_HTTP_MASK_e3c2_";
+const PARSE_ERROR_LOCATION_PATTERN = /@:(\d+):(\d+)/;
 
 type UrlMaskResult = {
   masked: string;
   urlMap: Map<string, string>;
 };
 
-function maskHttpUrls(code: string): UrlMaskResult {
-  const urlMap = new Map<string, string>();
-  let counter = 0;
+function stringIndexOf(value: string, search: string, start = 0): number {
+  return IntrinsicReflectApply(StringPrototypeIndexOf, value, [search, start]) as number;
+}
 
-  const masked = code.replace(HTTP_URL_PATTERN, (_match, quote: string, url: string) => {
-    const placeholder = `${VFURL_PLACEHOLDER_PREFIX}${counter++}__`;
-    urlMap.set(placeholder, url);
-    return `${quote}${placeholder}${quote}`;
-  });
+function stringSlice(value: string, start: number, end?: number): string {
+  return IntrinsicReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function replaceAllLiteral(value: string, search: string, replacement: string): string {
+  let result = "";
+  let cursor = 0;
+  for (;;) {
+    const index = stringIndexOf(value, search, cursor);
+    if (index < 0) return result + stringSlice(value, cursor);
+    result += stringSlice(value, cursor, index) + replacement;
+    cursor = index + search.length;
+  }
+}
+
+function splitLines(value: string): string[] {
+  const lines: string[] = [];
+  let cursor = 0;
+  for (;;) {
+    const index = stringIndexOf(value, "\n", cursor);
+    if (index < 0) {
+      primordialArrayPush(lines, stringSlice(value, cursor));
+      return lines;
+    }
+    primordialArrayPush(lines, stringSlice(value, cursor, index));
+    cursor = index + 1;
+  }
+}
+
+function maskHttpUrls(code: string): UrlMaskResult {
+  const urlMap = new IntrinsicMap<string, string>();
+  let counter = 0;
+  let masked = "";
+  let cursor = 0;
+  HTTP_URL_PATTERN.lastIndex = 0;
+  try {
+    for (;;) {
+      const match = IntrinsicReflectApply(
+        RegExpPrototypeExec,
+        HTTP_URL_PATTERN,
+        [code],
+      ) as RegExpExecArray | null;
+      if (match === null) break;
+      const quote = match[1]!;
+      const url = match[2]!;
+      const placeholder = `${VFURL_PLACEHOLDER_PREFIX}${counter++}__`;
+      IntrinsicReflectApply(MapPrototypeSet, urlMap, [placeholder, url]);
+      masked += stringSlice(code, cursor, match.index) + `${quote}${placeholder}${quote}`;
+      cursor = match.index + match[0].length;
+    }
+  } finally {
+    HTTP_URL_PATTERN.lastIndex = 0;
+  }
+  masked += stringSlice(code, cursor);
 
   return { masked, urlMap };
 }
@@ -46,9 +112,11 @@ function maskHttpUrls(code: string): UrlMaskResult {
 function unmaskHttpUrls(code: string, urlMap: Map<string, string>): string {
   let result = code;
 
-  for (const [placeholder, url] of urlMap) {
-    result = result.replaceAll(placeholder, url);
-  }
+  IntrinsicReflectApply(MapPrototypeForEach, urlMap, [
+    (url: string, placeholder: string) => {
+      result = replaceAllLiteral(result, placeholder, url);
+    },
+  ]);
 
   return result;
 }
@@ -64,29 +132,32 @@ export async function initLexer(): Promise<void> {
   }
 
   const lexer = getLexer();
-  initPromise = lexer.init ? lexer.init() : Promise.resolve();
+  initPromise = lexer.init ? lexer.init() : primordialPromiseResolve();
   await initPromise;
 }
 
 function logParseError(error: unknown, code: string): void {
-  const errorMsg = error instanceof Error ? error.message : String(error);
-  const match = errorMsg.match(/@:(\d+):(\d+)/);
+  const errorMsg = error instanceof Error ? error.message : IntrinsicString(error);
+  const match = IntrinsicReflectApply(
+    RegExpPrototypeExec,
+    PARSE_ERROR_LOCATION_PATTERN,
+    [errorMsg],
+  ) as RegExpExecArray | null;
   if (!match) return;
 
-  const line = Number.parseInt(match[1] ?? "", 10);
-  const col = Number.parseInt(match[2] ?? "", 10);
-  const lines = code.split("\n");
-  const start = Math.max(0, line - 3);
-
-  const context = lines
-    .slice(start, line + 2)
-    .map((l, i) => {
-      const lineNum = start + i + 1;
-      const prefix = lineNum === line ? ">>> " : "    ";
-      const snippet = l.length > 200 ? `${l.substring(0, 200)}...` : l;
-      return `${prefix}${lineNum}: ${snippet}`;
-    })
-    .join("\n");
+  const line = NumberParseInt(match[1] ?? "", 10);
+  const col = NumberParseInt(match[2] ?? "", 10);
+  const lines = splitLines(code);
+  const start = MathMax(0, line - 3);
+  let context = "";
+  for (let index = start; index < lines.length && index < line + 2; index++) {
+    const text = lines[index]!;
+    const lineNum = index + 1;
+    const prefix = lineNum === line ? ">>> " : "    ";
+    const snippet = text.length > 200 ? `${stringSlice(text, 0, 200)}...` : text;
+    if (context.length > 0) context += "\n";
+    context += `${prefix}${lineNum}: ${snippet}`;
+  }
 
   logger.error("Parse error", { line, col, context });
 }
@@ -104,9 +175,9 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
     throw error;
   }
 
-  if (urlMap.size === 0) return imports;
+  if (IntrinsicReflectApply(MapSizeGetter, urlMap, []) === 0) return imports;
 
-  return imports.map((imp) => {
+  return primordialArrayMap(imports, (imp) => {
     if (!imp.n) return imp;
 
     const restoredN = unmaskHttpUrls(imp.n, urlMap);
@@ -174,7 +245,7 @@ export async function replaceSpecifiers(
     if (!replacement || replacement === originalSpecifier) continue;
 
     if (!isDynamic) {
-      result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+      result = stringSlice(result, 0, imp.s) + replacement + stringSlice(result, imp.e);
       continue;
     }
 
@@ -182,12 +253,13 @@ export async function replaceSpecifiers(
     // We need to preserve the quote style when replacing.
     const quote = result[imp.s];
     if (quote === '"' || quote === "'" || quote === "`") {
-      result = result.substring(0, imp.s) + quote + replacement + quote + result.substring(imp.e);
+      result = stringSlice(result, 0, imp.s) + quote + replacement + quote +
+        stringSlice(result, imp.e);
       continue;
     }
 
     // Dynamic import with expression, not string literal - shouldn't happen if n is defined
-    result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+    result = stringSlice(result, 0, imp.s) + replacement + stringSlice(result, imp.e);
   }
 
   return unmaskHttpUrls(result, urlMap);
@@ -213,12 +285,12 @@ export async function rewriteImports(
     if (!imp) continue;
 
     const unmaskedImp = imp.n ? { ...imp, n: unmaskHttpUrls(imp.n, urlMap) } : imp;
-    const statement = unmaskHttpUrls(masked.substring(imp.ss, imp.se), urlMap);
+    const statement = unmaskHttpUrls(stringSlice(masked, imp.ss, imp.se), urlMap);
 
     const replacement = rewriter(unmaskedImp, statement);
     if (replacement === null) continue;
 
-    result = result.substring(0, imp.ss) + replacement + result.substring(imp.se);
+    result = stringSlice(result, 0, imp.ss) + replacement + stringSlice(result, imp.se);
   }
 
   return unmaskHttpUrls(result, urlMap);

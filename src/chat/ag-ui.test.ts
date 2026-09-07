@@ -3,6 +3,10 @@ import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/ass
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { unregister } from "#veryfront/extensions/contracts.ts";
 import {
+  createAgUiRunErrorEvent,
+  createAgUiSseErrorResponse,
+} from "#veryfront/agent/ag-ui/host-support.ts";
+import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
@@ -365,6 +369,37 @@ describe("chat/ag-ui", () => {
 
     assertEquals(result.events.length, 1);
     assertEquals(result.events[0]?.chatEvents, [{ type: "abort" }]);
+  });
+
+  it("round-trips non-cancellation error codes through public AG-UI encode and decode", async () => {
+    const response = createAgUiSseErrorResponse(
+      createAgUiRunErrorEvent("Purchase additional credits.", "INSUFFICIENT_CREDITS"),
+      402,
+    );
+    const result = decodeAgUiSseChunk(
+      createAgUiChatEventDecoderState(),
+      await response.text(),
+    );
+
+    assertEquals(result.events[0]?.chatEvents, [{
+      type: "error",
+      errorText: "Purchase additional credits.",
+      code: "INSUFFICIENT_CREDITS",
+    }]);
+
+    const legacyResponse = createAgUiSseErrorResponse(
+      createAgUiRunErrorEvent("Legacy failure"),
+      500,
+    );
+    const legacyResult = decodeAgUiSseChunk(
+      createAgUiChatEventDecoderState(),
+      await legacyResponse.text(),
+    );
+
+    assertEquals(legacyResult.events[0]?.chatEvents, [{
+      type: "error",
+      errorText: "Legacy failure",
+    }]);
   });
 
   it("keeps fallback reasoning ids stable across start, delta, and end", () => {

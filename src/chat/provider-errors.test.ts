@@ -1,10 +1,41 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseProviderError } from "./provider-errors.ts";
+import { parseKnownProblemBody, parseProviderError } from "./provider-errors.ts";
 import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
+  it("does not expose provider text from recognized problem bodies", async () => {
+    for (const slug of ["insufficient-credits", "resource-limit-exceeded"]) {
+      const problem = {
+        slug,
+        error: "private prompt fragment",
+        suggestion: "private provider diagnostic",
+      };
+      const expected = {
+        code: slug === "insufficient-credits" ? "INSUFFICIENT_CREDITS" : "RESOURCE_LIMIT_EXCEEDED",
+        message: slug === "insufficient-credits"
+          ? "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan."
+          : "Resource limit exceeded",
+        status: 402,
+      };
+
+      assertEquals(parseProviderError(problem), expected);
+      assertEquals(
+        parseProviderError(
+          await buildProviderError(
+            "openai",
+            new Response(JSON.stringify(problem), {
+              status: 402,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        ),
+        expected,
+      );
+    }
+  });
+
   it("parses gateway problem JSON strings and direct provider problem objects", () => {
     assertEquals(
       parseProviderError(JSON.stringify({
@@ -13,7 +44,8 @@ describe("chat/provider-errors", () => {
       })),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Purchase additional credits or upgrade your subscription plan.",
+        message:
+          "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
         status: 402,
       },
     );
@@ -25,7 +57,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "RESOURCE_LIMIT_EXCEEDED",
-        message: "Reduce the request size.",
+        message: "Resource limit exceeded",
         status: 402,
       },
     );
@@ -71,6 +103,39 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("keeps validated credit amounts without copying private problem text", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "private prompt fragment",
+        suggestion: "private provider diagnostic",
+        balance: 12,
+        required: 20,
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message:
+          "Insufficient AI credits: 20 credits required, 12 available. Purchase additional credits or upgrade your subscription plan.",
+        status: 402,
+      },
+    );
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded: private prompt fragment",
+        suggestion: "private provider diagnostic",
+        balance: 57.25,
+        required: 85.5,
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message:
+          "Agent run credit limit exceeded: 85.5 credits required, 57.25 remaining. Start a new reviewed run or reduce the scope of this run.",
+        status: 402,
+      },
+    );
+  });
+
   it("falls back safely when gateway credit values are invalid", () => {
     assertEquals(
       parseProviderError({
@@ -82,7 +147,8 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "Start a new reviewed run.",
+        message:
+          "Agent run credit limit exceeded. Start a new reviewed run or reduce the scope of this run.",
         status: 402,
       },
     );
@@ -96,16 +162,81 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "INSUFFICIENT_CREDITS",
-        message: "AI credit limit exceeded",
+        message: "Insufficient AI credits",
         status: 402,
       },
     );
   });
 
+  it("preserves guidance presence without requiring usable credit amounts", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "private provider detail",
+        suggestion: "private provider guidance",
+        balance: 12,
+        required: -1,
+      }).message,
+      "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+    );
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded",
+      }).message,
+      "Agent run credit limit exceeded",
+    );
+  });
+
+  it("does not invoke credit detail accessors in direct problem bodies", () => {
+    let accessorCalls = 0;
+    const problem = {
+      slug: "insufficient-credits",
+      suggestion: "private provider guidance",
+      get balance(): number {
+        accessorCalls += 1;
+        throw new Error("balance getter must not run");
+      },
+      get required(): number {
+        accessorCalls += 1;
+        throw new Error("required getter must not run");
+      },
+    };
+
+    assertEquals(parseKnownProblemBody(problem), {
+      code: "INSUFFICIENT_CREDITS",
+      message:
+        "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
+      status: 402,
+    });
+    assertEquals(accessorCalls, 0);
+
+    let propertyReads = 0;
+    const unreadableProblem = new Proxy<Record<string, unknown>>({}, {
+      get() {
+        propertyReads += 1;
+        throw new Error("property getter must not run");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("descriptor failure must be contained");
+      },
+    });
+
+    assertEquals(parseKnownProblemBody(unreadableProblem), null);
+    assertEquals(propertyReads, 0);
+  });
+
+  it("rejects revoked proxies without throwing from the direct problem parser", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    assertEquals(parseKnownProblemBody(proxy), null);
+  });
+
   it("parses provider overload, rate-limit, context-length, and credit messages", () => {
     assertEquals(parseProviderError({ type: "overloaded_error", message: "Overloaded" }), {
       code: "OVERLOADED_ERROR",
-      message: "Overloaded",
+      message: "The LLM provider is currently overloaded",
     });
     assertEquals(parseProviderError({ type: "rate_limit_error" }), {
       code: "RATE_LIMITED",
@@ -331,7 +462,7 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "OVERLOADED_ERROR",
-        message: "Overloaded",
+        message: "The LLM provider is currently overloaded",
       },
     );
   });
@@ -343,7 +474,7 @@ describe("chat/provider-errors", () => {
       ),
       {
         code: "RESOURCE_LIMIT_EXCEEDED",
-        message: "Reduce the request size.",
+        message: "Resource limit exceeded",
         status: 402,
       },
     );

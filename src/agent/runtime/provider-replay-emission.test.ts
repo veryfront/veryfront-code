@@ -307,8 +307,9 @@ describe("provider replay checkpoint emission", () => {
 
   it("fails the provider turn when streaming aborts before checkpoint capture", async () => {
     let failedTurns = 0;
+    const privateProviderMarker = "private provider replay failure <TOKEN>";
     const model = scriptedModel([() => {
-      throw new Error("provider stream failed");
+      throw new Error(privateProviderMarker);
     }], {
       modelId: "anthropic/failed-provider-replay-stream",
       provider: "anthropic",
@@ -330,7 +331,9 @@ describe("provider replay checkpoint emission", () => {
     const stream = await agent(config).stream({ input: "Answer" });
     const body = await stream.toDataStreamResponse().text();
 
-    assertEquals(body.includes("provider stream failed"), true);
+    assertEquals(body.includes("Provider stream failed"), true);
+    assertEquals(body.includes(privateProviderMarker), false);
+    assertEquals(body.includes('"type":"message-finish"'), false);
     assertEquals(failedTurns, 1);
   });
 

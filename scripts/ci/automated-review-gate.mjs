@@ -7,6 +7,10 @@ const BOTS = new Map([
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+const CODEX_REVIEW_SUMMARY_MARKER =
+  "<!-- codex-pull-request-review-summary -->";
+const CODEX_REVIEW_SUMMARY_ROW =
+  /^\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
 const CODEX_USAGE_LIMIT =
   /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
@@ -15,6 +19,7 @@ const REVIEW_REQUEST_MARKER =
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
+const CODEX_REACTION_RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
 const TIMEOUT_DISCOVERY_ROTATION_MS = 10 * 60 * 1000;
@@ -46,6 +51,8 @@ const REVIEW_BOUNDARY_REQUEST_KEYS = new Map([
 const NO_COMMIT = () => Promise.resolve(undefined);
 /** @type {(login: string) => Promise<boolean>} */
 const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
+const WAIT_FOR_REACTION = (delayMs) =>
+  new Promise((resolve) => setTimeout(resolve, delayMs));
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 export const AUTOMATED_REVIEW_TIMEOUT_MS = 30 * 60 * 1000;
@@ -135,6 +142,81 @@ function isPinnedBot(user, login) {
   return user?.login === login &&
     user?.id === BOTS.get(login) &&
     user?.type === "Bot";
+}
+
+function isPinnedCodexReaction(user) {
+  // GitHub reports this app identity as User on issue reactions and Bot on
+  // issue comments. Keep that API-specific variation local to reactions.
+  return user?.login === CODEX_LOGIN &&
+    user?.id === BOTS.get(CODEX_LOGIN) &&
+    (user?.type === "Bot" || user?.type === "User");
+}
+
+function parseCompletedCodexSummary(comment) {
+  if (
+    !isPinnedBot(comment?.user, CODEX_LOGIN) ||
+    typeof comment?.body !== "string"
+  ) return undefined;
+  const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
+  const expectedPrefix = [
+    CODEX_REVIEW_SUMMARY_MARKER,
+    "",
+    "## Codex Review Summary",
+    "",
+    "This comment shows the latest Codex review activity on this pull request.",
+    "",
+    "| Review | Status | Commit | Review trigger |",
+    "| --- | --- | --- | --- |",
+  ];
+  if (
+    expectedPrefix.some((line, index) => lines[index] !== line) ||
+    (lines[9] !== undefined && lines[9] !== "") ||
+    lines.slice(9).some((line) => /^\|.*\|$/.test(line.trim()))
+  ) return undefined;
+  const row = CODEX_REVIEW_SUMMARY_ROW.exec(lines[8] ?? "");
+  if (!row || row[1] !== row[2] || row[4].trim().length === 0) {
+    return undefined;
+  }
+  const completedAt = Date.parse(row[1]);
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  const updatedAt = Date.parse(comment?.updated_at ?? "");
+  if (
+    !Number.isFinite(completedAt) || !Number.isFinite(createdAt) ||
+    !Number.isFinite(updatedAt) || createdAt > updatedAt ||
+    completedAt > updatedAt
+  ) return undefined;
+  return { shortRef: row[3], completedAt, updatedAt };
+}
+
+async function resolvedCompletedCodexSummary(
+  comment,
+  headSha,
+  boundary,
+  resolveCommit,
+) {
+  const summary = parseCompletedCodexSummary(comment);
+  if (
+    !summary ||
+    (boundary !== undefined &&
+      (summary.completedAt <= boundary.time ||
+        summary.updatedAt <= boundary.time)) ||
+    !headSha.toLowerCase().startsWith(summary.shortRef.toLowerCase())
+  ) return undefined;
+  const resolved = await resolveCommit(summary.shortRef);
+  return typeof resolved === "string" && FULL_SHA.test(resolved) &&
+      resolved.toLowerCase() === headSha.toLowerCase()
+    ? summary
+    : undefined;
+}
+
+function codexCompletionReaction(reactions, summary, boundary) {
+  return reactions.find((candidate) => {
+    const createdAt = Date.parse(candidate?.created_at ?? "");
+    return isPinnedCodexReaction(candidate?.user) &&
+      candidate?.content === "+1" &&
+      Number.isFinite(createdAt) && createdAt > summary.updatedAt &&
+      (boundary === undefined || createdAt > boundary.time);
+  });
 }
 
 function isPinnedGraphqlBot(user, login) {
@@ -857,6 +939,7 @@ export async function findAutomatedReview(
   {
     reviews,
     comments,
+    reactions = /** @type {unknown[]} */ ([]),
     events = /** @type {unknown[]} */ ([]),
     timeline = /** @type {unknown[]} */ ([]),
   },
@@ -953,6 +1036,31 @@ export async function findAutomatedReview(
   }
 
   for (const comment of comments) {
+    const summary = await resolvedCompletedCodexSummary(
+      comment,
+      headSha,
+      boundary,
+      resolveCommit,
+    );
+    if (!summary) continue;
+    const reaction = codexCompletionReaction(reactions, summary, boundary);
+    if (!reaction) continue;
+    codexSuccesses.push({
+      evidence: reaction,
+      time: evidenceTime(reaction, "reacted", "created"),
+      timelineEvent: "reacted",
+      proof: {
+        reviewer: CODEX_LOGIN,
+        source: "codex-summary",
+        state: "COMMENTED",
+        url: typeof comment.html_url === "string"
+          ? comment.html_url
+          : undefined,
+      },
+    });
+  }
+
+  for (const comment of comments) {
     if (
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
       typeof comment?.body !== "string"
@@ -1034,6 +1142,56 @@ async function collectAll(github, endpoint, parameters, source) {
     }
   }
   return items;
+}
+
+async function collectAutomatedReviewEvidence(
+  github,
+  common,
+  pullNumber,
+  headSha,
+  sourcePrefix = "",
+) {
+  const source = (name) => `${sourcePrefix}${name}`;
+  const [reviews, comments, reactions, events, statuses, timeline] =
+    await Promise.all([
+      collectAll(
+        github,
+        github.rest.pulls.listReviews,
+        { ...common, pull_number: pullNumber },
+        source("reviews"),
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listComments,
+        { ...common, issue_number: pullNumber },
+        source("comments"),
+      ),
+      collectAll(
+        github,
+        github.rest.reactions.listForIssue,
+        { ...common, issue_number: pullNumber },
+        source("pull request reactions"),
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { ...common, issue_number: pullNumber },
+        source("pull request events"),
+      ),
+      collectAll(
+        github,
+        github.rest.repos.listCommitStatusesForRef,
+        { ...common, ref: headSha },
+        source("review statuses"),
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEventsForTimeline,
+        { ...common, issue_number: pullNumber },
+        source("pull request timeline"),
+      ),
+    ]);
+  return { reviews, comments, reactions, events, statuses, timeline };
 }
 
 async function resolveCommitRef(github, common, ref) {
@@ -1275,6 +1433,9 @@ export async function publishAutomatedReviewStatus({
   queuePropagationPending = false,
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
   reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
+  reactionRetryAttempt = 0,
+  waitForReaction = WAIT_FOR_REACTION,
+  retrySnapshot = undefined,
 }) {
   let review;
   let failure;
@@ -1315,6 +1476,12 @@ export async function publishAutomatedReviewStatus({
     (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1)
   ) {
     failure = new Error("Review timeout is invalid");
+  } else if (
+    !Number.isSafeInteger(reactionRetryAttempt) || reactionRetryAttempt < 0 ||
+    reactionRetryAttempt > CODEX_REACTION_RETRY_DELAYS_MS.length ||
+    typeof waitForReaction !== "function"
+  ) {
+    failure = new Error("Review reaction retry is invalid");
   } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
   } else {
@@ -1332,6 +1499,10 @@ export async function publishAutomatedReviewStatus({
       pullAuthor = current?.data?.user?.login;
       pullSnapshotUpdatedAt = current?.data?.updated_at;
       baseBinding = pullRequestBaseBinding(current?.data);
+      if (
+        retrySnapshot !== undefined &&
+        retrySnapshot?.baseBinding !== baseBinding
+      ) throw new Error("Pull request base changed during reaction retry");
       baseRef = current?.data?.base?.ref;
       isDraft = current?.data?.draft === true;
     } catch (error) {
@@ -1341,40 +1512,13 @@ export async function publishAutomatedReviewStatus({
   if (!failure) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, events, statuses, timeline] = await Promise.all(
-        [
-          collectAll(
-            github,
-            github.rest.pulls.listReviews,
-            { ...common, pull_number: pullNumber },
-            "reviews",
-          ),
-          collectAll(
-            github,
-            github.rest.issues.listComments,
-            { ...common, issue_number: pullNumber },
-            "comments",
-          ),
-          collectAll(
-            github,
-            github.rest.issues.listEvents,
-            { ...common, issue_number: pullNumber },
-            "pull request events",
-          ),
-          collectAll(
-            github,
-            github.rest.repos.listCommitStatusesForRef,
-            { ...common, ref: headSha },
-            "review statuses",
-          ),
-          collectAll(
-            github,
-            github.rest.issues.listEventsForTimeline,
-            { ...common, issue_number: pullNumber },
-            "pull request timeline",
-          ),
-        ],
-      );
+      const { reviews, comments, reactions, events, statuses, timeline } =
+        await collectAutomatedReviewEvidence(
+          github,
+          common,
+          pullNumber,
+          headSha,
+        );
       effectiveReviewResetKey = durableReviewRequestKey(
         events,
         reviewResetKey,
@@ -1402,6 +1546,13 @@ export async function publishAutomatedReviewStatus({
         baseBinding,
       );
       reviewEpochAtEvaluation = latestReviewEpochChange(events);
+      if (
+        retrySnapshot !== undefined &&
+        !sameReviewEpoch(
+          retrySnapshot?.reviewEpoch,
+          reviewEpochAtEvaluation,
+        )
+      ) throw new Error("Pull request lifecycle changed during reaction retry");
       reviewBoundary = activeReviewBoundary(
         latestReviewRequest(comments, headSha),
         reviewNotBefore,
@@ -1469,7 +1620,7 @@ export async function publishAutomatedReviewStatus({
             REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind)))
       ) {
         review = await findAutomatedReview(
-          { reviews, comments, events, timeline },
+          { reviews, comments, reactions, events, timeline },
           headSha,
           (ref) => resolveCommitRef(github, common, ref),
           (login) =>
@@ -1481,6 +1632,59 @@ export async function publishAutomatedReviewStatus({
           reviewNotBefore,
           runBoundRequest !== undefined,
         );
+        if (
+          !review &&
+          reactionRetryAttempt < CODEX_REACTION_RETRY_DELAYS_MS.length
+        ) {
+          const summaryBoundary = activeReviewBoundary(
+            latestReviewRequest(comments, headSha),
+            reviewNotBefore,
+            reviewEpochAtEvaluation,
+            runBoundRequest !== undefined,
+          );
+          let waitsForReaction = false;
+          for (const comment of comments) {
+            const summary = await resolvedCompletedCodexSummary(
+              comment,
+              headSha,
+              summaryBoundary,
+              (ref) => resolveCommitRef(github, common, ref),
+            );
+            if (
+              summary &&
+              !codexCompletionReaction(reactions, summary, summaryBoundary)
+            ) {
+              waitsForReaction = true;
+              break;
+            }
+          }
+          if (waitsForReaction) {
+            await waitForReaction(
+              CODEX_REACTION_RETRY_DELAYS_MS[reactionRetryAttempt],
+            );
+            return publishAutomatedReviewStatus({
+              github,
+              owner,
+              repo,
+              pullNumber,
+              headSha,
+              pullUrl,
+              reviewResetKey,
+              reviewFailureCommentId,
+              now,
+              reviewTimeoutMs,
+              queuePropagationPending,
+              reviewEpochNotBefore,
+              reviewEpochRunKey,
+              reactionRetryAttempt: reactionRetryAttempt + 1,
+              waitForReaction,
+              retrySnapshot: {
+                baseBinding,
+                reviewEpoch: reviewEpochAtEvaluation,
+              },
+            });
+          }
+        }
         if (!review) {
           if (
             existingPropagationRetryStatus &&
@@ -2732,39 +2936,13 @@ async function readMergeGroupSourceEvidence({
   pullNumber,
   sourceHeadSha,
 }) {
-  const [reviews, comments, events, statuses, timeline] = await Promise.all([
-    collectAll(
-      github,
-      github.rest.pulls.listReviews,
-      { ...common, pull_number: pullNumber },
-      "source reviews",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listComments,
-      { ...common, issue_number: pullNumber },
-      "source comments",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEvents,
-      { ...common, issue_number: pullNumber },
-      "source pull request events",
-    ),
-    collectAll(
-      github,
-      github.rest.repos.listCommitStatusesForRef,
-      { ...common, ref: sourceHeadSha },
-      "source review statuses",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEventsForTimeline,
-      { ...common, issue_number: pullNumber },
-      "source review timeline",
-    ),
-  ]);
-  return { reviews, comments, events, statuses, timeline };
+  return collectAutomatedReviewEvidence(
+    github,
+    common,
+    pullNumber,
+    sourceHeadSha,
+    "source ",
+  );
 }
 
 async function requireCurrentAutomatedReview({
@@ -3289,38 +3467,14 @@ async function revalidateAutomatedReviewRequest({
   marker,
 }) {
   const common = { owner, repo };
-  const [reviews, comments, events, statuses, timeline] = await Promise.all([
-    collectAll(
+  const { reviews, comments, reactions, events, statuses, timeline } =
+    await collectAutomatedReviewEvidence(
       github,
-      github.rest.pulls.listReviews,
-      { ...common, pull_number: pullNumber },
-      "final request reviews",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listComments,
-      { ...common, issue_number: pullNumber },
-      "final request comments",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEvents,
-      { ...common, issue_number: pullNumber },
-      "final request events",
-    ),
-    collectAll(
-      github,
-      github.rest.repos.listCommitStatusesForRef,
-      { ...common, ref: headSha },
-      "final request statuses",
-    ),
-    collectAll(
-      github,
-      github.rest.issues.listEventsForTimeline,
-      { ...common, issue_number: pullNumber },
-      "final request timeline",
-    ),
-  ]);
+      common,
+      pullNumber,
+      headSha,
+      "final request ",
+    );
   if (validateRequestEpoch) {
     const currentKey = resolveAutomatedReviewRequestEpochKey(
       events,
@@ -3358,7 +3512,7 @@ async function revalidateAutomatedReviewRequest({
   }
   const baseBinding = pullRequestBaseBinding(refreshed?.data);
   const review = await findAutomatedReview(
-    { reviews, comments, events, timeline },
+    { reviews, comments, reactions, events, timeline },
     headSha,
     (ref) => resolveCommitRef(github, common, ref),
     (login) =>

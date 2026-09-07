@@ -52,6 +52,7 @@ import {
   withHostedChildStreamIdleTimeout,
 } from "./child-stream-watchdog.ts";
 import type { ForkPart, ForkRuntimeStreamResult } from "../streaming/fork-runtime-stream.ts";
+import { ForkRuntimeStreamError } from "../streaming/fork-runtime-types.ts";
 
 const SOFT_IDLE_HEARTBEAT_PHASE = "post_tool_idle";
 const MAX_SOFT_IDLE_HEARTBEATS = 2;
@@ -296,6 +297,9 @@ export async function handleHostedChildForkFailure(
   }
 
   const errorText = input.error instanceof Error ? input.error.message : "Unknown error";
+  const terminalErrorCode = input.error instanceof ForkRuntimeStreamError
+    ? input.error.code
+    : undefined;
   // A step is one LLM turn, not one tool call, so tool-call count overcounts
   // steps (a single turn can emit several parallel calls). The failed stream
   // never resolves its step list, so the exact count is unavailable here; use
@@ -309,9 +313,14 @@ export async function handleHostedChildForkFailure(
     usage: input.usage,
     durationMs: Date.now() - input.startTime,
   });
-  const snapshot = buildChildRunFailureSnapshot(common, errorText, input.finalText || null);
+  const snapshot = buildChildRunFailureSnapshot(
+    common,
+    errorText,
+    input.finalText || null,
+    terminalErrorCode,
+  );
   await input.onSettled?.(snapshot);
-  return buildChildRunFailureResult(common, errorText);
+  return buildChildRunFailureResult(common, errorText, terminalErrorCode);
 }
 
 /** Process a hosted child fork stream part. */

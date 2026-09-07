@@ -17,6 +17,7 @@ import {
   generateWithAgentRuntimeDispatch,
   streamWithAgentRuntimeDispatch,
 } from "./runtime/index.ts";
+import { normalizeInput } from "#veryfront/agent/runtime/input-utils.ts";
 import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
 import {
   detectPlatform,
@@ -234,13 +235,7 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
         "agent.factory.stream",
         async () => {
           const inputMessages: Message[] = input.input
-            ? [
-              {
-                id: `msg_${Date.now()}`,
-                role: "user",
-                parts: [{ type: "text", text: input.input }],
-              },
-            ]
+            ? normalizeInput(input.input)
             : (input.messages ?? []);
 
           const skillSnapshot = resolveSkillSnapshot();

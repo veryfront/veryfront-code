@@ -47,6 +47,14 @@ interface ForkErrorPart {
   error: Error;
 }
 
+/** Terminal runtime error preserved while a fork waits for its final response. */
+export class ForkRuntimeStreamError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = "ForkRuntimeStreamError";
+  }
+}
+
 /** Public API contract for fork runtime step. */
 export interface ForkRuntimeStep {
   text: string;

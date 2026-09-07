@@ -21,6 +21,7 @@ import type {
   ChatStatus,
   InferenceMode,
   ToolOutput,
+  UseChatError,
   UseChatOptions,
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/types.ts";
@@ -151,7 +152,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useState<UseChatError | null>(null);
   const [data, setData] = useState<unknown>(null);
   const [model, setModel] = useState<string | undefined>(options.model);
   const [inferenceMode, setInferenceMode] = useState<InferenceMode>("cloud");

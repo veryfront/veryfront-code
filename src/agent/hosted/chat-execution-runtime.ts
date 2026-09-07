@@ -44,6 +44,7 @@ import {
   type HostedResponseFinalizationState,
 } from "./stream-finalization.ts";
 import {
+  createCodedHostedStreamError,
   getEmptyHostedFinalizedMessageTerminalError,
   getHostedStreamErrorText,
 } from "./stream-terminal-error.ts";
@@ -782,9 +783,9 @@ export function createHostedChatExecutionRuntime(
   const streamOptions: HostedChatRuntimeToUiMessageStreamOptions = {
     sendReasoning: true,
     originalMessages: input.originalMessages,
-    onError: (error) => {
-      lastStreamError = error;
-      return input.runContext.withContext(() => getHostedStreamErrorText(error));
+    onError: (error, context) => {
+      lastStreamError = context?.code ? createCodedHostedStreamError(error, context.code) : error;
+      return input.runContext.withContext(() => getHostedStreamErrorText(lastStreamError));
     },
     onFinish: ({ responseMessage, isAborted }) => {
       finishHandlerStarted = true;

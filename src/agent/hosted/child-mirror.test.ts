@@ -9,6 +9,7 @@ import {
   isAlreadyMirroredHostedChunk,
   toMirroredHostedStreamPart,
 } from "./child-mirror.ts";
+import { ForkRuntimeStreamError } from "../streaming/fork-runtime-types.ts";
 
 describe("agent/hosted-child-mirror", () => {
   it("tracks mirrored chunk duplicates by part type", () => {
@@ -46,6 +47,31 @@ describe("agent/hosted-child-mirror", () => {
         id: "tc-1",
         toolName: "bash",
       },
+    );
+  });
+
+  it("preserves coded child errors without adding a code to legacy errors", () => {
+    const ids = { messageId: "msg-1", reasoningMessageId: "reason-1" };
+    const codedError = new ForkRuntimeStreamError(
+      "Purchase additional credits.",
+      "INSUFFICIENT_CREDITS",
+    );
+    const legacyError = new Error("Legacy failure");
+
+    assertEquals(
+      toMirroredHostedStreamPart({
+        type: "error",
+        error: codedError,
+      }, ids),
+      {
+        type: "error",
+        error: codedError,
+        code: "INSUFFICIENT_CREDITS",
+      },
+    );
+    assertEquals(
+      toMirroredHostedStreamPart({ type: "error", error: legacyError }, ids),
+      { type: "error", error: legacyError },
     );
   });
 

@@ -17,6 +17,16 @@ import {
 } from "veryfront/platform";
 ```
 
+## Examples
+
+### Inspect the current runtime
+
+```ts
+import { getOsType, getRuntimeVersion } from "veryfront/platform";
+
+console.log(`${getOsType()} ${getRuntimeVersion()}`);
+```
+
 ## Exports
 
 ### Functions

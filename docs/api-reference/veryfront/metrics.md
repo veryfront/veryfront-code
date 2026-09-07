@@ -10,6 +10,18 @@ order: 20
 import { counter, gauge, histogram, metrics } from "veryfront/metrics";
 ```
 
+## Examples
+
+### Record application metrics
+
+```ts
+import { metrics } from "veryfront/metrics";
+
+metrics.counter("orders_processed_total", 1, { status: "completed" });
+metrics.histogram("order_processing_ms", 240);
+metrics.gauge("orders_queued", 3);
+```
+
 ## Exports
 
 ### Functions

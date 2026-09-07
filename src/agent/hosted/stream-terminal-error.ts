@@ -56,6 +56,13 @@ export type HostedStreamTerminalError = {
   message: string;
 };
 
+class CodedHostedStreamError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+    this.name = "CodedHostedStreamError";
+  }
+}
+
 function getUnknownErrorMessage(error: unknown): string {
   if (typeof error === "string") {
     return error;
@@ -72,9 +79,21 @@ function getUnknownErrorMessage(error: unknown): string {
   return String(error);
 }
 
+/** Preserve a canonical stream error while it crosses hosted finalization. */
+export function createCodedHostedStreamError(
+  error: unknown,
+  code: string,
+): Error {
+  return new CodedHostedStreamError(getUnknownErrorMessage(error), code);
+}
+
 function getHostedStreamTerminalError(streamError: unknown): HostedStreamTerminalError | null {
   if (streamError == null) {
     return null;
+  }
+
+  if (streamError instanceof CodedHostedStreamError) {
+    return { code: streamError.code, message: streamError.message };
   }
 
   const timeoutError = getHostedStreamTimeoutTerminalError(streamError);

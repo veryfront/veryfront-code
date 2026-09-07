@@ -1971,4 +1971,68 @@ describe("agent/hosted-chat-execution-runtime", () => {
       },
     ]);
   });
+
+  it("preserves coded canonical errors through the production stream callback", async () => {
+    const cases = [
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message: "Agent run credit limit exceeded: 2 credits required, 1 remaining. " +
+          "Start a new reviewed run or reduce the scope of this run.",
+      },
+      {
+        code: "RESOURCE_LIMIT_EXCEEDED",
+        message: "Resource limit exceeded",
+      },
+      {
+        code: "AI_PROVIDER_BILLING_ERROR",
+        message:
+          "The configured AI provider account cannot process this request. Try a different model, " +
+          "or ask an administrator to check provider billing.",
+      },
+    ] as const;
+
+    for (const expected of cases) {
+      let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const runtime = createHostedChatExecutionRuntime({
+        agentId: "agent-1",
+        modelId: "openai/gpt-5.4",
+        originalMessages: [],
+        runContext: { withContext: (fn) => fn() },
+        abortSignal: new AbortController().signal,
+        bootstrap: {
+          cleanup: async () => {},
+          lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+          rootStreamWatchdog: createRootStreamWatchdog(),
+          streamResult: createStreamResult({
+            finalStep: { text: "detached fallback" },
+            captureOptions: (options) => {
+              streamOptions = options;
+            },
+          }),
+          streamingMessageId: "stream-message-1",
+          capturedMessageId: "stream-message-1",
+          capturedConversationId: "conversation-1",
+          mirroredToolChunkState: createMirroredToolChunkState(),
+        },
+      });
+      if (!streamOptions?.onError) {
+        throw new Error("stream error callback was not captured");
+      }
+
+      assertEquals(
+        Reflect.apply(streamOptions.onError, undefined, [expected.message, {
+          code: expected.code,
+        }]),
+        expected.message,
+      );
+      await runtime.waitForFinish();
+
+      assertEquals(terminalStates, [{
+        status: "failed",
+        terminalErrorCode: expected.code,
+        terminalErrorMessage: expected.message,
+      }]);
+    }
+  });
 });

@@ -1,7 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  accumulateUsage,
+  getMaxSteps,
+  hasSyntheticMessageId,
+  hasSyntheticMessageTimestamp,
+  normalizeInput,
+  propagateSyntheticMessageMarks,
+  resolveValidatedTurnInput,
+} from "./input-utils.ts";
 
 type UsageTotal = Parameters<typeof accumulateUsage>[0];
 import {
@@ -104,6 +112,23 @@ describe("input-utils", () => {
       assertEquals(typeof message.timestamp, "number");
       assertEquals(message.timestamp > 0, true);
     });
+
+    it("marks synthesized fields across normalization and middleware copies", () => {
+      const [message] = normalizeInput("hello");
+      assertExists(message);
+      assertEquals(hasSyntheticMessageId(message), true);
+      assertEquals(hasSyntheticMessageTimestamp(message), true);
+
+      const copy = { ...message, parts: [...message.parts] };
+      propagateSyntheticMessageMarks(message, copy);
+      assertEquals(hasSyntheticMessageId(copy), true);
+      assertEquals(hasSyntheticMessageTimestamp(copy), true);
+
+      const [renormalized] = normalizeInput([copy]);
+      assertExists(renormalized);
+      assertEquals(hasSyntheticMessageId(renormalized), true);
+      assertEquals(hasSyntheticMessageTimestamp(renormalized), true);
+    });
   });
 
   describe("accumulateUsage", () => {
@@ -205,6 +230,69 @@ describe("input-utils", () => {
         "complete",
         "matching capture status must be preserved",
       );
+    });
+  });
+
+  describe("resolveValidatedTurnInput", () => {
+    const normalized = [
+      {
+        id: "msg_1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "hi" }],
+        timestamp: 1000,
+      },
+    ];
+
+    it("reuses the normalized messages when middleware left the input untouched", () => {
+      assertEquals(resolveValidatedTurnInput(normalized, normalized), normalized);
+    });
+
+    it("keeps in-place middleware mutations of the normalized messages", () => {
+      const mutable = normalizeInput([
+        {
+          id: "msg_1",
+          role: "user" as const,
+          parts: [{ type: "text" as const, text: "hi" }],
+          timestamp: 1000,
+        },
+      ]);
+      // A middleware that mutates a message in place keeps the array identity.
+      mutable[0] = {
+        id: "msg_1",
+        role: "system" as const,
+        parts: [{ type: "text" as const, text: "rewritten" }],
+        timestamp: 1000,
+      };
+
+      const result = resolveValidatedTurnInput(mutable, mutable);
+
+      assertEquals(result, mutable, "the mutated normalized array must be persisted as-is");
+      assertEquals(result[0]?.role, "system");
+    });
+
+    it("re-normalizes when middleware rewrote the input", () => {
+      const rewritten = [
+        {
+          id: "msg_2",
+          role: "system" as const,
+          parts: [{ type: "text" as const, text: "sanitized" }],
+          timestamp: 2000,
+        },
+      ];
+
+      const result = resolveValidatedTurnInput(rewritten, normalized);
+
+      assertEquals(result.length, 1);
+      assertEquals(result[0]?.id, "msg_2");
+      assertEquals(result[0]?.role, "system");
+    });
+
+    it("normalizes a middleware-supplied string back into messages", () => {
+      const result = resolveValidatedTurnInput("sanitized", normalized);
+
+      assertEquals(result.length, 1);
+      assertEquals(result[0]?.role, "user");
+      assertEquals((result[0]?.parts[0] as { text: string }).text, "sanitized");
     });
   });
 

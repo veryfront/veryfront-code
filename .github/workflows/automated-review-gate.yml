@@ -82,6 +82,7 @@ jobs:
         target: ${{ fromJSON(needs.timeout_targets.outputs.targets) }}
     permissions:
       contents: read
+      issues: read
       pull-requests: write
       statuses: write
     concurrency:
@@ -1226,6 +1227,7 @@ jobs:
       status_id: ${{ steps.reuse.outputs.merge-group-status-id }}
     permissions:
       contents: read
+      issues: read
       pull-requests: read
       statuses: write
     concurrency:

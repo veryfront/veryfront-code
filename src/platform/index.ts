@@ -3,6 +3,13 @@
  * compat, filesystem and KV abstractions for Deno, Node.js, and Bun.
  *
  * @module platform
+ *
+ * @example Inspect the current runtime
+ * ```ts
+ * import { getOsType, getRuntimeVersion } from "veryfront/platform";
+ *
+ * console.log(`${getOsType()} ${getRuntimeVersion()}`);
+ * ```
  */
 
 // Adapters

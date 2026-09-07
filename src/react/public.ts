@@ -365,6 +365,7 @@ export type {
   InferenceMode,
   OnToolCallArg,
   ToolOutput,
+  UseChatError,
   UseChatOptions,
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";

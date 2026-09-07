@@ -247,6 +247,7 @@ export function normalizeChatUiMessageChunkToAgUiRuntimeEvent(
       return {
         type: "error",
         error: chunk.errorText,
+        ...(chunk.code ? { code: chunk.code } : {}),
       };
 
     default:

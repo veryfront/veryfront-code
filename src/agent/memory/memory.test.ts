@@ -1,6 +1,8 @@
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  beginMemoryTransaction,
   BufferMemory,
   ConversationMemory,
   createAgentMemory,
@@ -37,6 +39,75 @@ describe("NoMemory", () => {
     await memory.clear();
     assertEquals(await memory.getMessages(), []);
   });
+});
+
+describe("built-in transaction conflicts", () => {
+  for (const type of ["conversation", "buffer", "summary"] as const) {
+    it(`keeps successful ${type} commits idempotent after a later clear`, async () => {
+      const memory = createMemory({ type, maxMessages: 20 });
+      const transaction = await beginMemoryTransaction(memory);
+      await transaction.add(userMessage("input", "accepted input"));
+      await transaction.commit();
+      await memory.clear();
+
+      await transaction.commit();
+
+      assertEquals(await memory.getMessages(), []);
+    });
+
+    it(`keeps ${type} rollback idempotent after a later write`, async () => {
+      const memory = createMemory({ type, maxMessages: 20 });
+      const transaction = await beginMemoryTransaction(memory);
+      await transaction.add(userMessage("input", "rejected input"));
+      await transaction.rollback();
+      const later = userMessage("later", "accepted input");
+      await memory.add(later);
+
+      await transaction.rollback();
+
+      assertEquals(await memory.getMessages(), [later]);
+    });
+
+    for (const mutation of ["clear", "add"] as const) {
+      it(`rejects concurrent ${mutation} before committing ${type} memory`, async () => {
+        const memory = createMemory({ type, maxMessages: 20 });
+        const history = userMessage("history", "accepted history");
+        const input = userMessage("input", "staged input");
+        const external = userMessage("external", "concurrent input");
+        await memory.add(history);
+        const transaction = await beginMemoryTransaction(memory);
+        await transaction.add(input);
+        if (mutation === "clear") await memory.clear();
+        else await memory.add(external);
+        await transaction.add({ ...userMessage("output", "staged output"), role: "assistant" });
+
+        const error = await assertRejects(
+          () => transaction.commit(),
+          VeryfrontError,
+          "Memory changed",
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "agent-error");
+        assertEquals(error.status, 500);
+        await transaction.rollback();
+
+        assertEquals(await memory.getMessages(), mutation === "clear" ? [] : [history, external]);
+      });
+    }
+
+    it(`preserves an external occurrence of a staged reference in ${type} memory`, async () => {
+      const memory = createMemory({ type, maxMessages: 20 });
+      const transaction = await beginMemoryTransaction(memory);
+      const shared = userMessage("shared", "shared input");
+      await transaction.add(shared);
+      await memory.add(shared);
+
+      await assertRejects(() => transaction.commit(), Error, "Memory changed");
+      await transaction.rollback();
+
+      assertEquals(await memory.getMessages(), [shared]);
+    });
+  }
 });
 
 describe("createAgentMemory", () => {

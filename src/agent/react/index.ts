@@ -25,6 +25,7 @@ export type {
   InferenceMode,
   OnToolCallArg,
   ToolOutput,
+  UseChatError,
   UseChatOptions,
   UseChatResult,
 } from "./use-chat/index.ts";

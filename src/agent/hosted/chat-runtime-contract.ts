@@ -64,7 +64,7 @@ export type HostedChatRuntimeToUiMessageStreamOptions<TMessageMetadata = Message
   sendReasoning?: boolean;
   originalMessages?: Array<ChatUiMessage<TMessageMetadata>>;
   generateMessageId?: () => string;
-  onError?: (error: unknown) => string;
+  onError?: (error: unknown, context?: { code?: string }) => string;
   onFinish?: (event: HostedChatRuntimeOnFinishEvent<TMessageMetadata>) => void | Promise<void>;
   messageMetadata?: (input: { part: HostedChatRuntimeFinishPart }) => TMessageMetadata | undefined;
 };

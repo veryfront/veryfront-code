@@ -140,4 +140,29 @@ describe("chat/hosted-ui-chunk-mapping", () => {
     );
     assertEquals(mapHostedStreamPartToChatUiChunks({ type: "finish" }), [{ type: "finish" }]);
   });
+
+  it("preserves a terminal code while keeping custom error formatting", () => {
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        {
+          type: "error",
+          error: new Error("raw child error"),
+          code: "INSUFFICIENT_CREDITS",
+        },
+        { onError: () => "Purchase additional credits." },
+      ),
+      [{
+        type: "error",
+        errorText: "Purchase additional credits.",
+        code: "INSUFFICIENT_CREDITS",
+      }],
+    );
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        { type: "error", error: new Error("Legacy failure") },
+        { onError: () => "Formatted legacy failure" },
+      ),
+      [{ type: "error", errorText: "Formatted legacy failure" }],
+    );
+  });
 });

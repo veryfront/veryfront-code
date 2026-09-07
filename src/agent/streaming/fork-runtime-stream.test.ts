@@ -629,6 +629,46 @@ describe("agent/fork-runtime-stream", () => {
     }
   });
 
+  it("preserves terminal error codes through the public fork stream", async () => {
+    const streamResult = startAgentRuntimeFork({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      model: "model-1",
+      maxSteps: 1,
+      prompt: "Do the work.",
+      forkToolNames: [],
+      runtimeTools: {},
+      buildInstructions: () => "Base instructions.",
+      responseTimeoutMs: 1,
+      runStep: async () => ({
+        stream: createRuntimeEventStream([{
+          type: "error",
+          error: "Resource limit exceeded",
+          code: "RESOURCE_LIMIT_EXCEEDED",
+        }]),
+        responsePromise: new Promise<AgentResponse>(() => {}),
+      }),
+    });
+
+    let thrown: unknown;
+    try {
+      for await (const _part of streamResult.fullStream) {
+        // Drain until the streamed error terminates the fork.
+      }
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertEquals(thrown instanceof Error ? thrown.message : undefined, "Resource limit exceeded");
+    assertEquals(
+      thrown && typeof thrown === "object" && "code" in thrown ? thrown.code : undefined,
+      "RESOURCE_LIMIT_EXCEEDED",
+    );
+    await Promise.resolve(streamResult.steps).catch(() => undefined);
+    await Promise.resolve(streamResult.totalUsage).catch(() => undefined);
+  });
+
   it("starts a high-level agent runtime fork from host tool definitions", async () => {
     const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
     const traceCalls: string[] = [];

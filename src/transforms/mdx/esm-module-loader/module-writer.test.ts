@@ -23,6 +23,31 @@ function cacheKeyForDependencies(
   return `on:${hashString(JSON.stringify(sortedEntries))}`;
 }
 
+describe("releaseTemporaryParents", () => {
+  it("release failures do not skip later releases or mask the load error", async () => {
+    const failure = new Error("fixture load failure");
+    let released = 0;
+    const observed = await (async () => {
+      try {
+        throw failure;
+      } finally {
+        await __moduleWriterInternals.releaseTemporaryParents([
+          () => {
+            released++;
+            throw new Error("fixture prune capacity failure");
+          },
+          () => {
+            released++;
+            return Promise.resolve();
+          },
+        ]);
+      }
+    })().catch((error: unknown) => error);
+    assertEquals(released, 2);
+    assertEquals(observed, failure);
+  });
+});
+
 const SNAPSHOT_A_DEPENDENCIES = { react: "19.1.1" } as const;
 const SNAPSHOT_B_DEPENDENCIES = { react: "19.1.2" } as const;
 const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);

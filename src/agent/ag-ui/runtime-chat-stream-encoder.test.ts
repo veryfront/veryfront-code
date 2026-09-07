@@ -194,9 +194,13 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
   });
 
   it("maps data events and updates finishReason on errors", () => {
+    let errorCallbackArgs: unknown[] = [];
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",
-      onError: (error) => `wrapped:${String(error)}`,
+      onError: (error, ...context) => {
+        errorCallbackArgs = [error, ...context];
+        return `wrapped:${String(error)}`;
+      },
     });
 
     assertEquals(encoder.encode({ type: "data", data: { model: "openai/gpt-5.4" } }), [
@@ -220,9 +224,15 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
     assertEquals(encoder.encode(sourceUrl), [sourceUrl]);
 
-    assertEquals(encoder.encode({ type: "error", error: "boom" }), [
-      { type: "error", errorText: "wrapped:boom" },
+    assertEquals(encoder.encode({ type: "error", error: "legacy" }), [
+      { type: "error", errorText: "wrapped:legacy" },
     ]);
+    assertEquals(errorCallbackArgs, ["legacy"]);
+
+    assertEquals(encoder.encode({ type: "error", error: "boom", code: "RATE_LIMITED" }), [
+      { type: "error", errorText: "wrapped:boom", code: "RATE_LIMITED" },
+    ]);
+    assertEquals(errorCallbackArgs, ["boom", { code: "RATE_LIMITED" }]);
     assertEquals(encoder.state.finishReason, "error");
   });
 

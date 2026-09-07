@@ -145,7 +145,8 @@ Deno.test("getEmptyHostedFinalizedMessageTerminalError prefers a real terminal e
     }),
     {
       code: "INSUFFICIENT_CREDITS",
-      message: "Purchase additional credits or upgrade your subscription plan.",
+      message:
+        "Insufficient AI credits. Purchase additional credits or upgrade your subscription plan.",
     },
   );
 });

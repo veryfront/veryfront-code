@@ -35,6 +35,7 @@ const BigIntPrototypeToString = BigInt.prototype.toString;
 const IntrinsicTextEncoder = TextEncoder;
 const IntrinsicUint8Array = Uint8Array;
 const NumberPrototypeToString = Number.prototype.toString;
+const MathImul = Math.imul;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
@@ -292,9 +293,9 @@ export function fnv1aHash(input: string): string {
   let hash = HASH_SEED_FNV1A >>> 0;
 
   for (let index = 0; index < input.length; index++) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, FNV1A_PRIME_32);
+    hash ^= ReflectApply(StringPrototypeCharCodeAt, input, [index]) as number;
+    hash = MathImul(hash, FNV1A_PRIME_32);
   }
 
-  return (hash >>> 0).toString(16);
+  return ReflectApply(NumberPrototypeToString, hash >>> 0, [16]) as string;
 }

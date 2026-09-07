@@ -1004,6 +1004,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         {
           event: "RunError",
           payload: {
+            ...(typeof event.code === "string" && event.code.length > 0
+              ? { code: event.code }
+              : {}),
             message: typeof event.error === "string" ? event.error : "Agent run failed",
           },
         },

@@ -394,6 +394,7 @@ export {
   type OnToolCallArg,
   type ToolOutput,
   useChat,
+  type UseChatError,
   type UseChatOptions,
   type UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";

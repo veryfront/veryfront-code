@@ -47,6 +47,20 @@ function createAdapter(
   installedVersion = "0.1.10",
 ): MockRuntimeAdapter {
   const adapter = createMockAdapter();
+  const statFixtureFile = adapter.fs.stat.bind(adapter.fs);
+  const fixtureMetadata = new Map<string, { content: string | undefined; mtimeMs: number }>();
+  adapter.fs.stat = async (path) => {
+    const info = await statFixtureFile(path);
+    const content = adapter.fs.files.get(path);
+    let metadata = fixtureMetadata.get(path);
+    // The generic mock reports the current clock on every stat. A fixture file
+    // changes only when its bytes change, including across asynchronous reads.
+    if (!metadata || metadata.content !== content) {
+      metadata = { content, mtimeMs: (metadata?.mtimeMs ?? 0) + 1 };
+      fixtureMetadata.set(path, metadata);
+    }
+    return { ...info, mtime: new Date(metadata.mtimeMs) };
+  };
   adapter.fs.files.set(
     PROJECT_PACKAGE_PATH,
     JSON.stringify({ dependencies: { veryfront: projectDeclaration } }),

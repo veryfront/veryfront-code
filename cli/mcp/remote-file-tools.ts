@@ -31,10 +31,7 @@ import {
 } from "#cli/shared/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { getHostSecret } from "#cli/process-env";
-import {
-  requireHostPrivateApiHttps,
-  resolveHostOwnedApiBaseUrl,
-} from "#veryfront/config/host-api-base.ts";
+import { requireHostPrivateApiHttps, resolveHostOwnedApiBaseUrl } from "#cli/host-api-base";
 import {
   buildProjectApiPath,
   buildProjectFilePath,

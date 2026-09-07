@@ -8,6 +8,19 @@
 
 import { SEMAPHORE_TIMEOUT } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import {
+  primordialArrayIndexOf,
+  primordialArrayPush,
+  primordialArrayShift,
+  primordialArraySplice,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  IntrinsicPromise,
+  primordialPromiseResolve,
+} from "#veryfront/platform/compat/primordials/promise.ts";
+
+const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
+const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
 
 /**
  * Thrown when a semaphore acquire exceeds its configured timeout.
@@ -66,34 +79,34 @@ export class Semaphore {
   private waitForPermit(): Promise<void> {
     if (this.permits > 0) {
       this.permits--;
-      return Promise.resolve();
+      return primordialPromiseResolve();
     }
 
-    return new Promise<void>((resolve, reject) => {
+    return new IntrinsicPromise<void>((resolve, reject) => {
       const task: WaitingTask = { resolve, reject };
 
       if (this.acquireTimeoutMs > 0) {
-        task.timeoutId = setTimeout(() => {
-          const idx = this.waiting.indexOf(task);
-          if (idx !== -1) this.waiting.splice(idx, 1);
+        task.timeoutId = hostSetTimeout(() => {
+          const idx = primordialArrayIndexOf(this.waiting, task);
+          if (idx !== -1) primordialArraySplice(this.waiting, idx, 1);
           reject(
             new SemaphoreTimeoutError(this.semaphoreName, this.acquireTimeoutMs),
           );
         }, this.acquireTimeoutMs);
       }
 
-      this.waiting.push(task);
+      primordialArrayPush(this.waiting, task);
     });
   }
 
   private release(): void {
-    const next = this.waiting.shift();
+    const next = primordialArrayShift(this.waiting);
     if (!next) {
       this.permits++;
       return;
     }
 
-    if (next.timeoutId) clearTimeout(next.timeoutId);
+    if (next.timeoutId) hostClearTimeout(next.timeoutId);
     next.resolve();
   }
 

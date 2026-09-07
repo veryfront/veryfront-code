@@ -7,7 +7,11 @@ import {
 import { toRenderableCustomChunk } from "../../../../chat/ag-ui-helpers.ts";
 import { normalizeChatMessageMetadata } from "../../../../chat/chat-ui-message-helpers.ts";
 import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
-import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
+import type {
+  ChatMessagePart,
+  ChatToolPart,
+  UseChatError,
+} from "#veryfront/agent/react/use-chat/types.ts";
 import { createAssistantMessage, generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
 import { buildCurrentParts } from "#veryfront/agent/react/use-chat/streaming/parts-builder.ts";
 import {
@@ -39,6 +43,11 @@ interface StreamingState {
   messageMetadata: Record<string, unknown>;
   partOrderCounter: number;
   currentStep: number;
+}
+
+function createChatStreamError(errorText: string, code?: string): UseChatError {
+  const error = AGENT_ERROR.create({ detail: errorText });
+  return code ? Object.assign(error, { code }) : error;
 }
 
 function createStreamingState(): StreamingState {
@@ -365,7 +374,7 @@ function processChatStreamEvent(
       return;
 
     case "error":
-      throw AGENT_ERROR.create({ detail: event.errorText });
+      throw createChatStreamError(event.errorText, event.code);
 
     default:
       if (event.type.startsWith("data-")) {

@@ -9,6 +9,7 @@
  */
 
 import { join, toFileUrl } from "#veryfront/compat/path";
+import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
@@ -34,6 +35,7 @@ import {
   extractHttpBundlePaths,
 } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
+import { LazyJsxImportScope } from "#veryfront/transforms/mdx/esm-module-loader/lazy-jsx-imports.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext, MdxPreparationContext } from "./types.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
@@ -52,6 +54,14 @@ import {
   transformReactToLocalPaths,
 } from "./import-transformer.ts";
 import {
+  ensureJsxCacheSweepArmed,
+  retainJsxArtifactForWrite,
+  retainJsxArtifactsReferencedIn,
+  withJsxArtifactLock,
+  withJsxArtifactWriteCapacity,
+} from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
+import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
   findMissingFrameworkBundles,
   findVfModuleImports,
   initializeCacheDir,
@@ -62,9 +72,130 @@ import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { assertLogicalCaptureImports } from "./module-fetcher/captured-module.ts";
+import {
+  primordialArrayJoin,
+  primordialArrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicString = String;
+const IntrinsicObjectKeys = Object.keys;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const MDX_LAYOUT_DECLARATION_PATTERN = /\bconst\s+MDXLayout\b/;
+const MDX_LAYOUT_EXPORT_PATTERN = /export\s+\{[^}]*MDXLayout/;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeHas = Map.prototype.has;
+const MapPrototypeSet = Map.prototype.set;
+
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return IntrinsicReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return IntrinsicReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function pathBaseName(value: string): string {
+  const slash = IntrinsicReflectApply(StringPrototypeLastIndexOf, value, ["/"]) as number;
+  const backslash = IntrinsicReflectApply(StringPrototypeLastIndexOf, value, ["\\"]) as number;
+  return stringSlice(value, (slash > backslash ? slash : backslash) + 1);
+}
+
+function regexpMatches(pattern: RegExp, value: string): boolean {
+  return IntrinsicReflectApply(RegExpPrototypeExec, pattern, [value]) !== null;
+}
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapValues<K, V>(map: Map<K, V>): V[] {
+  const values: V[] = [];
+  IntrinsicReflectApply(MapPrototypeForEach, map, [(value: V) => {
+    primordialArrayPush(values, value);
+  }]);
+  return values;
+}
+
+function firstValues<T>(values: readonly T[], limit: number): T[] {
+  const selected: T[] = [];
+  for (let index = 0; index < values.length && index < limit; index++) {
+    primordialArrayPush(selected, values[index]!);
+  }
+  return selected;
+}
+
+const temporaryParentReferences = new IntrinsicMap<string, {
+  count: number;
+  cleanup?: Promise<void>;
+  retention: Promise<() => void>;
+}>();
+
+async function releaseTemporaryParents(releases: readonly (() => Promise<void>)[]): Promise<void> {
+  for (let index = 0; index < releases.length; index++) {
+    try {
+      await releases[index]!();
+    } catch {
+      // Remaining files stay discoverable by the quota-accounted root sweep.
+      // One cleanup failure must not skip other releases or mask the load error.
+      try {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Temporary parent cleanup deferred`);
+      } catch {
+        // Project-modified logging must not interrupt the remaining releases.
+      }
+    }
+  }
+}
+
+async function retainTemporaryParent(path: string, cacheDir: string): Promise<() => Promise<void>> {
+  const entry = mapGet(temporaryParentReferences, path) ?? {
+    count: 0,
+    retention: retainJsxArtifactForWrite(path),
+  };
+  mapSet(temporaryParentReferences, path, entry);
+  entry.count++;
+  // A new evaluation must wait for an already-started removal before writing.
+  let releasePin: () => void;
+  try {
+    await entry.cleanup;
+    releasePin = await entry.retention;
+  } catch (error) {
+    if (--entry.count === 0) mapDelete(temporaryParentReferences, path);
+    throw error;
+  }
+  return async () => {
+    if (--entry.count !== 0) return;
+    entry.cleanup = primordialPromiseCatch(getLocalFs().remove(path), () => undefined);
+    await entry.cleanup;
+    if (entry.count === 0) {
+      releasePin();
+      mapDelete(temporaryParentReferences, path);
+    }
+    // Parent files share the durable JSX scan and quota. A transient removal
+    // failure or process exit leaves a discoverable, age-bounded artifact.
+    ensureJsxCacheSweepArmed(cacheDir);
+  };
+}
 
 export function buildMdxModuleNamespaceKey(
   projectId: string,
@@ -73,10 +204,12 @@ export function buildMdxModuleNamespaceKey(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
 ): Promise<string> {
-  const pinIdentity = dependencyPinningCacheKey?.startsWith("on:")
+  const pinIdentity = dependencyPinningCacheKey !== undefined &&
+      stringStartsWith(dependencyPinningCacheKey, "on:")
     ? `:pins-${dependencyPinningCacheKey}`
     : "";
-  const originIdentity = dependencyPinningCacheKey?.startsWith("on:") && moduleServerOrigin
+  const originIdentity = dependencyPinningCacheKey !== undefined &&
+      stringStartsWith(dependencyPinningCacheKey, "on:") && moduleServerOrigin
     ? `:origin-${moduleServerOrigin}`
     : "";
   const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
@@ -186,7 +319,11 @@ async function verifyMdxCacheFile(
 }
 
 /** Internal test seam for cache verification error handling. */
-export const __moduleWriterInternals = { verifyMdxCacheFile };
+export const __moduleWriterInternals = {
+  verifyMdxCacheFile,
+  releaseTemporaryParents,
+  retainTemporaryParent,
+};
 
 /**
  * Final root source and verified cache location, before tenant code is evaluated.
@@ -263,6 +400,11 @@ async function writeModuleESM(
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} loadModuleESM START`, { projectSlug });
 
+  /** Releases the JSX artifacts this render pins once its import settles. */
+  let releaseJsxArtifacts: (() => void) | undefined;
+  const lazyJsxImports = new LazyJsxImportScope();
+  const temporaryParentFiles = new IntrinsicMap<string, () => Promise<void>>();
+
   try {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter START`, { projectSlug });
     if (!context.adapter) {
@@ -288,7 +430,7 @@ async function writeModuleESM(
     const effectiveContext = {
       ...context,
       moduleCache,
-      moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+      moduleServerOrigin: stringStartsWith(dependencySnapshot.cacheKey, "on:")
         ? context.moduleServerOrigin
         : undefined,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
@@ -345,13 +487,25 @@ async function writeModuleESM(
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
       rewritten = await withSpan(
         SpanNames.MDX_TRANSFORM_JSX,
-        () => transformJsxImports(rewritten, adapter, esmCacheDir),
+        () => transformJsxImports(rewritten, adapter, esmCacheDir, projectDir),
         { "mdx.project_slug": projectSlug },
       );
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
+
+      // Keep legacy dependencies pinned while transformation and import settle.
+      // Captured graphs own their bytes and must not read the host JSX cache.
+      releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten, esmCacheDir, false);
+      if (moduleCache) {
+        // Only host evaluation consumes this temporary bridge. Preparation
+        // returns a root for later use, after this scope has been released.
+        rewritten = await lazyJsxImports.rewrite(rewritten, esmCacheDir);
+      }
     }
 
-    if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
+    if (
+      regexpMatches(MDX_LAYOUT_DECLARATION_PATTERN, rewritten) &&
+      !regexpMatches(MDX_LAYOUT_EXPORT_PATTERN, rewritten)
+    ) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
     }
 
@@ -399,9 +553,7 @@ async function writeModuleESM(
     const unresolved = hasUnresolvedImports(rewritten);
     if (unresolved.count > 0) {
       const errorMsg = `MDX has ${unresolved.count} unresolved module imports: ${
-        unresolved.paths
-          .slice(0, 5)
-          .join(", ")
+        primordialArrayJoin(firstValues(unresolved.paths, 5), ", ")
       }`;
       logger.error(`${LOG_PREFIX_MDX_RENDERER} ${errorMsg}`);
       throw IMPORT_RESOLUTION_ERROR.create({ detail: errorMsg });
@@ -410,7 +562,33 @@ async function writeModuleESM(
     const nsDir = cacheIdentity.namespaceDir;
     const localFs = getLocalFs();
 
-    let filePath = cacheIdentity.filePath;
+    const parentFilePath = async (hash: string): Promise<string> => {
+      const path = lazyJsxImports.hasRegistrations
+        ? join(esmCacheDir, buildMdxJsxCacheFileName(join(nsDir, hash), hash))
+        : join(nsDir, `${hash}.mjs`);
+      // Bridge identities are host-private, but unchanged modules must reuse
+      // their native URL within the host. Retire files after all evaluations.
+      if (lazyJsxImports.hasRegistrations && !mapHas(temporaryParentFiles, path)) {
+        mapSet(temporaryParentFiles, path, await retainTemporaryParent(path, esmCacheDir));
+      }
+      return path;
+    };
+    const writeParentFile = (path: string, code: string): Promise<boolean> => {
+      if (!lazyJsxImports.hasRegistrations) {
+        return writeCacheFile(localFs, path, code, "MDX-ESM-LOADER");
+      }
+      return withJsxArtifactWriteCapacity(
+        esmCacheDir,
+        path,
+        (assertQuotaOwned) =>
+          withJsxArtifactLock(path, async (assertArtifactOwned) => {
+            await assertQuotaOwned();
+            await assertArtifactOwned();
+            return await writeCacheFile(localFs, path, code, "MDX-ESM-LOADER");
+          }),
+      );
+    };
+    let filePath = await parentFilePath(codeHash);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
@@ -424,7 +602,7 @@ async function writeModuleESM(
       }
 
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Writing module file`, { projectSlug, filePath });
-      const written = await writeCacheFile(localFs, filePath, rewritten, "MDX-ESM-LOADER");
+      const written = await writeParentFile(filePath, rewritten);
       if (!written) {
         throw BUILD_FAILED.create({ detail: `Failed to write MDX module cache file: ${filePath}` });
       }
@@ -444,7 +622,7 @@ async function writeModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import START`, {
       projectSlug,
       filePath,
-      codePreview: rewritten.substring(0, 200),
+      codePreview: stringSlice(rewritten, 0, 200),
     });
 
     if (moduleCache) setupSSRGlobals();
@@ -491,14 +669,9 @@ async function writeModuleESM(
 
           // Re-write the module file with refreshed HTTP bundle paths
           const refreshedHash = hashString(rewritten);
-          const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+          const refreshedPath = await parentFilePath(refreshedHash);
           await mdxWriteFlight.do(refreshedPath, async () => {
-            const written = await writeCacheFile(
-              getLocalFs(),
-              refreshedPath,
-              rewritten,
-              "MDX-ESM-LOADER",
-            );
+            const written = await writeParentFile(refreshedPath, rewritten);
             if (!written) {
               throw BUILD_FAILED.create({
                 detail: `Failed to write refreshed MDX module cache file: ${refreshedPath}`,
@@ -511,12 +684,16 @@ async function writeModuleESM(
           compositeKey = `${namespaceKey}:${codeHash}`;
 
           // Clean up orphaned module file if path changed
-          if (refreshedPath !== originalFilePath) {
-            getLocalFs().remove(originalFilePath).catch((error) =>
-              logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
-                originalFilePath,
-                error,
-              })
+          if (
+            refreshedPath !== originalFilePath && !mapHas(temporaryParentFiles, originalFilePath)
+          ) {
+            void primordialPromiseCatch(
+              getLocalFs().remove(originalFilePath),
+              (error) =>
+                logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
+                  originalFilePath,
+                  error,
+                }),
             );
           }
 
@@ -527,7 +704,7 @@ async function writeModuleESM(
             if (stillFailed.length > 0) {
               throw BUNDLE_ERROR.create({
                 detail: `Failed to recover ${stillFailed.length} HTTP bundle(s) after re-fetch: ${
-                  stillFailed.join(", ")
+                  primordialArrayJoin(stillFailed, ", ")
                 }`,
               });
             }
@@ -548,7 +725,7 @@ async function writeModuleESM(
           `${LOG_PREFIX_MDX_LOADER} ${missingBundles.length} framework bundle(s) missing, regenerating`,
           {
             projectSlug,
-            missing: missingBundles.slice(0, 3),
+            missing: firstValues(missingBundles, 3),
             total: frameworkBundlePaths.length,
           },
         );
@@ -571,14 +748,9 @@ async function writeModuleESM(
 
         // Re-write the module file with regenerated framework bundle paths
         const refreshedHash = hashString(rewritten);
-        const refreshedPath = join(nsDir, `${refreshedHash}.mjs`);
+        const refreshedPath = await parentFilePath(refreshedHash);
         await mdxWriteFlight.do(refreshedPath, async () => {
-          const written = await writeCacheFile(
-            getLocalFs(),
-            refreshedPath,
-            rewritten,
-            "MDX-ESM-LOADER",
-          );
+          const written = await writeParentFile(refreshedPath, rewritten);
           if (!written) {
             throw BUILD_FAILED.create({
               detail: `Failed to write regenerated MDX module cache file: ${refreshedPath}`,
@@ -591,12 +763,14 @@ async function writeModuleESM(
         compositeKey = `${namespaceKey}:${codeHash}`;
 
         // Clean up orphaned module file if path changed
-        if (refreshedPath !== originalFilePath) {
-          getLocalFs().remove(originalFilePath).catch((error) =>
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
-              originalFilePath,
-              error,
-            })
+        if (refreshedPath !== originalFilePath && !mapHas(temporaryParentFiles, originalFilePath)) {
+          void primordialPromiseCatch(
+            getLocalFs().remove(originalFilePath),
+            (error) =>
+              logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
+                originalFilePath,
+                error,
+              }),
           );
         }
 
@@ -635,12 +809,12 @@ async function writeModuleESM(
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
       () => import(importUrl),
-      { "mdx.file_path": filePath.split("/").pop() || filePath },
+      { "mdx.file_path": pathBaseName(filePath) || filePath },
     ) as Record<string, unknown> & { __vfLayout?: React.ComponentType };
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
       projectSlug,
-      exports: Object.keys(mod),
+      exports: IntrinsicObjectKeys(mod),
     });
 
     const result: MDXModule = {
@@ -667,9 +841,13 @@ async function writeModuleESM(
     logger.error(`${LOG_PREFIX_MDX_RENDERER} MDX ESM load failed:`, error);
 
     // Capture compile error for MCP flywheel
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = error instanceof Error ? error.message : IntrinsicString(error);
     getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
 
     throw error;
+  } finally {
+    releaseJsxArtifacts?.();
+    lazyJsxImports.release();
+    await releaseTemporaryParents(mapValues(temporaryParentFiles));
   }
 }

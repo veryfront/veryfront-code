@@ -10,7 +10,7 @@ import {
   encodeConversationRecord,
 } from "#veryfront/react/components/chat/chat/persistence/conversation-codec.ts";
 import { useChat } from "./use-chat.ts";
-import type { UseChatResult } from "./types.ts";
+import type { UseChatError, UseChatResult } from "./types.ts";
 
 function installDom(): () => void {
   const dom = new JSDOM(
@@ -75,6 +75,26 @@ function sseResponse(): Response {
     status: 200,
     headers: { "content-type": "text/event-stream" },
   });
+}
+
+function errorSseResponse(code: string, message: string): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `event: RunError\ndata: ${JSON.stringify({ code, message })}\n\n`,
+          ),
+        );
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
 }
 
 function persistMessages(messages: UseChatResult["messages"]): UseChatResult["messages"] {
@@ -177,6 +197,50 @@ describe("react/agent/useChat status lifecycle", () => {
       await settle();
       restoreMockFetch();
       restoreDom();
+    }
+  });
+
+  it("surfaces actionable AG-UI error codes in state and onError", async () => {
+    for (const code of ["INSUFFICIENT_CREDITS", "RATE_LIMITED"]) {
+      const restoreDom = installDom();
+      installMockFetch(() => Promise.resolve(errorSseResponse(code, `${code} message`)));
+      let latest: UseChatResult | null = null;
+      let callbackError: UseChatError | undefined;
+
+      const Capture = (): null => {
+        latest = useChat({
+          api: "/api/ag-ui",
+          onError: (error) => {
+            callbackError = error;
+          },
+        });
+        return null;
+      };
+
+      const root = createRoot(document.getElementById("root")!);
+      try {
+        flushSync(() => root.render(<Capture />));
+        await latest!.sendMessage({ text: "Hello" });
+        await settle();
+
+        assertEquals(latest!.status, "error");
+        assertEquals(
+          latest!.error?.code,
+          code,
+          "hook state must retain the terminal provider error code",
+        );
+        assertEquals(
+          callbackError?.code,
+          code,
+          "onError must receive the terminal provider error code",
+        );
+        assertEquals(callbackError, latest!.error, "state and callback must expose the same error");
+      } finally {
+        flushSync(() => root.unmount());
+        await settle();
+        restoreMockFetch();
+        restoreDom();
+      }
     }
   });
 

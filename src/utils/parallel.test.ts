@@ -178,5 +178,13 @@ describe("parallel", () => {
       });
       assertEquals(result, []);
     });
+
+    it("rejects a sparse function array", async () => {
+      const sparse = new Array<() => Promise<number>>(1);
+      await assertRejects(
+        () => parallelAll(sparse),
+        TypeError,
+      );
+    });
   });
 });

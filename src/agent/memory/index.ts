@@ -10,6 +10,7 @@ export {
   type MemoryConfigBase,
   type MemoryPersistence,
   type MemoryStats,
+  type MemoryTransaction,
   type MinimalMessage,
 } from "./memory-interface.ts";
 export {

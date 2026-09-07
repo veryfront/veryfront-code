@@ -6,6 +6,9 @@
  * types and calls into this bridge at the edge.
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
+import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import type {
@@ -1132,121 +1135,181 @@ async function buildGenerateResultFromStream(
   };
 }
 
-function normalizeStreamPart(part: unknown): unknown {
-  if (!part || typeof part !== "object" || !("type" in part)) {
-    return part;
+function materializeProviderJsonField(value: unknown): unknown {
+  return value === undefined ? undefined : cloneStructuredValue(snapshotProviderJsonValue(value, {
+    dropUndefinedMembers: true,
+  }));
+}
+
+function generateUsageToStreamUsage(usage: DirectGenerateUsage) {
+  const { totalTokens, ...totalUsage } = usage;
+  const recomputedTotal = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  return totalTokens !== undefined && totalTokens !== recomputedTotal
+    ? { ...totalUsage, totalTokens }
+    : totalUsage;
+}
+
+function materializeRuntimeStreamPart(part: unknown): unknown {
+  if (!part || typeof part !== "object") return part;
+  const label = "Provider stream part";
+  const read = (key: string, required = false) => readOwnDataProperty(part, key, label, required);
+  const optional = (key: string, value = read(key)) => value === undefined ? {} : { [key]: value };
+  const type = read("type", true);
+  if (typeof type !== "string") return { type };
+
+  if (type.startsWith("data-")) {
+    return { type, data: materializeProviderJsonField(read("data")) };
   }
 
-  if (part.type === "text-delta") {
-    if ("delta" in part && typeof part.delta === "string") {
-      return {
-        type: "text-delta",
-        text: part.delta,
-      };
+  switch (type) {
+    case "text-delta": {
+      const delta = read("delta");
+      return { type, text: typeof delta === "string" ? delta : read("text") };
     }
-
-    return part;
+    case "reasoning-start":
+      return { type, id: read("id") };
+    case "reasoning-delta":
+      return { type, id: read("id"), delta: read("delta") };
+    case "reasoning-end":
+      return {
+        type,
+        id: read("id"),
+        ...optional("signature"),
+        ...optional("redactedData"),
+      };
+    case "tool-input-start":
+      return {
+        type,
+        id: read("id"),
+        toolName: read("toolName"),
+        ...optional("providerExecuted"),
+        ...optional("dynamic"),
+      };
+    case "tool-input-delta":
+      return { type, id: read("id"), delta: read("delta") };
+    case "tool-input-end":
+      return { type, id: read("id") };
+    case "tool-input-available":
+    case "tool-call":
+      return {
+        type,
+        ...optional("toolCallId"),
+        ...optional("id"),
+        toolName: read("toolName"),
+        input: materializeProviderJsonField(read("input")),
+        ...optional("providerExecuted"),
+        ...optional("dynamic"),
+      };
+    case "tool-result":
+      return {
+        type,
+        toolCallId: read("toolCallId"),
+        toolName: read("toolName"),
+        ...optional("output", materializeProviderJsonField(read("output"))),
+        ...optional("result", materializeProviderJsonField(read("result"))),
+        ...optional("error"),
+        ...optional("input", materializeProviderJsonField(read("input"))),
+        ...optional("providerExecuted"),
+        ...optional("dynamic"),
+        ...optional("preliminary"),
+        ...optional("isError"),
+      };
+    case "tool-error":
+      return {
+        type,
+        toolCallId: read("toolCallId"),
+        toolName: read("toolName"),
+        ...optional("error"),
+        ...optional("input", materializeProviderJsonField(read("input"))),
+        ...optional("providerExecuted"),
+        ...optional("dynamic"),
+        ...optional("preliminary"),
+        ...optional("isError"),
+      };
+    case "error":
+      return { type, error: read("error") };
+    case "finish":
+      break;
+    default:
+      return { type };
   }
 
-  if (part.type !== "finish") {
-    return part;
-  }
-
-  const finishPart = part as {
-    type: "finish";
-    usage?: unknown;
-    totalUsage?: unknown;
-    finishReason?: unknown;
-    providerMetadata?: Record<string, unknown>;
-  };
-  const usage = normalizeUsage(finishPart.usage) ?? normalizeUsage(finishPart.totalUsage);
-  const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
-
+  const usage = normalizeUsage(materializeProviderJsonField(read("usage"))) ??
+    normalizeUsage(materializeProviderJsonField(read("totalUsage")));
+  const providerMetadata = materializeProviderJsonField(read("providerMetadata"));
   return {
     type: "finish",
-    finishReason: normalizeFinishReason(finishPart.finishReason),
-    ...(finishPart.providerMetadata === undefined
-      ? {}
-      : { providerMetadata: finishPart.providerMetadata }),
-    ...(usage
-      ? {
-        totalUsage: {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          ...(usage.totalTokens !== undefined && usage.totalTokens !== recomputedTotal
-            ? { totalTokens: usage.totalTokens }
-            : {}),
-          ...(usage.cacheCreationInputTokens !== undefined
-            ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
-            : {}),
-          ...(usage.cacheReadInputTokens !== undefined
-            ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-            : {}),
-          ...(usage.cachedInputTokens !== undefined
-            ? { cachedInputTokens: usage.cachedInputTokens }
-            : {}),
-          ...(usage.reasoningTokens !== undefined
-            ? { reasoningTokens: usage.reasoningTokens }
-            : {}),
-          ...(usage.billableInputTokens !== undefined
-            ? { billableInputTokens: usage.billableInputTokens }
-            : {}),
-          ...(usage.billableOutputTokens !== undefined
-            ? { billableOutputTokens: usage.billableOutputTokens }
-            : {}),
-          ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-          ...(usage.providerInputCostUsd !== undefined
-            ? { providerInputCostUsd: usage.providerInputCostUsd }
-            : {}),
-          ...(usage.providerOutputCostUsd !== undefined
-            ? { providerOutputCostUsd: usage.providerOutputCostUsd }
-            : {}),
-          ...(usage.providerCostUsd !== undefined
-            ? { providerCostUsd: usage.providerCostUsd }
-            : {}),
-          ...(usage.veryfrontInputChargeUsd !== undefined
-            ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
-            : {}),
-          ...(usage.veryfrontOutputChargeUsd !== undefined
-            ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
-            : {}),
-          ...(usage.veryfrontChargeUsd !== undefined
-            ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
-            : {}),
-          ...(usage.veryfrontBilledUsd !== undefined
-            ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
-            : {}),
-          ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
-          ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
-          ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
-          ...(usage.usageCaptureStatus !== undefined
-            ? { usageCaptureStatus: usage.usageCaptureStatus }
-            : {}),
-        },
-      }
-      : {}),
+    finishReason: normalizeFinishReason(read("finishReason")),
+    ...(providerMetadata === undefined ? {} : { providerMetadata }),
+    ...(usage ? { totalUsage: generateUsageToStreamUsage(usage) } : {}),
   };
 }
 
+function materializeProviderStreamPart(part: unknown): unknown {
+  try {
+    const materializedPart = materializeRuntimeStreamPart(part);
+    if (
+      typeof materializedPart === "object" && materializedPart !== null &&
+      (materializedPart as { type?: unknown }).type === "error"
+    ) {
+      throw createRuntimeProviderStreamFailure(
+        (materializedPart as { error?: unknown }).error,
+      );
+    }
+    return materializedPart;
+  } catch (error) {
+    throw createRuntimeProviderStreamFailure(error);
+  }
+}
+
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
-  for await (const part of stream) {
-    yield normalizeStreamPart(part);
+  const reader = stream.getReader();
+  let completed = false;
+  let cleanupContinuesInBackground = false;
+
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) {
+        completed = true;
+        return;
+      }
+
+      try {
+        yield materializeProviderStreamPart(part.value);
+      } catch (error) {
+        cleanupContinuesInBackground = true;
+        void (async () => {
+          try {
+            await reader.cancel();
+          } catch {
+            // Provider cleanup cannot replace or delay the terminal provider error.
+          } finally {
+            reader.releaseLock();
+          }
+        })();
+        throw error;
+      }
+    }
+  } finally {
+    if (!cleanupContinuesInBackground) {
+      try {
+        if (!completed) await reader.cancel();
+      } finally {
+        reader.releaseLock();
+      }
+    }
   }
 }
 
 async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
-  for await (const part of stream) {
-    if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text-delta") {
-      continue;
-    }
-
-    if ("text" in part && typeof part.text === "string") {
-      yield part.text;
-      continue;
-    }
-
-    if ("delta" in part && typeof part.delta === "string") {
-      yield part.delta;
+  for await (const materializedPart of mapReadableStream(stream)) {
+    if (
+      typeof materializedPart === "object" && materializedPart !== null &&
+      (materializedPart as { type?: unknown }).type === "text-delta"
+    ) {
+      const text = (materializedPart as { text?: unknown }).text;
+      if (typeof text === "string") yield text;
     }
   }
 }

@@ -28,6 +28,8 @@ import {
 import { ModuleSourceCapture } from "#veryfront/transforms/esm/module-source-capture.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { DENO_CONFIG_STUB_CODE } from "#veryfront/transforms/pipeline/stages/ssr-vf-modules/constants.ts";
+import { buildMdxJsxCacheFileName } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { __jsxCacheInternals } from "#veryfront/transforms/mdx/esm-module-loader/jsx-cache.ts";
 
 describe("MDX module preparation", () => {
   afterAll(stopBundler);
@@ -558,6 +560,41 @@ describe("MDX module preparation", () => {
       assertEquals((await fs.stat(prepared.filePath)).isFile, true);
       await assertRejects(() => import(prepared.importUrl), Error, "tenant module evaluated");
     } finally {
+      await fs.remove(dir, { recursive: true });
+    }
+  });
+
+  it("keeps a prepared lazy JSX parent importable after preparation returns", async () => {
+    const fs = createFileSystem();
+    const dir = await fs.makeTempDir();
+    try {
+      const source = "export const value = 42;";
+      const childPath = join(dir, buildMdxJsxCacheFileName(join(dir, "child.jsx"), source));
+      await fs.writeTextFile(childPath, source);
+      const prepared = await prepareModuleESM(
+        `export const load = () => import(${jsonForInlineScript(toFileUrl(childPath).href)});`,
+        {
+          adapter: await runtime.get(),
+          projectDir: dir,
+          projectId: "preparation-test",
+          contentSourceId: "release-test",
+          esmCacheDir: dir,
+          dependencyPinningCacheKey: "off",
+        },
+      );
+      assertEquals(
+        await fs.exists(prepared.filePath),
+        true,
+        "preparation must retain its root artifact",
+      );
+      const parent = await import(prepared.importUrl);
+      assertEquals(
+        (await parent.load()).value,
+        42,
+        "lazy imports must not depend on a released host bridge",
+      );
+    } finally {
+      __jsxCacheInternals.cancelScheduledJsxCachePrunes();
       await fs.remove(dir, { recursive: true });
     }
   });

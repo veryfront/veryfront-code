@@ -516,7 +516,44 @@ describe("chat/final-step-fallback", () => {
           }),
         },
       }),
-      { code: "RESOURCE_LIMIT_EXCEEDED", message: "Reduce request size and try again." },
+      { code: "RESOURCE_LIMIT_EXCEEDED", message: "Resource limit exceeded" },
+    );
+  });
+
+  it("does not invoke credit detail accessors in final-step response bodies", () => {
+    let accessorCalls = 0;
+    const body = {
+      slug: "insufficient-credits",
+      error: "Agent run credit limit exceeded",
+      suggestion: "private provider guidance",
+      get balance(): number {
+        accessorCalls += 1;
+        throw new Error("balance getter must not run");
+      },
+      get required(): number {
+        accessorCalls += 1;
+        throw new Error("required getter must not run");
+      },
+    };
+
+    assertEquals(
+      extractFinalStepTerminalError({ response: { body } }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message:
+          "Agent run credit limit exceeded. Start a new reviewed run or reduce the scope of this run.",
+      },
+    );
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("rejects revoked final-step response bodies without throwing", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    assertEquals(
+      extractFinalStepTerminalError({ response: { body: proxy } }),
+      null,
     );
   });
 });

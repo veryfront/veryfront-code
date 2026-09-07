@@ -94,6 +94,15 @@ function shouldSkipProviderExecutedToolResult(
   return true;
 }
 
+function consumeProviderExecutedToolResults(
+  message: Message,
+  providerExecutedToolCallIds: Set<string>,
+): void {
+  for (const part of message.parts) {
+    shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+  }
+}
+
 function getToolInputRecord(part: Record<string, unknown>): Record<string, unknown> {
   return getRecordPartField(part, "args") ?? getRecordPartField(part, "input") ?? {};
 }
@@ -179,7 +188,9 @@ function getTextGenerationToolResultPart(
   };
 }
 
-function buildAttachmentContextFromParts(parts: Message["parts"]): string {
+/** @internal Provider-visible text annotation shared with input validation. */
+export function buildAttachmentContextFromParts(parts: Message["parts"]): string {
+  if (getTextFromParts(parts).includes("<uploaded_files>")) return "";
   const refs = parts.flatMap((part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
@@ -219,11 +230,21 @@ function appendReadableAttachmentContext(text: string, attachmentContext: string
   return `${text}${separator}${normalizedContext}`;
 }
 
-function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
+/** @internal Exact text projection shared with input validation. */
+export function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
   const text = getTextFromParts(parts);
   return text.includes("<uploaded_files>")
     ? text
     : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
+}
+
+/** @internal Text metadata sent in native attachment parts, independent of annotations. */
+export function getProviderAttachmentMetadata(parts: Message["parts"]): string[] {
+  return getUserFileParts(parts, false).flatMap((part) => [
+    part.mediaType,
+    ...(part.filename ? [part.filename] : []),
+    ...(part.url.startsWith("data:") ? [] : [part.url]),
+  ]);
 }
 
 function getUserFileParts(
@@ -383,18 +404,160 @@ export function convertToTextGenerationRuntimeMessage(
   }
 }
 
-function hasProviderSendableAssistantContent(message: Message): boolean {
+/**
+ * Whether `convertToTextGenerationRuntimeMessages` forwards this message to the
+ * provider rather than dropping it.
+ *
+ * Only assistant messages are ever dropped, and only when they carry no text,
+ * no tool call, and no attached provider metadata. Exported so input validation
+ * can mirror the drop: a dropped message leaves the messages on either side of
+ * it adjacent, and the provider then merges those into one turn.
+ */
+export function hasProviderSendableAssistantContent(
+  message: Message,
+  priorProviderExecutedToolCallIds: ReadonlySet<string> = new Set(),
+): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
 
-  return message.parts.some((part) => {
+  // Conversion registers every provider-executed call before it inspects any
+  // ordinary call in the same assistant message. Mirror that state here so a
+  // duplicate ID cannot make the predicate claim content that conversion will
+  // remove.
+  const providerExecutedToolCallIds = new Set(priorProviderExecutedToolCallIds);
+  for (const part of message.parts) {
+    const toolCallId = getProviderExecutedToolCallId(part);
+    if (toolCallId) providerExecutedToolCallIds.add(toolCallId);
+  }
+
+  for (const part of message.parts) {
     if (part.type === "text" && "text" in part) {
-      return typeof (part as { text?: unknown }).text === "string" &&
-        (part as { text: string }).text.length > 0;
+      if (
+        typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0
+      ) return true;
+      continue;
     }
 
-    return getTextGenerationToolCallPart(part) !== null;
-  });
+    if (shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)) continue;
+    if (getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null) return true;
+  }
+  return false;
+}
+
+/** Assistant messages retained after applying conversation-level provider call identity. */
+export function getProviderSendableAssistantMessages(
+  messages: readonly Message[],
+): ReadonlySet<Message> {
+  const sendable = new Set<Message>();
+  const providerExecutedToolCallIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+    if (message.role === "assistant") {
+      if (hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
+        sendable.add(message);
+        convertAssistantMessageToTextGenerationRuntimeMessages(
+          message,
+          providerExecutedToolCallIds,
+        );
+      } else {
+        consumeProviderExecutedToolResults(message, providerExecutedToolCallIds);
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      for (const part of message.parts) {
+        shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+      }
+    }
+  }
+  return sendable;
+}
+
+/** Tool messages retained after applying conversation-level provider call identity. */
+export function getProviderSendableToolMessages(
+  messages: readonly Message[],
+): ReadonlySet<Message> {
+  const sendable = new Set<Message>();
+  const providerExecutedToolCallIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+    if (message.role !== "tool") continue;
+    const converted = convertToTextGenerationRuntimeMessage(message, {
+      providerExecutedToolCallIds,
+    });
+    if (converted.role === "tool" && converted.content.length > 0) sendable.add(message);
+  }
+  return sendable;
+}
+
+/**
+ * Assistant messages Anthropic removes when compacting completed historical
+ * client-tool rounds. The request builder drops their tool calls once a later
+ * historical assistant text answer exists, so a tool-call-only message no
+ * longer separates the user turns on either side.
+ */
+export function getAnthropicCompactedAssistantMessages(
+  messages: readonly Message[],
+): ReadonlySet<Message> {
+  const compacted = new Set<Message>();
+  const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
+  const lastHistoricalAssistantTextIndex = messages.findLastIndex((message, index) =>
+    index < lastUserIndex &&
+    message.role === "assistant" &&
+    message.parts.some((part) =>
+      part.type === "text" && "text" in part &&
+      typeof (part as { text?: unknown }).text === "string" &&
+      (part as { text: string }).text.length > 0
+    )
+  );
+  const providerExecutedToolCallIds = new Set<string>();
+
+  for (const [index, message] of messages.entries()) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+    if (
+      message.role === "assistant" &&
+      index < lastHistoricalAssistantTextIndex &&
+      message.parts.some((part) =>
+        getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null
+      ) &&
+      !message.parts.some((part) =>
+        part.type === "text" && "text" in part &&
+        typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0
+      )
+    ) {
+      compacted.add(message);
+    }
+    if (message.role === "tool") {
+      for (const part of message.parts) {
+        shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+      }
+    }
+  }
+
+  return compacted;
 }
 
 function splitAnthropicProviderMetadata(
@@ -573,7 +736,8 @@ export function convertToTextGenerationRuntimeMessages(
       }
     }
 
-    if (!hasProviderSendableAssistantContent(message)) {
+    if (!hasProviderSendableAssistantContent(message, providerExecutedToolCallIds)) {
+      consumeProviderExecutedToolResults(message, providerExecutedToolCallIds);
       continue;
     }
 

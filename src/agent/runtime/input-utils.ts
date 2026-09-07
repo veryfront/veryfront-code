@@ -1,22 +1,71 @@
-import type { Message } from "../types.ts";
+import type { Message } from "#veryfront/agent/types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
 
+const syntheticMessageIds = new WeakSet<object>();
+const syntheticMessageTimestamps = new WeakSet<object>();
+const syntheticMessageIdValues = new WeakMap<object, string>();
+const syntheticMessageTimestampValues = new WeakMap<object, number>();
+
+/** Whether normalization supplied this message id from the wall clock. */
+export function hasSyntheticMessageId(message: Message): boolean {
+  return syntheticMessageIds.has(message);
+}
+
+/** Whether normalization supplied this message timestamp from the wall clock. */
+export function hasSyntheticMessageTimestamp(message: Message): boolean {
+  return syntheticMessageTimestamps.has(message);
+}
+
+/** Whether this message still carries the id supplied by normalization. */
+export function hasUnchangedSyntheticMessageId(
+  message: Message,
+  id: string,
+): boolean {
+  return syntheticMessageIds.has(message) && syntheticMessageIdValues.get(message) === id;
+}
+
+/** Whether this message still carries the timestamp supplied by normalization. */
+export function hasUnchangedSyntheticMessageTimestamp(
+  message: Message,
+  timestamp: number | undefined,
+): boolean {
+  return syntheticMessageTimestamps.has(message) &&
+    syntheticMessageTimestampValues.get(message) === timestamp;
+}
+
+/** Preserve synthesized-field provenance when middleware clones a message. */
+export function propagateSyntheticMessageMarks(source: Message, target: Message): void {
+  if (syntheticMessageIds.has(source)) {
+    syntheticMessageIds.add(target);
+    const id = syntheticMessageIdValues.get(source);
+    if (id !== undefined) syntheticMessageIdValues.set(target, id);
+  }
+  if (syntheticMessageTimestamps.has(source)) {
+    syntheticMessageTimestamps.add(target);
+    const timestamp = syntheticMessageTimestampValues.get(source);
+    if (timestamp !== undefined) syntheticMessageTimestampValues.set(target, timestamp);
+  }
+}
+
 export function normalizeInput(input: string | Message[]): Message[] {
   const now = Date.now();
 
   if (typeof input === "string") {
-    return [
-      {
-        id: `msg_${now}`,
-        role: "user",
-        parts: [{ type: "text", text: input }],
-        timestamp: now,
-      },
-    ];
+    const message: Message = {
+      id: `msg_${now}`,
+      role: "user",
+      parts: [{ type: "text", text: input }],
+      timestamp: now,
+    };
+    syntheticMessageIds.add(message);
+    syntheticMessageTimestamps.add(message);
+    syntheticMessageIdValues.set(message, message.id);
+    syntheticMessageTimestampValues.set(message, message.timestamp!);
+    return [message];
   }
 
   return input.map((msg, index) => {
@@ -29,10 +78,46 @@ export function normalizeInput(input: string | Message[]): Message[] {
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
+    if (msg.id == null) {
+      syntheticMessageIds.add(normalized);
+      syntheticMessageIdValues.set(normalized, normalized.id);
+    } else if (syntheticMessageIds.has(msg)) {
+      syntheticMessageIds.add(normalized);
+      syntheticMessageIdValues.set(
+        normalized,
+        syntheticMessageIdValues.get(msg) ?? normalized.id,
+      );
+    }
+    if (msg.timestamp == null || syntheticMessageTimestamps.has(msg)) {
+      syntheticMessageTimestamps.add(normalized);
+      syntheticMessageTimestampValues.set(
+        normalized,
+        msg.timestamp == null
+          ? normalized.timestamp!
+          : syntheticMessageTimestampValues.get(msg) ?? normalized.timestamp!,
+      );
+    }
     return isRuntimeGeneratedUserMessage(msg)
       ? markRuntimeGeneratedUserMessage(normalized)
       : normalized;
   });
+}
+
+/**
+ * Resolve the message set to persist for a turn once middleware has run.
+ *
+ * Memory is written after the middleware chain accepts the turn, so a rejected
+ * message is never stored and replayed unvalidated on a later turn. The
+ * middleware context must be built over the normalized messages: a middleware
+ * that mutates a message in place then mutates exactly what is persisted and
+ * dispatched, while one that replaces `context.input` (sanitization) hands
+ * back a value that is re-normalized before being persisted.
+ */
+export function resolveValidatedTurnInput(
+  contextInput: string | Message[],
+  normalizedInput: Message[],
+): Message[] {
+  return contextInput === normalizedInput ? normalizedInput : normalizeInput(contextInput);
 }
 
 export function accumulateUsage(
