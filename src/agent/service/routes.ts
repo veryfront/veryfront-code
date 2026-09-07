@@ -1,4 +1,3 @@
-import { parseProviderError } from "../../chat/provider-errors.ts";
 import { CONTROL_PLANE_RUN_STREAM_PATH } from "../../channels/control-plane.ts";
 import type { AgentServiceRoute } from "./definition.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/host-support.ts";
@@ -16,7 +15,10 @@ import {
   parseHostedChatRequestFromRequest,
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
 } from "../hosted/chat-request-parser.ts";
-import { executeHostedDurableChatRun } from "../hosted/durable-chat-run-start.ts";
+import {
+  classifyHostedChatSetupError,
+  executeHostedDurableChatRun,
+} from "../hosted/durable-chat-run-start.ts";
 import {
   type HostedServiceAuthenticatedRequest,
   HostedServiceAuthError,
@@ -255,7 +257,7 @@ function createAgUiSetupErrorResponse(input: {
     );
   }
 
-  const { code, status, message } = parseProviderError(input.error);
+  const { code, status, message } = classifyHostedChatSetupError(input.error);
   input.logger?.error("AG-UI request failed during setup", {
     errorCode: code,
     originalError: input.error instanceof Error ? input.error.message : String(input.error),

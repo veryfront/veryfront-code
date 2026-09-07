@@ -23,8 +23,10 @@ export type HostedDurableRunSetupErrorStatusCode =
   | 403
   | 404
   | 408
+  | 409
   | 413
   | 429
+  | 499
   | 500
   | 501
   | 502
@@ -84,7 +86,8 @@ function isDurableRunSetupErrorStatusCode(
   status: number | undefined,
 ): status is HostedDurableRunSetupErrorStatusCode {
   return status === 400 || status === 402 || status === 403 || status === 404 ||
-    status === 408 || status === 413 || status === 429 || status === 500 ||
+    status === 408 || status === 409 || status === 413 || status === 429 || status === 499 ||
+    status === 500 ||
     status === 501 || status === 502 || status === 503;
 }
 
@@ -97,12 +100,16 @@ function isDurableRunSetupErrorStatusCode(
  * parser's EXTERNAL_SERVICE_ERROR default. The error is snapshotted once
  * because proxied errors can pass the guard yet throw from field getters.
  */
-function classifyDurableRunSetupError(error: unknown): { code: string; status?: number } {
+export function classifyHostedChatSetupError(
+  error: unknown,
+): { code: string; status?: number; message: string } {
   const snapshot = snapshotVeryfrontError(error);
   if (snapshot) {
     return {
       code: snapshot.slug.toUpperCase().replaceAll("-", "_"),
       status: snapshot.status,
+      // The registry title is stable; request/provider details stay out of SSE.
+      message: snapshot.title,
     };
   }
 
@@ -319,7 +326,7 @@ export async function executeHostedDurableChatRun<TExecution>(
       );
     }
 
-    const { code, status } = classifyDurableRunSetupError(error);
+    const { code, status } = classifyHostedChatSetupError(error);
     const response = resolveHostedDurableRunSetupErrorResponse({
       code,
       status,

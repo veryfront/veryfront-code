@@ -30,16 +30,18 @@ import {
 } from "#veryfront/provider/runtime-inspection.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
-import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   AgentRunModelCallContextEvent,
   ModelCallMessage,
-  ModelCallRequest,
   ModelCallTool,
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
+import {
+  buildModelCallContextRequest,
+  resolveModelCallProvider,
+} from "./model-call-context-request.ts";
 
 const cloneStructuredValue = globalThis.structuredClone;
 const ObjectDefineProperty = Object.defineProperty;
@@ -711,110 +713,13 @@ function buildDirectModelOptions(
   };
 }
 
-function buildModelCallRequest(
-  options: ModelCallRequestSource,
-  reasoning = options.reasoning,
-): ModelCallRequest | undefined {
-  const projectedReasoning = reasoning
-    ? {
-      ...(reasoning.enabled !== undefined ? { enabled: reasoning.enabled } : {}),
-      ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}),
-      ...(reasoning.budgetTokens !== undefined ? { budgetTokens: reasoning.budgetTokens } : {}),
-    }
-    : undefined;
-  const request: ModelCallRequest = {
-    ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    ...(options.topP !== undefined ? { topP: options.topP } : {}),
-    ...(options.topK !== undefined ? { topK: options.topK } : {}),
-    ...(options.stopSequences !== undefined ? { stopSequences: [...options.stopSequences] } : {}),
-    ...(options.seed !== undefined ? { seed: options.seed } : {}),
-    ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
-    ...(options.frequencyPenalty !== undefined
-      ? { frequencyPenalty: options.frequencyPenalty }
-      : {}),
-    ...(projectedReasoning && Object.keys(projectedReasoning).length > 0
-      ? { reasoning: projectedReasoning }
-      : {}),
-  };
-  return Object.keys(request).length > 0 ? request : undefined;
-}
-
-function resolveModelProvider(model: ModelRuntime): string | undefined {
-  if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
-    return model.modelProvider;
-  }
-  return model.provider === "veryfront-cloud" ? undefined : model.provider;
-}
-
-function resolvePersistedReasoning(
-  model: ModelRuntime,
-  options: DirectModelOptions,
-): RuntimeReasoningOption | undefined {
-  const modelProvider = resolveModelProvider(model);
-  if (modelProvider === "openai" && typeof model.modelId === "string") {
-    const reasoning = resolveOpenAIReasoningConfig(model.modelId, modelProvider, options.reasoning);
-    return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
-  }
-
-  // The Anthropic request builder only gives neutral reasoning precedence when
-  // it enables thinking; otherwise a raw provider thinking config remains effective.
-  if (modelProvider !== "anthropic" || options.reasoning?.enabled === true) {
-    return options.reasoning;
-  }
-
-  const providerOptions = options.providerOptions;
-  if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
-    return options.reasoning;
-  }
-  const anthropic = readOwnEnumerableDataDescriptor(providerOptions, "anthropic")?.value;
-  if (!anthropic || typeof anthropic !== "object" || Array.isArray(anthropic)) {
-    return options.reasoning;
-  }
-  const thinking = readOwnEnumerableDataDescriptor(anthropic, "thinking")?.value;
-  if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) {
-    return options.reasoning;
-  }
-  const thinkingType = readOwnEnumerableDataDescriptor(thinking, "type")?.value;
-  if (thinkingType === "disabled") {
-    return { enabled: false };
-  }
-  if (thinkingType !== "adaptive" && thinkingType !== "enabled") {
-    return options.reasoning;
-  }
-
-  if (thinkingType === "enabled") {
-    const budgetTokens = readOwnEnumerableDataDescriptor(thinking, "budget_tokens")?.value;
-    return {
-      enabled: true,
-      ...(typeof budgetTokens === "number" && Number.isInteger(budgetTokens) && budgetTokens >= 0
-        ? { budgetTokens }
-        : {}),
-    };
-  }
-
-  const outputConfig = readOwnEnumerableDataDescriptor(anthropic, "output_config")?.value;
-  const effort = outputConfig && typeof outputConfig === "object" && !Array.isArray(outputConfig)
-    ? readOwnEnumerableDataDescriptor(outputConfig, "effort")?.value
-    : undefined;
-  return {
-    enabled: true,
-    ...(effort === "low" || effort === "medium" || effort === "high" || effort === "max"
-      ? { effort }
-      : {}),
-  };
-}
-
 async function emitModelCallContextEvent(
   options: DirectTextOptions,
   directOptions: DirectModelOptions,
 ): Promise<void> {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return;
-  const request = buildModelCallRequest(
-    directOptions,
-    resolvePersistedReasoning(options.model, directOptions),
-  );
+  const request = buildModelCallContextRequest(options.model, directOptions);
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
@@ -822,8 +727,8 @@ async function emitModelCallContextEvent(
       ? {
         model: {
           id: options.model.modelId,
-          ...(resolveModelProvider(options.model)
-            ? { modelProvider: resolveModelProvider(options.model) }
+          ...(resolveModelCallProvider(options.model)
+            ? { modelProvider: resolveModelCallProvider(options.model) }
             : {}),
         },
       }

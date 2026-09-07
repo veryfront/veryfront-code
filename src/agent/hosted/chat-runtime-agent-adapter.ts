@@ -56,48 +56,9 @@ export function createHostedChatRuntimeAgentAdapter(
   input: HostedChatRuntimeAgentAdapterInput,
 ): HostedChatRuntimeAgent {
   const runStream = input.runStream ?? ((operation) => operation());
-
   return {
     stream: async (streamInput): Promise<HostedChatRuntimeStreamResult> => {
-      let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
-      const streamResponse = await runStream(() =>
-        runWithEffectiveSourceIntegrationPolicy(
-          input.sourceIntegrationPolicy,
-          async () => {
-            const projectContext = input.resolveProjectContext?.() ?? {
-              projectId: input.projectId,
-              projectSlug: input.projectSlug,
-            };
-            const response = await input.runtimeAgent.stream({
-              messages: streamInput.messages,
-              ...(input.maxOutputTokens !== undefined
-                ? { maxOutputTokens: input.maxOutputTokens }
-                : {}),
-              context: {
-                ...(input.runId ? { runId: input.runId } : {}),
-                ...(input.agentId ? { agentId: input.agentId } : {}),
-                ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-                ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
-                ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
-                abortSignal: streamInput.abortSignal,
-                publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
-              },
-            });
-            return response.toDataStreamResponse();
-          },
-        )
-      );
-
-      if (!streamResponse.body) {
-        throw AGENT_ERROR.create({ detail: "Agent runtime returned an empty stream body" });
-      }
-
-      const stream = createToolExecutionDataEventBridgeStream({
-        baseStream: streamResponse.body,
-        installPublisher: (nextPublishDataEvent) => {
-          publishDataEvent = nextPublishDataEvent;
-        },
-      });
+      const stream = await createHostedChatRuntimeDataStream(input, streamInput, runStream);
 
       return {
         steps: Promise.resolve([]),
@@ -125,4 +86,51 @@ export function createHostedChatRuntimeAgentAdapter(
       };
     },
   };
+}
+
+/** @internal Start the runtime data stream without installing broker UI callbacks. */
+export async function createHostedChatRuntimeDataStream(
+  input: HostedChatRuntimeAgentAdapterInput,
+  streamInput: Parameters<HostedChatRuntimeAgent["stream"]>[0],
+  runStream: HostedChatRuntimeAgentAdapterRunner = input.runStream ?? ((operation) => operation()),
+): Promise<ReadableStream<Uint8Array>> {
+  let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
+  const streamResponse = await runStream(() =>
+    runWithEffectiveSourceIntegrationPolicy(
+      input.sourceIntegrationPolicy,
+      async () => {
+        const projectContext = input.resolveProjectContext?.() ?? {
+          projectId: input.projectId,
+          projectSlug: input.projectSlug,
+        };
+        const response = await input.runtimeAgent.stream({
+          messages: streamInput.messages,
+          ...(input.maxOutputTokens !== undefined
+            ? { maxOutputTokens: input.maxOutputTokens }
+            : {}),
+          context: {
+            ...(input.runId ? { runId: input.runId } : {}),
+            ...(input.agentId ? { agentId: input.agentId } : {}),
+            ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+            ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
+            ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
+            abortSignal: streamInput.abortSignal,
+            publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
+          },
+        });
+        return response.toDataStreamResponse();
+      },
+    )
+  );
+
+  if (!streamResponse.body) {
+    throw AGENT_ERROR.create({ detail: "Agent runtime returned an empty stream body" });
+  }
+
+  return createToolExecutionDataEventBridgeStream({
+    baseStream: streamResponse.body,
+    installPublisher: (nextPublishDataEvent) => {
+      publishDataEvent = nextPublishDataEvent;
+    },
+  });
 }
