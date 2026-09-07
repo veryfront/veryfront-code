@@ -607,6 +607,9 @@ describe("LibModulesHandler", () => {
         get() {
           throw new Error("snapshot failure must not be inspected");
         },
+        getPrototypeOf() {
+          throw new Error("snapshot failure prototype must not be inspected");
+        },
       });
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       const adapter = createAdapter();

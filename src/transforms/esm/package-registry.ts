@@ -284,7 +284,7 @@ export function withDependencyPinningSourceFileSystem(
 }
 
 function ownSnapshotStore(
-  value: object,
+  value: CreateDependencyPinningSourceOptions | RuntimeAdapter,
   key: "snapshotStore" | "dependencySnapshotStore",
 ): unknown {
   const descriptor = snapshotGetOwnPropertyDescriptor(value, key);

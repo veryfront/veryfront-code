@@ -15,7 +15,7 @@
  */
 import type { HandlerContext } from "../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 import {
   type DependencyPinningSnapshot,
@@ -166,9 +166,7 @@ export function snapshotStoreFailureResponse(
   req: Request,
   securityConfig: HandlerContext["securityConfig"],
 ): Response | undefined {
-  if (
-    !(error instanceof VeryfrontError) || error.slug !== DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug
-  ) {
+  if (snapshotVeryfrontError(error)?.slug !== DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
     return undefined;
   }
   const prepared = builder.withCORS(req, securityConfig?.cors)
