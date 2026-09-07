@@ -448,6 +448,29 @@ describe("agent/hosted-durable-chat-run-start", () => {
     }
   });
 
+  it("redacts setup error slugs in durable responses and logs", async () => {
+    const error = PERMISSION_DENIED.create();
+    error.slug = "setup?token=synthetic-private-credential";
+    const logs: Array<Record<string, unknown> | undefined> = [];
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      prepareExecution: () => Promise.reject(error),
+      startDetachedExecution: async () => {},
+      logger: { error: (_message, metadata) => logs.push(metadata) },
+    });
+
+    assertEquals(response.status, 403);
+    assertEquals(await readJson(response), { errorCode: "EXTERNAL_SERVICE_ERROR" });
+    assertEquals(logs.length, 1);
+    assertEquals(logs[0]?.errorCode, "EXTERNAL_SERVICE_ERROR");
+    assertEquals(
+      JSON.stringify(logs).toLowerCase().includes("synthetic-private-credential"),
+      false,
+    );
+  });
+
   it("preserves not-supported status for unsupported hosted models", async () => {
     const response = await executeHostedDurableChatRun({
       req: createParsedRequest(),
