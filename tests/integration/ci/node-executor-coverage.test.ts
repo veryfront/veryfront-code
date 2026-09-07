@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { relative } from "node:path";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import {
   buildNativeCoverageArgs,
   validateNativeCoverage,
@@ -12,7 +13,10 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 describe("native executor source coverage", () => {
   it("maps real TypeScript coverage and rejects transformed JavaScript positions", async () => {
     await Deno.mkdir(`${root}/coverage`, { recursive: true });
-    const directory = await Deno.makeTempDir({ dir: `${root}/coverage`, prefix: "node-mapping-" });
+    const directory = await makeTempDirWithOptions({
+      dir: `${root}/coverage`,
+      prefix: "node-mapping-",
+    });
     const source = `${directory}/mapping-fixture.ts`;
     const test = `${directory}/mapping-fixture.test.ts`;
     const lcov = `${directory}/lcov.info`;
