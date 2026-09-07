@@ -10,6 +10,8 @@
  * - Performance and concurrency
  */
 
+import { ensureTestSchemaValidator } from "#veryfront/schemas/_test-setup.ts";
+
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
@@ -521,6 +523,7 @@ describe(
         });
 
         it("does not read project middleware before proxy request context exists", async () => {
+          ensureTestSchemaValidator();
           const multiProjectFs = new MultiProjectFSAdapter({
             veryfront: {
               apiBaseUrl: "https://api.example.com",
@@ -579,6 +582,7 @@ describe(
         });
 
         it("refuses shared proxy middleware after trusted request context is resolved", async () => {
+          ensureTestSchemaValidator();
           const trustEnvName = "VERYFRONT_TRUST_FORWARDED_HEADERS";
           const originalProxyTrust = getHostEnv(trustEnvName);
           const projectSlug = "shared-middleware-project";

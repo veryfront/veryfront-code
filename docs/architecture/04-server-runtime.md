@@ -40,6 +40,10 @@ policy. When enabled, set all of these values:
 - `MEMORY_RECYCLE_CONSECUTIVE_SAMPLES=<positive-integer>`
 - `MEMORY_MONITORING_INTERVAL_MS=<sample-interval>` (optional, defaults to 30000)
 
+Enabling recycle starts the existing memory monitor even when
+`ENABLE_MEMORY_MONITORING` is absent or `false`. The process emits its normal
+memory status and pressure logs at the selected sample interval.
+
 The RSS threshold must leave enough memory for native allocations and for
 requests that remain active during the configured shutdown drain period. The
 process waits for the configured number of consecutive above-threshold samples.

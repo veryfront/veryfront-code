@@ -201,15 +201,34 @@ interface DirectProductionServerDependencies {
   ) => void | (() => void);
 }
 
+interface StartProductionServerDependencies {
+  bootstrap: typeof bootstrapProd;
+}
+
 /** Starts production server. */
 export function startProductionServer(
   options: StartProductionServerOptions,
+): Promise<ServerHandle> {
+  return startProductionServerWithDependencies(options, { bootstrap: bootstrapProd });
+}
+
+/** @internal Starts a production server with explicit lifecycle dependencies. */
+export function startProductionServerWithDependencies(
+  options: StartProductionServerOptions,
+  dependencies: StartProductionServerDependencies,
 ): Promise<ServerHandle> {
   const suppliedBootstrap = options.bootstrapResult;
   const suppliedProviderSource = suppliedBootstrap?.nodeWebSocketServerProvider;
   const suppliedNodeWebSocketServerProvider = suppliedProviderSource === undefined
     ? undefined
     : snapshotNodeWebSocketServerProvider(suppliedProviderSource);
+  let ownedBootstrap: BootstrapResult | undefined;
+  let ownedBootstrapDisposal: Promise<void> | undefined;
+  const disposeOwnedBootstrap = (): Promise<void> => {
+    if (!ownedBootstrap) return Promise.resolve();
+    ownedBootstrapDisposal ??= Promise.resolve().then(() => ownedBootstrap?.dispose?.());
+    return ownedBootstrapDisposal;
+  };
 
   return withSpan(
     "server.startProductionServer",
@@ -244,7 +263,9 @@ export function startProductionServer(
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        const bootstrap = suppliedBootstrap ?? await bootstrapProd(projectDir, baseAdapter);
+        const bootstrap = suppliedBootstrap ??
+          await dependencies.bootstrap(projectDir, baseAdapter);
+        if (!suppliedBootstrap) ownedBootstrap = bootstrap;
         const adapter = bootstrap.adapter;
         const nodeWebSocketServerProvider = suppliedBootstrap === undefined
           ? bootstrap.nodeWebSocketServerProvider
@@ -387,12 +408,20 @@ export function startProductionServer(
           } catch (error) {
             logger.debug("Server stop failed", { error });
           }
+          await disposeOwnedBootstrap();
         };
 
         return { ready, stop };
       } catch (error) {
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
         rejectionGuard?.dispose();
+        try {
+          await disposeOwnedBootstrap();
+        } catch (disposeError) {
+          logger.warn("Failed to dispose production bootstrap after startup error", {
+            error: disposeError,
+          });
+        }
         throw error;
       }
     },
