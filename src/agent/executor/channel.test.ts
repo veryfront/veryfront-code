@@ -385,4 +385,107 @@ describe("executor channel", () => {
       await receiver.closed;
     }
   });
+
+  it("retains settlement until an aborted handler and owned I/O finish", async () => {
+    const finish = Promise.withResolvers<null>();
+    const started = Promise.withResolvers<void>();
+    const { caller, receiver } = pair(
+      new Map([
+        ["wait", {
+          mode: "unary",
+          handle: () => {
+            started.resolve();
+            return finish.promise;
+          },
+        }],
+      ]),
+    );
+    const rejected = assertRejects(() => caller.request("wait", null));
+    await started.promise;
+    receiver.close();
+    await Promise.all([caller.closed, receiver.closed, rejected]);
+    try {
+      let settled = false;
+      void receiver.settled.then(() => {
+        settled = true;
+      });
+      await tick();
+      assertEquals(settled, false);
+      finish.resolve(null);
+      await Promise.all([caller.settled, receiver.settled]);
+      assertEquals(settled, true);
+    } finally {
+      finish.resolve(null);
+      caller.close();
+      receiver.close();
+    }
+  });
+
+  for (const pendingSide of ["read", "write"] as const) {
+    it(`joins pending ${pendingSide} transport cleanup after prompt closure`, async () => {
+      const finish = Promise.withResolvers<void>();
+      const channel = createExecutorChannel({
+        binding,
+        transport: {
+          readable: new ReadableStream({
+            cancel: () => pendingSide === "read" ? finish.promise : undefined,
+          }),
+          writable: new WritableStream({
+            write: () => pendingSide === "write" ? finish.promise : undefined,
+          }),
+        },
+      });
+      await tick();
+      channel.close();
+      await channel.closed;
+      let settled = false;
+      void channel.settled.then(() => {
+        settled = true;
+      });
+      await tick();
+      assertEquals(settled, false);
+      finish.resolve();
+      await channel.settled;
+      assertEquals(settled, true);
+    });
+  }
+
+  it("joins asynchronous stream iterator cleanup after channel closure", async () => {
+    const cleaning = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const { caller, receiver } = pair(
+      new Map([
+        ["items", {
+          mode: "stream",
+          handle: async function* () {
+            try {
+              while (true) yield 1;
+            } finally {
+              cleaning.resolve();
+              await finish.promise;
+            }
+          },
+        }],
+      ]),
+    );
+    const stream = caller.stream("items", null);
+    await stream.next();
+    receiver.close();
+    await Promise.all([caller.closed, receiver.closed, cleaning.promise]);
+    let settled = false;
+    void receiver.settled.then(() => {
+      settled = true;
+    });
+    await tick();
+    try {
+      assertEquals(settled, false);
+      finish.resolve();
+      await Promise.all([caller.settled, receiver.settled]);
+      assertEquals(settled, true);
+    } finally {
+      finish.resolve();
+      caller.close();
+      receiver.close();
+    }
+  });
 });

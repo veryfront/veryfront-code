@@ -48,6 +48,12 @@ export type ExecutorModelDispatchGate = (
   context: ExecutorOperationContext,
 ) => void | ExecutorModelDispatchPermit | Promise<void | ExecutorModelDispatchPermit>;
 
+/** Synchronous trusted normalization before audit; the returned value is validated and copied. */
+export type ExecutorModelCallNormalizer = (
+  request: ExecutorModelDispatch,
+  context: ExecutorOperationContext,
+) => ExecutorModelDispatch["options"];
+
 /**
  * Construct only in trusted ingress. The resolver closes over ingress-owned
  * authority; project discovery, extension registries, and credentials are not
@@ -57,12 +63,14 @@ export function createExecutorModelBroker(options: {
   resolveModelRuntime: AgentModelRuntimeResolver | undefined;
   allowedModelIds: ReadonlySet<string>;
   beforeModelDispatch?: ExecutorModelDispatchGate;
+  normalizeModelCall?: ExecutorModelCallNormalizer;
 }): ReadonlyMap<string, ExecutorOperation> {
   const resolve = options.resolveModelRuntime;
   if (typeof resolve !== "function") throw new TypeError("Managed model resolver is required");
   const allowed = executorModelIds(options.allowedModelIds);
   const models = new Map<string, ModelRuntime>();
   const beforeModelDispatch = options.beforeModelDispatch;
+  const normalizeModelCall = options.normalizeModelCall;
   let sequence = 0;
   const getModel = (id: string): ModelRuntime => {
     if (!allowed.has(id)) throw new TypeError("Managed model is not allowed");
@@ -91,21 +99,32 @@ export function createExecutorModelBroker(options: {
       throw new TypeError("Managed model call limit exceeded");
     }
     const callSequence = ++sequence;
-    if (beforeModelDispatch) {
+    if (beforeModelDispatch || normalizeModelCall) {
       const metadata = parseExecutorModelData(
         getExecutorModelMetadataSchema(),
         executorModelJson([modelMetadata(call.modelId, call.model)]),
       )[0]!;
-      return await beforeModelDispatch({
+      const snapshot = (): ExecutorModelDispatch => ({
         identity: { binding: { ...context.binding }, sequence: callSequence },
         mode,
-        model: metadata,
-        // The sink never shares mutable prompt/options with provider dispatch.
+        model: parseExecutorModelData(
+          getExecutorModelMetadataSchema(),
+          executorModelJson([metadata]),
+        )[0]!,
+        // Neither normalization nor audit shares mutable options with provider dispatch.
         options: parseExecutorModelData(
           getExecutorModelOptionsSchema(),
           executorModelJson(call.options),
         ),
-      }, context);
+      });
+      if (normalizeModelCall) {
+        call.options = parseExecutorModelData(
+          getExecutorModelOptionsSchema(),
+          executorModelJson(normalizeModelCall(snapshot(), context)),
+        );
+        context.signal.throwIfAborted();
+      }
+      return await beforeModelDispatch?.(snapshot(), context);
     }
   };
   return new Map<string, ExecutorOperation>([
