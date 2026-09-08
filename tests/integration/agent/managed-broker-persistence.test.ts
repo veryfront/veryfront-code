@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createManagedBrokerPersistence } from "#veryfront/agent/hosted/managed-broker-persistence.ts";
+import { FakeTime } from "#std/testing/time";
 
 const conversationId = "00000000-0000-4000-8000-000000000001";
 const messageId = "00000000-0000-4000-8000-000000000002";
@@ -199,6 +200,73 @@ describe("managed broker persistence", () => {
       assertEquals(calls.at(-1)?.status, "failed");
       await persistence.cleanup();
     });
+  });
+
+  it("retains a noncooperative model audit append after its deadline failure", async () => {
+    using time = new FakeTime();
+    const appendEntered = Promise.withResolvers<void>();
+    const appendRelease = Promise.withResolvers<Response>();
+    const calls: Record<string, unknown>[] = [];
+    const fallback = successfulFetch(calls);
+    let delayAuditAppend = true;
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      if (delayAuditAppend && Array.isArray(body.events)) {
+        delayAuditAppend = false;
+        appendEntered.resolve();
+        return await appendRelease.promise;
+      }
+      return await fallback(input, init);
+    };
+    const persistence = createManagedBrokerPersistence({
+      apiUrl: "https://api.example.test",
+      runEventToken: "run-event-token",
+      run,
+      modelId: "model",
+      resolveProvider: () => "provider",
+      fetch,
+    });
+    const audit = persistence.modelRunEventSink({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+      tools: [],
+    });
+    await appendEntered.promise;
+
+    time.tick(30_000);
+    const auditResult = await Promise.allSettled([audit]);
+    const auditError = auditResult[0]?.status === "rejected" ? auditResult[0].reason : undefined;
+    assertEquals(auditError instanceof Error, true);
+    assertEquals((auditError as Error).message, "Durable run event persistence timed out");
+
+    const finishResult = await Promise.allSettled([
+      persistence.output.finish({ completed: false, error: auditError }),
+    ]);
+    assertEquals(finishResult[0]?.status, "rejected");
+    assertEquals(
+      finishResult[0]?.status === "rejected" ? finishResult[0].reason : undefined,
+      auditError,
+    );
+    assertEquals(calls.at(-1)?.status, "failed");
+
+    let cleanupSettled = false;
+    const cleanup = persistence.cleanup().then(() => cleanupSettled = true);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    assertEquals(cleanupSettled, false);
+
+    appendRelease.resolve(Response.json({
+      latest_event_id: 1,
+      latest_external_event_sequence: 1,
+      appended_count: 1,
+      run: {
+        run_id: run.runId,
+        conversation_id: conversationId,
+        latest_event_id: 1,
+        latest_external_event_sequence: 1,
+      },
+    }));
+    await cleanup;
+    assertEquals(cleanupSettled, true);
   });
 
   it("persists a failed terminal outcome for executor output errors", async () => {
