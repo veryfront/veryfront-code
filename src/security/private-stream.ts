@@ -45,3 +45,37 @@ export function cancelPrivateStream(
 export function isPrivateStreamLocked(stream: ReadableStream<unknown>): boolean {
   return apply(streamLocked, stream, []) as boolean;
 }
+
+const enqueue = ReadableStreamDefaultController.prototype.enqueue;
+const close = ReadableStreamDefaultController.prototype.close;
+const error = ReadableStreamDefaultController.prototype.error;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
+
+export const PrivateReadableStream = ReadableStream;
+
+type ControllerOperation = (...args: never[]) => unknown;
+
+function controllerMethod(
+  controller: ReadableStreamDefaultController<unknown>,
+  key: string,
+  native: ControllerOperation,
+): ControllerOperation {
+  // Internal forwarding controllers provide own methods; native controllers inherit theirs.
+  const descriptor = getOwnPropertyDescriptor(controller, key);
+  return descriptor && hasOwn(descriptor, "value") && typeof descriptor.value === "function"
+    ? descriptor.value
+    : native;
+}
+
+export function enqueuePrivateStream<T>(controller: ReadableStreamDefaultController<T>, value: T) {
+  apply(controllerMethod(controller, "enqueue", enqueue), controller, [value]);
+}
+
+export function closePrivateStream(controller: ReadableStreamDefaultController) {
+  apply(controllerMethod(controller, "close", close), controller, []);
+}
+
+export function errorPrivateStream(controller: ReadableStreamDefaultController, reason: unknown) {
+  apply(controllerMethod(controller, "error", error), controller, [reason]);
+}

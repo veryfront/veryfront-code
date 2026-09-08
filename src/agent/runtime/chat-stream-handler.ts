@@ -1,3 +1,9 @@
+import {
+  closePrivateStream,
+  enqueuePrivateStream,
+  errorPrivateStream,
+  PrivateReadableStream,
+} from "#veryfront/security/private-stream.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 /**
  * Model Runtime Stream Handler
@@ -115,18 +121,19 @@ function wrapRuntimeProviderReadableStream(
     released = true;
     reader.releaseLock();
   };
-  return new ReadableStream<unknown>(
+  return new PrivateReadableStream<unknown>(
     {
       async pull(controller) {
         try {
           const next = await reader.read();
           if (next.done) {
             releaseReader();
-            controller.close();
-          } else controller.enqueue(next.value);
+            closePrivateStream(controller);
+          } else enqueuePrivateStream(controller, next.value);
         } catch (error) {
           releaseReader();
-          controller.error(
+          errorPrivateStream(
+            controller,
             isStatefulTurnCycleError(error) ? error : createRuntimeProviderStreamFailure(error),
           );
         }

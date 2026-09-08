@@ -1,3 +1,4 @@
+import { closePrivateStream, enqueuePrivateStream } from "#veryfront/security/private-stream.ts";
 /**
  * SSE (Server-Sent Events) Utilities
  *
@@ -27,7 +28,7 @@ export function sendSSE(
   event: Record<string, unknown>,
 ): void {
   try {
-    controller.enqueue(encoder.encode(`data: ${privateJsonStringify(event)}\n\n`));
+    enqueuePrivateStream(controller, encoder.encode(`data: ${privateJsonStringify(event)}\n\n`));
   } catch (error) {
     if (isClosedStreamControllerError(error)) {
       return;
@@ -39,7 +40,7 @@ export function sendSSE(
 
 export function closeSSEStream(controller: ReadableStreamDefaultController): void {
   try {
-    controller.close();
+    closePrivateStream(controller);
   } catch (error) {
     if (isClosedStreamControllerError(error)) {
       return;

@@ -1,3 +1,4 @@
+import { enqueuePrivateStream } from "#veryfront/security/private-stream.ts";
 /**
  * Agent Runtime - Core execution engine
  *
@@ -3564,7 +3565,7 @@ export class AgentRuntime {
               : { chunk: textChunk, remainingPrefixLength: remainingSsePrefixLength };
             remainingSsePrefixLength = stripped.remainingPrefixLength;
             if (stripped.chunk !== undefined) {
-              controller.enqueue(stripped.chunk);
+              enqueuePrivateStream(controller, stripped.chunk);
             }
           }
         }
@@ -3625,7 +3626,7 @@ export class AgentRuntime {
         );
         for (const output of deferredRecoveryOutput) {
           if (output.kind === "sse" && !output.isTextEvent) {
-            controller.enqueue(output.chunk);
+            enqueuePrivateStream(controller, output.chunk);
           }
         }
         deferredRecoveryOutput.length = 0;
@@ -3657,7 +3658,8 @@ export class AgentRuntime {
       const stepController = deferredRecoveryOutput === undefined ? controller : {
         enqueue(chunk: Uint8Array) {
           if (releasedDeferredRecoveryOutput) {
-            controller.enqueue(
+            enqueuePrivateStream(
+              controller,
               releasedRecoveryReplacementTextPartId !== undefined
                 ? rewriteRecoveryTextSseChunkId(
                   chunk,

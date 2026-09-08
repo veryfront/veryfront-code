@@ -98,4 +98,70 @@ describe("private stream intrinsics", () => {
     assertEquals(cancellations, 1);
     assertEquals(exposures, 0);
   });
+
+  it("keeps private output out of replaced reader and controller methods", async () => {
+    const originalGetReader = ReadableStream.prototype.getReader;
+    const originalTee = ReadableStream.prototype.tee;
+    const originalRead = ReadableStreamDefaultReader.prototype.read;
+    const originalEnqueue = ReadableStreamDefaultController.prototype.enqueue;
+    const marker = "Synthetic private output";
+    const baseStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(marker));
+        controller.close();
+      },
+    });
+    let exposures = 0;
+    let intercepted: ReadableStream<Uint8Array> | undefined;
+    let result = "";
+    try {
+      ReadableStreamDefaultReader.prototype.read = function () {
+        return Reflect.apply(originalRead, this, []).then((value) => {
+          if (
+            value.value instanceof Uint8Array && new TextDecoder().decode(value.value) === marker
+          ) {
+            exposures++;
+          }
+          return value;
+        });
+      };
+      ReadableStreamDefaultController.prototype.enqueue = function (value) {
+        if (value instanceof Uint8Array && new TextDecoder().decode(value) === marker) exposures++;
+        return Reflect.apply(originalEnqueue, this, [value]);
+      };
+      ReadableStream.prototype.getReader = (function (
+        this: ReadableStream<Uint8Array>,
+        options?: ReadableStreamGetReaderOptions,
+      ) {
+        if (this === baseStream) {
+          exposures++;
+          const branches = Reflect.apply(originalTee, this, []) as ReadableStream<Uint8Array>[];
+          intercepted = branches[0];
+          return Reflect.apply(originalGetReader, branches[1], [options]);
+        }
+        return Reflect.apply(originalGetReader, this, [options]);
+      }) as typeof originalGetReader;
+      const stream = createToolExecutionDataEventBridgeStream({
+        baseStream,
+        installPublisher: () => {},
+      });
+      const reader = Reflect.apply(originalGetReader, stream, []);
+      try {
+        while (true) {
+          const next = await Reflect.apply(originalRead, reader, []);
+          if (next.done) break;
+          result += new TextDecoder().decode(next.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    } finally {
+      ReadableStream.prototype.getReader = originalGetReader;
+      ReadableStreamDefaultReader.prototype.read = originalRead;
+      ReadableStreamDefaultController.prototype.enqueue = originalEnqueue;
+      if (intercepted) assertEquals(await new Response(intercepted).text(), marker);
+    }
+    assertEquals(result, marker);
+    assertEquals(exposures, 0);
+  });
 });
