@@ -41,11 +41,7 @@ export async function startNodeManagedAgentBroker(options: {
   const beginShutdown = () => {
     shuttingDown = true;
     if (!shutdown) {
-      try {
-        shutdown = Promise.resolve(options.broker.shutdown());
-      } catch (error) {
-        shutdown = Promise.reject(error);
-      }
+      shutdown = (async () => await options.broker.shutdown())();
     }
     void shutdown.catch(() => {});
     return shutdown;
