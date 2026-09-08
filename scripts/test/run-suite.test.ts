@@ -19,7 +19,11 @@ import {
   LOOPBACK_ALLOW_NET,
   parseDenoSuiteArgs,
 } from "./run-deno-suite.ts";
-import { LEAF_TEST_SUITES, partitionDenoSuiteFiles, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
+import {
+  LEAF_TEST_SUITES,
+  partitionDenoSuiteFiles,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 import { classifyTestPath } from "./test-layout.ts";
 import {
   formatSuitePlan,
@@ -396,14 +400,21 @@ describe("migration command surface", () => {
       "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
       "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
     ];
-    const peers = ["cli/app/state.test.ts", "tests/docs/error-docs-links.test.ts"];
+    const peers = [
+      "cli/app/state.test.ts",
+      "tests/docs/error-docs-links.test.ts",
+    ];
     for (const limit of [2, 50, null]) {
       const batches = partitionDenoSuiteFiles([...peers, ...mutators], limit);
       assertEquals(batches.flat().sort(), [...peers, ...mutators].sort());
       for (const mutator of mutators) {
-        assertEquals(batches.find((batch) => batch.includes(mutator)), [mutator]);
+        assertEquals(batches.find((batch) => batch.includes(mutator)), [
+          mutator,
+        ]);
       }
-      assert(batches.some((batch) => peers.every((peer) => batch.includes(peer))));
+      assert(
+        batches.some((batch) => peers.every((peer) => batch.includes(peer))),
+      );
     }
   });
 
