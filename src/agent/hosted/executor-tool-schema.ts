@@ -81,8 +81,10 @@ export const getExecutorToolFrameSchema = defineSchema((v) =>
 );
 export type ExecutorToolFrame = InferSchema<ReturnType<typeof getExecutorToolFrameSchema>>;
 
+const JSON_BYTE_ENCODER = new TextEncoder();
+
 export function executorToolBytes(value: JsonValue): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  return JSON_BYTE_ENCODER.encode(JSON.stringify(value)).byteLength;
 }
 
 /** Snapshot before validation or serialization. Never invoke toJSON or coerce non-data values. */
