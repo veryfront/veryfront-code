@@ -10,10 +10,16 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SOURCE_FILES = [
   "src/agent/hosted/executor-node-bootstrap.ts",
   "src/agent/hosted/executor-node-transport.ts",
+  "src/security/http/native-header-processing.ts",
+  "src/security/http/native-request-processing.ts",
 ];
 const TEST_FILES = [
   "tests/integration/agent/executor-node-bootstrap.test.ts",
   "tests/integration/agent/executor-node-transport.test.ts",
+  "tests/integration/agent/service-header-boundary.test.ts",
+  "tests/integration/agent/service-request-defaults.test.ts",
+  "tests/integration/agent/service-native-invocation.test.ts",
+  "tests/integration/security/application-request.test.ts",
 ];
 
 /** Build the same native coverage command for the fixed lane and its mapping regression. */

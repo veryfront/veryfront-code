@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -48,6 +49,7 @@ describe("security/http/application-request", () => {
       Function.prototype.call = original;
     }
     assertEquals(observations, 0);
+    assertEquals(failures.length, isNode ? 2 : 0);
     for (const failure of failures) assertEquals(failure instanceof TypeError, true);
     assertEquals(host.headers.get("X-Veryfront-Inference-Token"), canary);
     assertEquals(createApplicationRequest(host).headers.get("X-Application"), "keep");
