@@ -3,6 +3,7 @@ import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   chainPrivatePromise as chain,
   createPrivateDeferred,
+  observePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type {
@@ -119,7 +120,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
           for (const task of runtimeTasks) await task;
         }
         cleanupStarted = true;
-        if (loadStarted) await backend?.cleanup(runtime);
+        if (loadStarted && backend) await observePrivatePromise(backend.cleanup(runtime));
       } catch {
         throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLEANUP_FAILED");
       } finally {
@@ -151,10 +152,10 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     }
     loadStarted = true;
     try {
-      runtime = await backend.load(lifetime.signal);
+      runtime = await observePrivatePromise(backend.load(lifetime.signal));
       assertActive();
       // Validate the whole catalog before publishing local or wire access.
-      const module = await helpers();
+      const module = await observePrivatePromise(helpers());
       parseDiscoveryData(
         getExecutorDiscoveryCandidatesSchema(),
         module.getProjectAgentRuntimeAgentIdCandidates(runtime),
@@ -174,14 +175,14 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     if (definitions.size >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_BUSY");
     }
-    const module = await helpers();
+    const module = await observePrivatePromise(helpers());
     const found = discovery.agents.get(agentId);
     let definition: RuntimeAgentMarkdownDefinition;
     if (found && module.doesProjectAgentRuntimeAgentMatchSource(found, agentSource)) {
-      const projected = await module.runWithProjectAgentRuntime(
+      const projected = await observePrivatePromise(module.runWithProjectAgentRuntime(
         discovery,
         () => module.createRuntimeAgentDefinitionFromAgent(found),
-      );
+      ));
       definition = { ...projected, id: agentId };
     } else {
       if (agentSource === "code") throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
@@ -243,7 +244,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
         throw new ExecutorDiscoveryError("ABORTED");
       }
       assertActive();
-      const value = await operation();
+      const value = await observePrivatePromise(operation());
       assertActive();
       if (context.signal.aborted || Date.now() >= context.deadline) {
         onCancel();
@@ -280,13 +281,13 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       handle(value, context) {
         return execute(context, async () => {
           parseDiscoveryData(getExecutorDiscoveryRequestSchema(), value);
-          const discovery = await discover();
-          const module = await helpers();
+          const discovery = await observePrivatePromise(discover());
+          const module = await observePrivatePromise(helpers());
           const candidates = module.getProjectAgentRuntimeAgentIdCandidates(discovery);
           const defaultAgentId = defaultId ??
             module.resolveSingleProjectAgentRuntimeAgentId({ candidates, source: agentSource });
           if (!defaultAgentId) throw new ExecutorDiscoveryError("CONFIG_INVALID");
-          const definition = await describeAgent(discovery, defaultAgentId);
+          const definition = await observePrivatePromise(describeAgent(discovery, defaultAgentId));
           return discoverySuccess(
             parseDiscoveryData(getExecutorDiscoveryDescriptionSchema(), {
               source,
@@ -304,8 +305,8 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       handle(value, context) {
         return execute(context, async () => {
           const request = parseDiscoveryData(getExecutorAgentDescribeRequestSchema(), value);
-          const discovery = await discover();
-          const definition = await describeAgent(discovery, request.agentId);
+          const discovery = await observePrivatePromise(discover());
+          const definition = await observePrivatePromise(describeAgent(discovery, request.agentId));
           return discoverySuccess(
             parseDiscoveryData(getExecutorAgentDescriptionSchema(), { source, definition }, true),
           );

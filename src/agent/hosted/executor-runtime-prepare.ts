@@ -2,6 +2,7 @@ import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   chainPrivatePromise as chain,
   createPrivateDeferred,
+  observePrivatePromise,
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -261,8 +262,8 @@ export function createExecutorRuntimePreparation(input: Options) {
       // Startup can still reserve producer work. Join both before releasing
       // facades, without joining the stream handler that calls this cleanup.
       if (startup) await chain(startup, () => {}, () => {});
-      await producerCompletion;
-      if (resourcesStarted) await facades.cleanup();
+      if (producerCompletion) await observePrivatePromise(producerCompletion);
+      if (resourcesStarted) await observePrivatePromise(facades.cleanup());
     });
     return cleanup;
   };
@@ -277,7 +278,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         failed = true;
       }
       try {
-        await input.discovery.close();
+        await observePrivatePromise(input.discovery.close());
       } catch {
         failed = true;
       }
@@ -358,7 +359,10 @@ export function createExecutorRuntimePreparation(input: Options) {
       const operation = privateMapGet(input.discovery.operations, "agent.describe");
       if (operation?.mode !== "unary") refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       const described = getExecutorAgentDescribeResultSchema().parse(
-        await operation.handle({ agentId: request.agentId }, context),
+        await chain(
+          resolvePrivatePromise(),
+          () => operation.handle({ agentId: request.agentId }, context),
+        ),
       );
       if (
         !described.ok || described.value.definition.id !== grant.agentId ||
@@ -445,12 +449,12 @@ export function createExecutorRuntimePreparation(input: Options) {
       resolveModelRuntime(modelId);
       const execution = grant.execution;
       const steering = facades.projectSteering
-        ? await facades.projectSteering.prepare({
+        ? await observePrivatePromise(facades.projectSteering.prepare({
           definition,
           projectId: execution.projectId,
           branchId: execution.branchId,
           signal: context.signal,
-        })
+        }))
         : undefined;
       assertActive();
       if (steering && steering.agent.id !== definition.id) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
@@ -585,7 +589,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         if (name !== undefined) facadeAllowedToolSet.add(name);
       }
       const facadeAllowedToolNames = [...facadeAllowedToolSet];
-      const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      const toolAssembly = await observePrivatePromise(prepareFacadedHostedChatRuntimeToolAssembly({
         signal: context.signal,
         taskContext,
         instructions: options.instructions,
@@ -612,7 +616,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           }
         },
         loadLatestConversationUserText: facades.latestConversationUserText,
-      });
+      }));
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
         if (!includes(toolAssembly.authorizedToolNames, name)) {
@@ -712,7 +716,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         });
         if (context.signal.aborted) cancel();
         try {
-          return await preparation;
+          return await observePrivatePromise(preparation);
         } finally {
           apply(removeEventListener, context.signal, ["abort", cancel]);
         }

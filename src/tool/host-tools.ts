@@ -4,13 +4,16 @@ import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const objectEntries = Object.entries;
-const objectDefineProperty = Object.defineProperty;
 const objectCreate = Object.create;
 const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 
@@ -96,7 +99,29 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
     const key = keys[index]!;
     const descriptor = descriptors[key];
     if (descriptor && objectHasOwn(descriptor, "value")) {
-      objectDefineProperty(snapshot, key, { value: descriptor.value, enumerable: true });
+      defineOwnDataProperty(snapshot, key, descriptor.value, { enumerable: true });
+    }
+  }
+  const prototypeFields: (keyof HostToolDefinition)[] = [
+    "description",
+    "execute",
+    "inputSchema",
+    "inputSchemaJson",
+    "mcp",
+  ];
+  for (let index = 0; index < prototypeFields.length; index++) {
+    const key = prototypeFields[index]!;
+    if (objectHasOwn(snapshot, key)) continue;
+    let current: Record<string, unknown> | null = value;
+    for (let depth = 0; current !== null && current !== objectPrototype && depth < 128; depth++) {
+      const descriptor = objectGetOwnPropertyDescriptor(current, key);
+      if (descriptor !== undefined) {
+        if (objectHasOwn(descriptor, "value")) {
+          defineOwnDataProperty(snapshot, key, descriptor.value, { enumerable: true });
+        }
+        break;
+      }
+      current = objectGetPrototypeOf(current);
     }
   }
   return snapshot;
@@ -174,12 +199,12 @@ export function createToolsFromHostDefinitions(
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
           : materializedTool;
-        objectDefineProperty(tools, toolName, {
-          value: inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
+        defineOwnDataProperty(
+          tools,
+          toolName,
+          inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
+          { enumerable: true, configurable: true, writable: true },
+        );
       }
     } catch (error) {
       agentLogger.warn("Skipping host tool: schema conversion failed", {

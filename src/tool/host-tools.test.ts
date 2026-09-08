@@ -15,6 +15,23 @@ import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("materializes class-defined execution methods with their original receiver", async () => {
+    class Definition {
+      description = "Synthetic class tool";
+      inputSchema = defineSchema((v) => v.object({}))();
+      executions = 0;
+      execute() {
+        this.executions++;
+        return { executions: this.executions };
+      }
+    }
+    const definition = new Definition();
+    const tools = createToolsFromHostDefinitions({ synthetic: definition });
+    assertEquals(Object.keys(tools), ["synthetic"]);
+    assertEquals(await tools.synthetic?.execute({}), { executions: 1 });
+    assertEquals(definition.executions, 1);
+  });
+
   it("ignores inherited optional metadata and preserves the original execution receiver", async () => {
     let metadataReads = 0;
     const definition: HostToolSet[string] = Object.create({
