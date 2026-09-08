@@ -1,20 +1,22 @@
 /**
- * Shared dependency snapshot storage over the distributed cache backend.
+ * Cache-backed dependency snapshot storage for host bootstrap configuration.
  *
  * The dependency snapshot registry (`transforms/esm/dependency-snapshot-registry.ts`)
  * shares pinned dependency history across renderer replicas through the
- * `DependencySnapshotStore` capability. Without it, history is process-local:
- * a document rendered on one replica pins a snapshot key that another replica
- * cannot resolve once dependency writeback rewrites `package.json`, and every
- * pinned module request landing there answers 409 until the client re-renders
- * against the new key.
+ * `DependencySnapshotStore` capability. Without a configured provider, history
+ * stays process-local and cold replicas depend on metadata-history recovery to
+ * resolve keys rendered elsewhere.
  *
- * This module implements that capability over the same shared cache backends
- * the module response caches already use (API cache or Redis). Only genuinely
- * shared backends qualify: the contract explicitly excludes node-local storage,
- * so disk and memory backends never serve as snapshot history — a degraded
- * resolution rejects, keeping the accessor's failure-retry path live so a
- * recovered Redis is picked back up without a process restart.
+ * This module implements that capability over the shared cache backends the
+ * module response caches already use (API cache or Redis). It never activates
+ * itself: per `docs/architecture/15-runtime-adapters.md`, the framework does
+ * not select a storage transport from environment variables — the host
+ * bootstrap that owns the runtime adapter decides, before its first request,
+ * by placing the handle from {@link createCacheDependencySnapshotStoreHandle}
+ * on the adapter as `dependencySnapshotStore`. Only genuinely shared backends
+ * qualify: node-local disk and memory resolutions reject rather than serve,
+ * which also keeps `createDistributedCacheAccessor`'s failure-retry path armed
+ * so a recovered backend is picked up without a process restart.
  *
  * Failure semantics follow the store contract: publication resolves only after
  * the backend demonstrably retains the exact bytes until the requested deadline
@@ -22,8 +24,15 @@
  * different bytes at an already-published key fail rather than overwrite —
  * atomically where the backend exposes the revision capability, and by
  * read-back verification elsewhere. Reads are bounded before materializing a
- * record; a fail-open backend read that reports an outage as a miss degrades to
- * a snapshot conflict, never to wrong data.
+ * record. One documented limitation remains: the qualifying backends also fail
+ * open on `get`, so a read outage surfaces as missing history (a snapshot
+ * conflict), never as wrong data — a host that requires strict outage
+ * rejection must supply a fail-closed provider instead.
+ *
+ * Privileged state must stay unobservable from project code: every intrinsic
+ * this module needs at operation time is captured here, before project code
+ * runs, so replaced globals never receive the backend, the adapter, or stored
+ * bytes.
  */
 import {
   createDependencySnapshotStoreHandle,
@@ -32,14 +41,17 @@ import {
   type DependencySnapshotStoreHandle,
 } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import type { CacheBackend } from "./types.ts";
-import {
-  createCacheBackend,
-  createDistributedCacheAccessor,
-  isApiCacheAvailable,
-} from "./backends/factory.ts";
-import { isRedisConfigured } from "./backends/redis.ts";
+import { createCacheBackend, createDistributedCacheAccessor } from "./backends/factory.ts";
 import { captureRevisionedCacheBackendMethods } from "./capabilities.ts";
 import { assertCacheValueWithinLimit, captureBoundedCacheRead } from "./bounded-read.ts";
+
+const apply = Reflect.apply;
+const jsonParse = JSON.parse;
+const jsonStringify = JSON.stringify;
+const dateNow = Date.now;
+const mathCeil = Math.ceil;
+const isSafeInteger = Number.isSafeInteger;
+const isArray = Array.isArray;
 
 const SNAPSHOT_KEY_PREFIX = "dependency-snapshots";
 
@@ -80,15 +92,15 @@ function recordKey(namespace: string, key: string): string {
 function decodeRecord(raw: string): DependencySnapshotRecord {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = jsonParse(raw);
   } catch {
     throw new Error("Dependency snapshot record is not valid JSON");
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (parsed === null || typeof parsed !== "object" || isArray(parsed)) {
     throw new Error("Dependency snapshot record must be an object");
   }
   const { value, expiresAt } = parsed as Record<string, unknown>;
-  if (typeof value !== "string" || !Number.isSafeInteger(expiresAt)) {
+  if (typeof value !== "string" || !isSafeInteger(expiresAt)) {
     throw new Error("Dependency snapshot record fields are malformed");
   }
   assertCacheValueWithinLimit(value, MAX_SNAPSHOT_VALUE_BYTES);
@@ -106,7 +118,8 @@ async function readRecordRaw(backend: CacheBackend, cacheKey: string): Promise<s
   }
   // Redis exposes no bounded read; the post-hoc assertion still refuses to
   // decode or serve an oversized record.
-  const value = await backend.get(cacheKey);
+  const get = backend.get;
+  const value = await apply(get, backend, [cacheKey]);
   if (value !== null) assertCacheValueWithinLimit(value, MAX_SNAPSHOT_RECORD_BYTES);
   return value;
 }
@@ -153,7 +166,7 @@ export function createCacheBackedDependencySnapshotStore(
       const existingRaw = revisioned === null ? await readRecordRaw(backend, cacheKey) : undefined;
       const observed = revisioned === null
         ? undefined
-        : await Reflect.apply(revisioned.getWithRevision, backend, [cacheKey]);
+        : await apply(revisioned.getWithRevision, backend, [cacheKey]);
       const observedRaw = revisioned === null ? existingRaw : observed!.value;
       if (observedRaw !== null && observedRaw !== undefined) {
         assertCacheValueWithinLimit(observedRaw, MAX_SNAPSHOT_RECORD_BYTES);
@@ -165,14 +178,14 @@ export function createCacheBackedDependencySnapshotStore(
       }
       throwIfAborted(signal);
 
-      const ttlSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
+      const ttlSeconds = mathCeil((expiresAt - dateNow()) / 1000);
       if (ttlSeconds <= 0) {
         throw new Error("Dependency snapshot retention window has already passed");
       }
-      const encoded = JSON.stringify({ value, expiresAt });
+      const encoded = jsonStringify({ value, expiresAt });
 
       if (revisioned !== null) {
-        const accepted = await Reflect.apply(revisioned.compareExchange, backend, [
+        const accepted = await apply(revisioned.compareExchange, backend, [
           cacheKey,
           observed!.revision,
           { kind: "set", value: encoded, expiresAtMs: expiresAt },
@@ -195,7 +208,8 @@ export function createCacheBackedDependencySnapshotStore(
       // (encodeDependencySnapshot sorts and canonicalizes), so concurrent
       // publishers at one key carry identical bytes unless storage is
       // corrupted — and corruption is what the checks above still catch.
-      await backend.set(cacheKey, encoded, ttlSeconds);
+      const set = backend.set;
+      await apply(set, backend, [cacheKey, encoded, ttlSeconds]);
       // The backends fail open on `set`, and acknowledged retention is the
       // whole point of publication: a document only advertises a pin its
       // replicas can later resolve. Verify the bytes and the deadline landed.
@@ -210,7 +224,7 @@ export function createCacheBackedDependencySnapshotStore(
       const record = decodeRecord(raw);
       // The contract reserves null for missing or expired history; a backend
       // that retains stale bytes past their TTL must not resurrect them.
-      if (record.expiresAt <= Date.now()) return null;
+      if (record.expiresAt <= dateNow()) return null;
       return record;
     },
   };
@@ -233,45 +247,30 @@ export async function _createSharedDependencySnapshotCacheBackend(): Promise<Cac
   return backend;
 }
 
-/** Only backends shared across replicas satisfy the snapshot store contract. */
-function isSharedBackendConfigured(): boolean {
-  return isApiCacheAvailable() || isRedisConfigured();
-}
-
-let testBackendAccessor: (() => Promise<CacheBackend | null>) | undefined;
-let sharedHandle: DependencySnapshotStoreHandle | undefined;
-let sharedAccessor: (() => Promise<CacheBackend | null>) | undefined;
-
 /**
- * The process-wide shared snapshot store handle, or `undefined` when no shared
- * cache backend is configured (local development keeps process-local history).
- * The handle is created lazily and reused for the life of the process; while a
- * configured backend is unreachable its operations reject, and the accessor
- * retries resolution on its normal failure-backoff schedule.
+ * Build the opaque handle for cache-backed shared snapshot history.
+ *
+ * Calling this is the host's explicit decision to use the distributed cache as
+ * snapshot storage; the framework never calls it on its own. The host bootstrap
+ * that owns the runtime adapter places the handle on the adapter before its
+ * first request, per `docs/architecture/15-runtime-adapters.md`:
+ *
+ * ```ts
+ * Object.defineProperty(adapter, "dependencySnapshotStore", {
+ *   value: createCacheDependencySnapshotStoreHandle(),
+ * });
+ * ```
+ *
+ * The handle's operations reject while no qualifying shared backend (API cache
+ * or Redis) is resolvable, and the underlying accessor retries resolution on
+ * its normal failure-backoff schedule.
  */
-export function getSharedDependencySnapshotStoreHandle():
-  | DependencySnapshotStoreHandle
-  | undefined {
-  if (sharedHandle) return sharedHandle;
-  const accessor = testBackendAccessor ??
-    (isSharedBackendConfigured()
-      ? (sharedAccessor ??= createDistributedCacheAccessor(
-        _createSharedDependencySnapshotCacheBackend,
-        "DEPENDENCY-SNAPSHOTS",
-      ))
-      : undefined);
-  if (!accessor) return undefined;
-  sharedHandle = createDependencySnapshotStoreHandle(
+export function createCacheDependencySnapshotStoreHandle(): DependencySnapshotStoreHandle {
+  const accessor = createDistributedCacheAccessor(
+    _createSharedDependencySnapshotCacheBackend,
+    "DEPENDENCY-SNAPSHOTS",
+  );
+  return createDependencySnapshotStoreHandle(
     createCacheBackedDependencySnapshotStore(accessor),
   );
-  return sharedHandle;
-}
-
-/** @internal Replace or clear the shared store backend for tests. */
-export function _setSharedDependencySnapshotStoreBackendForTest(
-  backend: CacheBackend | undefined,
-): void {
-  testBackendAccessor = backend === undefined ? undefined : () => Promise.resolve(backend);
-  sharedHandle = undefined;
-  sharedAccessor = undefined;
 }

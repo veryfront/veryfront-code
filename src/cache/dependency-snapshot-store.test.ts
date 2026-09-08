@@ -1,14 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend, CacheRevisionMutation, CacheRevisionSnapshot } from "./types.ts";
 import { MemoryCacheBackend } from "./backends/memory.ts";
-import {
-  _setSharedDependencySnapshotStoreBackendForTest,
-  createCacheBackedDependencySnapshotStore,
-  getSharedDependencySnapshotStoreHandle,
-} from "./dependency-snapshot-store.ts";
-import { resolveDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
+import { createCacheBackedDependencySnapshotStore } from "./dependency-snapshot-store.ts";
 
 function backedStore(backend: CacheBackend | null) {
   return createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend));
@@ -18,10 +13,6 @@ const NAMESPACE = "a".repeat(64);
 const KEY = "on:54uvgwr2ih7p";
 
 describe("cache/dependency-snapshot-store", () => {
-  afterEach(() => {
-    _setSharedDependencySnapshotStoreBackendForTest(undefined);
-  });
-
   describe("createCacheBackedDependencySnapshotStore", () => {
     it("round-trips a published snapshot record", async () => {
       const store = backedStore(new MemoryCacheBackend());
@@ -233,26 +224,6 @@ describe("cache/dependency-snapshot-store", () => {
       const survivor = outcomes[0]?.status === "fulfilled" ? "publisher-a" : "publisher-b";
       const record = await store.read(NAMESPACE, KEY);
       assertEquals(record?.value, survivor);
-    });
-  });
-
-  describe("getSharedDependencySnapshotStoreHandle", () => {
-    // Whether the handle exists at all depends on process configuration; that
-    // behavior lives in tests/integration/server/dependency-snapshot-store-wiring.test.ts
-    // where the environment can be controlled explicitly.
-    it("returns a stable handle backed by the injected backend", async () => {
-      _setSharedDependencySnapshotStoreBackendForTest(new MemoryCacheBackend());
-      const handle = getSharedDependencySnapshotStoreHandle();
-      assertExists(handle);
-      assertEquals(getSharedDependencySnapshotStoreHandle(), handle);
-
-      const store = resolveDependencySnapshotStoreHandle(handle);
-      const expiresAt = Date.now() + 60_000;
-      await store.publish(NAMESPACE, KEY, "snapshot-bytes", expiresAt);
-      assertEquals(await store.read(NAMESPACE, KEY), {
-        value: "snapshot-bytes",
-        expiresAt,
-      });
     });
   });
 });
