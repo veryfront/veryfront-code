@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
@@ -14,6 +15,7 @@ import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.
 import { SSRHandler } from "./ssr.handler.ts";
 
 const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
+const fileSystem = createFileSystem();
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -31,7 +33,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       clearReactVersionCache();
-      await Deno.writeTextFile(`${projectDir}/package.json`, '{"dependencies":{}}');
+      await fileSystem.writeTextFile(`${projectDir}/package.json`, '{"dependencies":{}}');
       const adapter = {
         ...createMockAdapter(),
         dependencySnapshotStore: createDependencySnapshotStoreHandle({
@@ -61,7 +63,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
   it("sheds preview requests without refreshing source and retains dependency pinning", async () => {
@@ -74,7 +76,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       clearReactVersionCache();
-      await Deno.writeTextFile(
+      await fileSystem.writeTextFile(
         `${projectDir}/package.json`,
         JSON.stringify({ dependencies: { react: "19.2.4" } }),
       );
@@ -117,7 +119,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
 
@@ -130,18 +132,19 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       clearReactVersionCache();
-      await Deno.writeTextFile(
+      await fileSystem.writeTextFile(
         packageJsonPath,
         JSON.stringify({ dependencies: { react: "18.3.1" } }),
       );
       const snapshotA = await getDependencyPinningSnapshot(projectDir);
 
-      await Deno.writeTextFile(
+      await fileSystem.writeTextFile(
         packageJsonPath,
         JSON.stringify({ dependencies: { react: "19.2.4" } }),
       );
       const future = new Date(Date.now() + 2_000);
-      await Deno.utime(packageJsonPath, future, future);
+      assertExists(fileSystem.utime, "the native filesystem must support timestamp updates");
+      await fileSystem.utime(packageJsonPath, future, future);
       const snapshotB = await getDependencyPinningSnapshot(projectDir);
       assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
 
@@ -257,7 +260,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
 
@@ -311,7 +314,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
 });

@@ -102,18 +102,20 @@ export function decodeDependencySnapshot(
   if (`on:${hashDependencyPins(result.dependencies!, result.configuredVersions)}` !== key) {
     throw new TypeError("Dependency snapshot identity does not match its contents");
   }
+  if (serializeDependencySnapshot(namespace, result) !== value) {
+    throw new TypeError("Dependency snapshot bytes are not canonical");
+  }
   return result;
 }
 
-/** Canonical bytes make repeated publication idempotent across replicas. */
-export function encodeDependencySnapshot(
+function serializeDependencySnapshot(
   namespace: string,
   snapshot: DependencyPinningSnapshot,
 ): string {
   const sorted = Object.fromEntries(
     Object.entries(snapshot.dependencies ?? {}).sort(([a], [b]) => a.localeCompare(b)),
   );
-  const value = JSON.stringify({
+  return JSON.stringify({
     version: 1,
     namespace,
     snapshot: {
@@ -122,6 +124,14 @@ export function encodeDependencySnapshot(
       configuredVersions: freezeConfiguredVersions(snapshot.configuredVersions),
     },
   });
+}
+
+/** Canonical bytes make repeated publication idempotent across replicas. */
+export function encodeDependencySnapshot(
+  namespace: string,
+  snapshot: DependencyPinningSnapshot,
+): string {
+  const value = serializeDependencySnapshot(namespace, snapshot);
   decodeDependencySnapshot(value, namespace, snapshot.cacheKey);
   return value;
 }

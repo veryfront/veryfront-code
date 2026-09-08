@@ -141,6 +141,16 @@ describe("suite planning parity", () => {
     );
   });
 
+  it("includes the SSR snapshot boundary in both native runtime suites", async () => {
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes("src/server/handlers/request/ssr/ssr-snapshot.test.ts"),
+        `${suite} must execute the SSR snapshot boundary regressions`,
+      );
+    }
+  });
+
   it("keeps the Deno unit-preload transport test out of external runtimes", async () => {
     const denoOnlyFile = "src/testing/offline-react-transport.test.ts";
 

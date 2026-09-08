@@ -35,6 +35,31 @@ describe("dependency snapshot storage codec", () => {
     assertThrows(() => decodeDependencySnapshot(JSON.stringify(badConfiguration), namespace, key));
     assertThrows(() => decodeDependencySnapshot(value, "b".repeat(64), key));
   });
+  it("rejects reordered declarations, ignored fields, and noncanonical whitespace", () => {
+    const dependencies = { react: "19.2.4", zod: "4.0.0" };
+    const key = `on:${hashDependencyPins(dependencies)}`;
+    const canonical = encodeDependencySnapshot(
+      namespace,
+      createDependencyPinningSnapshot(key, dependencies),
+    );
+    const reordered = JSON.parse(canonical);
+    reordered.snapshot.dependencies = { zod: "4.0.0", react: "19.2.4" };
+    const extraEnvelopeField = { ...JSON.parse(canonical), ignored: true };
+    const extraSnapshotField = JSON.parse(canonical);
+    extraSnapshotField.snapshot.ignored = true;
+    for (const value of [reordered, extraEnvelopeField, extraSnapshotField]) {
+      assertThrows(
+        () => decodeDependencySnapshot(JSON.stringify(value), namespace, key),
+        TypeError,
+        "canonical",
+      );
+    }
+    assertThrows(
+      () => decodeDependencySnapshot(`${canonical}\n`, namespace, key),
+      TypeError,
+      "canonical",
+    );
+  });
   it("owns frozen copies of dependency maps including prototype-shaped names", () => {
     const dependencies = JSON.parse('{"__proto__":"1.0.0","react":"19.2.4"}');
     const snapshot = createDependencyPinningSnapshot(
