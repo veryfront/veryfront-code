@@ -47,7 +47,8 @@ export interface ExecutorNodeBootstrap {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-function readBootstrap(environment: ExecutorBootstrapEnvironment) {
+/** Validate the fixed Operator environment without enumerating or forwarding it. */
+export function readExecutorBootstrapConfiguration(environment: ExecutorBootstrapEnvironment) {
   try {
     const allocationId = environment.get("VERYFRONT_EXECUTOR_ALLOCATION_ID");
     const generation = environment.get("VERYFRONT_EXECUTOR_GENERATION");
@@ -144,7 +145,7 @@ export async function startExecutorNodeBootstrap(
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
   const startedAt = Date.now();
-  const { binding, lifetimeMs, hardDeadlineAt } = readBootstrap(
+  const { binding, lifetimeMs, hardDeadlineAt } = readExecutorBootstrapConfiguration(
     options.environment ?? { get: (name) => process.env[name] },
   );
   const deadline = Math.min(startedAt + lifetimeMs, hardDeadlineAt);
