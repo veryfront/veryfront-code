@@ -110,6 +110,9 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
           if (entry.length === 1 && entry[0] === "local") {
             return Reflect.apply(originalArrayIterator, ["ungranted"], []);
           }
+          if (entry.length === 1 && entry[0] === "visible") {
+            entry[1] = "hidden";
+          }
           const candidate = entry[1] as { execute?: () => unknown } | undefined;
           if (entry[0] === "hidden" && candidate?.execute) candidate.execute();
           return Reflect.apply(originalArrayIterator, this, []);

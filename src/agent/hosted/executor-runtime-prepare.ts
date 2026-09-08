@@ -537,9 +537,16 @@ export function createExecutorRuntimePreparation(input: Options) {
         }
         remoteToolSources[remoteToolSources.length] = remoteToolSource;
       }
-      const facadeAllowedToolNames = [
-        ...createPrivateSet([...allowedToolNames, ...providerToolNames]),
-      ];
+      const facadeAllowedToolSet = createPrivateSet<string>();
+      for (let index = 0; index < allowedToolNames.length; index++) {
+        const name = allowedToolNames[index];
+        if (name !== undefined) facadeAllowedToolSet.add(name);
+      }
+      for (let index = 0; index < providerToolNames.length; index++) {
+        const name = providerToolNames[index];
+        if (name !== undefined) facadeAllowedToolSet.add(name);
+      }
+      const facadeAllowedToolNames = [...facadeAllowedToolSet];
       const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
         signal: context.signal,
         taskContext,
