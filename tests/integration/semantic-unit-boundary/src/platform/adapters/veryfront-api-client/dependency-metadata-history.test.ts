@@ -8,7 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { VeryfrontAPIOperations } from "./operations.ts";
+import { VeryfrontAPIOperations } from "#veryfront/platform/adapters/veryfront-api-client/operations.ts";
 
 const PROJECT_ID = "10000000-1000-4000-8000-100000000001";
 

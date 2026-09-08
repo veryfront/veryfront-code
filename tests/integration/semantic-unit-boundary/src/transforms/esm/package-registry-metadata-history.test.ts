@@ -13,7 +13,7 @@ import {
   isCurrentDependencyPinningSnapshot,
   resolveRequestedDependencyPinningSnapshot,
   withDependencyPinningSourceFileSystem,
-} from "./package-registry.ts";
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 const projectId = "00000000-0000-4000-8000-000000000001";
 const emptyKey = "on:54uvgwr2ih7p";

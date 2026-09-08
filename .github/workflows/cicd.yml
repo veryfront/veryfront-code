@@ -356,6 +356,21 @@ jobs:
           START=$(date +%s)
           deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/4 --coverage-dir=coverage-shard-${{ matrix.shard }}
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
+      - name: Include dependency history integration coverage
+        if: matrix.shard == 1
+        run: |
+          rm -rf coverage-history
+          deno task test:file --coverage=coverage-history \
+            tests/integration/semantic-unit-boundary/src/platform/adapters/fs/veryfront/dependency-metadata-history.test.ts \
+            tests/integration/semantic-unit-boundary/src/platform/adapters/veryfront-api-client/dependency-metadata-history.test.ts \
+            tests/integration/semantic-unit-boundary/src/transforms/esm/package-registry-metadata-history.test.ts
+          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-history.lcov
+          deno eval '
+            import { mergeLcovReports } from "./scripts/test/coverage-ci.ts";
+            const target = "coverage-shard-1/lcov.info";
+            const reports = await Promise.all([target, "coverage-history.lcov"].map(path => Deno.readTextFile(path)));
+            await Deno.writeTextFile(target, mergeLcovReports(reports));
+          '
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

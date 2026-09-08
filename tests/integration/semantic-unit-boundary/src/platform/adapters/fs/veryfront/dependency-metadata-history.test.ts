@@ -3,8 +3,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { VeryfrontFSAdapter } from "./adapter.ts";
-import { MultiProjectFSAdapter } from "./multi-project-adapter.ts";
+import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.ts";
+import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 const PROJECT_ID = "10000000-1000-4000-8000-100000000001";
 
