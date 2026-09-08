@@ -29,11 +29,11 @@ describe("executor runtime private lifecycle", () => {
     const binding = { allocationId: "lifecycle", invocationId: "lifecycle", generation: 1 };
     const source = { type: "release", releaseId: "synthetic-release" } as const;
     const modelId = "veryfront-cloud/openai/gpt-5.4";
-    const coder = agent<any>({
+    const coder = agent({
       id: "coder",
       system: "Synthetic source instructions.",
       model: modelId,
-      tools: [],
+      tools: {},
     });
     let facadeCleanups = 0;
     let discoveryCleanups = 0;
@@ -104,9 +104,7 @@ describe("executor runtime private lifecycle", () => {
         deadline: Date.now() + 30_000,
       });
       assertEquals((result as { ok?: boolean }).ok, true, JSON.stringify(result));
-      Promise.prototype.then = function () {
-        return Promise.resolve(undefined) as ReturnType<typeof originalThen>;
-      };
+      Promise.prototype.then = (() => Promise.resolve()) as typeof originalThen;
       await owner.close();
     } finally {
       Promise.prototype.then = originalThen;
