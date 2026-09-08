@@ -114,6 +114,7 @@ describe("vfCreateProject filesystem conflicts", () => {
       new URL("../../../../../deno.json", import.meta.url),
     );
     const output = await new Deno.Command(Deno.execPath(), {
+      cwd: parentDir,
       args: [
         "run",
         "--allow-all",

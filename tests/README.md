@@ -67,6 +67,14 @@ containers. A failed batch stops the remaining work, while process boundaries
 prevent completed modules and resources from accumulating for the entire run.
 Use `deno task test:file <path>` for the focused red-green loop.
 
+Tests that change the process working directory run in separate processes,
+including coverage shards. Register new cwd-mutating fixtures in
+`scripts/test/suites.ts`; the dedicated cross-file cwd-lock probes remain
+concurrent to test exclusion. A `withCwd` lock only coordinates callers that
+take it, so it cannot protect unrelated readers in another test file. Anchor
+repository reads to `import.meta.url` and pass an explicit `cwd` to child
+processes unless inherited cwd behavior is the subject of the test.
+
 ### Semantic Unit-Boundary Audit
 
 `deno task lint:test-semantic-dispositions` is the temporary semantic companion
