@@ -148,7 +148,10 @@ function intersectNames(
   );
 }
 
-/** One allocation's static preparation/stream dispatcher. Metadata never installs execution authority. */
+/**
+ * One allocation's fixed-project preparation/stream dispatcher. Metadata never
+ * installs execution authority; project navigation requires separate broker support.
+ */
 export function createExecutorRuntimePreparation(input: Options) {
   const grant = snapshotGrant(input.grant);
   const binding = parseRuntimePreparationData(getExecutorBindingSchema(), input.binding);
@@ -321,6 +324,9 @@ export function createExecutorRuntimePreparation(input: Options) {
           : normalizeToolNames(request.allowedToolNames),
         deniedToolNames,
       );
+      if (allowedToolNames.includes("studio_open_project")) {
+        refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+      }
       const providerToolNames = intersectNames(
         modelGrant.providerToolNames,
         resolveHostedRuntimeAllowedProviderTools({

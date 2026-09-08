@@ -541,6 +541,108 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  it("refuses selected project navigation before starting fixed-project facades", async () => {
+    let facadeCalls = 0;
+    const f = fixture({
+      grant: {
+        ...grant,
+        allowedToolNames: ["studio_open_project"],
+        remoteToolSourceIds: ["studio"],
+        execution: { kind: "ephemeral", projectId: "project-one" },
+      },
+      facades: {
+        projectSteering: {
+          prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+          refresh: () => "Synthetic source instructions.",
+        },
+        resolveModelRuntime: () => {
+          facadeCalls++;
+          return model;
+        },
+        remoteToolSources: new Map([["studio", {
+          id: "studio",
+          listTools: () => {
+            facadeCalls++;
+            return Promise.resolve([syntheticRemoteTool("studio_open_project")]);
+          },
+          executeTool: () => {
+            facadeCalls++;
+            return Promise.resolve({ ok: true });
+          },
+        }]]),
+      },
+    });
+    try {
+      assertEquals(await prepare(f.owner), {
+        ok: false,
+        code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE",
+      });
+      assertEquals(facadeCalls, 0);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("keeps unselected navigation outside a run bound to its granted project", async () => {
+    const executions: { name: string; args: Record<string, unknown> }[] = [];
+    let calls = 0;
+    const f = fixture({
+      grant: {
+        ...grant,
+        allowedToolNames: ["studio_open_project", "update_file"],
+        remoteToolSourceIds: ["studio"],
+        execution: { kind: "ephemeral", projectId: "project-one" },
+      },
+      facades: {
+        projectSteering: {
+          prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+          refresh: () => "Synthetic source instructions.",
+        },
+        remoteToolSources: new Map([["studio", {
+          id: "studio",
+          listTools: () =>
+            Promise.resolve(["studio_open_project", "update_file"].map((name) => ({
+              ...syntheticRemoteTool(name),
+              parameters: {
+                type: "object",
+                properties: { project_reference: { type: "string" } },
+                required: ["project_reference"],
+              },
+            }))),
+          executeTool: (name, args) => {
+            executions.push({ name, args });
+            return Promise.resolve({ ok: true });
+          },
+        }]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            assertEquals((options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name), [
+              "update_file",
+            ]);
+            return finishStream(calls++ === 0 ? "update_file" : undefined, {
+              project_reference: "project-two",
+            });
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(
+        await preparedStream(f, {
+          agentId: "coder",
+          allowedToolNames: ["update_file"],
+        }),
+      );
+      assertEquals(executions, [{
+        name: "update_file",
+        args: { project_reference: "project-one" },
+      }]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   for (
     const selection of [
       { name: "declared delegate", expected: ["read_file", "agent_writer"] },
