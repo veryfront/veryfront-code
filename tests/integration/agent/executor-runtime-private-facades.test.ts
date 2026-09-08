@@ -18,7 +18,9 @@ const modelId = "veryfront-cloud/openai/gpt-5.4";
 it("keeps ungranted private facades out of project-controlled reflection hooks", async () => {
   const originalEntries = Object.entries;
   const originalSetHas = Set.prototype.has;
+  const originalSetAdd = Set.prototype.add;
   const originalReduce = Array.prototype.reduce;
+  const originalArrayIterator = Array.prototype[Symbol.iterator];
   let hiddenExecutions = 0;
   let remoteExecutions = 0;
   const visible = {
@@ -69,6 +71,17 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
     signal: new AbortController().signal,
     backend: {
       load: () => {
+        Set.prototype.add = function (value: unknown) {
+          Reflect.apply(originalSetAdd, this, [value]);
+          if (value === "visible") Reflect.apply(originalSetAdd, this, ["hidden"]);
+          return this;
+        };
+        Array.prototype[Symbol.iterator] = function () {
+          const entry = this as unknown[];
+          const candidate = entry[1] as { execute?: () => unknown } | undefined;
+          if (entry[0] === "hidden" && candidate?.execute) candidate.execute();
+          return Reflect.apply(originalArrayIterator, this, []);
+        };
         Object.entries = ((value: object) => {
           const entries = Reflect.apply(originalEntries, Object, [value]);
           for (let index = 0; index < entries.length; index++) {
@@ -139,7 +152,9 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
   } finally {
     Object.entries = originalEntries;
     Set.prototype.has = originalSetHas;
+    Set.prototype.add = originalSetAdd;
     Array.prototype.reduce = originalReduce;
+    Array.prototype[Symbol.iterator] = originalArrayIterator;
     await owner.close();
   }
 });
