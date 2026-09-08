@@ -1,6 +1,12 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import type { ExecutorOperation, ExecutorOperationContext } from "./channel.ts";
-import { type ExecutorBinding, getExecutorBindingSchema } from "./protocol.ts";
+import type {
+  ExecutorOperation,
+  ExecutorOperationContext,
+} from "#veryfront/agent/executor/channel.ts";
+import {
+  type ExecutorBinding,
+  getExecutorBindingSchema,
+} from "#veryfront/agent/executor/protocol.ts";
 
 export type ExecutorOperationGateState = "preparing" | "prepared" | "executing" | "revoked";
 
