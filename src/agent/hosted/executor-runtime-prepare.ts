@@ -77,22 +77,12 @@ const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const arrayFilter = Array.prototype.filter;
 const arrayIncludes = Array.prototype.includes;
-const arrayMap = Array.prototype.map;
-const arrayReduce = Array.prototype.reduce;
-const IntrinsicSet = Set;
-const setHas = Set.prototype.has;
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
   return apply(arrayFilter, values, [predicate]) as T[];
 }
 function includes<T>(values: readonly T[], value: T): boolean {
   return apply(arrayIncludes, values, [value]) as boolean;
-}
-function map<T, U>(values: readonly T[], callback: (value: T) => U): U[] {
-  return apply(arrayMap, values, [callback]) as U[];
-}
-function reduce<T, U>(values: readonly T[], callback: (result: U, value: T) => U, initial: U): U {
-  return apply(arrayReduce, values, [callback, initial]) as U;
 }
 
 function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
@@ -106,14 +96,14 @@ function selectAllowedHostTools(
   tools: HostToolSet,
   allowedNames: readonly string[],
 ): HostToolSet {
-  const allowed = new IntrinsicSet(allowedNames);
+  const allowed = createPrivateSet(allowedNames);
   const entries = apply(objectEntries, Object, [tools]) as Array<
     [string, HostToolSet[string]]
   >;
   const selected: HostToolSet = {};
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
-    if (entry === undefined || !apply(setHas, allowed, [entry[0]])) continue;
+    if (entry === undefined || !allowed.has(entry[0])) continue;
     apply(objectDefineProperty, Object, [
       selected,
       entry[0],
