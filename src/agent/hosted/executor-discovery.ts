@@ -47,7 +47,13 @@ export interface ExecutorDiscovery {
   readonly signal: AbortSignal;
   /** Local-only access for the next runtime.prepare stage. */
   getRuntime(): ProjectAgentRuntimeDiscovery;
-  /** Resolves after all discovery/projection and partial-resource cleanup settle. */
+  /**
+   * Retain original runtime work before cleanup starts, including work spawned
+   * by retained startup after cancellation. Tasks must not await discovery
+   * operations, close(), or settled; those can themselves await cleanup.
+   */
+  retainRuntimeTask(task: Promise<unknown>): void;
+  /** Resolves after discovery, retained runtime work, and partial-resource cleanup settle. */
   readonly settled: Promise<void>;
   close(): Promise<void>;
 }
@@ -84,6 +90,8 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   let setupFailed = false;
   let runtime: ProjectAgentRuntimeDiscovery | undefined;
   let closing: Promise<void> | undefined;
+  let cleanupStarted = false;
+  const runtimeTasks = new Set<Promise<void>>();
   const definitions = new Map<string, RuntimeAgentMarkdownDefinition>();
   const helpers = () => import("../project/agent-runtime.ts");
 
@@ -95,6 +103,10 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     // Memoize before synchronous abort listeners can reenter close().
     closing = tail.then(async () => {
       try {
+        // Re-read after each batch: retained startup may reserve producer work
+        // after cancellation, before its own promise settles.
+        while (runtimeTasks.size > 0) await Promise.all(runtimeTasks);
+        cleanupStarted = true;
         if (loadStarted) await backend?.cleanup(runtime);
       } catch {
         throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLEANUP_FAILED");
@@ -291,6 +303,12 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     signal: lifetime.signal,
     settled: settled.promise,
     close,
+    retainRuntimeTask(task) {
+      if (cleanupStarted) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLOSED");
+      const retained = task.then(() => {}, () => {});
+      runtimeTasks.add(retained);
+      void retained.then(() => runtimeTasks.delete(retained));
+    },
     getRuntime() {
       assertActive();
       if (!runtime || !discovered) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_NOT_READY");

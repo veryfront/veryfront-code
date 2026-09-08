@@ -196,7 +196,8 @@ function createDefaultTaskContext(
   };
 }
 
-function incrementSteeringRevision(context: DefaultHostedChatRuntimeTaskContext): void {
+/** @internal Share steering invalidation with facaded runtime preparation. */
+export function incrementSteeringRevision(context: HostedRuntimeStateResolverContext): void {
   context.steeringRevision = (context.steeringRevision ?? 0) + 1;
 }
 
@@ -287,24 +288,19 @@ async function buildToolAssembly(
   };
 }
 
-function createRuntimeAgentConfig(input: {
-  options: DefaultHostedChatRuntimeCreationOptions;
-  taskContext: DefaultHostedChatRuntimeTaskContext;
+/** @internal Shared runtime construction after transport-free tool assembly. */
+export type PreparedHostedRuntimeAgentOptions = {
+  options: Omit<DefaultHostedChatRuntimeCreationOptions, "authToken">;
+  taskContext: HostedRuntimeStateResolverContext;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  refreshSystem?: CreateDefaultHostedChatRuntimeOptions["refreshSystem"];
-}): AgentConfig {
+  refreshSystem?: () => Promise<AgentSystem> | AgentSystem;
+};
+
+function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): AgentConfig {
   const liveProjectSteering = input.options.liveProjectSteering;
-  const systemRefresh = input.refreshSystem;
-  const refreshSystem = systemRefresh && liveProjectSteering
-    ? () =>
-      systemRefresh({
-        taskContext: input.taskContext,
-        liveProjectSteering,
-        toolAssembly: input.toolAssembly,
-      })
-    : undefined;
+  const refreshSystem = input.refreshSystem;
 
   const runtimeTools = Object.fromEntries(
     Object.entries(input.toolAssembly.runtimeTools).map(([toolName, runtimeTool]) => [
@@ -514,17 +510,24 @@ export async function createDefaultHostedChatRuntime(
           effectiveRunEventWriterCapability,
           () => buildToolAssembly({ ...input, taskContext, cloudContext }),
         );
-        const runtimeAgentConfig = createRuntimeAgentConfig({
-          options: input.options,
-          taskContext,
-          toolAssembly,
-          modelId,
-          sourceIntegrationPolicy: input.sourceIntegrationPolicy,
-          refreshSystem: input.refreshSystem,
-        });
+        const refreshSystem = input.refreshSystem;
+        const liveProjectSteering = input.options.liveProjectSteering;
         const runtimeAgent = runWithVeryfrontCloudContext(
           cloudContext,
-          () => createEphemeralAgentWithRuntimeOptions(runtimeAgentConfig, runtimeOptions),
+          () =>
+            createPreparedHostedRuntimeAgent({
+              options: input.options,
+              taskContext,
+              toolAssembly,
+              modelId,
+              sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+              ...(refreshSystem && liveProjectSteering
+                ? {
+                  refreshSystem: () =>
+                    refreshSystem({ taskContext, liveProjectSteering, toolAssembly }),
+                }
+                : {}),
+            }, runtimeOptions),
         );
 
         return {
@@ -574,4 +577,15 @@ export async function createDefaultHostedChatRuntime(
       }
     },
   );
+}
+
+/** @internal Construct from explicit runtime state; no private transport or credential defaults. */
+export function createPreparedHostedRuntimeAgent(
+  input: PreparedHostedRuntimeAgentOptions,
+  runtimeOptions: AgentRuntimeInternalOptions,
+) {
+  return createEphemeralAgentWithRuntimeOptions(createRuntimeAgentConfig(input), {
+    ...runtimeOptions,
+    modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
+  });
 }

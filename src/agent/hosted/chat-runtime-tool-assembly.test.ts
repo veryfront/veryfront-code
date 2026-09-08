@@ -19,8 +19,54 @@ import {
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
   prepareConfigDerivedHostedChatRuntimeToolAssembly,
+  prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
 } from "./chat-runtime-tool-assembly.ts";
+
+it("facaded assembly preserves project tool normalization and mutation callbacks without private transport config", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  let mutations = 0;
+  const source: RemoteToolSource = {
+    id: "api",
+    listTools: () =>
+      Promise.resolve([{
+        ...remoteTool("update_file", "Update file"),
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" }, project_reference: { type: "string" } },
+          required: ["project_reference"],
+        },
+      }, remoteTool("delete_file", "Delete file")]),
+    executeTool: (_name, args) => {
+      calls.push(args);
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+    taskContext: {
+      projectId: "project-1",
+      branchId: null,
+      model: "veryfront-cloud/openai/gpt-5.4",
+    },
+    instructions: "Synthetic instructions",
+    localTools: {},
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    allowedToolNames: ["update_file"],
+    remoteToolSources: [source],
+    onSteeringMutation: () => {
+      mutations++;
+    },
+  });
+  assertEquals(assembly.availableToolNames, ["update_file"]);
+  await assembly.remoteToolSources[0]!.executeTool("update_file", {
+    path: "AGENTS.md",
+    project_reference: "untrusted-project",
+  });
+  assertEquals(calls, [{ path: "AGENTS.md", project_reference: "project-1" }]);
+  assertEquals(mutations, 1);
+  await assertRejects(() => assembly.remoteToolSources[0]!.executeTool("delete_file", {}));
+  assertEquals(calls.length, 1);
+});
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,

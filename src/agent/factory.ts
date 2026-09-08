@@ -564,13 +564,24 @@ function createAgent<TOutput = never>(
 
   registerConfiguredLocalTools(config);
 
-  const mergedToolsConfig = resolveToolsConfiguration({
-    config,
-    id,
-    delegates,
-    skillTools: resolveSkillToolDisposition(config, id),
-    resolveSkillSnapshot,
-  });
+  let mergedToolsConfig: AgentConfig["tools"];
+  if (options.runtimeOptions?.preserveToolCatalog === true) {
+    if (config.tools === true || delegates !== undefined) {
+      throw new TypeError(
+        "A prevalidated agent requires an explicit tool catalog without delegates",
+      );
+    }
+    ensureBuiltinSchemaValidator();
+    mergedToolsConfig = { ...(config.tools ?? {}) };
+  } else {
+    mergedToolsConfig = resolveToolsConfiguration({
+      config,
+      id,
+      delegates,
+      skillTools: resolveSkillToolDisposition(config, id),
+      resolveSkillSnapshot,
+    });
+  }
 
   const augmentedSystem = createAugmentedSystem({
     config,

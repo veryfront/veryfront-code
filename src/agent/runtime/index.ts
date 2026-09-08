@@ -1623,6 +1623,12 @@ type RuntimeStepState = {
 /** @internal Framework-only AgentRuntime construction options. */
 export type AgentRuntimeInternalOptions = {
   resolveModelRuntime?: AgentModelRuntimeResolver;
+  /** Preserve the factory caller's prevalidated catalog without implicit tools or delegates. */
+  preserveToolCatalog?: boolean;
+  /** Call controls for private models, independent of source transport hooks. */
+  modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
+  /** Observe original producer settlement before it starts, including its full cleanup. */
+  onStreamCompletion?: (completion: Promise<void>) => void;
 };
 
 type AgentRuntimeGenerateArgs = [
@@ -1703,6 +1709,8 @@ export function streamWithAgentRuntimeDispatch(
 /** Implement agent runtime. */
 export class AgentRuntime {
   #modelResolverState: AgentRuntimeModelResolverState;
+  #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
+  #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
@@ -1713,6 +1721,8 @@ export class AgentRuntime {
     config: AgentConfig,
     internalOptions: AgentRuntimeInternalOptions = {},
   ) {
+    this.#modelCallThinking = internalOptions.modelCallThinking;
+    this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#modelResolverState = internalOptions.resolveModelRuntime
       ? { status: "available", resolver: internalOptions.resolveModelRuntime }
       : { status: "absent" };
@@ -2075,6 +2085,7 @@ export class AgentRuntime {
           modelOverride,
           mode,
           resolveModelRuntime,
+          modelCallThinking: this.#modelCallThinking,
         }),
         ...(resolveModelRuntime ? { resolveModelRuntime } : {}),
       };
@@ -2454,6 +2465,8 @@ export class AgentRuntime {
       // an unhandled rejection under Deno (#2334).
       let inFlight: Promise<AgentResponse> | undefined;
 
+      const completion = Promise.withResolvers<void>();
+      this.#onStreamCompletion?.(completion.promise);
       const runtimeStream = new IntrinsicReadableStream<Uint8Array>({
         start: async (controller) => {
           try {
@@ -2577,7 +2590,11 @@ export class AgentRuntime {
             sendSSE(controller, encoder, resolveRuntimeExecutionErrorEvent(error));
             closeSSEStream(controller);
           } finally {
-            abortScope.dispose();
+            try {
+              abortScope.dispose();
+            } finally {
+              completion.resolve();
+            }
           }
         },
         cancel(reason) {

@@ -353,6 +353,33 @@ describe("executor discovery operations", () => {
     assertEquals(cleaned, 1);
   });
 
+  it("joins producer work retained by startup after upstream cancellation", async () => {
+    const f = fixture();
+    await call(f.owner, "discovery.describe");
+    const resumeStartup = Promise.withResolvers<void>();
+    const producer = Promise.withResolvers<void>();
+    const startup = resumeStartup.promise.then(() => {
+      f.owner.retainRuntimeTask(producer.promise);
+    });
+    f.owner.retainRuntimeTask(startup);
+    f.controller.abort();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(f.cleanups, 0);
+      resumeStartup.resolve();
+      await startup;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(f.cleanups, 0);
+    } finally {
+      resumeStartup.resolve();
+      producer.resolve();
+      await startup;
+      await f.owner.settled;
+    }
+    assertEquals(f.cleanups, 1);
+    assertThrows(() => f.owner.retainRuntimeTask(Promise.resolve()), ExecutorDiscoveryError);
+  });
+
   it("cleans partial discovery even when the loader throws a registered configuration error", async () => {
     let cleaned = 0;
     const f = fixture({
