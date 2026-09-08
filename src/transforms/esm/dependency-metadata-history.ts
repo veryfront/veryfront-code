@@ -1,3 +1,4 @@
+import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
 import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 import {
   canIdentifyProxyWithoutHooks,
@@ -24,6 +25,7 @@ const setPrototypeOf = Object.setPrototypeOf;
 const isArray = Array.isArray;
 const isSafeInteger = Number.isSafeInteger;
 const stringify = JSON.stringify;
+const freeze = Object.freeze;
 
 export interface MetadataHistoryScope {
   readonly projectId: string;
@@ -77,14 +79,16 @@ function readHistoryEntry(value: unknown, now: number): MetadataEntry {
     ) throw unavailable();
     dependencies[name] = declaration;
   }
-  return { __proto__: null, dependencies, expiresAt } as MetadataEntry;
+  freeze(dependencies);
+  return freeze({ __proto__: null, dependencies, expiresAt }) as MetadataEntry;
 }
 
-function readHistoryEntries(
+/** Copy only validated scoped fields before retaining an API history response. */
+export function captureDependencyMetadataHistory(
   value: unknown,
   scope: MetadataHistoryScope,
   now: number,
-): MetadataEntry[] {
+): { value: DependencyMetadataHistory; bytes: number } {
   const history = record(value);
   if (
     own(history, "version") !== 1 || own(history, "projectId") !== scope.projectId ||
@@ -105,9 +109,10 @@ function readHistoryEntries(
     branch: scope.branch,
     entries: safeEntries,
   };
-  if (utf8ByteLength(stringify(safe)) > DEPENDENCY_SNAPSHOT_MAX_BYTES) throw unavailable();
-
-  return safeEntries;
+  const bytes = utf8ByteLength(stringify(safe));
+  if (bytes > DEPENDENCY_SNAPSHOT_MAX_BYTES) throw unavailable();
+  freeze(safeEntries);
+  return { value: freeze(safe) as DependencyMetadataHistory, bytes };
 }
 
 /**
@@ -122,23 +127,51 @@ export function selectHistoricalDependencySnapshot(
   configuredVersions: DependencyPinningSnapshot["configuredVersions"],
   now: number,
 ): HistoricalDependencySnapshot | undefined {
-  const safeEntries = readHistoryEntries(value, scope, now);
+  return selectCapturedHistoricalDependencySnapshot(
+    captureDependencyMetadataHistory(value, scope, now).value,
+    scope,
+    requestedKey,
+    configuredVersions,
+    now,
+  );
+}
 
+/** Select from the immutable result of captureDependencyMetadataHistory without recopying it. */
+export function selectCapturedHistoricalDependencySnapshot(
+  value: DependencyMetadataHistory,
+  scope: MetadataHistoryScope,
+  requestedKey: string,
+  configuredVersions: DependencyPinningSnapshot["configuredVersions"],
+  now: number,
+): HistoricalDependencySnapshot | undefined {
+  const envelope = record(value);
+  if (
+    own(envelope, "version") !== 1 || own(envelope, "projectId") !== scope.projectId ||
+    own(envelope, "branch") !== scope.branch
+  ) throw unavailable();
+  const safeEntries = own(envelope, "entries");
+  if (!isArray(safeEntries) || isProxyWithoutHooks(safeEntries)) throw unavailable();
   let selected: HistoricalDependencySnapshot | undefined;
   let selectedBytes: string | undefined;
   // Index access avoids invoking a mutable Array iterator.
   let index = 0;
   while (index < safeEntries.length) {
-    const entry = safeEntries[index++]!;
-    if (entry.expiresAt <= now) continue;
-    const effective = applyConfiguredDependencyOverrides(entry.dependencies, configuredVersions);
+    const entry = record(own(safeEntries, `${index++}`));
+    const expiresAt = own(entry, "expiresAt");
+    if (
+      typeof expiresAt !== "number" || !isSafeInteger(expiresAt) || expiresAt <= 0 ||
+      expiresAt > now + DEPENDENCY_SNAPSHOT_RETENTION_MS
+    ) throw unavailable();
+    if (expiresAt <= now) continue;
+    const dependencies = own(entry, "dependencies") as Readonly<Record<string, string>>;
+    const effective = applyConfiguredDependencyOverrides(dependencies, configuredVersions);
     const key = `on:${hashDependencyPins(effective, configuredVersions)}`;
     if (key !== requestedKey) continue;
     const snapshot = createDependencyPinningSnapshot(key, effective, configuredVersions);
     const bytes = encodeDependencySnapshot("metadata-history", snapshot);
     if (selectedBytes !== undefined && selectedBytes !== bytes) throw unavailable();
-    if (!selected || selected.expiresAt < entry.expiresAt) {
-      selected = { snapshot, expiresAt: entry.expiresAt };
+    if (!selected || selected.expiresAt < expiresAt) {
+      selected = { snapshot, expiresAt };
       selectedBytes = bytes;
     }
   }

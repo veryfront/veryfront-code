@@ -6,7 +6,10 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { DependencySnapshotRegistry } from "./dependency-snapshot-registry.ts";
-import { selectHistoricalDependencySnapshot } from "./dependency-metadata-history.ts";
+import {
+  captureDependencyMetadataHistory,
+  selectCapturedHistoricalDependencySnapshot,
+} from "./dependency-metadata-history.ts";
 import {
   applyConfiguredDependencyOverrides,
   createDependencyPinningSnapshot,
@@ -636,21 +639,31 @@ export async function resolveRequestedDependencyPinningSnapshot(
   const configuredVersions = current.cacheKey === "off"
     ? freezeConfiguredVersions(captureConfiguredVersions(source.config))
     : current.configuredVersions;
+  let historyRevision = current.cacheKey;
+  if (historyRevision === "off") {
+    // A rollback must still observe package writes before reusing a cached miss.
+    // Reading raw pins here grants no publication or current-snapshot authority.
+    const metadata = await readProjectDependencyVersionsWithMode(source, true);
+    if (metadata.dependencyState === "unknown") return undefined;
+    historyRevision = `off:${hashDependencyPins(metadata.dependencies ?? {}, configuredVersions)}`;
+  }
   // The handler derives target and source identity from the same resolved
   // request branch. An adapter bound to another branch must fail closed here;
   // never adopt a response's scope to make an inconsistent source recover.
   return await snapshotRegistry(source).recoverHistorical(
     snapshotHistoryIdentity(source),
     requestedCacheKey,
-    reader,
+    async (signal) =>
+      captureDependencyMetadataHistory(await reader(signal), scope, metadataHistoryNow()),
     (history) =>
-      selectHistoricalDependencySnapshot(
+      selectCapturedHistoricalDependencySnapshot(
         history,
         scope,
         requestedCacheKey,
         configuredVersions,
         metadataHistoryNow(),
       ),
+    historyRevision,
   );
 }
 
@@ -833,9 +846,18 @@ function parsePackageDependencyMap(content: string): Record<string, string> {
 export async function readProjectDependencyVersions(
   source: DependencyPinningSourceInput,
 ): Promise<DependencyVersionsResult> {
+  return await readProjectDependencyVersionsWithMode(
+    source,
+    getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1",
+  );
+}
+
+async function readProjectDependencyVersionsWithMode(
+  source: DependencyPinningSourceInput,
+  pinningOn: boolean,
+): Promise<DependencyVersionsResult> {
   const normalized = normalizeDependencyPinningSource(source);
   if (!normalized.packageJsonPath) return { dependencyState: "absent" };
-  const pinningOn = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
   const pendingKey = `${normalized.cacheIdentity}\0${pinningOn ? "on" : "off"}`;
   const pending = pendingDependencyVersionReads.get(pendingKey);
   if (pending) return pending;
@@ -923,9 +945,9 @@ async function readProjectDependencyVersionsUncoalesced(
     const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
-    // Only materialize the full dependency map when the pinning flag is on.
-    // Flag-off callers only need react/veryfront extraction; building the full
-    // map on the default path wastes memory across up to 256 cached projects.
+    // Full maps are needed for pinning captures and historical revision checks.
+    // Ordinary flag-off callers only need react/veryfront extraction; retaining
+    // a full map on that default path wastes memory across 256 cached projects.
     let dependencies: Record<string, string> | undefined;
     let dependencyPinHash: string | undefined;
     if (pinningOn) {

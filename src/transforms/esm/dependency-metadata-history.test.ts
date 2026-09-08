@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { selectHistoricalDependencySnapshot } from "./dependency-metadata-history.ts";
+import {
+  captureDependencyMetadataHistory,
+  selectCapturedHistoricalDependencySnapshot,
+  selectHistoricalDependencySnapshot,
+} from "./dependency-metadata-history.ts";
 import {
   applyConfiguredDependencyOverrides,
   DEPENDENCY_SNAPSHOT_MAX_BYTES,
@@ -19,6 +23,53 @@ function select(value: unknown, key = emptyKey) {
 }
 
 describe("API-derived dependency metadata history", () => {
+  it("retains only immutable validated fields instead of the provider response", () => {
+    const source = { ...history({ react: "19.2.4" }), ignored: "x".repeat(2 * 1024 * 1024) };
+    const captured = captureDependencyMetadataHistory(source, scope, now);
+    source.entries[0]!.dependencies.react = "18.3.1";
+    source.entries.length = 0;
+    assertEquals(captured.value.entries[0]?.dependencies.react, "19.2.4");
+    assertEquals(Object.hasOwn(captured.value, "ignored"), false);
+    assertEquals(captured.bytes < 1024, true);
+    assertEquals(Object.isFrozen(captured.value), true);
+    assertEquals(Object.isFrozen(captured.value.entries), true);
+    assertEquals(Object.isFrozen(captured.value.entries[0]), true);
+    assertEquals(Object.isFrozen(captured.value.entries[0]?.dependencies), true);
+  });
+
+  it("rechecks cached scope and expiry without extending acknowledged retention", () => {
+    const captured = captureDependencyMetadataHistory(history({}, now + 500), scope, now);
+    assertEquals(
+      selectCapturedHistoricalDependencySnapshot(
+        captured.value,
+        scope,
+        emptyKey,
+        undefined,
+        now,
+      )?.snapshot.cacheKey,
+      emptyKey,
+    );
+    assertEquals(
+      selectCapturedHistoricalDependencySnapshot(
+        captured.value,
+        scope,
+        emptyKey,
+        undefined,
+        now + 500,
+      ),
+      undefined,
+    );
+    assertThrows(() =>
+      selectCapturedHistoricalDependencySnapshot(
+        captured.value,
+        { ...scope, projectId: "another-project" },
+        emptyKey,
+        undefined,
+        now,
+      )
+    );
+  });
+
   it("reconstructs the exact prior empty map with its acknowledged expiry", () => {
     const result = select(history());
     assertEquals(result?.snapshot.cacheKey, "on:54uvgwr2ih7p");

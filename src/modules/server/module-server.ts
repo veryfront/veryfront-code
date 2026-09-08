@@ -394,8 +394,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
   const url = new URL(req.url);
   const dependencyPinningEnabled = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
   const extractedPathPin = extractDependencyPinningPathKey(url.pathname);
-  const pathPin = dependencyPinningEnabled ||
-      (extractedPathPin.found && !extractedPathPin.malformed)
+  const pathPin = dependencyPinningEnabled || extractedPathPin.found
     ? extractedPathPin
     : { pathname: url.pathname, found: false, malformed: false };
   if (pathPin.found && !pathPin.malformed) {

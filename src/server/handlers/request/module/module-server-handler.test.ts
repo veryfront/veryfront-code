@@ -14,6 +14,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV } from "#veryfront/transforms/esm/dependency-pinning-cohort.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 
@@ -32,6 +33,88 @@ describe(
       clearReactVersionCache();
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
+    });
+
+    it("serves canonical pinned paths after the pinning flag is rolled back", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const originalRolloutPercent = getHostEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV);
+      const projectDir = "/module-pins-rollback";
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.2.4" } }),
+      );
+      adapter.fs.files.set(
+        `${projectDir}/page.ts`,
+        'export default "rollback-route-canary";\n',
+      );
+      const ctx = {
+        projectDir,
+        projectId: "module-pins-rollback",
+        adapter,
+        isLocalProject: false,
+        requestContext: {
+          token: "",
+          slug: "module-pins-rollback",
+          branch: null,
+          mode: "preview",
+        },
+        securityConfig: null,
+      } satisfies HandlerContext;
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        setEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, "100");
+        const snapshot = await getDependencyPinningSnapshot(
+          createHandlerDependencyPinningSource(ctx),
+        );
+        assertEquals(snapshot.cacheKey.startsWith("on:"), true);
+        assertEquals(snapshot.dependencies?.react, "19.2.4");
+
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
+        const result = await handleModuleServer(
+          new Request(
+            `http://localhost/_vf_modules/_pins/${encodeURIComponent(snapshot.cacheKey)}/page.js`,
+          ),
+          ctx,
+          () => new ResponseBuilder(),
+          (response): HandlerResult => ({ response, continue: false }),
+          () => {},
+          (error) => error instanceof Error ? error.message : String(error),
+        );
+
+        assertEquals(result.response?.status, 200);
+        assertStringIncludes(await result.response!.text(), "rollback-route-canary");
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        restoreEnv(DEPENDENCY_PINNING_ROLLOUT_PERCENT_ENV, originalRolloutPercent);
+      }
+    });
+
+    it("rejects malformed pinned paths after the pinning flag is rolled back", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
+        const result = await handleModuleServer(
+          new Request("http://localhost/_vf_modules/_pins/%E0%A4%A/page.js"),
+          {
+            projectDir: "/module-malformed-pins-rollback",
+            projectId: "module-malformed-pins-rollback",
+            adapter: createMockAdapter(),
+            isLocalProject: false,
+            securityConfig: null,
+          },
+          () => new ResponseBuilder(),
+          (response): HandlerResult => ({ response, continue: false }),
+          () => {},
+          (error) => error instanceof Error ? error.message : String(error),
+        );
+
+        assertEquals(result.response?.status, 409);
+        assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      }
     });
 
     it("returns uncached 503 when shared historical storage is unavailable", async () => {

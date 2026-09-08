@@ -110,7 +110,11 @@ branch retained in the response for matching.
 The optional reader accepts an `AbortSignal`. The registry's five-second deadline
 aborts the underlying metadata request, so cooperative reads release their admission
 slots when the endpoint stalls. Concurrent keys from one source share the same
-full-history read, then independently validate their requested key. Returned
+full-history read, then independently validate their requested key. Settled history
+is retained for one second, including misses, with limits of 32 sources and 8 MiB
+of serialized metadata. A change to the observed package dependency state invalidates
+the source cache immediately; registry clearing also discards it. Only copied,
+validated fields are retained, and original snapshot expiries still apply. Returned
 dependency maps have a null prototype.
 
 Disabling pinning or reducing the rollout cohort stops new pinning. Exact historical

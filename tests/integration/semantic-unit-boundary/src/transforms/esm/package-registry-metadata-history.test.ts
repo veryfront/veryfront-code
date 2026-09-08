@@ -20,6 +20,8 @@ import {
   withDependencyPinningSourceFileSystem,
 } from "#veryfront/transforms/esm/package-registry.ts";
 
+import { hashDependencyPins } from "#veryfront/transforms/esm/dependency-snapshot.ts";
+
 const projectId = "00000000-0000-4000-8000-000000000001";
 const emptyKey = "on:54uvgwr2ih7p";
 
@@ -147,6 +149,27 @@ describe("package registry metadata history recovery", () => {
       assertEquals(f.reads, 1);
       assertEquals(isCurrentDependencyPinningSnapshot(source, original.cacheKey), false);
       assertEquals((await getDependencyPinningSnapshot(source)).cacheKey, "off");
+    });
+  }
+
+  for (const rollback of ["flag", "cohort"] as const) {
+    it(`invalidates a settled miss after a package write during ${rollback} rollback`, async () => {
+      const f = fixture();
+      f.history.entries.length = 0;
+      const source = createDependencyPinningSource(f.options);
+      if (rollback === "flag") setEnv("VERYFRONT_DEPENDENCY_PINNING", "0");
+      else setEnv("VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT", "0");
+      const previous = { react: "19.2.4" };
+      const key = `on:${hashDependencyPins(previous)}`;
+      assertEquals(await resolveRequestedDependencyPinningSnapshot(source, key), undefined);
+      assertEquals(f.reads, 1);
+      // The API acknowledges the preimage before changing package.json.
+      f.history.entries.push({ dependencies: previous, expiresAt: Date.now() + 60_000 });
+      f.adapter.fs.readFile = () => Promise.resolve('{"dependencies":{"react":"19.2.5"}}');
+      assertEquals((await resolveRequestedDependencyPinningSnapshot(source, key))?.cacheKey, key);
+      assertEquals(f.reads, 2);
+      assertEquals((await getDependencyPinningSnapshot(source)).cacheKey, "off");
+      assertEquals(isCurrentDependencyPinningSnapshot(source, key), false);
     });
   }
 
