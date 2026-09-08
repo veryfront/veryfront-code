@@ -26,6 +26,28 @@ import {
   parseExecutorModelData,
 } from "./executor-model-schema.ts";
 
+/** Broker-owned identity and owned snapshot for one validated model dispatch. */
+export interface ExecutorModelDispatch {
+  readonly identity: {
+    readonly binding: ExecutorOperationContext["binding"];
+    readonly sequence: number;
+  };
+  readonly mode: "generate" | "stream";
+  readonly model: ExecutorModelMetadata;
+  readonly options: Omit<ModelRuntimeCallOptions, "headers" | "abortSignal">;
+}
+
+/** Recheck owner authority synchronously at the provider invocation boundary. */
+export interface ExecutorModelDispatchPermit {
+  assertActive(): void;
+}
+
+/** Generic broker hook; hosted callers use the required persistence wrapper. */
+export type ExecutorModelDispatchGate = (
+  request: ExecutorModelDispatch,
+  context: ExecutorOperationContext,
+) => void | ExecutorModelDispatchPermit | Promise<void | ExecutorModelDispatchPermit>;
+
 /**
  * Construct only in trusted ingress. The resolver closes over ingress-owned
  * authority; project discovery, extension registries, and credentials are not
@@ -34,11 +56,14 @@ import {
 export function createExecutorModelBroker(options: {
   resolveModelRuntime: AgentModelRuntimeResolver | undefined;
   allowedModelIds: ReadonlySet<string>;
+  beforeModelDispatch?: ExecutorModelDispatchGate;
 }): ReadonlyMap<string, ExecutorOperation> {
   const resolve = options.resolveModelRuntime;
   if (typeof resolve !== "function") throw new TypeError("Managed model resolver is required");
   const allowed = executorModelIds(options.allowedModelIds);
   const models = new Map<string, ModelRuntime>();
+  const beforeModelDispatch = options.beforeModelDispatch;
+  let sequence = 0;
   const getModel = (id: string): ModelRuntime => {
     if (!allowed.has(id)) throw new TypeError("Managed model is not allowed");
     const cached = models.get(id);
@@ -52,9 +77,36 @@ export function createExecutorModelBroker(options: {
     const call = parseExecutorModelData(getExecutorModelCallSchema(), input);
     context.signal.throwIfAborted();
     return {
+      modelId: call.modelId,
       model: getModel(call.modelId),
-      options: { ...call.options, abortSignal: context.signal } satisfies ModelRuntimeCallOptions,
+      options: call.options satisfies Omit<ModelRuntimeCallOptions, "headers" | "abortSignal">,
     };
+  };
+  const authorizeDispatch = async (
+    call: ReturnType<typeof parseCall>,
+    mode: "generate" | "stream",
+    context: ExecutorOperationContext,
+  ) => {
+    if (sequence === Number.MAX_SAFE_INTEGER) {
+      throw new TypeError("Managed model call limit exceeded");
+    }
+    const callSequence = ++sequence;
+    if (beforeModelDispatch) {
+      const metadata = parseExecutorModelData(
+        getExecutorModelMetadataSchema(),
+        executorModelJson([modelMetadata(call.modelId, call.model)]),
+      )[0]!;
+      return await beforeModelDispatch({
+        identity: { binding: { ...context.binding }, sequence: callSequence },
+        mode,
+        model: metadata,
+        // The sink never shares mutable prompt/options with provider dispatch.
+        options: parseExecutorModelData(
+          getExecutorModelOptionsSchema(),
+          executorModelJson(call.options),
+        ),
+      }, context);
+    }
   };
   return new Map<string, ExecutorOperation>([
     ["model.metadata", {
@@ -109,7 +161,10 @@ export function createExecutorModelBroker(options: {
         const call = parseCall(input, context);
         let result;
         try {
-          result = await call.model.doGenerate(call.options);
+          const permit = await authorizeDispatch(call, "generate", context);
+          context.signal.throwIfAborted();
+          permit?.assertActive();
+          result = await call.model.doGenerate({ ...call.options, abortSignal: context.signal });
         } catch (error) {
           return modelFailureOrThrow(error, context);
         }
@@ -133,7 +188,10 @@ export function createExecutorModelBroker(options: {
         const call = parseCall(input, context);
         let result;
         try {
-          result = await call.model.doStream(call.options);
+          const permit = await authorizeDispatch(call, "stream", context);
+          context.signal.throwIfAborted();
+          permit?.assertActive();
+          result = await call.model.doStream({ ...call.options, abortSignal: context.signal });
         } catch (error) {
           yield modelFailureOrThrow(error, context);
           return;

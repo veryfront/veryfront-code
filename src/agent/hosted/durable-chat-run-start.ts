@@ -1,6 +1,9 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
-import { INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
+import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
+import { ERROR_REGISTRY, INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
+import { EXECUTOR_AGENT_FAILURE_CODES } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import {
   compactHistoricalUiMessageToolInputs,
   type HistoricalToolInputCompactionDiagnostic,
@@ -23,8 +26,10 @@ export type HostedDurableRunSetupErrorStatusCode =
   | 403
   | 404
   | 408
+  | 409
   | 413
   | 429
+  | 499
   | 500
   | 501
   | 502
@@ -84,7 +89,8 @@ function isDurableRunSetupErrorStatusCode(
   status: number | undefined,
 ): status is HostedDurableRunSetupErrorStatusCode {
   return status === 400 || status === 402 || status === 403 || status === 404 ||
-    status === 408 || status === 413 || status === 429 || status === 500 ||
+    status === 408 || status === 409 || status === 413 || status === 429 || status === 499 ||
+    status === 500 ||
     status === 501 || status === 502 || status === 503;
 }
 
@@ -97,12 +103,21 @@ function isDurableRunSetupErrorStatusCode(
  * parser's EXTERNAL_SERVICE_ERROR default. The error is snapshotted once
  * because proxied errors can pass the guard yet throw from field getters.
  */
-function classifyDurableRunSetupError(error: unknown): { code: string; status?: number } {
+export function classifyHostedChatSetupError(
+  error: unknown,
+): { code: string; status?: number; message: string } {
   const snapshot = snapshotVeryfrontError(error);
   if (snapshot) {
+    const code = Object.hasOwn(ERROR_REGISTRY, snapshot.slug)
+      ? snapshot.slug.toUpperCase().replaceAll("-", "_")
+      : [...CURATED_PROVIDER_FAILURE_CODES, ...EXECUTOR_AGENT_FAILURE_CODES].find((value) =>
+        value.toLowerCase().replaceAll("_", "-") === snapshot.slug
+      ) ?? "EXTERNAL_SERVICE_ERROR";
     return {
-      code: snapshot.slug.toUpperCase().replaceAll("-", "_"),
+      code,
       status: snapshot.status,
+      // Error titles can be customized after registration.
+      message: sanitizeBoundedDiagnosticText(snapshot.title),
     };
   }
 
@@ -319,7 +334,7 @@ export async function executeHostedDurableChatRun<TExecution>(
       );
     }
 
-    const { code, status } = classifyDurableRunSetupError(error);
+    const { code, status } = classifyHostedChatSetupError(error);
     const response = resolveHostedDurableRunSetupErrorResponse({
       code,
       status,
