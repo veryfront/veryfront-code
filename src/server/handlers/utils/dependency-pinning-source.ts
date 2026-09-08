@@ -56,7 +56,11 @@ export function createHandlerDependencyPinningSource(
     dependencyWritebackToken: dependencyWritebackTarget ? ctx.proxyToken : undefined,
     // Replicated runtimes share snapshot history, so a document rendered on one
     // replica keeps hydrating on every other replica after dependency writeback
-    // changes the current key.
-    snapshotStore: getSharedDependencySnapshotStoreHandle(),
+    // changes the current key. A host that configures snapshot storage on its
+    // adapter owns that decision — captured absence included — and the
+    // cache-backed default applies only when the adapter says nothing.
+    ...(ctx.adapter && Object.hasOwn(ctx.adapter, "dependencySnapshotStore")
+      ? {}
+      : { snapshotStore: getSharedDependencySnapshotStoreHandle() }),
   });
 }

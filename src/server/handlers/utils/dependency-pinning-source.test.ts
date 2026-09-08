@@ -5,6 +5,7 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backends/memory.ts";
 import { _setSharedDependencySnapshotStoreBackendForTest } from "#veryfront/cache/dependency-snapshot-store.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
@@ -280,6 +281,35 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
         "a cold replica must recover the rendered snapshot instead of conflicting",
       );
       assertEquals(recovered?.dependencies, document.dependencies);
+    });
+
+    it("defers to an adapter that configures its own snapshot store", async () => {
+      _setSharedDependencySnapshotStoreBackendForTest(new MemoryCacheBackend());
+      const published: string[] = [];
+      const adapterStore = createDependencySnapshotStoreHandle({
+        publish: (_namespace: string, key: string) => {
+          published.push(key);
+          return Promise.resolve();
+        },
+        read: () => Promise.resolve(null),
+      });
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/package.json", '{"dependencies":{}}');
+      Object.defineProperty(adapter, "dependencySnapshotStore", {
+        value: adapterStore,
+        enumerable: true,
+      });
+
+      const source = createHandlerDependencyPinningSource(
+        makeCtx({ adapter, projectId: "adapter-store-project", isLocalProject: false }),
+      );
+      const document = await getDependencyPinningSnapshot(source);
+
+      assertEquals(
+        published,
+        [document.cacheKey],
+        "the host-configured adapter store must receive the publication",
+      );
     });
   });
 });
