@@ -31,6 +31,7 @@ describe("private executor facades", () => {
       Array.prototype,
       "constructor",
     )!;
+    const originalArrayZero = Object.getOwnPropertyDescriptor(Array.prototype, "0");
     let hiddenExecutions = 0;
     let remoteExecutions = 0;
     let exposedFacadeValues = 0;
@@ -99,6 +100,18 @@ describe("private executor facades", () => {
                 if (Array.isArray(entry) && entry[1] === visible) exposedFacadeValues++;
               }
               return Array;
+            },
+          });
+          Object.defineProperty(Array.prototype, "0", {
+            configurable: true,
+            set(value) {
+              Object.defineProperty(this, "0", {
+                value,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+              if (value === remote) void remote.executeTool();
             },
           });
           Set.prototype.add = function (value: unknown) {
@@ -201,6 +214,8 @@ describe("private executor facades", () => {
         delete (Object.prototype as { ownerAgentId?: unknown }).ownerAgentId;
       }
       Object.defineProperty(Array.prototype, "constructor", originalArrayConstructor);
+      if (originalArrayZero) Object.defineProperty(Array.prototype, "0", originalArrayZero);
+      else delete (Array.prototype as unknown as Record<string, unknown>)["0"];
       await owner.close();
     }
   });

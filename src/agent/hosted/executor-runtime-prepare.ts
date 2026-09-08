@@ -75,11 +75,20 @@ const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
-const arrayFilter = Array.prototype.filter;
 const arrayIncludes = Array.prototype.includes;
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
-  return apply(arrayFilter, values, [predicate]) as T[];
+  const filtered: T[] = [];
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index] as T;
+    if (!predicate(value)) continue;
+    apply(objectDefineProperty, Object, [
+      filtered,
+      filtered.length,
+      { value, enumerable: true, configurable: true, writable: true },
+    ]);
+  }
+  return filtered;
 }
 function includes<T>(values: readonly T[], value: T): boolean {
   return apply(arrayIncludes, values, [value]) as boolean;
@@ -535,7 +544,16 @@ export function createExecutorRuntimePreparation(input: Options) {
             );
           }
         }
-        remoteToolSources[remoteToolSources.length] = remoteToolSource;
+        apply(objectDefineProperty, Object, [
+          remoteToolSources,
+          remoteToolSources.length,
+          {
+            value: remoteToolSource,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          },
+        ]);
       }
       const facadeAllowedToolSet = createPrivateSet<string>();
       for (let index = 0; index < allowedToolNames.length; index++) {
