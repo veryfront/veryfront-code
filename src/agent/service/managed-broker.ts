@@ -26,3 +26,10 @@ export {
   type BrokerRuntimeAgentPrivateAuthority,
   parseBrokerRuntimeAgentIngress,
 } from "./broker-ingress.ts";
+export {
+  type ManagedAgentBrokerIngressAuthority,
+  type ManagedAgentExecutorRequest,
+  type ManagedAgentIngressResult,
+  parseManagedAgUiAgentIngress,
+  parseManagedDurableAgentIngress,
+} from "./managed-hosted-ingress.ts";
