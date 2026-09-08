@@ -6,6 +6,7 @@ import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensi
 import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 
 import type { ModelRuntime } from "../types.ts";
+import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -88,26 +89,37 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
 function createVeryfrontCloudModelInternal(
   modelId: string,
   inferenceCredential?: string,
-  options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
+  options: {
+    apiBaseUrl?: string;
+    assertInferenceCredentialActive?: () => void;
+    credentialSource?: "application";
+    providerSelection?: "first-party";
+    assertCredentialActive?: () => void;
+  } = {},
 ): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
-  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
-    inferenceCredential,
-    options.apiBaseUrl,
-  );
+  const { apiBaseUrl, apiToken, projectSlug } = options.credentialSource === "application"
+    ? requireApplicationBootstrap()
+    : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl);
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
-    ...(options.assertInferenceCredentialActive
-      ? { assertInferenceCredentialActive: options.assertInferenceCredentialActive }
+    ...(options.assertCredentialActive || options.assertInferenceCredentialActive
+      ? {
+        assertInferenceCredentialActive: options.assertCredentialActive ??
+          options.assertInferenceCredentialActive,
+      }
       : {}),
   });
   const usesHostPrivateCredential = inferenceCredential === undefined &&
-    getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
-  const useFirstPartyTransport = inferenceCredential !== undefined || usesHostPrivateCredential;
+    options.credentialSource !== "application" && getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
+  const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential ||
+    options.credentialSource === "application";
+  const useFirstPartyTransport = usesPrivateCredential ||
+    options.providerSelection === "first-party";
   // Native provider request builders require a credential, but the guarded
-  // gateway fetch owns the real run-scoped token and replaces native auth.
-  const providerCredential = useFirstPartyTransport
+  // gateway fetch owns the real authority token and replaces native auth.
+  const providerCredential = usesPrivateCredential
     ? `vf-placeholder-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
     : apiToken;
   // Project extensions may replace registry providers. A signed inference
@@ -307,8 +319,40 @@ function createVeryfrontCloudModelInternal(
   );
 }
 
-export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
-  return createVeryfrontCloudModelInternal(modelId);
+function requireApplicationBootstrap(): {
+  apiBaseUrl: string;
+  apiToken: string;
+  projectSlug: string;
+} {
+  const context = getCurrentVeryfrontCloudContext();
+  if (
+    typeof context?.apiBaseUrl !== "string" || !context.apiBaseUrl ||
+    typeof context.apiToken !== "string" || !context.apiToken ||
+    typeof context.projectSlug !== "string"
+  ) {
+    throw new TypeError(
+      "Application model construction requires explicit gateway, token, and project scope",
+    );
+  }
+  // The broker's explicit application domain must not consult request,
+  // runtime configuration, or host credential/project fallback sources.
+  return {
+    apiBaseUrl: context.apiBaseUrl,
+    apiToken: context.apiToken,
+    projectSlug: context.projectSlug,
+  };
+}
+
+export function createVeryfrontCloudModel(
+  modelId: string,
+  /** @internal Broker construction policy, separate from model call/provider options. */
+  options?: {
+    credentialSource: "application";
+    providerSelection: "first-party";
+    assertCredentialActive?: () => void;
+  },
+): ModelRuntime {
+  return createVeryfrontCloudModelInternal(modelId, undefined, options);
 }
 
 /** @internal Build a first-party gateway model with explicit run-scoped authority. */
