@@ -4,7 +4,7 @@ import { bindExecutorDiscoveryRoots } from "#veryfront/agent/hosted/executor-dis
 import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
-import { discoverProjectAgentRuntime } from "../project/agent-runtime.ts";
+import { discoverProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import { nodeAdapter } from "#veryfront/platform/adapters/node.ts";
 import type { ExecutorDiscoveryBackend } from "./executor-discovery.ts";
 import { ExecutorDiscoveryError } from "./executor-discovery-schema.ts";

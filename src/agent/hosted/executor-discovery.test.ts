@@ -5,7 +5,7 @@ import { CONFIG_INVALID, CONFIG_PARSE_ERROR, CONFIG_VALIDATION_FAILED } from "#v
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
-import type { ProjectAgentRuntimeDiscovery } from "../project/agent-runtime.ts";
+import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "../runtime/agent-markdown-adapter.ts";
 import { createExecutorDiscovery, type ExecutorDiscoveryBackend } from "./executor-discovery.ts";
 import {
