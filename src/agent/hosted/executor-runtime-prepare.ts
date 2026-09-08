@@ -457,7 +457,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           ),
           availableSkillIds: skills.allowedSkillIds,
           configDerivedSelector: request.allowedToolNames === undefined &&
-            !(definition.tools === true && Boolean(definition.deniedTools?.length)),
+            !(definition.tools === true && (definition.deniedTools?.length ?? 0) > 0),
         });
         allowedToolNames = intersectNames(
           normalizeToolNames(grant.allowedToolNames),
