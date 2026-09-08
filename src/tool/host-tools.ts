@@ -5,6 +5,10 @@ import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectEntries = Object.entries;
+
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
 }["bivarianceHack"];
@@ -41,7 +45,7 @@ export interface HostToolMaterializationOptions {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !arrayIsArray(value);
 }
 
 /** Detect a contract `Schema<T>` value produced by defineSchema. */
@@ -110,7 +114,12 @@ export function createToolsFromHostDefinitions(
 ): ToolSet {
   const tools: ToolSet = {};
 
-  for (const [toolName, definition] of Object.entries(definitions)) {
+  const entries = apply(objectEntries, Object, [definitions]) as Array<[string, unknown]>;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    const toolName = entry[0];
+    const definition = entry[1];
     if (!isHostToolDefinition(definition)) continue;
 
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>

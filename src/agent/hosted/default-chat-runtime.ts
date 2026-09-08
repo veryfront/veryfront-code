@@ -64,6 +64,31 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 
 const apply = Reflect.apply;
 const TypeErrorConstructor = TypeError;
+const objectEntries = Object.entries;
+const objectDefineProperty = Object.defineProperty;
+
+function mapOwnRecord<TInput, TOutput>(
+  input: Record<string, TInput>,
+  mapper: (name: string, value: TInput) => TOutput,
+): Record<string, TOutput> {
+  const entries = apply(objectEntries, Object, [input]) as Array<[string, TInput]>;
+  const output: Record<string, TOutput> = {};
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    apply(objectDefineProperty, Object, [
+      output,
+      entry[0],
+      {
+        value: mapper(entry[0], entry[1]),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      },
+    ]);
+  }
+  return output;
+}
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -302,11 +327,9 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
   const liveProjectSteering = input.options.liveProjectSteering;
   const refreshSystem = input.refreshSystem;
 
-  const runtimeTools = Object.fromEntries(
-    Object.entries(input.toolAssembly.runtimeTools).map(([toolName, runtimeTool]) => [
-      toolName,
-      markRuntimeLocalTool(runtimeTool),
-    ]),
+  const runtimeTools = mapOwnRecord(
+    input.toolAssembly.runtimeTools,
+    (_toolName, runtimeTool) => markRuntimeLocalTool(runtimeTool),
   );
   const resolveHostedRuntimeState = createHostedRuntimeStateResolver({
     taskContext: input.taskContext,
@@ -413,27 +436,25 @@ function snapshotHostedToolResult(result: unknown): unknown {
 
 /** @internal Bound tool results and sanitize errors without trusted provenance. */
 export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
-  return Object.fromEntries(
-    Object.entries(tools).map(([toolName, tool]) => {
+  return mapOwnRecord(
+    tools,
+    (_toolName, tool) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return [
-        toolName,
-        {
-          ...tool,
-          execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
-            try {
-              return snapshotHostedToolResult(
-                await apply(execute, tool, [toolInput, context]),
-              );
-            } catch (error) {
-              if (preserveTrustedError) throw error;
-              throw new TypeErrorConstructor("Hosted project tool execution failed");
-            }
-          },
+      return {
+        ...tool,
+        execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+          try {
+            return snapshotHostedToolResult(
+              await apply(execute, tool, [toolInput, context]),
+            );
+          } catch (error) {
+            if (preserveTrustedError) throw error;
+            throw new TypeErrorConstructor("Hosted project tool execution failed");
+          }
         },
-      ];
-    }),
+      };
+    },
   );
 }
 
@@ -444,19 +465,17 @@ export function scopeHostedRuntimeTools(input: {
   cloudContext: VeryfrontCloudContext;
 }): ToolSet {
   const scopedTools = scopeHostedRuntimeToolResults(input.tools);
-  return Object.fromEntries(
-    Object.entries(scopedTools).map(([toolName, tool]) => [
-      toolName,
-      {
-        ...tool,
-        execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-          withoutHostedCredentials({
-            taskContext: input.taskContext,
-            cloudContext: input.cloudContext,
-            operation: () => apply(tool.execute, tool, [toolInput, context]),
-          }),
-      },
-    ]),
+  return mapOwnRecord(
+    scopedTools,
+    (_toolName, tool) => ({
+      ...tool,
+      execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+        withoutHostedCredentials({
+          taskContext: input.taskContext,
+          cloudContext: input.cloudContext,
+          operation: () => apply(tool.execute, tool, [toolInput, context]),
+        }),
+    }),
   );
 }
 
