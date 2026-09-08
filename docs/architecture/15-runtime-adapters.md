@@ -101,10 +101,19 @@ credentials or expose a snapshot publication endpoint to project code.
 
 Before a dependency-resolution write changes `package.json`, the API acknowledges
 storage of its own observed prior dependency map, including an absent file as an
-empty map. The read endpoint returns at most 16 recent maps within a 1 MiB response
-limit. Metadata publication has a 960 KiB admission bound so an acknowledged
-individual record fits the response. The project and canonical branch scope are
-derived by the API, with the requested branch retained in the response for matching.
+empty map. Publication atomically bounds unexpired history to 16 maps and 960 KiB
+per project/branch. A full budget defers automatic writeback instead of dropping a
+retained map. The read endpoint returns that history within a 1 MiB response limit.
+The project and canonical branch scope are derived by the API, with the requested
+branch retained in the response for matching.
+
+The optional reader accepts an `AbortSignal`. The registry's five-second deadline
+aborts the underlying metadata request, so cooperative reads release their admission
+slots when the endpoint stalls. Returned dependency maps have a null prototype.
+
+Disabling pinning or reducing the rollout cohort stops new pinning. Exact historical
+keys remain readable through their existing expiry, using the current captured
+configuration and the same project/branch checks; recovery grants no writeback authority.
 
 A cold renderer consults this capability only after local history misses and the
 current dependency key differs. It combines a prior raw map with its current
@@ -117,8 +126,8 @@ original source when file reads are wrapped for tracking.
 This does not weaken the shared snapshot store's acknowledged publication contract:
 an explicitly configured store never falls back to this metadata reader. Standalone
 filesystems do not require an API or shared backend. Direct package edits, concurrent
-configuration changes, history outside the bounded read window, and historical data
-predating activation can remain unavailable. They still return a conflict rather
+configuration changes, expired history, and metadata changes predating the API
+preimage publisher can remain unavailable. They still return a conflict rather
 than interpreting an old key using current dependencies.
 
 ## Change checks

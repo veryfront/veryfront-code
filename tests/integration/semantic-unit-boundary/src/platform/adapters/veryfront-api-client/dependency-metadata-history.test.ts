@@ -12,11 +12,11 @@ import { VeryfrontAPIOperations } from "#veryfront/platform/adapters/veryfront-a
 
 const PROJECT_ID = "10000000-1000-4000-8000-100000000001";
 
-function createOps(token = "project-token"): VeryfrontAPIOperations {
+function createOps(token = "project-token", maxRetries = 0): VeryfrontAPIOperations {
   return new VeryfrontAPIOperations(
     "https://api.example.com",
     token,
-    { maxRetries: 0, initialDelay: 1, maxDelay: 1 },
+    { maxRetries, initialDelay: 1, maxDelay: 1 },
     PROJECT_ID,
   );
 }
@@ -99,6 +99,9 @@ describe("dependency metadata history API", () => {
     assertExists(entry);
     const dependencies = entry.dependencies;
 
+    assertEquals(Object.getPrototypeOf(dependencies), null);
+    assertEquals("hasOwnProperty" in dependencies, false);
+    assertEquals("valueOf" in dependencies, false);
     assertEquals(Object.keys(dependencies).sort(), ["__proto__", "constructor", "toJSON"]);
     assertEquals(
       Object.getOwnPropertyDescriptor(dependencies, "__proto__")?.value,
@@ -109,6 +112,73 @@ describe("dependency metadata history API", () => {
       "constructor-version",
     );
     assertEquals(Object.getOwnPropertyDescriptor(dependencies, "toJSON")?.value, "json-version");
+  });
+
+  it("cancels a stalled response body through the caller signal", async () => {
+    let observedSignal: AbortSignal | null | undefined;
+    let bodyReads = 0;
+    let bodyCancellations = 0;
+    let markBodyRead!: () => void;
+    const bodyRead = new Promise<void>((resolve) => {
+      markBodyRead = resolve;
+    });
+    installMockFetch((_input, init) => {
+      observedSignal = init && "signal" in init ? init.signal : undefined;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              bodyReads++;
+              markBodyRead();
+              return new Promise<void>(() => {});
+            },
+            cancel() {
+              bodyCancellations++;
+            },
+          }),
+        ),
+      );
+    });
+    const controller = new AbortController();
+    const cancellation = new Error("history read cancelled");
+    const request = createOps("project-token", 2).readDependencyMetadataHistory(
+      "project-slug",
+      PROJECT_ID,
+      null,
+      controller.signal,
+    );
+    await bodyRead;
+
+    controller.abort(cancellation);
+
+    await assertRejects(() => request, Error, "history read cancelled");
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(bodyReads, 1);
+    assertEquals(bodyCancellations, 1);
+  });
+
+  it("rejects an already-aborted signal before starting the request", async () => {
+    let fetchCalls = 0;
+    installMockFetch(() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json(response()));
+    });
+    const controller = new AbortController();
+    const cancellation = new DOMException("history read already cancelled", "AbortError");
+    controller.abort(cancellation);
+
+    await assertRejects(
+      () =>
+        createOps().readDependencyMetadataHistory(
+          "project-slug",
+          PROJECT_ID,
+          null,
+          controller.signal,
+        ),
+      DOMException,
+      "history read already cancelled",
+    );
+    assertEquals(fetchCalls, 0);
   });
 
   it("normalizes an explicit main branch to the omitted query", async () => {

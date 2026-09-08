@@ -373,7 +373,7 @@ export interface FileSystemAdapter {
    */
   getSourceSnapshotIdentity?(): string | undefined | Promise<string | undefined>;
   /** Read trusted prior dependency metadata for this adapter's mutable source scope. */
-  readDependencyMetadataHistory?(): Promise<
+  readDependencyMetadataHistory?(signal?: AbortSignal): Promise<
     import("./dependency-metadata-history.ts").DependencyMetadataHistory
   >;
 }

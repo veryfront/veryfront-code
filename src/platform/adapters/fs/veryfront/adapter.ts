@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
 import { createHash, type Hash } from "node:crypto";
 import { createError, toError } from "#veryfront/errors";
 import type {
@@ -1641,14 +1642,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.#getCurrentSourceSnapshotIdentity();
   }
 
-  async readDependencyMetadataHistory(): Promise<DependencyMetadataHistory> {
-    await this.#ensureExactReadInitialized();
+  async readDependencyMetadataHistory(signal?: AbortSignal): Promise<DependencyMetadataHistory> {
+    throwIfAborted(signal);
+    await awaitAbortable(this.#ensureExactReadInitialized(), signal);
     const source = this.getEffectiveContentContext();
     if (source?.sourceType !== "branch") {
       throw new TypeError("Dependency metadata history is available only for branch sources");
     }
     const branch = source.branch && source.branch !== "main" ? source.branch : null;
-    return await this.client.readDependencyMetadataHistory(branch);
+    return await this.client.readDependencyMetadataHistory(branch, signal);
   }
 
   getPokeMetrics(): {

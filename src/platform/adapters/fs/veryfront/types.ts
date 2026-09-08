@@ -70,7 +70,7 @@ export interface FSAdapter {
    * `#veryfront/platform/adapters/base.ts` for the contract.
    */
   getSourceSnapshotIdentity?(): string | undefined | Promise<string | undefined>;
-  readDependencyMetadataHistory?(): Promise<DependencyMetadataHistory>;
+  readDependencyMetadataHistory?(signal?: AbortSignal): Promise<DependencyMetadataHistory>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {

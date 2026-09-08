@@ -177,6 +177,40 @@ describe("dependency snapshot registry", () => {
     assertEquals(registry.peek("source", a.cacheKey), undefined);
     assertExists(registry.peek("source", b.cacheKey));
   });
+  it("aborts cooperative metadata reads and releases every admission slot", async () => {
+    const registry = new DependencySnapshotRegistry({ timeoutMs: 20 });
+    const original = snapshot();
+    let aborted = 0;
+    await Promise.all(
+      Array.from(
+        { length: 64 },
+        (_, index) =>
+          assertRejects(() =>
+            registry.recoverHistorical(
+              `source-${index}`,
+              original.cacheKey,
+              (signal) =>
+                new Promise((_resolve, reject) => {
+                  signal.addEventListener("abort", () => {
+                    aborted++;
+                    reject(signal.reason);
+                  }, { once: true });
+                }),
+            )
+          ),
+      ),
+    );
+    assertEquals(aborted, 64);
+    assertEquals(
+      await registry.recoverHistorical(
+        "healthy",
+        original.cacheKey,
+        () => Promise.resolve({ snapshot: original, expiresAt: Date.now() + 10_000 }),
+      ),
+      original,
+    );
+  });
+
   it("keeps timed-out producers counted until settlement and never publishes late local success", async () => {
     const release = deferred();
     let producers = 0;

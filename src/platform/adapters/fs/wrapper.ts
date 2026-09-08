@@ -129,7 +129,9 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   ) => Promise<Uint8Array>;
   readonly createFileBytesExclusive?: (path: string, content: Uint8Array) => Promise<void>;
   readOptionalTextFile(path: string): Promise<string>;
-  readonly readDependencyMetadataHistory?: () => Promise<DependencyMetadataHistory>;
+  readonly readDependencyMetadataHistory?: (
+    signal?: AbortSignal,
+  ) => Promise<DependencyMetadataHistory>;
   readdir(path: string): Promise<DirectoryEntry[]>;
   shutdown(): Promise<void>;
 }
@@ -202,7 +204,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     | undefined
     | Promise<string | undefined>;
   readonly getSourceSnapshotIdentity?: () => string | undefined | Promise<string | undefined>;
-  readonly readDependencyMetadataHistory?: () => Promise<DependencyMetadataHistory>;
+  readonly readDependencyMetadataHistory?: (
+    signal?: AbortSignal,
+  ) => Promise<DependencyMetadataHistory>;
   #textFileReader: CapturedTextFileReader;
   #contextRunner: CapturedContextRunner | undefined;
 
@@ -314,8 +318,8 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       "readDependencyMetadataHistory",
     );
     if (dependencyMetadataHistory !== undefined) {
-      this.readDependencyMetadataHistory = () =>
-        IntrinsicReflectApply(dependencyMetadataHistory, fsAdapter, []) as Promise<
+      this.readDependencyMetadataHistory = (signal?: AbortSignal) =>
+        IntrinsicReflectApply(dependencyMetadataHistory, fsAdapter, [signal]) as Promise<
           DependencyMetadataHistory
         >;
     }

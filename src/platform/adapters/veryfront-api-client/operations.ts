@@ -84,7 +84,7 @@ function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, strin
     });
   }
 
-  const result = IntrinsicObjectCreate(IntrinsicObjectPrototype) as Record<string, string>;
+  const result = IntrinsicObjectCreate(null) as Record<string, string>;
   for (const key of IntrinsicReflectOwnKeys(raw)) {
     if (typeof key !== "string") {
       throw API_CLIENT_ERROR.create({
@@ -370,6 +370,7 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     expectedProjectId: string,
     requestedBranch: string | null,
+    signal?: AbortSignal,
   ): Promise<DependencyMetadataHistory> {
     const branch = requestedBranch === "main" ? null : requestedBranch;
     const params = new URLSearchParams();
@@ -381,6 +382,7 @@ export class VeryfrontAPIOperations {
     const raw = await this.request(endpoint, {
       maxResponseBytes: MAX_DEPENDENCY_METADATA_HISTORY_RESPONSE_BYTES,
       includeErrorBodyInDiagnostics: false,
+      signal,
     });
     const response = getDependencyMetadataHistoryResponseSchema().parse(raw);
     if (response.project_id !== expectedProjectId || response.branch !== branch) {

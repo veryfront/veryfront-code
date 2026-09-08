@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -120,6 +125,45 @@ describe("package registry metadata history recovery", () => {
       emptyKey,
     );
     assertEquals(f.reads, 1);
+  });
+
+  for (const rollback of ["flag", "cohort"] as const) {
+    it(`recovers an exact old key after ${rollback} rollback without enabling publication`, async () => {
+      const f = fixture();
+      f.adapter.fs.readFile = () => Promise.resolve("{}");
+      const source = createDependencyPinningSource({
+        ...f.options,
+        config: { react: { version: "19.1.0" } },
+      });
+      const original = await getDependencyPinningSnapshot(source);
+      f.adapter.fs.readFile = () => Promise.resolve('{"dependencies":{"zod":"3.0.0"}}');
+      clearReactVersionCache();
+      if (rollback === "flag") setEnv("VERYFRONT_DEPENDENCY_PINNING", "0");
+      else setEnv("VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT", "0");
+      assertEquals((await getDependencyPinningSnapshot(source)).cacheKey, "off");
+      const recovered = await resolveRequestedDependencyPinningSnapshot(source, original.cacheKey);
+      assertEquals(recovered?.cacheKey, original.cacheKey);
+      assertEquals(recovered?.configuredVersions, original.configuredVersions);
+      assertEquals(f.reads, 1);
+      assertEquals(isCurrentDependencyPinningSnapshot(source, original.cacheKey), false);
+      assertEquals((await getDependencyPinningSnapshot(source)).cacheKey, "off");
+    });
+  }
+
+  it("passes the registry cancellation signal to the captured history reader", async () => {
+    const f = fixture();
+    const signals: AbortSignal[] = [];
+    f.adapter.fs.readDependencyMetadataHistory = (signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      return Promise.resolve(f.history);
+    };
+    const source = createDependencyPinningSource(f.options);
+    assertEquals(
+      (await resolveRequestedDependencyPinningSnapshot(source, emptyKey))?.cacheKey,
+      emptyKey,
+    );
+    assertExists(signals[0]);
+    assertEquals(signals[0].aborted, false);
   });
 
   it("does not read metadata when the current snapshot already matches", async () => {

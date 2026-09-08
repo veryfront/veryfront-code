@@ -275,14 +275,17 @@ function captureSourceMetadataHistoryReader(
   const method = reader.value;
   snapshotApply(snapshotWeakSet, sourceMetadataHistoryReaders, [
     source,
-    () => snapshotApply(method, adapterFs, []) as Promise<unknown>,
+    (signal: AbortSignal) => snapshotApply(method, adapterFs, [signal]) as Promise<unknown>,
   ]);
 }
 
 let localSnapshotRegistry = new DependencySnapshotRegistry();
 let sharedSnapshotRegistries = new WeakMap<DependencySnapshotStore, DependencySnapshotRegistry>();
 const sourceSnapshotStores = new WeakMap<DependencyPinningSource, DependencySnapshotStore>();
-const sourceMetadataHistoryReaders = new WeakMap<DependencyPinningSource, () => Promise<unknown>>();
+const sourceMetadataHistoryReaders = new WeakMap<
+  DependencyPinningSource,
+  (signal: AbortSignal) => Promise<unknown>
+>();
 const metadataHistoryNow = Date.now;
 const adapterSnapshotStores = new WeakMap<
   RuntimeAdapter,
@@ -615,30 +618,36 @@ export async function resolveRequestedDependencyPinningSnapshot(
   }
   const remembered = getDependencyPinningSnapshotSync(source, requestedCacheKey);
   if (remembered) return remembered;
-  if (!current.cacheKey.startsWith("on:") || typeof source !== "object" || source === null) {
+  if (typeof source !== "object" || source === null) {
     return undefined;
   }
   const target = source.dependencyWritebackTarget;
   const reader = snapshotApply(snapshotWeakGet, sourceMetadataHistoryReaders, [source]) as
-    | (() => Promise<unknown>)
+    | ((signal: AbortSignal) => Promise<unknown>)
     | undefined;
   if (!reader || !source.projectId || !target || source.releaseId) return undefined;
   const scope = {
     projectId: source.projectId,
     branch: target.kind === "branch" ? target.branch : null,
   };
+  // A rollout rollback stops new pinning, not reads of still-valid old keys.
+  // The off snapshot carries no config, so capture this source's overrides
+  // before awaiting history and retain exact-key reconstruction on rollback.
+  const configuredVersions = current.cacheKey === "off"
+    ? freezeConfiguredVersions(captureConfiguredVersions(source.config))
+    : current.configuredVersions;
   // The handler derives target and source identity from the same resolved
   // request branch. An adapter bound to another branch must fail closed here;
   // never adopt a response's scope to make an inconsistent source recover.
   return await snapshotRegistry(source).recoverHistorical(
     snapshotHistoryIdentity(source),
     requestedCacheKey,
-    async () =>
+    async (signal) =>
       selectHistoricalDependencySnapshot(
-        await reader(),
+        await reader(signal),
         scope,
         requestedCacheKey,
-        current.configuredVersions,
+        configuredVersions,
         metadataHistoryNow(),
       ),
   );

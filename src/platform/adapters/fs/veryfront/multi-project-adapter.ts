@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type {
@@ -598,8 +599,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return `adapter:${generation}:${sourceIdentity}`;
   }
 
-  async readDependencyMetadataHistory(): Promise<DependencyMetadataHistory> {
-    const adapter = await this.#getAdapter();
+  async readDependencyMetadataHistory(signal?: AbortSignal): Promise<DependencyMetadataHistory> {
+    throwIfAborted(signal);
+    const adapter = await awaitAbortable(this.#getAdapter(), signal);
     if (!isConcreteVeryfrontFSAdapter(adapter)) {
       const reader = adapter.readDependencyMetadataHistory;
       if (typeof reader !== "function") {
@@ -607,14 +609,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
           "Selected Veryfront filesystem adapter cannot read dependency metadata history",
         );
       }
-      return await IntrinsicReflectApply(reader, adapter, []) as DependencyMetadataHistory;
+      return await IntrinsicReflectApply(reader, adapter, [signal]) as DependencyMetadataHistory;
     }
     const reader = captureEffectiveAdapterMethod(
       adapter,
       "readDependencyMetadataHistory",
       VeryfrontFSAdapterReadDependencyMetadataHistory,
     );
-    return await IntrinsicReflectApply(reader, adapter, []) as DependencyMetadataHistory;
+    return await IntrinsicReflectApply(reader, adapter, [signal]) as DependencyMetadataHistory;
   }
 
   dispose(): void {

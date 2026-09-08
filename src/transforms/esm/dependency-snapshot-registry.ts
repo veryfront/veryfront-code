@@ -169,7 +169,9 @@ export class DependencySnapshotRegistry {
   async recoverHistorical(
     identity: string,
     key: string,
-    load: () => Promise<{ snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined>,
+    load: (
+      signal: AbortSignal,
+    ) => Promise<{ snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined>,
   ): Promise<DependencyPinningSnapshot | undefined> {
     if (this.#store) return undefined;
     const generation = this.generation;

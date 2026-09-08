@@ -298,11 +298,15 @@ export class VeryfrontApiClient {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug());
   }
 
-  readDependencyMetadataHistory(branch: string | null): Promise<DependencyMetadataHistory> {
+  readDependencyMetadataHistory(
+    branch: string | null,
+    signal?: AbortSignal,
+  ): Promise<DependencyMetadataHistory> {
     return this.operations.readDependencyMetadataHistory(
       this.requireProjectSlug(),
       this.getProjectId(),
       branch,
+      signal,
     );
   }
 

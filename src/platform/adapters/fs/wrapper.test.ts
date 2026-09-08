@@ -121,14 +121,18 @@ describe("FSAdapterWrapper", () => {
         branch: null,
         entries: [] as const,
       };
+      const controller = new AbortController();
+      let observedSignal: AbortSignal | undefined;
       const fsAdapter = createMockFSAdapter({
-        readDependencyMetadataHistory() {
+        readDependencyMetadataHistory(signal?: AbortSignal) {
+          observedSignal = signal;
           return Promise.resolve(expected);
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
-      assertEquals(await wrapper.readDependencyMetadataHistory?.(), expected);
+      assertEquals(await wrapper.readDependencyMetadataHistory?.(controller.signal), expected);
+      assertEquals(observedSignal, controller.signal);
       const descriptor = Object.getOwnPropertyDescriptor(
         wrapper,
         "readDependencyMetadataHistory",
