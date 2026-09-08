@@ -11,7 +11,7 @@ import {
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 describe("native executor source coverage", () => {
-  it("accepts a V8 function anchor mapped inside the final TypeScript function body", async () => {
+  it("retains an original function anchor when generated coordinates repeat its name", async () => {
     await Deno.mkdir(`${root}/coverage`, { recursive: true });
     const directory = await makeTempDirWithOptions({
       dir: `${root}/coverage`,
@@ -38,8 +38,8 @@ describe("native executor source coverage", () => {
       [
         "TN:",
         `SF:${source}`,
-        "FN:2,bodyMappedTarget",
         "FN:4,bodyMappedTarget",
+        "FN:1,bodyMappedTarget",
         "FNDA:1,bodyMappedTarget",
         "DA:4,1",
         "end_of_record",

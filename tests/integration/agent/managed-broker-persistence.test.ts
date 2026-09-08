@@ -45,43 +45,53 @@ describe("managed broker persistence", () => {
   it("persists output, audit, parent events, checkpoints, and terminal completion", async () => {
     const calls: Record<string, unknown>[] = [];
     const fetch = successfulFetch(calls);
-    await withMockFetch(fetch, async () => {
-      const persistence = createManagedBrokerPersistence({
-        apiUrl: "https://api.example.test",
-        runEventToken: "run-event-token",
-        run,
-        modelId: "veryfront-cloud/openai/synthetic",
-        resolveProvider: () => "openai",
-        fetch,
-      });
-      await persistence.output.write({ type: "text-delta", id: "message", delta: "hello" });
-      await persistence.modelRunEventSink({
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
-        messages: [],
-        tools: [],
-      });
-      await persistence.publishParentRunEvents([{ type: "STEP_STARTED" }]);
-      await persistence.persistToolExposureCheckpoint({
-        version: 2,
-        loadedToolNames: ["search"],
-      });
-      await persistence.persistProviderReplayCheckpoint({
-        version: 1,
-        messageId,
-        provider: "anthropic",
-        providerBlocks: [{
-          type: "provider-block",
+    await withMockFetch(
+      () => Promise.reject(new Error("external fetch must not be used")),
+      async () => {
+        const persistence = createManagedBrokerPersistence({
+          apiUrl: "https://api.example.test",
+          runEventToken: "run-event-token",
+          run,
+          modelId: "veryfront-cloud/openai/synthetic",
+          resolveProvider: () => "openai",
+          fetch,
+        });
+        await persistence.output.write({ type: "text-delta", id: "message", delta: "hello" });
+        await persistence.modelRunEventSink({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          tools: [],
+        });
+        await persistence.publishParentRunEvents([{ type: "STEP_STARTED" }]);
+        await persistence.persistToolExposureCheckpoint({
+          version: 2,
+          loadedToolNames: ["search"],
+        });
+        await persistence.persistProviderReplayCheckpoint({
+          version: 1,
+          messageId,
           provider: "anthropic",
-          block: { type: "redacted_thinking", data: "synthetic" },
-        }],
-        providerBlockPositions: [0],
-        providerMessageBlockCounts: [1],
-        totalPartCount: 1,
-      });
-      await persistence.output.finish({ completed: true });
-      await assertRejects(() => persistence.publishParentRunEvents([{ type: "STEP_FINISHED" }]));
-      await persistence.cleanup();
-    });
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: { type: "redacted_thinking", data: "synthetic" },
+          }],
+          providerBlockPositions: [0],
+          providerMessageBlockCounts: [1],
+          totalPartCount: 1,
+        });
+        await persistence.output.finish({
+          completed: true,
+          metadata: {
+            modelId: "veryfront-cloud/openai/synthetic",
+            usage: { inputTokens: 12, outputTokens: 7, cachedInputTokens: 3 },
+            usageCaptureStatus: "complete",
+          },
+        });
+        await assertRejects(() => persistence.publishParentRunEvents([{ type: "STEP_FINISHED" }]));
+        await persistence.cleanup();
+      },
+    );
     const events = calls.flatMap((call) => Array.isArray(call.events) ? call.events : []);
     assertEquals(events.some((event) => event.type === "TEXT_MESSAGE_CONTENT"), true);
     assertEquals(events.some((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT"), true);
@@ -92,6 +102,14 @@ describe("managed broker persistence", () => {
       true,
     );
     assertEquals(calls.at(-1)?.status, "completed");
+    assertEquals(calls.at(-1)?.metadata, {
+      provider: "openai",
+      model: "veryfront-cloud/openai/synthetic",
+      inputTokens: 12,
+      outputTokens: 7,
+      usageCaptureStatus: "complete",
+      finishReason: "stop",
+    });
   });
 
   it("retains a queued cancellation finish until the original output write settles", async () => {

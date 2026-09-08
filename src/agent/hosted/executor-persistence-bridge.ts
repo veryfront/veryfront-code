@@ -40,6 +40,10 @@ export type ExecutorPersistenceFacades = Pick<
   "publishParentRunEvents" | "toolExposureCheckpoint" | "providerReplayCheckpoint"
 >;
 
+type ExecutorPersistencePayload =
+  | { events: ConversationRunEvent[] }
+  | { checkpoint: ToolExposureCheckpoint | ProviderReplayCheckpoint };
+
 function sameBinding(left: Readonly<ExecutorBinding>, right: Readonly<ExecutorBinding>): boolean {
   return left.allocationId === right.allocationId && left.generation === right.generation &&
     left.invocationId === right.invocationId;
@@ -212,7 +216,7 @@ export function createExecutorPersistenceFacades(options: {
   const request = async (
     operation: string,
     capabilityId: string,
-    payload: object,
+    payload: ExecutorPersistencePayload,
     schema: Schema<unknown>,
   ) => {
     options.signal?.throwIfAborted();

@@ -40,7 +40,13 @@ export async function startNodeManagedAgentBroker(options: {
   let shutdown: Promise<unknown> | undefined;
   const beginShutdown = () => {
     shuttingDown = true;
-    shutdown ??= options.broker.shutdown();
+    if (!shutdown) {
+      try {
+        shutdown = Promise.resolve(options.broker.shutdown());
+      } catch (error) {
+        shutdown = Promise.reject(error);
+      }
+    }
     void shutdown.catch(() => {});
     return shutdown;
   };
@@ -75,7 +81,9 @@ export async function startNodeManagedAgentBroker(options: {
           beginShutdown(),
           options.broker.closed,
           options.broker.settled,
-          ...[...new Set(handlers)].map((handler) => handler.close?.()),
+          ...[...new Set(handlers)].map((handler) =>
+            Promise.resolve().then(() => handler.close?.())
+          ),
         ]);
         const failed = results.find((result) => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;

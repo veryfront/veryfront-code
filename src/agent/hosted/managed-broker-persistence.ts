@@ -22,11 +22,16 @@ import {
   type ProviderReplayCheckpoint,
 } from "../runtime/provider-replay.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 
 /** Acknowledging output writes and terminal finalization for a canonical run. */
 export interface ManagedBrokerOutput {
   write(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
-  finish(input: { completed: boolean; error?: unknown }): Promise<void>;
+  finish(input: {
+    completed: boolean;
+    error?: unknown;
+    metadata?: HostedLifecycleTerminalState["metadata"];
+  }): Promise<void>;
 }
 
 /** Create exact-run API persistence callbacks while retaining credentials in the broker. */
@@ -62,6 +67,7 @@ export function createManagedBrokerPersistence(input: {
     run,
     fallbackModelId: input.modelId,
     resolveProvider: input.resolveProvider,
+    fetch: input.fetch,
   });
   const durableSink = createDurableRunEventSink({ mirror: durableMirror });
   let tail = Promise.resolve();
@@ -137,17 +143,24 @@ export function createManagedBrokerPersistence(input: {
         try {
           if (terminalFailure.failed) {
             await terminal.dispatch(
-              resolveConversationHostedStreamErrorState(terminalFailure.error),
+              {
+                ...resolveConversationHostedStreamErrorState(terminalFailure.error),
+                metadata: result.metadata,
+              },
             );
           } else if (result.completed) {
-            await terminal.dispatch({ status: "completed" });
+            await terminal.dispatch({ status: "completed", metadata: result.metadata });
           } else if (result.error !== undefined) {
-            await terminal.dispatch(resolveConversationHostedStreamErrorState(result.error));
+            await terminal.dispatch({
+              ...resolveConversationHostedStreamErrorState(result.error),
+              metadata: result.metadata,
+            });
           } else {
             await terminal.dispatch({
               status: "cancelled",
               terminalErrorCode: "ABORTED",
               terminalErrorMessage: "Managed executor output was cancelled",
+              metadata: result.metadata,
             });
           }
         } catch (terminalDispatchError) {

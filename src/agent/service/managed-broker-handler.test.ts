@@ -55,6 +55,7 @@ async function request(signal?: AbortSignal) {
 function runtimeFixture(
   streamFailure = false,
   terminalChunk?: "error" | "finish-error",
+  finishWithUsage?: true,
 ) {
   const release = Promise.withResolvers<void>();
   const settled = Promise.withResolvers<void>();
@@ -82,18 +83,37 @@ function runtimeFixture(
         streamCalls++;
         return {
           steps: Promise.resolve([]),
-          toUIMessageStream: async function* () {
-            await release.promise;
-            if (streamFailure) throw new Error("synthetic stream failure");
-            if (terminalChunk === "error") {
-              yield { type: "error", errorText: "ordinary stream error" } as const;
-              return;
-            }
-            if (terminalChunk === "finish-error") {
-              yield { type: "finish", finishReason: "error" } as const;
-              return;
-            }
-            yield { type: "start", messageId: "assistant-message" } as const;
+          toUIMessageStream(streamOptions = {}) {
+            return (async function* () {
+              await release.promise;
+              if (streamFailure) throw new Error("synthetic stream failure");
+              if (terminalChunk === "error") {
+                yield { type: "error", errorText: "ordinary stream error" } as const;
+                return;
+              }
+              if (terminalChunk === "finish-error") {
+                yield { type: "finish", finishReason: "error" } as const;
+                return;
+              }
+              if (finishWithUsage) {
+                const part = {
+                  type: "finish" as const,
+                  finishReason: "stop" as const,
+                  totalUsage: {
+                    inputTokens: 12,
+                    outputTokens: 7,
+                    usageCaptureStatus: "complete" as const,
+                  },
+                };
+                yield {
+                  type: "finish",
+                  finishReason: "stop",
+                  messageMetadata: streamOptions.messageMetadata?.({ part }),
+                } as const;
+                return;
+              }
+              yield { type: "start", messageId: "assistant-message" } as const;
+            })();
           },
         };
       },
@@ -121,19 +141,25 @@ async function handler(
     throwingObserver?: boolean;
     streamFailure?: boolean;
     terminalChunk?: "error" | "finish-error";
+    finishWithUsage?: true;
     missingOutput?: boolean;
     waitForOutput?: boolean;
     startError?: Error;
   } = {},
 ) {
   const first = await request(options.signal);
-  const fixture = runtimeFixture(options.streamFailure, options.terminalChunk);
+  const fixture = runtimeFixture(
+    options.streamFailure,
+    options.terminalChunk,
+    options.finishWithUsage,
+  );
   let prepareCalls = 0;
   let brokerStarts = 0;
   let cleanupCalls = 0;
   const outputChunks: string[] = [];
   const outputFinishes: boolean[] = [];
   const outputFinishErrors: unknown[] = [];
+  const outputFinishMetadata: unknown[] = [];
   const outputRelease = Promise.withResolvers<void>();
   let prepareSignal: AbortSignal | undefined;
   const prepareEntered = Promise.withResolvers<void>();
@@ -180,9 +206,10 @@ async function handler(
           async write(chunk: { type: string }) {
             outputChunks.push(chunk.type);
           },
-          async finish(outcome: { completed: boolean; error?: unknown }) {
+          async finish(outcome: { completed: boolean; error?: unknown; metadata?: unknown }) {
             outputFinishes.push(outcome.completed);
             outputFinishErrors.push(outcome.error);
+            outputFinishMetadata.push(outcome.metadata);
             if (options.waitForOutput) await outputRelease.promise;
           },
         },
@@ -209,6 +236,7 @@ async function handler(
     outputChunks,
     outputFinishes,
     outputFinishErrors,
+    outputFinishMetadata,
     releaseOutput: outputRelease.resolve,
     abortExecution: () => executionController.abort(),
     get prepareCalls() {
@@ -267,6 +295,17 @@ describe("managed broker handler", () => {
       await f.managed.close();
     }
     assertEquals(f.cleanupCalls, 1);
+  });
+  it("preserves detached finish usage metadata for durable finalization", async () => {
+    const f = await handler("detached", { finishWithUsage: true });
+    assertEquals((await f.managed.handle(f.first.request)).status, 202);
+    f.fixture.release();
+    await f.managed.close();
+    assertEquals(f.outputFinishMetadata, [{
+      modelId: "veryfront-cloud/openai/synthetic",
+      usage: { inputTokens: 12, outputTokens: 7 },
+      usageCaptureStatus: "complete",
+    }]);
   });
   it("transfers detached ownership before 202 and prevents duplicate allocation", async () => {
     const f = await handler("detached");

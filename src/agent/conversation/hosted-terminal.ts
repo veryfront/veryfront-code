@@ -136,6 +136,8 @@ export interface CreateConversationHostedTerminalAdapterOptions {
   fallbackModelId: string;
   resolveProvider: (modelId: string) => string;
   onTerminalState?: (terminalState: HostedLifecycleTerminalState) => Promise<void> | void;
+  /** Explicit trusted-host transport for durable terminal persistence. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Public API contract for conversation hosted terminal adapter. */
@@ -245,6 +247,7 @@ export function createConversationHostedTerminalAdapter(
         ),
         terminalErrorCode: terminalState.terminalErrorCode,
         terminalErrorMessage: terminalState.terminalErrorMessage,
+        fetch: options.fetch,
       });
     } catch (error) {
       // Allow a later dispatch to retry; keeping the flag set on failure would

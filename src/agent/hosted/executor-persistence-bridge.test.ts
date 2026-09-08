@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildInvokeAgentChildRunLifecycleCustomEvent } from "#veryfront/agent/child-run/invoke-agent-child-runs.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import {
   createExecutorPersistenceBroker,
@@ -9,6 +10,7 @@ import {
 import {
   executorPersistenceJson,
   executorPersistenceOperations,
+  getExecutorParentRunEventsRequestSchema,
   getExecutorPersistenceCapabilityIdsSchema,
 } from "./executor-persistence-schema.ts";
 
@@ -23,6 +25,35 @@ const capabilityIds = {
   providerReplayCheckpoint: "provider-checkpoint-capability",
 };
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+function parentProgressEvent(
+  status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled" =
+    "running",
+) {
+  return buildInvokeAgentChildRunLifecycleCustomEvent({
+    toolCallId: "tool-call-test",
+    childConversationId: "10000000-1000-4000-8000-100000000001",
+    childRunId: "child-run-test",
+    childMessageId: "10000000-1000-4000-8000-100000000002",
+    childAgentId: "child-agent-test",
+    status,
+  });
+}
+const privateCheckpointEvents = [
+  executorPersistenceJson({
+    type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    version: 2,
+    loadedToolNames: ["search"],
+  }),
+  executorPersistenceJson({
+    type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+    version: 1,
+    messageId: "message-test",
+    provider: "anthropic",
+    providerBlocks: [],
+    providerBlockPositions: [],
+    totalPartCount: 1,
+  }),
+];
 
 function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentCalls?: number) {
   const forward = new TransformStream<Uint8Array, Uint8Array>();
@@ -49,6 +80,49 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor persistence bridge", () => {
+  it("allows exact child progress events and rejects checkpoint event types", () => {
+    const request = {
+      capabilityId: capabilityIds.publishParentRunEvents,
+      sequence: 1,
+      events: [parentProgressEvent()],
+    };
+    assertEquals(getExecutorParentRunEventsRequestSchema().safeParse(request).success, true);
+    for (const event of privateCheckpointEvents) {
+      assertEquals(
+        getExecutorParentRunEventsRequestSchema().safeParse({ ...request, events: [event] })
+          .success,
+        false,
+      );
+    }
+  });
+
+  it("rejects checkpoint event types before parent persistence dispatch", async () => {
+    let dispatches = 0;
+    const operations = createExecutorPersistenceBroker({
+      expectedBinding: binding,
+      capabilityIds: { publishParentRunEvents: capabilityIds.publishParentRunEvents },
+      publishParentRunEvents: async () => {
+        dispatches++;
+      },
+    });
+    const operation = operations.get(executorPersistenceOperations.publishParentRunEvents);
+    if (operation?.mode !== "unary") throw new Error("missing synthetic operation");
+    for (const event of privateCheckpointEvents) {
+      await assertRejects(() =>
+        Promise.resolve(operation.handle({
+          capabilityId: capabilityIds.publishParentRunEvents,
+          sequence: 1,
+          events: [event],
+        }, {
+          binding,
+          signal: new AbortController().signal,
+          deadline: Date.now() + 1_000,
+        }))
+      );
+    }
+    assertEquals(dispatches, 0);
+  });
+
   it("keeps later writes usable after an unsent request hits channel admission", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -58,7 +132,7 @@ describe("executor persistence bridge", () => {
         expectedBinding: binding,
         capabilityIds: { publishParentRunEvents: "events" },
         publishParentRunEvents: async (events) => {
-          written.push(events[0]!.type);
+          written.push(JSON.stringify(events[0]));
           if (written.length === 1) {
             entered.resolve();
             await release.promise;
@@ -72,13 +146,15 @@ describe("executor persistence bridge", () => {
       capabilityIds: { publishParentRunEvents: "events" },
     });
     try {
-      const first = facade.publishParentRunEvents!([{ type: "FIRST" }]);
+      const firstEvent = parentProgressEvent("pending");
+      const thirdEvent = parentProgressEvent("completed");
+      const first = facade.publishParentRunEvents!([firstEvent]);
       await entered.promise;
-      await assertRejects(() => facade.publishParentRunEvents!([{ type: "UNSENT" }]));
+      await assertRejects(() => facade.publishParentRunEvents!([parentProgressEvent("running")]));
       release.resolve();
       await first;
-      await facade.publishParentRunEvents!([{ type: "THIRD" }]);
-      assertEquals(written, ["FIRST", "THIRD"]);
+      await facade.publishParentRunEvents!([thirdEvent]);
+      assertEquals(written, [JSON.stringify(firstEvent), JSON.stringify(thirdEvent)]);
     } finally {
       release.resolve();
       await channels.close();
@@ -140,7 +216,7 @@ describe("executor persistence bridge", () => {
         capabilityIds,
       });
       await Promise.all([
-        facades.publishParentRunEvents?.([{ type: "STEP_STARTED" }]),
+        facades.publishParentRunEvents?.([parentProgressEvent()]),
         facades.toolExposureCheckpoint?.persist({ version: 2, loadedToolNames: ["search"] }),
         facades.providerReplayCheckpoint?.persist({
           version: 1,
@@ -156,7 +232,7 @@ describe("executor persistence bridge", () => {
           totalPartCount: 1,
         }),
       ]);
-      assertEquals(persisted, ["events:STEP_STARTED", "tools:search", "provider:message-1"]);
+      assertEquals(persisted, ["events:CUSTOM", "tools:search", "provider:message-1"]);
     } finally {
       await channels.close();
     }
@@ -195,7 +271,7 @@ describe("executor persistence bridge", () => {
       Promise.resolve(operation.handle({
         capabilityId: "wrong-capability",
         sequence: 1,
-        events: [{ type: "UNAUTHORIZED" }],
+        events: [parentProgressEvent("pending")],
       }, {
         binding,
         signal: new AbortController().signal,
@@ -216,8 +292,8 @@ describe("executor persistence bridge", () => {
           [cyclic] as unknown as Parameters<NonNullable<typeof facades.publishParentRunEvents>>[0],
         )
       );
-      await facades.publishParentRunEvents!([{ type: "AUTHORIZED" }]);
-      assertEquals(persisted, ["AUTHORIZED"]);
+      await facades.publishParentRunEvents!([parentProgressEvent()]);
+      assertEquals(persisted, ["CUSTOM"]);
     } finally {
       await channels.close();
     }
@@ -239,7 +315,7 @@ describe("executor persistence bridge", () => {
       capabilityIds: { publishParentRunEvents: capabilityIds.publishParentRunEvents },
     });
     let acknowledged = false;
-    const request = facades.publishParentRunEvents!([{ type: "STEP_FINISHED" }]).then(() => {
+    const request = facades.publishParentRunEvents!([parentProgressEvent("completed")]).then(() => {
       acknowledged = true;
     });
     await entered.promise;
@@ -281,7 +357,7 @@ describe("executor persistence bridge", () => {
       capabilityIds: { publishParentRunEvents: capabilityIds.publishParentRunEvents },
       publishParentRunEvents: async (events) => {
         persisted.push(String(events[0]?.type));
-        if (events[0]?.type === "FIRST") throw new Error("synthetic persistence failure");
+        if (persisted.length === 1) throw new Error("synthetic persistence failure");
       },
     });
     const operation = operations.get(executorPersistenceOperations.publishParentRunEvents);
@@ -295,25 +371,25 @@ describe("executor persistence bridge", () => {
       Promise.resolve(operation.handle({
         capabilityId: capabilityIds.publishParentRunEvents,
         sequence: 1,
-        events: [{ type: "FIRST" }],
+        events: [parentProgressEvent("pending")],
       }, context))
     );
     await assertRejects(() =>
       Promise.resolve(operation.handle({
         capabilityId: capabilityIds.publishParentRunEvents,
         sequence: 1,
-        events: [{ type: "RETRY" }],
+        events: [parentProgressEvent("running")],
       }, context))
     );
     assertEquals(
       await operation.handle({
         capabilityId: capabilityIds.publishParentRunEvents,
         sequence: 2,
-        events: [{ type: "NEXT" }],
+        events: [parentProgressEvent("completed")],
       }, context),
       { acknowledged: true, sequence: 2 },
     );
-    assertEquals(persisted, ["FIRST", "NEXT"]);
+    assertEquals(persisted, ["CUSTOM", "CUSTOM"]);
   });
 
   it("rejects malformed replay state and mismatched bindings without reserving sequence", async () => {

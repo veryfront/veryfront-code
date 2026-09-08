@@ -248,14 +248,16 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
     throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
   }
 
-  const executorValue = snapshotExecutorValue({
-    owner,
-    run: invocation.run,
-    ...(invocation.taskId ? { taskId: invocation.taskId } : {}),
-    agentSource: invocation.agentSource,
-    ...(invocation.agentConfig ? { agentConfig: invocation.agentConfig } : {}),
-    input: toRuntimeRunAgentInput(parsedInbound.data),
-  });
+  const executorValue = snapshotExecutorValue(
+    {
+      owner,
+      run: invocation.run,
+      ...(invocation.taskId ? { taskId: invocation.taskId } : {}),
+      agentSource: invocation.agentSource,
+      ...(invocation.agentConfig ? { agentConfig: invocation.agentConfig } : {}),
+      input: toRuntimeRunAgentInput(parsedInbound.data),
+    } satisfies BrokerRuntimeAgentExecutorInput,
+  );
   for (
     const token of [
       inboundAuthorization,
@@ -281,14 +283,15 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       authorization,
       rawBody,
     }),
-    executor: executorValue as unknown as BrokerRuntimeAgentExecutorInput,
+    executor: executorValue,
   };
 }
 
-function snapshotExecutorValue(value: unknown) {
+function snapshotExecutorValue<T>(value: T): T {
   const snapshot = snapshotBoundedJsonValue(value);
   if (!snapshot.success) throw new BrokerIngressError(400, "BROKER_INGRESS_INVALID_BODY");
-  return snapshot.value;
+  // The bounded copy preserves the assembled, schema-validated DTO structure.
+  return snapshot.value as T;
 }
 
 function containsForwardedAuthority(value: unknown): boolean {

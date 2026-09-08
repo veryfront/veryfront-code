@@ -6,6 +6,8 @@ import { ExecutorDiscoveryError } from "../hosted/executor-discovery-schema.ts";
 import { HostedServiceAuthError } from "./auth.ts";
 import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
+import { buildChatStreamChunkMessageMetadata } from "../../chat/chat-ui-message-helpers.ts";
+import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 import type {
   ManagedExecutorRuntime,
   ManagedExecutorStartInput,
@@ -335,9 +337,30 @@ async function runDetached(
     await runtime.runOwned(async () => {
       let streamCompleted = false;
       let failure: unknown;
+      let terminalMetadata: HostedLifecycleTerminalState["metadata"];
       try {
         const result = await runtime.agent.stream({ messages, abortSignal: signal });
-        for await (const chunk of result.toUIMessageStream()) {
+        for await (
+          const chunk of result.toUIMessageStream({
+            messageMetadata({ part }) {
+              const metadata = buildChatStreamChunkMessageMetadata({
+                agentId: runtime.definition.id,
+                agentName: runtime.definition.name,
+                agentAvatarUrl: runtime.definition.avatarUrl,
+                modelId: runtime.modelId,
+                part: { type: part.type, totalUsage: part.totalUsage },
+              });
+              terminalMetadata = {
+                modelId: metadata.modelId,
+                ...(metadata.usage ? { usage: metadata.usage } : {}),
+                ...(metadata.usageCaptureStatus
+                  ? { usageCaptureStatus: metadata.usageCaptureStatus }
+                  : {}),
+              };
+              return metadata;
+            },
+          })
+        ) {
           await output.write(chunk);
           if (chunk.type === "error" && failure === undefined) {
             failure = new Error(chunk.errorText || "Agent stream failed");
@@ -357,6 +380,7 @@ async function runDetached(
         await output.finish({
           completed: streamCompleted,
           ...(failure === undefined || signal.aborted ? {} : { error: failure }),
+          ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
         });
       }
     });

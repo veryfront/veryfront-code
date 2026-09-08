@@ -1,8 +1,11 @@
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { getConversationRunEventSchema } from "#veryfront/agent/conversation/run-events.ts";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
+import {
+  getInvokeAgentChildRunLifecycleCustomEventSchema,
+  getInvokeAgentChildRunStateDeltaSchema,
+} from "#veryfront/agent/child-run/invoke-agent-child-runs.ts";
 import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
 
@@ -30,6 +33,12 @@ const getCapabilityRequestSchema = defineSchema((v) =>
     sequence: getSequenceSchema(),
   }).strict()
 );
+const getExecutorParentRunEventSchema = defineSchema((v) =>
+  v.union([
+    getInvokeAgentChildRunStateDeltaSchema(),
+    getInvokeAgentChildRunLifecycleCustomEventSchema(),
+  ])
+);
 
 /** Identifiers installed by the broker; authority and run ownership are never wire fields. */
 export const getExecutorPersistenceCapabilityIdsSchema = defineSchema((v) =>
@@ -49,7 +58,7 @@ export type ExecutorPersistenceCapabilityIds = InferSchema<
 export const getExecutorParentRunEventsRequestSchema = defineSchema((v) =>
   getCapabilityRequestSchema().extend({
     events: v.array(
-      getConversationRunEventSchema().refine((event) =>
+      getExecutorParentRunEventSchema().refine((event) =>
         encoder.encode(JSON.stringify(event)).byteLength <=
           MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
       ),

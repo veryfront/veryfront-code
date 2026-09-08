@@ -109,6 +109,71 @@ describe("managed node broker", () => {
     assertEquals(events, ["broker-shutdown", "handler-close"]);
   });
 
+  for (const shutdownThrows of [false, true]) {
+    it(`joins retirement after synchronous close failure (shutdown throws: ${shutdownThrows})`, async () => {
+      const failure = new Error("synthetic close failure");
+      const retirement = Promise.withResolvers<void>();
+      const firstClosed = Promise.withResolvers<void>();
+      let secondClosed = false;
+      const first = {
+        handle: () => new Response("handled"),
+        close: () => {
+          firstClosed.resolve();
+          throw failure;
+        },
+      };
+      const second = {
+        handle: () => new Response("handled"),
+        close: () => {
+          secondClosed = true;
+          return retirement.promise;
+        },
+      };
+      const server = await startNodeManagedAgentBroker({
+        port: 0,
+        bindAddress: "127.0.0.1",
+        signals: [],
+        readiness: () => true,
+        broker: {
+          shutdown: () => {
+            if (shutdownThrows) throw failure;
+            return Promise.resolve();
+          },
+          closed: Promise.resolve(),
+          settled: retirement.promise,
+        },
+        handlers: {
+          signedStream: first,
+          durableStart: second,
+          agUi: second,
+          cancel: second,
+          resume: second,
+        },
+      });
+      let stopped = false;
+      const stopping = server.stop().then(
+        () => {
+          stopped = true;
+          return undefined;
+        },
+        (error: unknown) => {
+          stopped = true;
+          return error;
+        },
+      );
+      try {
+        await Promise.race([firstClosed.promise, stopping]);
+        assertEquals(secondClosed, true);
+        assertEquals(stopped, false);
+        retirement.resolve();
+        assertEquals(await stopping, failure);
+      } finally {
+        retirement.resolve();
+        await stopping;
+      }
+    });
+  }
+
   it("rejects incomplete route configuration before binding", async () => {
     await assertRejects(() =>
       startNodeManagedAgentBroker({

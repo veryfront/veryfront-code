@@ -452,4 +452,6 @@ export interface FinalizeConversationAgentRunInput {
   finishReason?: string;
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
+  /** Explicit trusted-host transport for broker-owned finalization. */
+  fetch?: typeof globalThis.fetch;
 }
