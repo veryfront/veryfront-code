@@ -432,6 +432,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           : {}),
       };
       const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+        signal: context.signal,
         taskContext,
         instructions: options.instructions,
         localTools,

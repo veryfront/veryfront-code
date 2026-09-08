@@ -455,6 +455,56 @@ describe("executor runtime preparation", () => {
     assertEquals(f.discoveryCleanups, 1);
   });
 
+  for (const cancellation of ["operation", "owner", "discovery"] as const) {
+    it(`cancels remote facade listing after ${cancellation} cancellation`, async () => {
+      const entered = Promise.withResolvers<void>();
+      const listing = Promise.withResolvers<[]>();
+      const operationAbort = new AbortController();
+      let listingSignal: AbortSignal | undefined;
+      const f = fixture({
+        grant: { ...grant, remoteToolSourceIds: ["api"] },
+        facades: {
+          remoteToolSources: new Map([["api", {
+            id: "api",
+            listTools: (context) => {
+              listingSignal = context?.abortSignal;
+              listingSignal?.addEventListener("abort", () => {
+                listing.reject(new Error("Synthetic listing cancellation"));
+              }, { once: true });
+              entered.resolve();
+              return listing.promise;
+            },
+            executeTool: () => Promise.reject(new Error("Unused")),
+          }]]),
+        },
+      });
+      const operation = f.owner.operations.get("runtime.prepare");
+      assert(operation?.mode === "unary");
+      const pending = operation.handle({ agentId: "coder" }, {
+        binding,
+        signal: operationAbort.signal,
+        deadline: Date.now() + 30_000,
+      });
+      try {
+        await entered.promise;
+        assert(listingSignal, "Remote listing must receive the preparation signal");
+        assertEquals(listingSignal.aborted, false);
+        if (cancellation === "operation") operationAbort.abort();
+        else if (cancellation === "discovery") f.controller.abort();
+        else void f.owner.close();
+        assertEquals(listingSignal.aborted, true);
+        assertEquals(await pending, { ok: false, code: "ABORTED" });
+        await f.owner.settled;
+        assertEquals(f.cleanups, 1);
+        assertEquals(f.discoveryCleanups, 1);
+      } finally {
+        listing.resolve([]);
+        await pending;
+        await f.owner.close();
+      }
+    });
+  }
+
   it("joins late preparation and cleanup after cancellation", async () => {
     const listing = Promise.withResolvers<[]>();
     const entered = Promise.withResolvers<void>();

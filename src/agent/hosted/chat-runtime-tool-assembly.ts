@@ -165,6 +165,7 @@ export type PrepareFacadedHostedChatRuntimeToolAssemblyInput<
   & {
     taskContext: Omit<HostedChatRuntimeToolAssemblyContext, "authToken">;
     remoteToolSources: readonly RemoteToolSource[];
+    signal?: AbortSignal;
     loadLatestConversationUserText?: () => Promise<string | null>;
   };
 
@@ -503,6 +504,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
+    ...("remoteToolSources" in input ? { context: { abortSignal: input.signal } } : {}),
   });
   const remoteToolNames = applySourceIntegrationPolicy(
     listedRemoteToolNames,
