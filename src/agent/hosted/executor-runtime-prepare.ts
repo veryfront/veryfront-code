@@ -1,4 +1,8 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  chainPrivatePromise as chain,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { VERYFRONT_CLOUD_MODEL_PREFIX } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
@@ -230,17 +234,17 @@ export function createExecutorRuntimePreparation(input: Options) {
   let producerCompletion: Promise<void> | undefined;
   let streamSignal = lifetime.signal;
   const settled = Promise.withResolvers<void>();
-  void settled.promise.catch(() => {});
+  void chain(settled.promise, () => {}, () => {});
   const assertActive = () => {
     if (lifetime.signal.aborted || input.discovery.signal.aborted) {
       refuse("EXECUTOR_RUNTIME_CLOSED");
     }
   };
   const release = () => {
-    cleanup ??= Promise.resolve().then(async () => {
+    cleanup ??= chain(resolvePrivatePromise(), async () => {
       // Startup can still reserve producer work. Join both before releasing
       // facades, without joining the stream handler that calls this cleanup.
-      await startup?.catch(() => {});
+      if (startup) await chain(startup, () => {}, () => {});
       await producerCompletion;
       if (resourcesStarted) await facades.cleanup();
     });
@@ -248,8 +252,8 @@ export function createExecutorRuntimePreparation(input: Options) {
   };
   function close(): Promise<void> {
     if (closing) return closing;
-    closing = Promise.resolve().then(async () => {
-      await preparation?.catch(() => {});
+    closing = chain(resolvePrivatePromise(), async () => {
+      if (preparation) await chain(preparation, () => {}, () => {});
       let failed = false;
       try {
         await release();
@@ -264,13 +268,13 @@ export function createExecutorRuntimePreparation(input: Options) {
       preparedOperations = undefined;
       if (failed) refuse("EXECUTOR_RUNTIME_CLEANUP_FAILED");
     });
-    void closing.then(settled.resolve, settled.reject);
+    void chain(closing, settled.resolve, settled.reject);
     lifetime.abort();
     input.discovery.signal.removeEventListener("abort", onDiscoveryAbort);
     return closing;
   }
   const onDiscoveryAbort = () => {
-    void close().catch(() => {});
+    void chain(close(), () => {}, () => {});
   };
   input.discovery.signal.addEventListener("abort", onDiscoveryAbort, { once: true });
   if (input.discovery.signal.aborted) onDiscoveryAbort();
@@ -629,7 +633,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         preparedRuntimeHandle,
         startStream: (streamInput) => {
           streamSignal = streamInput.abortSignal;
-          startup = Promise.resolve().then(() => {
+          startup = chain(resolvePrivatePromise(), () => {
             assertActive();
             return createHostedChatRuntimeDataStream({
               runtimeAgent,
@@ -683,7 +687,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         );
         executorAgentJson(request, "EXECUTOR_AGENT_INPUT_TOO_LARGE");
         const cancel = () => {
-          void close().catch(() => {});
+          void chain(close(), () => {}, () => {});
         };
         context.signal.addEventListener("abort", cancel, { once: true });
         preparation = prepare(request, {

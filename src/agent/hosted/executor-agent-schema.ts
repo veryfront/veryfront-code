@@ -5,6 +5,8 @@ import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
 
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
 // Reserve the complete worst-case protocol envelope: two 128-character binding
 // strings can each require six JSON bytes per character, plus numeric identities,
 // request metadata, and the four-byte frame prefix. This is a current wire limit,
@@ -84,7 +86,7 @@ export class ExecutorAgentError extends VeryfrontError {
 export function executorAgentFailureCode(error: unknown, fallback: FailureCode): FailureCode {
   if (error instanceof ExecutorAgentError) return error.code;
   if (error !== null && typeof error === "object") {
-    const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+    const descriptor = objectGetOwnPropertyDescriptor(error, "code");
     const explicit = getExecutorAgentFailureCodeSchema().safeParse(descriptor?.value);
     if (explicit.success) return explicit.data;
   }

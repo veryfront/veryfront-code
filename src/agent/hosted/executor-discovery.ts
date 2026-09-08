@@ -1,5 +1,6 @@
 import { isAbsolute, join, relative, sep } from "node:path";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { chainPrivatePromise as chain } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type {
   ProjectAgentRuntimeAgentSource,
@@ -25,17 +26,6 @@ import {
   getExecutorDiscoverySourceSchema,
   parseDiscoveryData,
 } from "./executor-discovery-schema.ts";
-
-const apply = Reflect.apply;
-const promiseThen = Promise.prototype.then;
-
-function chain<T, U>(
-  promise: Promise<T>,
-  fulfilled: (value: T) => U | PromiseLike<U>,
-  rejected?: (reason: unknown) => U | PromiseLike<U>,
-): Promise<U> {
-  return apply(promiseThen, promise, [fulfilled, rejected]) as Promise<U>;
-}
 
 export interface ExecutorDiscoveryBackend {
   load(signal: AbortSignal): Promise<ProjectAgentRuntimeDiscovery>;
