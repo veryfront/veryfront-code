@@ -47,6 +47,18 @@ import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
+// Capture collection operations before project discovery can modify shared built-ins.
+const objectEntries = Object.entries;
+const objectFromEntries = Object.fromEntries;
+const objectKeys = Object.keys;
+const objectHasOwn = Object.hasOwn;
+const apply = Reflect.apply;
+const arrayFilter = Array.prototype.filter;
+
+function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
+  return apply(arrayFilter, values, [predicate]) as T[];
+}
+
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
@@ -217,11 +229,10 @@ function withoutDeniedHostTools(
     return tools;
   }
   const denied = new Set(deniedToolNames);
-  return Object.fromEntries(
-    Object.entries(tools).filter(([toolName, tool]) =>
+  return objectFromEntries(
+    filter(objectEntries(tools), ([toolName, tool]) =>
       !denied.has(toolName) &&
-      (tool.shortName === undefined || !denied.has(tool.shortName))
-    ),
+      (tool.shortName === undefined || !denied.has(tool.shortName))),
   );
 }
 
@@ -258,11 +269,10 @@ function applyHostedHostToolPolicy(
     return tools;
   }
   const allowed = new Set(policy.allow);
-  return Object.fromEntries(
-    Object.entries(tools).filter(([registeredName, tool]) =>
+  return objectFromEntries(
+    filter(objectEntries(tools), ([registeredName, tool]) =>
       allowed.has(registeredName) ||
-      (tool.shortName !== undefined && allowed.has(tool.shortName))
-    ),
+      (tool.shortName !== undefined && allowed.has(tool.shortName))),
   );
 }
 
@@ -293,8 +303,8 @@ function filterPostFormInputLocalTools(
   }
 
   const blockedToolNames = new Set(["form_input", "load_skill"]);
-  return Object.fromEntries(
-    Object.entries(tools).filter(([toolName]) => !blockedToolNames.has(toolName)),
+  return objectFromEntries(
+    filter(objectEntries(tools), ([toolName]) => !blockedToolNames.has(toolName)),
   );
 }
 
@@ -307,7 +317,7 @@ function resolveOwnerScopedToolName(input: {
     return input.toolName;
   }
 
-  for (const [registeredName, tool] of Object.entries(input.localTools)) {
+  for (const [registeredName, tool] of objectEntries(input.localTools)) {
     if (
       tool.ownerAgentId === input.agentId &&
       tool.shortName === input.toolName
@@ -351,11 +361,12 @@ export function filterHostedChatRuntimeLocalTools(input: {
   sourceProviderToolNames?: readonly string[];
 }): HostToolSet {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  const entries = Object.entries(input.tools).filter(([toolName]) =>
-    allowedToolNames ? allowedToolNames.has(toolName) : true
+  const entries = filter(
+    objectEntries(input.tools),
+    ([toolName]) => allowedToolNames ? allowedToolNames.has(toolName) : true,
   );
 
-  return Object.fromEntries(entries.sort(([left], [right]) => compareStrings(left, right)));
+  return objectFromEntries(entries.sort(([left], [right]) => compareStrings(left, right)));
 }
 
 function shouldIncludeHostedWebFetchFallback(input: {
@@ -365,7 +376,7 @@ function shouldIncludeHostedWebFetchFallback(input: {
   allowedProviderToolNames: ReadonlySet<string> | null;
   providerNativeToolNames: readonly string[];
 }): boolean {
-  if (!Object.hasOwn(input.localTools, "web_fetch")) {
+  if (!objectHasOwn(input.localTools, "web_fetch")) {
     return false;
   }
   if (input.providerNativeToolNames.includes("web_fetch")) {
@@ -402,7 +413,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   );
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: normalizedAllowedToolNames,
-    localToolNames: Object.keys(authorizedLocalTools),
+    localToolNames: objectKeys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
     configDerivedSelector: configDerivedSelector ||
       (input.includeRuntimeEssentialToolsWhenEmpty === true &&
@@ -422,11 +433,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     input.allowedProviderToolNames,
   );
   const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
-  const sortedLocalToolEntries = Object.entries(selectedLocalTools).filter(([toolName]) =>
-    isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy)
+  const sortedLocalToolEntries = filter(
+    objectEntries(selectedLocalTools),
+    ([toolName]) => isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy),
   );
   if (
-    !Object.hasOwn(selectedLocalTools, "web_fetch") &&
+    !objectHasOwn(selectedLocalTools, "web_fetch") &&
     shouldIncludeHostedWebFetchFallback({
       localTools: postFormInputLocalTools,
       sourceProviderToolNames,
@@ -440,7 +452,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       sortedLocalToolEntries.push(["web_fetch", hostedWebFetchTool]);
     }
   }
-  const sortedLocalTools = Object.fromEntries(
+  const sortedLocalTools = objectFromEntries(
     sortedLocalToolEntries.sort(([left], [right]) => compareStrings(left, right)),
   );
   const localHostTools = input.traceLocalTools
@@ -511,7 +523,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     input.sourceIntegrationPolicy,
   );
   const localProviderToolNames = new Set(
-    Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
+    objectKeys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
   );
   // Explicit denials also bind provider-native tools: a denied name must not
   // reach the model through the provider channel after the host and remote
@@ -534,7 +546,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   // Materialize before validation and provider capping so skipped descriptors
   // cannot advertise capabilities that the runtime cannot execute.
   const localRuntimeTools = createToolsFromHostDefinitions(localHostTools);
-  const localToolNames = Object.keys(localRuntimeTools);
+  const localToolNames = objectKeys(localRuntimeTools);
   const toolSearchDenied = deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME);
   const toolLoadingMode: RuntimeToolLoadingMode = normalizedAllowedToolNames === null &&
       !toolSearchDenied
@@ -555,10 +567,10 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const compatibleToolNames = new Set(availableToolNames);
   const compatibleLocalRuntimeTools = toolLoadingMode === "deferred"
     ? localRuntimeTools
-    : Object.fromEntries(
-      Object.entries(localRuntimeTools).filter(([toolName]) => compatibleToolNames.has(toolName)),
+    : objectFromEntries(
+      filter(objectEntries(localRuntimeTools), ([toolName]) => compatibleToolNames.has(toolName)),
     );
-  const compatibleLocalToolNames = Object.keys(compatibleLocalRuntimeTools);
+  const compatibleLocalToolNames = objectKeys(compatibleLocalRuntimeTools);
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
     ? remoteToolNames
     : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));

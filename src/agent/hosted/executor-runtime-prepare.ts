@@ -72,6 +72,15 @@ const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
+const arrayFilter = Array.prototype.filter;
+const arrayIncludes = Array.prototype.includes;
+
+function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
+  return apply(arrayFilter, values, [predicate]) as T[];
+}
+function includes<T>(values: readonly T[], value: T): boolean {
+  return apply(arrayIncludes, values, [value]) as boolean;
+}
 
 function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
   return apply(mapGet, map, [key]) as V | undefined;
@@ -156,9 +165,11 @@ function intersectNames(
   requested: readonly string[] | undefined,
   denied: readonly string[] = [],
 ) {
-  return granted.filter((name) =>
-    (source === undefined || source === true || source.includes(name)) &&
-    (requested === undefined || requested.includes(name)) && !denied.includes(name)
+  return filter(
+    granted,
+    (name) =>
+      (source === undefined || source === true || includes(source, name)) &&
+      (requested === undefined || includes(requested, name)) && !includes(denied, name),
   );
 }
 
@@ -246,18 +257,18 @@ export function createExecutorRuntimePreparation(input: Options) {
       }
     }
     for (const server of definition.mcpServers ?? []) {
-      if (!effective.remoteToolSourceIds.includes(server.id ?? server.kind)) {
+      if (!includes(effective.remoteToolSourceIds, server.id ?? server.kind)) {
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       }
     }
     if (
       (effective.execution.projectId !== null ||
-        effective.requiredCapabilities?.includes("project-steering")) &&
+        includes(effective.requiredCapabilities ?? [], "project-steering")) &&
       (typeof facades.projectSteering?.prepare !== "function" ||
         typeof facades.projectSteering?.refresh !== "function")
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     if (
-      effective.requiredCapabilities?.includes("conversation-user-text") &&
+      includes(effective.requiredCapabilities ?? [], "conversation-user-text") &&
       typeof facades.latestConversationUserText !== "function"
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     if (effective.execution.kind === "canonical") {
@@ -306,8 +317,10 @@ export function createExecutorRuntimePreparation(input: Options) {
       // can await discovery.close(). No remaining preparation work awaits it.
       input.discovery.retainRuntimeTask(preparation!);
       let localTools: HostToolSet = Object.fromEntries(
-        [...runtime.tools].filter(([id, value]) =>
-          !isSkillInfrastructureToolId(id) && isToolVisibleTo(value, { agentId: definition.id })
+        filter(
+          [...runtime.tools],
+          ([id, value]) =>
+            !isSkillInfrastructureToolId(id) && isToolVisibleTo(value, { agentId: definition.id }),
         ),
       );
       for (const id of grant.hostToolFacadeIds) {
@@ -343,7 +356,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           : normalizeToolNames(request.allowedToolNames),
         deniedToolNames,
       );
-      if (allowedToolNames.includes("studio_open_project")) {
+      if (includes(allowedToolNames, "studio_open_project")) {
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       }
       const providerToolNames = intersectNames(
@@ -386,8 +399,9 @@ export function createExecutorRuntimePreparation(input: Options) {
       if (sourceToolNames !== undefined) {
         const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
           allowedToolNames: normalizeToolNames(sourceToolNames),
-          localToolNames: normalizeToolNames(grant.allowedToolNames).filter((name) =>
-            hasOwn(localTools, name)
+          localToolNames: filter(
+            normalizeToolNames(grant.allowedToolNames),
+            (name) => hasOwn(localTools, name),
           ),
           availableSkillIds: skills.allowedSkillIds,
           configDerivedSelector: request.allowedToolNames === undefined &&
@@ -423,7 +437,7 @@ export function createExecutorRuntimePreparation(input: Options) {
               projectId: execution.projectId,
               branchId: execution.branchId,
               instructions: steering.initialProjectInstructions ?? "",
-              skills: allowedToolNames.includes("load_skill") ? skills.definitions : [],
+              skills: includes(allowedToolNames, "load_skill") ? skills.definitions : [],
               environmentContext: steering.environmentContext,
               availableToolNames: allowedToolNames,
             })
@@ -490,7 +504,7 @@ export function createExecutorRuntimePreparation(input: Options) {
             error,
           }),
         remoteToolSources: grant.remoteToolSourceIds.map((id) =>
-          (definition.mcpServers ?? []).filter((server) => (server.id ?? server.kind) === id)
+          filter(definition.mcpServers ?? [], (server) => (server.id ?? server.kind) === id)
             .reduce(
               (source, server) => wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy),
               privateMapGet(facades.remoteToolSources, id)!,
@@ -505,7 +519,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       });
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
-        if (!toolAssembly.authorizedToolNames.includes(name)) {
+        if (!includes(toolAssembly.authorizedToolNames, name)) {
           refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
         }
       }
