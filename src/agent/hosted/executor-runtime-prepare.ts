@@ -84,6 +84,8 @@ const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
 const arrayIsArray = Array.isArray;
@@ -237,6 +239,33 @@ function snapshotCheckpointFacade<I, C>(
   objectSetPrototypeOf(snapshot, null);
   return snapshot;
 }
+
+function snapshotFacadeMethod<T extends object, K extends keyof T>(facade: T, key: K): T[K] {
+  let current: object | null = facade;
+  for (let depth = 0; current !== null && current !== objectPrototype && depth < 128; depth++) {
+    const descriptor = objectGetOwnPropertyDescriptor(current, key);
+    if (descriptor) {
+      const method = hasOwn(descriptor, "value") ? descriptor.value : undefined;
+      return (typeof method === "function"
+        ? (...args: unknown[]) => apply(method, facade, args)
+        : undefined) as T[K];
+    }
+    current = objectGetPrototypeOf(current);
+  }
+  return undefined as T[K];
+}
+
+function snapshotSteeringFacade(
+  facade: ExecutorRuntimeFacades["projectSteering"],
+): ExecutorRuntimeFacades["projectSteering"] {
+  if (!facade) return undefined;
+  const snapshot = {
+    prepare: snapshotFacadeMethod(facade, "prepare"),
+    refresh: snapshotFacadeMethod(facade, "refresh"),
+  };
+  objectSetPrototypeOf(snapshot, null);
+  return snapshot;
+}
 function sameBinding(left: ExecutorBinding, right: ExecutorBinding) {
   return left.allocationId === right.allocationId && left.generation === right.generation &&
     left.invocationId === right.invocationId;
@@ -268,6 +297,8 @@ export function createExecutorRuntimePreparation(input: Options) {
   objectSetPrototypeOf(source, null);
   const facades: ExecutorRuntimeFacades = {
     ...input.facades,
+    cleanup: snapshotFacadeMethod(input.facades, "cleanup"),
+    projectSteering: snapshotSteeringFacade(input.facades.projectSteering),
     hostTools: new Map(input.facades.hostTools),
     remoteToolSources: new Map(input.facades.remoteToolSources),
     toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),

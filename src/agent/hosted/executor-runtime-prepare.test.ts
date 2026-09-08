@@ -8,7 +8,12 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { parseRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
-import type { HostToolDefinition, ToolDefinition } from "#veryfront/tool";
+import type {
+  HostToolDefinition,
+  HostToolSet,
+  RemoteToolSource,
+  ToolDefinition,
+} from "#veryfront/tool";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { agent } from "#veryfront/agent/factory.ts";
@@ -91,6 +96,7 @@ function fixture(
   overrides: {
     grant?: ExecutorRuntimePreparationGrant | null;
     facades?: Partial<ExecutorRuntimeFacades>;
+    facadeInstance?: ExecutorRuntimeFacades;
     config?: Partial<AgentConfig>;
     load?: () => Promise<ProjectAgentRuntimeDiscovery>;
   } = {},
@@ -116,7 +122,7 @@ function fixture(
     source,
     discovery,
     grant: overrides.grant === null ? undefined : overrides.grant ?? grant,
-    facades: {
+    facades: overrides.facadeInstance ?? {
       resolveModelRuntime: () => model,
       hostTools: new Map(),
       remoteToolSources: new Map(),
@@ -596,6 +602,106 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  it("retains the steering preparation method and its original receiver through discovery", async () => {
+    class Steering {
+      #calls: string[] = [];
+      prepare(
+        { definition }: Parameters<
+          NonNullable<ExecutorRuntimeFacades["projectSteering"]>["prepare"]
+        >[0],
+      ) {
+        this.#calls.push("prepare");
+        return Promise.resolve({ agent: definition });
+      }
+      refresh() {
+        return "Synthetic instructions";
+      }
+      get calls() {
+        return this.#calls;
+      }
+    }
+    const steering = new Steering();
+    const f = fixture({
+      facades: { projectSteering: steering },
+      load: () => {
+        steering.prepare = () => {
+          throw new Error("Replaced preparation method");
+        };
+        return Promise.resolve(runtime());
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assert(steering.calls.includes("prepare"));
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  for (const missing of ["prepare", "refresh"] as const) {
+    it(`refuses inherited steering ${missing} without exposing its facade`, async () => {
+      let reads = 0;
+      const steering: Partial<NonNullable<ExecutorRuntimeFacades["projectSteering"]>> = {
+        prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+        refresh: () => "Synthetic instructions",
+      };
+      delete steering[missing];
+      const f = fixture({
+        grant: { ...grant, requiredCapabilities: ["project-steering"] },
+        facades: {
+          projectSteering: steering as NonNullable<ExecutorRuntimeFacades["projectSteering"]>,
+        },
+        load: () => {
+          Object.setPrototypeOf(steering, {
+            get [missing]() {
+              reads++;
+              return () => Promise.resolve(undefined);
+            },
+          });
+          return Promise.resolve(runtime());
+        },
+      });
+      try {
+        assertEquals(await prepare(f.owner), {
+          ok: false,
+          code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE",
+        });
+        assertEquals(reads, 0);
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
+  for (const method of ["own", "prototype"] as const) {
+    it(`preserves the original receiver for ${method} cleanup methods`, async () => {
+      class Facades implements ExecutorRuntimeFacades {
+        #cleanups = 0;
+        resolveModelRuntime = () => model;
+        hostTools = new Map<string, HostToolSet>();
+        remoteToolSources = new Map<string, RemoteToolSource>();
+        cleanup() {
+          this.#cleanups++;
+          return Promise.resolve();
+        }
+        get cleanups() {
+          return this.#cleanups;
+        }
+      }
+      const facades = new Facades();
+      if (method === "own") {
+        Object.defineProperty(facades, "cleanup", { value: facades.cleanup, enumerable: true });
+      }
+      const f = fixture({ facadeInstance: facades });
+      try {
+        assertEquals((await prepare(f.owner) as { ok: boolean }).ok, true);
+      } finally {
+        await f.owner.close();
+      }
+      assertEquals(facades.cleanups, 1);
+    });
+  }
+
   it("validates preparation requests without inheriting optional model limits", () => {
     let reads = 0;
     const request = Object.create({
