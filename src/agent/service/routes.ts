@@ -25,7 +25,10 @@ import {
   type HostedServiceRunEventAppendTokenVerification,
 } from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
-import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  createApplicationRequest,
+  createApplicationRequestHeaders,
+} from "#veryfront/security/http/application-request.ts";
 import { assertNativeHeaderProcessing } from "#veryfront/security/http/native-header-processing.ts";
 import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
 import { isResponseLike } from "./response-like.ts";
@@ -227,7 +230,9 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
     }
     : payload;
   assertNativeHeaderProcessing();
-  const headers = new NativeHeaders(readRequestValue<Headers>(request, RequestHeadersGet));
+  const headers = createApplicationRequestHeaders(
+    readRequestValue<Headers>(request, RequestHeadersGet),
+  );
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
   const body = JSON.stringify(sanitizedPayload);
   assertNativeHeaderProcessing();

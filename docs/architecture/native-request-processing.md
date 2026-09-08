@@ -4,7 +4,7 @@ The service request helper and application-request sanitizers preserve native Re
 
 The preconditions inspect Function.prototype.call and the native Headers iterator protocol without invoking accessors. Request construction also rejects ambient RequestInit fields on Object.prototype. Options inherited from a custom prototype remain supported. An existing native Request passed without init remains unchanged; its headers are not enumerated to manufacture defaults.
 
-Framework-invoked option conversion is followed by another check before native construction or header iteration. Application sanitization checks before cloning and copying, and hosted invocation preparation checks again after asynchronous work before copying headers. Request bodies, content types, native transfer semantics and host error identity retain their ordinary behavior. Node instrumentation that replaces the checked callback or iterator methods will cause explicit rejection on these paths.
+Framework-invoked option conversion is followed by another check before native construction or header iteration. Application sanitization checks before cloning and copying, and hosted invocation preparation removes infrastructure headers before native HeadersInit conversion. It checks native state again after payload serialization and before constructing the application request. Request bodies, content types, native transfer semantics and host error identity retain their ordinary behavior. Node instrumentation that replaces the checked callback or iterator methods will cause explicit rejection on these paths.
 
 ## Ownership and limits
 

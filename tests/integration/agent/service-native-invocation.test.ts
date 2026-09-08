@@ -1,3 +1,4 @@
+import { types as utilTypes } from "node:util";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
 import type { HostedServiceAuthenticatedRequest } from "#veryfront/agent/service/auth.ts";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
@@ -43,8 +44,8 @@ function createRuntimeInvocationRequest(canary: string): Request {
   });
 }
 
-for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
-  it(`rejects changed native ${mutation} before copying runtime invocation credentials`, async () => {
+for (const mutation of ["iterator", "dispatcher", "serialization", "isProxy"] as const) {
+  it(`keeps infrastructure credentials out of native ${mutation} hooks`, async () => {
     if (!isNode) return;
 
     const canary = "synthetic-runtime-invocation-canary";
@@ -58,6 +59,8 @@ for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
     const apply = Reflect.apply;
     const getHeader = Headers.prototype.get;
     const dispatcherDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "dispatcher");
+    const originalIsProxy = utilTypes.isProxy;
+    let detachedRequest: Request | undefined;
     const toJSONDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
     let serializationCalls = 0;
     let observations = 0;
@@ -87,7 +90,17 @@ for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
       verifyProjectAccess: async () => ({ success: true }),
       verifyRunEventAppendToken: async () => {
         verificationCompleted = true;
-        if (mutation === "dispatcher") {
+        if (mutation === "isProxy") {
+          utilTypes.isProxy = new Proxy(originalIsProxy, {
+            apply(target, receiver, args) {
+              if (
+                args[0] instanceof Headers &&
+                apply(getHeader, args[0], ["X-Veryfront-Inference-Token"]) === canary
+              ) observations++;
+              return apply(target, receiver, args);
+            },
+          });
+        } else if (mutation === "dispatcher") {
           replaceDispatcher();
         } else if (mutation === "serialization") {
           Object.defineProperty(Object.prototype, "toJSON", {
@@ -120,7 +133,8 @@ for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
       },
       prepareExecution: async () => ({ executionId: "exec-1" }),
       streamExecutionToAgUiResponse: () => new Response("streamed"),
-      startDetachedExecution: async () => {
+      startDetachedExecution: async ({ rawRequest }) => {
+        detachedRequest = rawRequest;
         detachedDispatches++;
       },
     });
@@ -133,6 +147,7 @@ for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
     } catch (error) {
       failure = error;
     } finally {
+      utilTypes.isProxy = originalIsProxy;
       Object.defineProperty(Headers.prototype, Symbol.iterator, iteratorDescriptor);
       if (toJSONDescriptor) Object.defineProperty(Object.prototype, "toJSON", toJSONDescriptor);
       else Reflect.deleteProperty(Object.prototype, "toJSON");
@@ -144,6 +159,14 @@ for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
     assertEquals(verificationCompleted, true, "the mutation occurs after verification");
     if (mutation === "serialization") assertEquals(serializationCalls > 0, true);
     assertEquals(observations, 0, "the modified native operation never observes the credential");
+    if (mutation === "isProxy") {
+      assertEquals(failure, undefined);
+      assertEquals(response?.status, 202);
+      assertEquals(detachedDispatches, 1);
+      assertEquals(detachedRequest?.headers.get("X-Veryfront-Inference-Token"), null);
+      assertEquals((await detachedRequest?.text())?.includes(canary), false);
+      return;
+    }
     assertEquals(failure instanceof TypeError, true, "the compromised operation fails explicitly");
     assertEquals(response, undefined, "the route never substitutes a success response");
     assertEquals(detachedDispatches, 0, "the route never starts detached execution");
