@@ -19,6 +19,8 @@ import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { createExecutorModelBroker, type ExecutorModelDispatch } from "./executor-model-bridge.ts";
 import { executorModelJson, parseExecutorModelData } from "./executor-model-schema.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
+import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
+import { executorModelFailure } from "./executor-model-errors.ts";
 
 /** Ingress-owned invocation authority. The sink already owns its exact run identity. */
 export interface HostedExecutorModelScope {
@@ -28,25 +30,59 @@ export interface HostedExecutorModelScope {
   readonly assertActive: () => void;
 }
 
+interface HostedModelBrokerInput {
+  resolveModelRuntime: AgentModelRuntimeResolver | undefined;
+  allowedModelIds: ReadonlySet<string>;
+  scope: HostedExecutorModelScope;
+  grant: ExecutorModelGrant;
+}
+
 /**
  * Hosted model operations require a captured, acknowledging run event sink.
  * Use the durable run sink backed by the trusted root mirror. No handler reads
  * caller AsyncLocalStorage or accepts executor-authored event/run identity.
  * Metadata and preparation check invocation authority but emit no call event.
  */
-export function createHostedExecutorModelBroker(input: {
-  resolveModelRuntime: AgentModelRuntimeResolver | undefined;
-  allowedModelIds: ReadonlySet<string>;
-  scope: HostedExecutorModelScope;
-  runEventSink: AgentRunEventSink | undefined;
-}): ReadonlyMap<string, ExecutorOperation> {
+export function createHostedExecutorModelBroker(
+  input: HostedModelBrokerInput & {
+    runEventSink: AgentRunEventSink | undefined;
+  },
+): ReadonlyMap<string, ExecutorOperation> {
   const sink = input.runEventSink;
   if (typeof sink !== "function") {
     throw new DurableRunEventPersistenceError("Hosted model dispatch requires a run event sink");
   }
+  return createScopedHostedModelBroker(input, async (request, context) => {
+    await acknowledgePersistence(() => sink(createContextEvent(request)), context.signal);
+  });
+}
+
+/**
+ * Broker-selected direct inference after verified preparation found neither a
+ * conversation nor a canonical root. This factory grants no event append
+ * authority. A canonical run missing its writer must use the durable failure
+ * path; executor operation payloads cannot select or change this mode.
+ */
+export function createEphemeralHostedExecutorModelBroker(
+  input: HostedModelBrokerInput & {
+    prepared: { conversationId: string | null | undefined; canonicalRootRun: unknown };
+  },
+): ReadonlyMap<string, ExecutorOperation> {
+  if (input.prepared.conversationId !== null || input.prepared.canonicalRootRun !== null) {
+    throw new TypeError("Ephemeral model dispatch requires verified non-canonical preparation");
+  }
+  return createScopedHostedModelBroker(input);
+}
+
+function createScopedHostedModelBroker(
+  input: HostedModelBrokerInput,
+  persist?: (request: ExecutorModelDispatch, context: ExecutorOperationContext) => Promise<void>,
+): ReadonlyMap<string, ExecutorOperation> {
   const binding = parseExecutorModelData(getExecutorBindingSchema(), input.scope.binding);
   const lifetime = input.scope.signal;
   const assertActive = input.scope.assertActive;
+  const admission = createExecutorModelAdmission(input.grant, input.allowedModelIds);
+  const admit = admission.admit;
   if (!(lifetime instanceof AbortSignal) || typeof assertActive !== "function") {
     throw new TypeError("Hosted model dispatch requires invocation authority");
   }
@@ -66,13 +102,16 @@ export function createHostedExecutorModelBroker(input: {
   const operations = createExecutorModelBroker({
     resolveModelRuntime: input.resolveModelRuntime,
     allowedModelIds: input.allowedModelIds,
+    normalizeModelCall(request, context) {
+      assertScope(context);
+      return admission.normalize(request);
+    },
     async beforeModelDispatch(request, context) {
       assertScope(context);
       assertPersistedModelOptions(request);
-      const event = createContextEvent(request);
-      // Resolution is the existing sink contract's persistence acknowledgement.
-      // A sink that only queues writes does not satisfy the hosted contract.
-      await acknowledgePersistence(() => sink(event), context.signal);
+      // Durable callers provide the acknowledging sink. Ephemeral callers
+      // perform the same authority/control checks without fabricating events.
+      if (persist) await persist(request, context);
       assertScope(context);
       return { assertActive: () => assertScope(context) };
     },
@@ -84,11 +123,40 @@ export function createHostedExecutorModelBroker(input: {
   return new Map([...operations].map(([name, operation]): [string, ExecutorOperation] => [
     name,
     operation.mode === "unary"
-      ? { mode: "unary", handle: (value, context) => operation.handle(value, bindContext(context)) }
+      ? {
+        mode: "unary",
+        async handle(value, context) {
+          const boundContext = bindContext(context);
+          let admission: ReturnType<typeof admit> | undefined;
+          try {
+            admission = name === "model.generate" ? admit(value) : undefined;
+            return await operation.handle(admission?.input ?? value, boundContext);
+          } catch (error) {
+            boundContext.signal.throwIfAborted();
+            const failure = executorModelFailure(error);
+            if (failure?.code === "RESOURCE_LIMIT_EXCEEDED") return failure;
+            throw error;
+          } finally {
+            admission?.release();
+          }
+        },
+      }
       : {
         mode: "stream",
         async *handle(value, context) {
-          yield* operation.handle(value, bindContext(context));
+          const boundContext = bindContext(context);
+          let admission: ReturnType<typeof admit> | undefined;
+          try {
+            admission = name === "model.stream" ? admit(value) : undefined;
+            yield* operation.handle(admission?.input ?? value, boundContext);
+          } catch (error) {
+            boundContext.signal.throwIfAborted();
+            const failure = executorModelFailure(error);
+            if (failure?.code !== "RESOURCE_LIMIT_EXCEEDED") throw error;
+            yield failure;
+          } finally {
+            admission?.release();
+          }
         },
       },
   ]));
