@@ -165,8 +165,8 @@ export type PrepareFacadedHostedChatRuntimeToolAssemblyInput<
   & {
     taskContext: Omit<HostedChatRuntimeToolAssemblyContext, "authToken">;
     remoteToolSources: readonly RemoteToolSource[];
-    signal?: AbortSignal;
-    loadLatestConversationUserText?: () => Promise<string | null>;
+    signal: AbortSignal;
+    loadLatestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
   };
 
 type FacadedHostedChatRuntimeToolAssemblyResult = HostedChatRuntimeToolAssemblyResult & {
@@ -590,7 +590,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     if (input.loadLatestConversationUserText) {
       updateDefaultResearchArtifacts({
         taskContext: input.taskContext,
-        latestUserText: await input.loadLatestConversationUserText(),
+        latestUserText: await input.loadLatestConversationUserText(input.signal),
         system: systemInstructions,
       });
     }

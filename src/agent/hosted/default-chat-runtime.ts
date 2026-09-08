@@ -411,38 +411,52 @@ function snapshotHostedToolResult(result: unknown): unknown {
   return snapshot.value;
 }
 
-/** @internal Scope local tool execution and sanitize errors without trusted provenance. */
-export function scopeHostedRuntimeTools(input: {
-  tools: ToolSet;
-  taskContext: DefaultHostedChatRuntimeTaskContext;
-  cloudContext: VeryfrontCloudContext;
-}): ToolSet {
+/** @internal Bound tool results and sanitize errors without trusted provenance. */
+export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
   return Object.fromEntries(
-    Object.entries(input.tools).map(([toolName, tool]) => {
+    Object.entries(tools).map(([toolName, tool]) => {
       const execute = tool.execute;
       const preserveTrustedError = hasTrustedHostToolProvenance(tool);
       return [
         toolName,
         {
           ...tool,
-          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-            withoutHostedCredentials({
-              taskContext: input.taskContext,
-              cloudContext: input.cloudContext,
-              operation: async () => {
-                try {
-                  return snapshotHostedToolResult(
-                    await apply(execute, tool, [toolInput, context]),
-                  );
-                } catch (error) {
-                  if (preserveTrustedError) throw error;
-                  throw new TypeErrorConstructor("Hosted project tool execution failed");
-                }
-              },
-            }),
+          execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+            try {
+              return snapshotHostedToolResult(
+                await apply(execute, tool, [toolInput, context]),
+              );
+            } catch (error) {
+              if (preserveTrustedError) throw error;
+              throw new TypeErrorConstructor("Hosted project tool execution failed");
+            }
+          },
         },
       ];
     }),
+  );
+}
+
+/** @internal Scope local tool execution and sanitize errors without trusted provenance. */
+export function scopeHostedRuntimeTools(input: {
+  tools: ToolSet;
+  taskContext: DefaultHostedChatRuntimeTaskContext;
+  cloudContext: VeryfrontCloudContext;
+}): ToolSet {
+  const scopedTools = scopeHostedRuntimeToolResults(input.tools);
+  return Object.fromEntries(
+    Object.entries(scopedTools).map(([toolName, tool]) => [
+      toolName,
+      {
+        ...tool,
+        execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+          withoutHostedCredentials({
+            taskContext: input.taskContext,
+            cloudContext: input.cloudContext,
+            operation: () => apply(tool.execute, tool, [toolInput, context]),
+          }),
+      },
+    ]),
   );
 }
 

@@ -43,6 +43,7 @@ it("facaded assembly preserves project tool normalization and mutation callbacks
     },
   };
   const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+    signal: new AbortController().signal,
     taskContext: {
       projectId: "project-1",
       branchId: null,

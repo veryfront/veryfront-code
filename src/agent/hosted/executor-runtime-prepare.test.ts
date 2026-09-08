@@ -591,6 +591,62 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  it("sanitizes project tool failures before streaming them from the prepared runtime", async () => {
+    const privateDetail = "synthetic-private-project-detail";
+    let modelCalls = 0;
+    const projectRuntime = runtime({ tools: { project_failure: true } });
+    projectRuntime.tools.set("project_failure", {
+      id: "project_failure",
+      type: "function",
+      description: "Synthetic project tool",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        throw new Error(privateDetail);
+      },
+    });
+    const f = fixture({
+      grant: { ...grant, allowedToolNames: ["project_failure"] },
+      load: () => Promise.resolve(projectRuntime),
+      facades: {
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: () => finishStream(modelCalls++ === 0 ? "project_failure" : undefined),
+        }),
+      },
+    });
+    try {
+      const frames = await Array.fromAsync(await preparedStream(f));
+      const serialized = JSON.stringify(frames);
+      assertEquals(serialized.includes(privateDetail), false);
+      assertEquals(serialized.includes("Hosted project tool execution failed"), true);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("cancels latest conversation text loading before facade cleanup", async () => {
+    const entered = Promise.withResolvers<void>();
+    let observedSignal: AbortSignal | undefined;
+    const f = fixture({
+      facades: {
+        latestConversationUserText: (signal) => {
+          observedSignal = signal;
+          entered.resolve();
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      },
+    });
+    const pending = prepare(f.owner);
+    await entered.promise;
+    const closing = f.owner.close();
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(await pending, { ok: false, code: "ABORTED" });
+    await closing;
+    assertEquals(f.cleanups, 1);
+  });
+
   it("refuses selected project navigation before starting fixed-project facades", async () => {
     let facadeCalls = 0;
     const f = fixture({

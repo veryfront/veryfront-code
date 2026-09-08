@@ -40,6 +40,7 @@ import {
   createPreparedHostedRuntimeAgent,
   incrementSteeringRevision,
   type PreparedHostedRuntimeAgentOptions,
+  scopeHostedRuntimeToolResults,
 } from "#veryfront/agent/hosted/default-chat-runtime.ts";
 import {
   prepareFacadedHostedChatRuntimeToolAssembly,
@@ -90,7 +91,7 @@ export interface ExecutorRuntimeFacades {
     ): Promise<HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>>;
     refresh(): Promise<AgentSystem> | AgentSystem;
   };
-  latestConversationUserText?: () => Promise<string | null>;
+  latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
   publishParentRunEvents?: NonNullable<CreationOptions["publishParentRunEvents"]>;
   toolExposureCheckpoint?: {
     initial?: CreationOptions["serverResolvedToolExposureCheckpoint"];
@@ -477,7 +478,10 @@ export function createExecutorRuntimePreparation(input: Options) {
           createPreparedHostedRuntimeAgent({
             options,
             taskContext,
-            toolAssembly,
+            toolAssembly: {
+              ...toolAssembly,
+              runtimeTools: scopeHostedRuntimeToolResults(toolAssembly.runtimeTools),
+            },
             modelId,
             sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
             refreshSystem: facades.projectSteering?.refresh.bind(facades.projectSteering),
