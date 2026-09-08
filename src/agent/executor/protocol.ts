@@ -1,4 +1,5 @@
 import { createPrivateTextDecoder, encodePrivateText } from "#veryfront/security/private-text.ts";
+import { protectPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import {
   isPrivateUint8Array,
   privateByteLength,
@@ -105,13 +106,14 @@ export function encodeExecutorFrame(frame: ExecutorFrame): Uint8Array {
 export async function* readExecutorFrames(
   reader: ReadableStreamDefaultReader<Uint8Array>,
 ): AsyncGenerator<ExecutorFrame> {
+  const privateReader = protectPrivateStreamReader(reader);
   const prefix = new PrivateUint8Array(4);
   let prefixOffset = 0;
   let payload: Uint8Array | undefined;
   let payloadOffset = 0;
   const decoder = createPrivateTextDecoder("utf-8", { fatal: true });
   while (true) {
-    const { value: chunk, done } = await reader.read();
+    const { value: chunk, done } = await privateReader.read();
     if (done) {
       if (prefixOffset || payload) throw new ExecutorProtocolError("Truncated executor frame");
       return;

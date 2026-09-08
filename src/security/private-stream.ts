@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
   chainPrivatePromise,
   observePrivatePromise,
@@ -20,6 +21,7 @@ const controllerDesiredSize = ownDescriptor(
 const streamGetReader = ReadableStream.prototype.getReader;
 const streamCancel = ReadableStream.prototype.cancel;
 const streamLocked = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "locked")!.get!;
+const ownedReaders = createPrivateWeakStore<ReadableStreamDefaultReader<unknown>, true>();
 const readerRead = ReadableStreamDefaultReader.prototype.read;
 const readerCancel = ReadableStreamDefaultReader.prototype.cancel;
 const readerReleaseLock = ReadableStreamDefaultReader.prototype.releaseLock;
@@ -125,6 +127,13 @@ export function getPrivateStreamReader<T>(
   stream: ReadableStream<T>,
 ): ReadableStreamDefaultReader<T> {
   const reader = apply(streamGetReader, stream, []) as ReadableStreamDefaultReader<T>;
+  return protectPrivateStreamReader(reader);
+}
+
+export function protectPrivateStreamReader<T>(
+  reader: ReadableStreamDefaultReader<T>,
+): ReadableStreamDefaultReader<T> {
+  if (ownedReaders.get(reader)) return reader;
   const facade: ReadableStreamDefaultReader<T> = {
     read: () =>
       observePrivatePromise(apply(readerRead, reader, []) as Promise<ReadableStreamReadResult<T>>),
@@ -138,6 +147,7 @@ export function getPrivateStreamReader<T>(
     },
   };
   setPrototypeOf(facade, null);
+  ownedReaders.set(facade, true);
   return freeze(facade);
 }
 

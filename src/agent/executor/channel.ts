@@ -1,3 +1,4 @@
+import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
@@ -27,6 +28,7 @@ import {
 } from "./protocol.ts";
 
 const apply = Reflect.apply;
+const setPrototypeOf = Object.setPrototypeOf;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapDelete = Map.prototype.delete;
@@ -119,7 +121,7 @@ export interface ExecutorChannel {
 }
 
 type EndError = Extract<ExecutorMessage, { type: "end" }>["error"];
-type Deferred<T> = ReturnType<typeof Promise.withResolvers<T>>;
+type Deferred<T> = ReturnType<typeof createPrivateDeferred<T>>;
 
 interface OutgoingCall {
   id: number;
@@ -192,9 +194,9 @@ class Channel implements ExecutorChannel {
   readonly #maxRetainedBytes: number;
   #retainedBytes = 0;
   readonly #controller = new AbortController();
-  readonly #ready = Promise.withResolvers<void>();
-  readonly #closed = Promise.withResolvers<Error>();
-  readonly #settled = Promise.withResolvers<void>();
+  readonly #ready = createPrivateDeferred<void>();
+  readonly #closed = createPrivateDeferred<Error>();
+  readonly #settled = createPrivateDeferred<void>();
   readonly #outgoing = createPrivateSet<OutgoingCall>();
   readonly #outgoingById = new Map<number, OutgoingCall>();
   readonly #incoming = new Map<number, IncomingCall>();
@@ -332,7 +334,7 @@ class Channel implements ExecutorChannel {
       inputBytes: this.#retainPayload(snapshot.value),
       mode,
       queue: [],
-      completion: Promise.withResolvers<void>(),
+      completion: createPrivateDeferred<void>(),
       received: 0,
       consumed: 0,
       unaryBytes: 0,
@@ -341,6 +343,7 @@ class Channel implements ExecutorChannel {
       cancelled: false,
       reading: false,
     };
+    setPrototypeOf(call, null);
     void call.completion.promise.catch(() => {});
     this.#outgoing.add(call);
     call.timer = setTimeout(() => this.#cancelOutgoing(call, "deadline"), timeoutMs);
@@ -437,7 +440,7 @@ class Channel implements ExecutorChannel {
       try {
         // Keep the admission slot and a deadline until release is written.
         if (call.id && !this.#error) {
-          call.releaseAck = Promise.withResolvers<void>();
+          call.releaseAck = createPrivateDeferred<void>();
           const acknowledgement = call.releaseAck;
           void acknowledgement.promise.catch(() => {});
           call.cancellationTimer = setTimeout(
@@ -587,6 +590,7 @@ class Channel implements ExecutorChannel {
       cancelled: false,
       settled: false,
     };
+    setPrototypeOf(call, null);
     apply(mapSet, this.#incoming, [call.id, call]);
     call.timer = setTimeout(() => this.#abortIncoming(call, "deadline"), timeout);
     this.#activeHandlers++;
@@ -615,6 +619,7 @@ class Channel implements ExecutorChannel {
         return;
       }
       const context = { binding: this.#binding, signal: call.controller.signal, deadline };
+      setPrototypeOf(context, null);
       if (operation.mode === "unary") {
         const value = await operation.handle(message.value, context);
         if (call.ended || this.#error) return;
@@ -711,7 +716,7 @@ class Channel implements ExecutorChannel {
       return Promise.reject(this.#error);
     }
     this.#sendSequence++;
-    const done = Promise.withResolvers<void>();
+    const done = createPrivateDeferred<void>();
     appendPrivateQueue(this.#writes, { bytes, done });
     this.#queuedBytes += privateByteLength(bytes);
     if (!this.#writing) void this.#flush();
