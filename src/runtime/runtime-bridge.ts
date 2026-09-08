@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 /**
  * Runtime Bridge
  *
@@ -938,7 +939,7 @@ async function buildGenerateResultFromStream(
   const toolInputs = new Map<string, { toolCallId: string; toolName: string; input: string }>();
   const toolResults: NonNullable<RuntimeGenerateTextResult["toolResults"]> = [];
 
-  for await (const rawPart of mapReadableStream(stream)) {
+  for await (const rawPart of getPrivateAsyncIterator(mapReadableStream(stream))) {
     if (!rawPart || typeof rawPart !== "object" || !("type" in rawPart)) {
       continue;
     }
@@ -1208,7 +1209,7 @@ async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterabl
 }
 
 async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
-  for await (const materializedPart of mapReadableStream(stream)) {
+  for await (const materializedPart of getPrivateAsyncIterator(mapReadableStream(stream))) {
     if (
       typeof materializedPart === "object" && materializedPart !== null &&
       (materializedPart as { type?: unknown }).type === "text-delta"
@@ -1272,10 +1273,10 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
 
   return {
     fullStream: (async function* () {
-      yield* mapReadableStream(await acquire("full"));
+      yield* getPrivateAsyncIterator(mapReadableStream(await acquire("full")));
     })(),
     textStream: (async function* () {
-      yield* textDeltasFromStream(await acquire("text"));
+      yield* getPrivateAsyncIterator(textDeltasFromStream(await acquire("text")));
     })(),
   };
 }

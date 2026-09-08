@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
   closePrivateStream,
   createPrivateReadableStream,
@@ -704,7 +705,7 @@ async function processActiveStream(
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
   try {
-    for await (const frame of run.frames) {
+    for await (const frame of getPrivateAsyncIterator(run.frames)) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
         callbacks?.onChunk?.(frame.event.delta);
       }
@@ -1113,7 +1114,7 @@ export function processStreamInternal(
     // client even when the stream aborts or throws, so the finalizer runs in a
     // `finally`. It runs after the shadow compare so a synthesized event can
     // never perturb the legacy-vs-reducer snapshot the rollout gate reads.
-    const streamIterator = result.fullStream[Symbol.asyncIterator]();
+    const streamIterator = getPrivateAsyncIterator(result.fullStream);
     let streamIteratorReturned = false;
     /** Release the upstream iterator exactly once, whichever exit is taken. */
     const returnStreamIteratorOnce = () => {

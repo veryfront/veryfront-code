@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import {
   cancelPrivateStream,
@@ -82,7 +83,9 @@ export function createExecutorAgentOperations(options: {
         );
         phase = "stream";
         yield { type: "ready" };
-        for await (const event of readExecutorDataEvents(stream, context.signal)) {
+        for await (
+          const event of getPrivateAsyncIterator(readExecutorDataEvents(stream, context.signal))
+        ) {
           yield executorAgentJson({ type: "event", event }, "EXECUTOR_AGENT_INVALID_STREAM");
         }
       } catch (error) {

@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import {
@@ -461,7 +462,7 @@ class Channel implements ExecutorChannel {
 
   async #receive(): Promise<void> {
     try {
-      for await (const frame of readExecutorFrames(this.#reader)) {
+      for await (const frame of getPrivateAsyncIterator(readExecutorFrames(this.#reader))) {
         if (this.#error) return;
         this.#accept(frame);
       }
@@ -619,7 +620,7 @@ class Channel implements ExecutorChannel {
         if (call.ended || this.#error) return;
         await this.#send({ type: "data", id: call.id, index: call.sent++, value });
       } else {
-        iterator = operation.handle(message.value, context)[Symbol.asyncIterator]();
+        iterator = getPrivateAsyncIterator(operation.handle(message.value, context));
         while (!call.ended && !this.#error) {
           while (
             call.sent - call.consumed >= EXECUTOR_STREAM_WINDOW && !call.ended && !this.#error

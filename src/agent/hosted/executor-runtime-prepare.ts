@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
@@ -822,10 +823,10 @@ export function createExecutorRuntimePreparation(input: Options) {
         ? undefined
         : privateMapGet(preparedOperations, "agent.stream");
       if (operation?.mode !== "stream") refuse("EXECUTOR_RUNTIME_NOT_PREPARED");
-      yield* operation.handle(value, {
+      yield* getPrivateAsyncIterator(operation.handle(value, {
         ...context,
         signal: combineSignals(context.signal, lifetime.signal),
-      });
+      }));
     },
   });
   return { operations, close, settled: settled.promise, signal: lifetime.signal };

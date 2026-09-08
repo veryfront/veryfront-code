@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import {
@@ -148,7 +149,9 @@ function createScopedHostedModelBroker(
           let admission: ReturnType<typeof admit> | undefined;
           try {
             admission = name === "model.stream" ? admit(value) : undefined;
-            yield* operation.handle(admission?.input ?? value, boundContext);
+            yield* getPrivateAsyncIterator(
+              operation.handle(admission?.input ?? value, boundContext),
+            );
           } catch (error) {
             boundContext.signal.throwIfAborted();
             const failure = executorModelFailure(error);
