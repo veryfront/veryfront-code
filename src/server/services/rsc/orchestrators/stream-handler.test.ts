@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { expect } from "#std/expect.ts";
 import { RenderHandler } from "./render-handler.ts";
 import { StreamHandler } from "./stream-handler.ts";
@@ -78,11 +79,11 @@ describe("StreamHandler", () => {
         const response = await streamHandler.handle("/", new URLSearchParams());
         const text = await response.text();
 
-        expect(response).toBe(failure);
-        expect(response.status).toBe(status);
-        expect(response.headers.get("cache-control")).toBe("no-store");
-        expect(response.headers.get("vary")).toBe(RSC_DEPENDENCY_PINNING_HEADER);
-        expect(text).toBe(body);
+        assertStrictEquals(response, failure);
+        assertEquals(response.status, status);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(response.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
+        assertEquals(text, body);
       });
     }
 
