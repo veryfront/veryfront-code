@@ -62,11 +62,11 @@ function ownEntries<T>(value: Record<string, T>): Array<[string, T]> {
   return apply(objectEntries, Object, [value]) as Array<[string, T]>;
 }
 
-function ownKeys(value: object): string[] {
+function ownKeys<T>(value: Record<string, T>): string[] {
   return apply(objectKeys, Object, [value]) as string[];
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn<T>(value: Record<string, T>, key: PropertyKey): boolean {
   return apply(objectHasOwn, Object, [value, key]) as boolean;
 }
 
