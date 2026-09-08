@@ -316,9 +316,10 @@ export function createExecutorRuntimePreparation(input: Options) {
         resolveModelRuntime,
         () => revokeModelRuntimeResolver(facades.resolveModelRuntime),
       );
+      // The first facade call can reserve resources before throwing.
+      resourcesStarted = true;
       resolveModelRuntime(modelId);
       const execution = grant.execution;
-      resourcesStarted = true;
       const steering = facades.projectSteering
         ? await facades.projectSteering.prepare({
           definition,

@@ -269,6 +269,43 @@ describe("executor runtime preparation", () => {
     }
   });
 
+  for (const outcome of ["throws", "returns no model"] as const) {
+    it(`cleans reserved facade resources when model resolution ${outcome}`, async () => {
+      let retained = false;
+      let cleanups = 0;
+      const f = fixture({
+        facades: {
+          resolveModelRuntime: () => {
+            retained = true;
+            if (outcome === "throws") {
+              throw PERMISSION_DENIED.create({ detail: "synthetic-private-diagnostic" });
+            }
+            return undefined;
+          },
+          cleanup: () => {
+            assert(retained);
+            retained = false;
+            cleanups++;
+            return Promise.resolve();
+          },
+        },
+      });
+      try {
+        assertEquals(await prepare(f.owner), {
+          ok: false,
+          code: outcome === "throws"
+            ? "PERMISSION_DENIED"
+            : "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE",
+        });
+        assertEquals(retained, false);
+        assertEquals(cleanups, 1);
+      } finally {
+        await f.owner.close();
+      }
+      assertEquals(cleanups, 1);
+    });
+  }
+
   it("rejects source, mode, and authority fields from wire preparation", async () => {
     const values: JsonValue[] = [{ agentId: "coder", source }, {
       agentId: "coder",
