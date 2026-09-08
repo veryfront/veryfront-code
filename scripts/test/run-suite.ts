@@ -121,6 +121,10 @@ const RUNTIME_PATTERNS = {
     "tests/integration/server/dependency-snapshot-stream.test.ts",
     "tests/integration/server/package-registry-shared.test.ts",
     "tests/integration/agent/service-response-init.test.ts",
+    "tests/integration/agent/service-header-boundary.test.ts",
+    "tests/integration/agent/service-request-defaults.test.ts",
+    "tests/integration/agent/service-native-invocation.test.ts",
+    "tests/integration/security/application-request.test.ts",
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
   bun: [
@@ -141,6 +145,10 @@ const RUNTIME_PATTERNS = {
     "tests/integration/server/dependency-snapshot-stream.test.ts",
     "tests/integration/server/package-registry-shared.test.ts",
     "tests/integration/agent/service-response-init.test.ts",
+    "tests/integration/agent/service-header-boundary.test.ts",
+    "tests/integration/agent/service-request-defaults.test.ts",
+    "tests/integration/agent/service-native-invocation.test.ts",
+    "tests/integration/security/application-request.test.ts",
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
 } as const;

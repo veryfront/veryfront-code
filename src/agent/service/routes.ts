@@ -25,7 +25,12 @@ import {
   type HostedServiceRunEventAppendTokenVerification,
 } from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
-import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  createApplicationRequest,
+  createApplicationRequestHeaders,
+} from "#veryfront/security/http/application-request.ts";
+import { assertNativeHeaderProcessing } from "#veryfront/security/http/native-header-processing.ts";
+import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
 import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import {
@@ -224,11 +229,17 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
       credentials: withoutInferenceCredential(credentials),
     }
     : payload;
-  const headers = new NativeHeaders(readRequestValue<Headers>(request, RequestHeadersGet));
+  assertNativeHeaderProcessing();
+  const headers = createApplicationRequestHeaders(
+    readRequestValue<Headers>(request, RequestHeadersGet),
+  );
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
+  const body = JSON.stringify(sanitizedPayload);
+  assertNativeHeaderProcessing();
+  assertNativeRequestDefaults();
   return createApplicationRequest(
     new NativeRequest(readRequestValue<string>(request, RequestUrlGet), {
-      body: JSON.stringify(sanitizedPayload),
+      body,
       headers,
       method: readRequestValue<string>(request, RequestMethodGet),
       signal: readRequestValue<AbortSignal>(request, RequestSignalGet),
@@ -425,6 +436,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
+      assertNativeHeaderProcessing();
+      assertNativeRequestDefaults();
       const applicationRequestSource = IntrinsicReflectApply(
         RequestClone,
         input.request,
@@ -445,6 +458,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         return Response.json({ errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" }, { status: 400 });
       }
 
+      assertNativeHeaderProcessing();
+      assertNativeRequestDefaults();
       const applicationRequest = await createRuntimeInvocationApplicationRequest(
         applicationRequestSource,
       );
