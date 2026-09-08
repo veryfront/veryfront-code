@@ -5,14 +5,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { parseRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import type { HostToolDefinition, ToolDefinition } from "#veryfront/tool";
-import { registerModelRuntimeResolverRevoker } from "../runtime/model-transport.ts";
+import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
-import { agent } from "../factory.ts";
-import type { ProjectAgentRuntimeDiscovery } from "../project/agent-runtime.ts";
+import { agent } from "#veryfront/agent/factory.ts";
+import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
 import { createExecutorDiscovery } from "./executor-discovery.ts";
 import {
   createExecutorRuntimePreparation,
@@ -20,7 +20,7 @@ import {
   type ExecutorRuntimePreparationGrant,
 } from "./executor-runtime-prepare.ts";
 import { ExecutorRuntimePreparationError } from "./executor-runtime-prepare-schema.ts";
-import { createExecutorChannel } from "../executor/channel.ts";
+import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorHostedChatRuntimeAgent } from "./executor-agent-bridge.ts";
 
 const binding = {
@@ -538,6 +538,7 @@ async function preparedStream(
   f: ReturnType<typeof fixture>,
   request: JsonValue = { agentId: "coder" },
   userText = "Synthetic question",
+  signal = new AbortController().signal,
 ) {
   const result = await prepare(f.owner, request);
   assert(result && typeof result === "object" && !Array.isArray(result) && result.ok === true);
@@ -555,7 +556,7 @@ async function preparedStream(
     }],
   }, {
     binding,
-    signal: new AbortController().signal,
+    signal,
     deadline: Date.now() + 30_000,
   });
 }
@@ -591,6 +592,79 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  for (const cancellation of ["operation", "owner"] as const) {
+    it(`cancels steering refresh on ${cancellation} abort and joins it before cleanup`, async () => {
+      const entered = Promise.withResolvers<void>();
+      const unblock = Promise.withResolvers<void>();
+      const abort = new AbortController();
+      let refreshSignal: AbortSignal | undefined;
+      let calls = 0;
+      const f = fixture({
+        grant: {
+          ...grant,
+          allowedToolNames: ["update_file"],
+          remoteToolSourceIds: ["api"],
+          execution: { kind: "ephemeral", projectId: "synthetic-project" },
+        },
+        facades: {
+          projectSteering: {
+            prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+            refresh: async (signal?: AbortSignal) => {
+              refreshSignal = signal;
+              entered.resolve();
+              await unblock.promise;
+              signal?.throwIfAborted();
+              return "Updated instructions";
+            },
+          },
+          remoteToolSources: new Map([["api", {
+            id: "api",
+            listTools: () =>
+              Promise.resolve([{
+                ...syntheticRemoteTool("update_file"),
+                parameters: {
+                  type: "object",
+                  properties: { path: { type: "string" }, project_reference: { type: "string" } },
+                  required: ["project_reference"],
+                },
+              }]),
+            executeTool: () => Promise.resolve({ success: true }),
+          }]]),
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream: () =>
+              finishStream(calls++ === 0 ? "update_file" : undefined, { path: "AGENTS.md" }),
+          }),
+        },
+      });
+      const consuming = Array.fromAsync(
+        await preparedStream(f, { agentId: "coder" }, "Synthetic question", abort.signal),
+      ).catch(() => []);
+      try {
+        await Promise.race([
+          entered.promise,
+          consuming.then((frames) => {
+            throw new Error(`Stream completed before refresh: ${JSON.stringify(frames)}`);
+          }),
+        ]);
+        assert(refreshSignal, "refresh must receive its runtime cancellation signal");
+        assertEquals(refreshSignal.aborted, false);
+        if (cancellation === "operation") abort.abort();
+        else void f.owner.close();
+        assertEquals(refreshSignal.aborted, true);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(f.cleanups, 0);
+        assertEquals(f.discoveryCleanups, 0);
+      } finally {
+        unblock.resolve();
+        await consuming;
+        await f.owner.close();
+      }
+      assertEquals(f.cleanups, 1);
+      assertEquals(f.discoveryCleanups, 1);
+    });
+  }
+
   it("sanitizes project tool failures before streaming them from the prepared runtime", async () => {
     const privateDetail = "synthetic-private-project-detail";
     let modelCalls = 0;

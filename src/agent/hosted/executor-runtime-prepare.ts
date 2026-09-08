@@ -67,6 +67,17 @@ import {
   parseRuntimePreparationData,
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 
+const apply = Reflect.apply;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+
+function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return apply(mapGet, map, [key]) as V | undefined;
+}
+function privateMapHas<K, V>(map: ReadonlyMap<K, V>, key: K): boolean {
+  return apply(mapHas, map, [key]) as boolean;
+}
+
 type CreationOptions = HostedChatRuntimeCreationOptions<
   RuntimeAgentMarkdownDefinition,
   RuntimeAgentThinkingConfig
@@ -89,7 +100,7 @@ export interface ExecutorRuntimeFacades {
         signal: AbortSignal;
       },
     ): Promise<HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>>;
-    refresh(): Promise<AgentSystem> | AgentSystem;
+    refresh(signal: AbortSignal): Promise<AgentSystem> | AgentSystem;
   };
   latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
   publishParentRunEvents?: NonNullable<CreationOptions["publishParentRunEvents"]>;
@@ -170,6 +181,7 @@ export function createExecutorRuntimePreparation(input: Options) {
   let cleanup: Promise<void> | undefined;
   let startup: Promise<ReadableStream<Uint8Array>> | undefined;
   let producerCompletion: Promise<void> | undefined;
+  let streamSignal = lifetime.signal;
   const settled = Promise.withResolvers<void>();
   void settled.promise.catch(() => {});
   const assertActive = () => {
@@ -224,10 +236,12 @@ export function createExecutorRuntimePreparation(input: Options) {
       typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     for (const id of effective.hostToolFacadeIds) {
-      if (!facades.hostTools.has(id)) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+      if (!privateMapHas(facades.hostTools, id)) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     }
     for (const id of effective.remoteToolSourceIds) {
-      if (!facades.remoteToolSources.has(id)) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+      if (!privateMapHas(facades.remoteToolSources, id)) {
+        refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+      }
     }
     for (const server of definition.mcpServers ?? []) {
       if (!effective.remoteToolSourceIds.includes(server.id ?? server.kind)) {
@@ -289,13 +303,15 @@ export function createExecutorRuntimePreparation(input: Options) {
       // Enroll only after agent.describe returns: a failed discovery operation
       // can await discovery.close(). No remaining preparation work awaits it.
       input.discovery.retainRuntimeTask(preparation!);
-      const localTools: HostToolSet = Object.fromEntries(
+      let localTools: HostToolSet = Object.fromEntries(
         [...runtime.tools].filter(([id, value]) =>
           !isSkillInfrastructureToolId(id) && isToolVisibleTo(value, { agentId: definition.id })
         ),
       );
       for (const id of grant.hostToolFacadeIds) {
-        Object.assign(localTools, facades.hostTools.get(id));
+        // Object spread creates own data properties without invoking mutable
+        // Object.assign or inherited setters with private facade values.
+        localTools = { ...localTools, ...privateMapGet(facades.hostTools, id) };
       }
       const normalizeToolNames = (names: readonly string[]) => [
         ...resolveOwnerScopedToolNames({
@@ -456,7 +472,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           (definition.mcpServers ?? []).filter((server) => (server.id ?? server.kind) === id)
             .reduce(
               (source, server) => wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy),
-              facades.remoteToolSources.get(id)!,
+              privateMapGet(facades.remoteToolSources, id)!,
             )
         ),
         onSteeringMutation: (mutation) => {
@@ -484,7 +500,9 @@ export function createExecutorRuntimePreparation(input: Options) {
             },
             modelId,
             sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
-            refreshSystem: facades.projectSteering?.refresh.bind(facades.projectSteering),
+            refreshSystem: facades.projectSteering
+              ? () => facades.projectSteering!.refresh(streamSignal)
+              : undefined,
           }, {
             resolveModelRuntime,
             preserveToolCatalog: true,
@@ -499,6 +517,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       preparedOperations = createExecutorAgentOperations({
         preparedRuntimeHandle,
         startStream: (streamInput) => {
+          streamSignal = streamInput.abortSignal;
           startup = Promise.resolve().then(() => {
             assertActive();
             return createHostedChatRuntimeDataStream({
