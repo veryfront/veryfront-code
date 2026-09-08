@@ -49,7 +49,7 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function own(value: object, name: string): unknown {
+function own(value: Record<string, unknown> | readonly unknown[], name: string): unknown {
   const descriptor = getOwnPropertyDescriptor(value, name);
   if (!descriptor || !hasOwn(descriptor, "value")) throw unavailable();
   return descriptor.value;
