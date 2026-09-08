@@ -1,4 +1,5 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   chainPrivatePromise as chain,
   createPrivateDeferred,
@@ -79,7 +80,6 @@ const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
-const objectDefineProperty = Object.defineProperty;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
@@ -94,7 +94,7 @@ const iteratorSymbol = Symbol.iterator;
 
 function combineSignals(...signals: AbortSignal[]): AbortSignal {
   const inputs = createPrivateSet(signals);
-  objectDefineProperty(signals, iteratorSymbol, { value: () => inputs.values() });
+  defineOwnDataProperty(signals, iteratorSymbol, () => inputs.values());
   return apply(abortSignalAny, AbortSignalConstructor, [signals]) as AbortSignal;
 }
 
@@ -103,11 +103,12 @@ function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] 
   for (let index = 0; index < values.length; index++) {
     const value = values[index] as T;
     if (!predicate(value)) continue;
-    apply(objectDefineProperty, Object, [
+    defineOwnDataProperty(
       filtered,
       filtered.length,
-      { value, enumerable: true, configurable: true, writable: true },
-    ]);
+      value,
+      { enumerable: true, configurable: true, writable: true },
+    );
   }
   return filtered;
 }
@@ -134,11 +135,12 @@ function selectAllowedHostTools(
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined || !allowed.has(entry[0])) continue;
-    apply(objectDefineProperty, Object, [
+    defineOwnDataProperty(
       selected,
       entry[0],
-      { value: entry[1], enumerable: true, configurable: true, writable: true },
-    ]);
+      entry[1],
+      { enumerable: true, configurable: true, writable: true },
+    );
   }
   return selected;
 }
@@ -571,16 +573,12 @@ export function createExecutorRuntimePreparation(input: Options) {
             );
           }
         }
-        apply(objectDefineProperty, Object, [
+        defineOwnDataProperty(
           remoteToolSources,
           remoteToolSources.length,
-          {
-            value: remoteToolSource,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          },
-        ]);
+          remoteToolSource,
+          { enumerable: true, configurable: true, writable: true },
+        );
       }
       const facadeAllowedToolSet = createPrivateSet<string>();
       for (let index = 0; index < allowedToolNames.length; index++) {

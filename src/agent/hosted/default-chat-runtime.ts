@@ -61,11 +61,11 @@ import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts"
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const apply = Reflect.apply;
 const TypeErrorConstructor = TypeError;
 const objectEntries = Object.entries;
-const objectDefineProperty = Object.defineProperty;
 
 function mapOwnRecord<TInput, TOutput>(
   input: Record<string, TInput>,
@@ -76,16 +76,12 @@ function mapOwnRecord<TInput, TOutput>(
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined) continue;
-    apply(objectDefineProperty, Object, [
+    defineOwnDataProperty(
       output,
       entry[0],
-      {
-        value: mapper(entry[0], entry[1]),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      },
-    ]);
+      mapper(entry[0], entry[1]),
+      { enumerable: true, configurable: true, writable: true },
+    );
   }
   return output;
 }
