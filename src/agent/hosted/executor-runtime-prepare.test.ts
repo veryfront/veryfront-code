@@ -6,6 +6,8 @@ import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { AgentConfig } from "../types.ts";
+import { parseRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import type { HostToolDefinition, ToolDefinition } from "#veryfront/tool";
 import { registerModelRuntimeResolverRevoker } from "../runtime/model-transport.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
@@ -539,6 +541,82 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  for (
+    const selection of [
+      { name: "declared delegate", expected: ["read_file", "agent_writer"] },
+      { name: "narrowed request", requested: ["read_file"], expected: ["read_file"] },
+      { name: "empty request", requested: [], expected: [] },
+      { name: "denied delegate", denied: ["agent_writer"], expected: ["read_file"] },
+      { name: "missing grant", granted: [], expected: [] },
+    ]
+  ) {
+    it(`preserves Markdown delegate bindings within authority: ${selection.name}`, async () => {
+      const definition = parseRuntimeAgentMarkdownDefinition({
+        id: "coder",
+        content: `---
+tools: [read_file]
+delegates: [writer, ungranted]
+denied-tools: ${JSON.stringify(selection.denied ?? [])}
+---
+Synthetic source instructions.`,
+      });
+      const state = runtime();
+      state.agents.set("coder", createRuntimeAgentFromMarkdownDefinition(definition));
+      const executions: string[] = [];
+      let visible: string[] = [];
+      let calls = 0;
+      const f = fixture({
+        load: () => Promise.resolve(state),
+        grant: {
+          ...grant,
+          allowedToolNames: selection.granted ?? ["read_file", "agent_writer", "agent_undeclared"],
+          hostToolFacadeIds: ["delegates"],
+        },
+        facades: {
+          hostTools: new Map([[
+            "delegates",
+            Object.fromEntries(
+              ["read_file", "agent_writer", "agent_ungranted", "agent_undeclared"].map((name) => [
+                name,
+                {
+                  ...syntheticHostTool(),
+                  execute: () => {
+                    executions.push(name);
+                    return { ok: true };
+                  },
+                },
+              ]),
+            ),
+          ]]),
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream(options) {
+              visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+              return finishStream(
+                calls++ === 0 ? visible.find((name) => name === "agent_writer") : undefined,
+              );
+            },
+          }),
+        },
+      });
+      try {
+        await Array.fromAsync(
+          await preparedStream(f, {
+            agentId: "coder",
+            ...(selection.requested === undefined ? {} : { allowedToolNames: selection.requested }),
+          }),
+        );
+        assertEquals([...visible].sort(), [...selection.expected].sort());
+        assertEquals(
+          executions,
+          selection.expected.some((name) => name === "agent_writer") ? ["agent_writer"] : [],
+        );
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   it("retains discovery resources during preparation after upstream abort", async () => {
     const entered = Promise.withResolvers<void>();
     const listing = Promise.withResolvers<[]>();
