@@ -21,6 +21,9 @@ import {
 } from "./executor-agent-schema.ts";
 
 const textEncoder = new TextEncoder();
+const MapConstructor = Map;
+const mapSet = Map.prototype.set;
+const apply = Reflect.apply;
 
 async function startExecutorRuntimeStream(
   start: () => Promise<ReadableStream<Uint8Array>>,
@@ -50,7 +53,7 @@ export function createExecutorAgentOperations(options: {
     options.preparedRuntimeHandle,
   );
   let started = false;
-  return new Map([["agent.stream", {
+  const streamOperation: ExecutorOperation = {
     mode: "stream",
     async *handle(value, context) {
       let phase: "setup" | "stream" = "setup";
@@ -100,7 +103,10 @@ export function createExecutorAgentOperations(options: {
       context.signal.throwIfAborted();
       yield failure ?? { type: "complete" };
     },
-  }]]);
+  };
+  const operations = new MapConstructor<string, ExecutorOperation>();
+  apply(mapSet, operations, ["agent.stream", streamOperation]);
+  return operations;
 }
 
 function parseFrame(value: unknown) {

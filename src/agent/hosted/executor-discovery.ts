@@ -26,6 +26,17 @@ import {
   parseDiscoveryData,
 } from "./executor-discovery-schema.ts";
 
+const apply = Reflect.apply;
+const promiseThen = Promise.prototype.then;
+
+function chain<T, U>(
+  promise: Promise<T>,
+  fulfilled: (value: T) => U | PromiseLike<U>,
+  rejected?: (reason: unknown) => U | PromiseLike<U>,
+): Promise<U> {
+  return apply(promiseThen, promise, [fulfilled, rejected]) as Promise<U>;
+}
+
 export interface ExecutorDiscoveryBackend {
   load(signal: AbortSignal): Promise<ProjectAgentRuntimeDiscovery>;
   /** Own partial setup even when load throws before returning a runtime. */
@@ -83,7 +94,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   const projectDir = input.projectDir;
   const lifetime = new AbortController();
   const settled = Promise.withResolvers<void>();
-  void settled.promise.catch(() => {});
+  void chain(settled.promise, () => {}, () => {});
   let tail: Promise<void> = Promise.resolve();
   let backend = input.backend;
   let loadStarted = false;
@@ -102,11 +113,13 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   function close(): Promise<void> {
     if (closing) return closing;
     // Memoize before synchronous abort listeners can reenter close().
-    closing = tail.then(async () => {
+    closing = chain(tail, async () => {
       try {
         // Re-read after each batch: retained startup may reserve producer work
         // after cancellation, before its own promise settles.
-        while (runtimeTasks.size > 0) await Promise.all(runtimeTasks);
+        while (runtimeTasks.size > 0) {
+          for (const task of runtimeTasks) await task;
+        }
         cleanupStarted = true;
         if (loadStarted) await backend?.cleanup(runtime);
       } catch {
@@ -116,13 +129,13 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
         definitions.clear();
       }
     });
-    void closing.then(settled.resolve, settled.reject);
+    void chain(closing, settled.resolve, settled.reject);
     input.signal.removeEventListener("abort", onAbort);
     lifetime.abort();
     return closing;
   }
   const onAbort = () => {
-    void close().catch(() => {});
+    void chain(close(), () => {}, () => {});
   };
   input.signal.addEventListener("abort", onAbort, { once: true });
   if (input.signal.aborted) onAbort();
@@ -223,10 +236,10 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     ) return { ok: false, code: "EXECUTOR_DISCOVERY_BINDING_MISMATCH" };
     if (lifetime.signal.aborted) return { ok: false, code: "EXECUTOR_DISCOVERY_CLOSED" };
     const onCancel = () => {
-      void close().catch(() => {});
+      void chain(close(), () => {}, () => {});
     };
     context.signal.addEventListener("abort", onCancel, { once: true });
-    const work = tail.then(async () => {
+    const work = chain(tail, async () => {
       if (context.signal.aborted || Date.now() >= context.deadline) {
         onCancel();
         throw new ExecutorDiscoveryError("ABORTED");
@@ -240,7 +253,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       }
       return value;
     });
-    tail = work.then(() => {}, () => {});
+    tail = chain(work, () => {}, () => {});
     if (context.signal.aborted) onCancel();
     try {
       return await work;
@@ -309,9 +322,9 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     close,
     retainRuntimeTask(task) {
       if (cleanupStarted) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLOSED");
-      const retained = task.then(() => {}, () => {});
+      const retained = chain(task, () => {}, () => {});
       runtimeTasks.add(retained);
-      void retained.then(() => runtimeTasks.delete(retained));
+      void chain(retained, () => runtimeTasks.delete(retained));
     },
     getRuntime() {
       assertActive();

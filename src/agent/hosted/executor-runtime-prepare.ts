@@ -326,7 +326,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       if (!grant || grant.agentId !== request.agentId || !sameBinding(binding, context.binding)) {
         refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
       }
-      const operation = input.discovery.operations.get("agent.describe");
+      const operation = privateMapGet(input.discovery.operations, "agent.describe");
       if (operation?.mode !== "unary") refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       const described = getExecutorAgentDescribeResultSchema().parse(
         await operation.handle({ agentId: request.agentId }, context),
@@ -686,7 +686,9 @@ export function createExecutorRuntimePreparation(input: Options) {
     async *handle(value, context) {
       assertActive();
       if (!sameBinding(binding, context.binding)) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-      const operation = preparedOperations?.get("agent.stream");
+      const operation = preparedOperations === undefined
+        ? undefined
+        : privateMapGet(preparedOperations, "agent.stream");
       if (operation?.mode !== "stream") refuse("EXECUTOR_RUNTIME_NOT_PREPARED");
       yield* operation.handle(value, {
         ...context,
