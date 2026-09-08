@@ -2,6 +2,10 @@ import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts"
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import { defineError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { getExecutorDiscoveryIdSchema } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
+import {
+  getExecutorAgentFailureCodeSchema,
+  getExecutorPreparedRuntimeHandleSchema,
+} from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 const failureStatus = {
   EXECUTOR_RUNTIME_INVALID_INPUT: 400,
@@ -14,6 +18,19 @@ const failureStatus = {
   EXECUTOR_RUNTIME_CLOSED: 410,
   ABORTED: 499,
 } as const;
+type RuntimePreparationFailureCode = keyof typeof failureStatus;
+const runtimePreparationFailureCodes = Object.keys(failureStatus) as [
+  RuntimePreparationFailureCode,
+  ...RuntimePreparationFailureCode[],
+];
+const getExecutorRuntimePreparationFailureCodeSchema = defineSchema((v) =>
+  v.union([v.enum(runtimePreparationFailureCodes), getExecutorAgentFailureCodeSchema()])
+);
+export function isExecutorRuntimePreparationFailureCode(
+  value: unknown,
+): value is RuntimePreparationFailureCode {
+  return runtimePreparationFailureCodes.includes(value as RuntimePreparationFailureCode);
+}
 export class ExecutorRuntimePreparationError extends VeryfrontError {
   constructor(readonly code: keyof typeof failureStatus) {
     super(
@@ -56,6 +73,26 @@ export const getExecutorRuntimePrepareRequestSchema = defineSchema((v) =>
 );
 export type ExecutorRuntimePrepareRequest = InferSchema<
   ReturnType<typeof getExecutorRuntimePrepareRequestSchema>
+>;
+
+export const getExecutorRuntimePrepareResultSchema = defineSchema((v) =>
+  v.discriminatedUnion("ok", [
+    v.object({
+      ok: v.literal(true),
+      value: v.object({
+        preparedRuntimeHandle: getExecutorPreparedRuntimeHandleSchema(),
+        runtimeKind: v.literal("framework"),
+        modelId: getExecutorDiscoveryIdSchema(),
+      }).strict(),
+    }).strict(),
+    v.object({
+      ok: v.literal(false),
+      code: getExecutorRuntimePreparationFailureCodeSchema(),
+    }).strict(),
+  ])
+);
+export type ExecutorRuntimePrepareResult = InferSchema<
+  ReturnType<typeof getExecutorRuntimePrepareResultSchema>
 >;
 
 export const getExecutorRuntimeGrantDataSchema = defineSchema((v) => {

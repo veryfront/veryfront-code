@@ -422,8 +422,9 @@ closed; callers must not retry by falling back to a user API token.
 `startExecutorRuntimeEntrypoint` is available from
 `veryfront/agent/executor-runtime`. It starts the executor side of a managed
 broker/executor deployment on Node.js 22 or newer. Your trusted image launcher
-registers the first-party schema validator, bundler, module lexer, and Skill
-document parser, then supplies the Operator allocation environment and image
+calls `initializeExecutorRuntimeContracts()` from the same export to initialize
+the first-party schema validator, bundler, module lexer, and Skill document
+parser, then supplies the Operator allocation environment and image
 manifest. Missing runtime contracts fail startup.
 
 The executor accepts one authenticated `runtime.install` message bound to its
@@ -438,6 +439,14 @@ and durable persistence. Executor facades call these capabilities through the
 authenticated channel. Closing a runtime revokes its facades; admission remains
 held until the original work and cleanup settle. This entrypoint requires the
 broker and isolation infrastructure to be configured separately.
+
+Use `veryfront/agent/managed-broker` for the broker composition and signed
+control-plane HTTP adapter. The broker installs invocation grants, describes
+the selected agent, and prepares the executor before accepting a run. It keeps
+model and tool execution unavailable during preparation. Configure detached
+202 responses or request-owned SSE responses in trusted service configuration.
+Detached runs require output persistence callbacks; their finalization remains
+part of the session's owned work until all writes settle.
 
 ## Verify it worked
 

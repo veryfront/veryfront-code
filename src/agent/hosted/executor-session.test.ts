@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorChannel } from "../executor/channel.ts";
 import { ManualMonotonicClock } from "../streaming/lifecycle/testing.ts";
@@ -790,6 +796,55 @@ describe("hosted executor session", () => {
     } finally {
       allocation.resolve(structuredClone(f.returned));
     }
+  });
+
+  it("retains broker-owned work through bounded close until the original promise settles", async () => {
+    const work = Promise.withResolvers<string>();
+    const f = fixture();
+    const session = f.start();
+    await session.ready;
+    const owned = session.runOwned(() => work.promise);
+    const closing = session.close();
+    f.time.advanceBy(500);
+    assertEquals((await closing).release, "released");
+    let settled = false;
+    void session.settled.then(() => settled = true);
+    await tick();
+    assertEquals(settled, false);
+    work.resolve("persisted");
+    assertEquals(await owned, "persisted");
+    await session.settled;
+    assertEquals(settled, true);
+    await f.peerClosed();
+  });
+
+  it("propagates owned-work rejection and retires it from settlement", async () => {
+    const f = fixture();
+    const session = f.start();
+    await session.ready;
+    const failure = new Error("synthetic owned failure");
+    const rejected = await assertRejects(() => session.runOwned(() => Promise.reject(failure)));
+    assertStrictEquals(rejected, failure);
+    await session.close();
+    await session.settled;
+    await f.peerClosed();
+  });
+
+  it("rejects owned work after close without invoking the thunk", async () => {
+    const f = fixture();
+    const session = f.start();
+    await session.ready;
+    await session.close();
+    let invoked = false;
+    await assertRejects(() =>
+      session.runOwned(() => {
+        invoked = true;
+        return Promise.resolve();
+      })
+    );
+    assertEquals(invoked, false);
+    await session.settled;
+    await f.peerClosed();
   });
 
   it("retains session admission through noncooperative incoming operation cleanup", async () => {

@@ -27,6 +27,9 @@ function sessionDouble() {
     binding: undefined,
     accepted: false,
     accept() {},
+    runOwned(operation) {
+      return operation();
+    },
     close() {
       closeCalls++;
       controller.abort();

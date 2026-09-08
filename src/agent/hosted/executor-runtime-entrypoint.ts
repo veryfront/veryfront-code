@@ -10,6 +10,8 @@ import {
   startExecutorNodeBootstrap,
 } from "./executor-node-bootstrap.ts";
 import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
+import { awaitExecutorCleanup } from "./executor-runtime-settlement.ts";
+export { initializeExecutorRuntimeContracts } from "./executor-runtime-contracts.ts";
 import {
   type ExecutorArtifactManifest,
   getExecutorArtifactManifestSchema,
@@ -132,20 +134,19 @@ export async function startExecutorRuntimeEntrypoint(
     let closing: Promise<void> | undefined;
     const close = (): Promise<void> => {
       if (!closing) {
-        closing = Promise.resolve().then(async () => {
-          bootstrap.close();
-          await installation.close();
-          const connected = await channel.promise.catch(() => undefined);
-          await connected?.settled;
-        });
+        closing = awaitExecutorCleanup([
+          Promise.resolve().then(() => bootstrap.close()),
+          Promise.resolve().then(() => installation.close()),
+          channel.promise.then((connected) => connected.settled, () => {}),
+        ]);
         lifetime.abort();
       }
       return closing;
     };
-    const settled = Promise.all([
+    const settled = awaitExecutorCleanup([
       installation.settled,
       channel.promise.then((connected) => connected.settled, () => {}),
-    ]).then(() => {});
+    ]);
     void settled.catch(() => {});
     return { address: bootstrap.address, ready: bootstrap.ready, close, settled };
   } catch (error) {

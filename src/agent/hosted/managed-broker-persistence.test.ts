@@ -1,0 +1,188 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
+
+const conversationId = "00000000-0000-4000-8000-000000000001";
+const messageId = "00000000-0000-4000-8000-000000000002";
+const run = {
+  runId: "run-1",
+  conversationId,
+  messageId,
+  latestEventId: 0,
+  latestExternalEventSequence: 0,
+  waitingToolCallId: null,
+  waitingToolName: null,
+  status: "running" as const,
+  streamProtocolVersion: 2 as const,
+};
+
+function successfulFetch(calls: Record<string, unknown>[]) {
+  let cursor = 0;
+  return async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+    calls.push(body);
+    if (Array.isArray(body.events)) {
+      cursor += body.events.length;
+      return Response.json({
+        latest_event_id: cursor,
+        latest_external_event_sequence: cursor,
+        appended_count: body.events.length,
+        run: {
+          run_id: run.runId,
+          conversation_id: conversationId,
+          latest_event_id: cursor,
+          latest_external_event_sequence: cursor,
+        },
+      });
+    }
+    return Response.json({ completed: true, run: { runId: run.runId, status: body.status } });
+  };
+}
+
+describe("managed broker persistence", () => {
+  it("persists output, audit, parent events, checkpoints, and terminal completion", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const fetch = successfulFetch(calls);
+    await withMockFetch(fetch, async () => {
+      const persistence = createManagedBrokerPersistence({
+        apiUrl: "https://api.example.test",
+        runEventToken: "run-event-token",
+        run,
+        modelId: "veryfront-cloud/openai/synthetic",
+        resolveProvider: () => "openai",
+        fetch,
+      });
+      await persistence.output.write({ type: "text-delta", id: "message", delta: "hello" });
+      await persistence.modelRunEventSink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        messages: [],
+        tools: [],
+      });
+      await persistence.publishParentRunEvents([{ type: "STEP_STARTED" }]);
+      await persistence.persistToolExposureCheckpoint({
+        version: 2,
+        loadedToolNames: ["search"],
+      });
+      await persistence.persistProviderReplayCheckpoint({
+        version: 1,
+        messageId,
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "redacted_thinking", data: "synthetic" },
+        }],
+        providerBlockPositions: [0],
+        providerMessageBlockCounts: [1],
+        totalPartCount: 1,
+      });
+      await persistence.output.finish({ completed: true });
+      await assertRejects(() => persistence.publishParentRunEvents([{ type: "STEP_FINISHED" }]));
+      await persistence.cleanup();
+    });
+    const events = calls.flatMap((call) => Array.isArray(call.events) ? call.events : []);
+    assertEquals(events.some((event) => event.type === "TEXT_MESSAGE_CONTENT"), true);
+    assertEquals(events.some((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT"), true);
+    assertEquals(events.some((event) => event.type === "STEP_STARTED"), true);
+    assertEquals(events.some((event) => event.type === "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), true);
+    assertEquals(
+      events.some((event) => event.type === "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT"),
+      true,
+    );
+    assertEquals(calls.at(-1)?.status, "completed");
+  });
+
+  it("retains a queued cancellation finish until the original output write settles", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<Response>();
+    const calls: Record<string, unknown>[] = [];
+    const fallback = successfulFetch(calls);
+    let first = true;
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (first) {
+        first = false;
+        entered.resolve();
+        return await release.promise;
+      }
+      return await fallback(input, init);
+    };
+    await withMockFetch(fetch, async () => {
+      const persistence = createManagedBrokerPersistence({
+        apiUrl: "https://api.example.test",
+        runEventToken: "run-event-token",
+        run,
+        modelId: "model",
+        resolveProvider: () => "provider",
+        fetch,
+      });
+      const write = persistence.output.write({
+        type: "text-delta",
+        id: "message",
+        delta: "pending",
+      });
+      await entered.promise;
+      let finished = false;
+      const finish = persistence.output.finish({ completed: false }).then(() => finished = true);
+      await Promise.resolve();
+      assertEquals(finished, false);
+      release.resolve(Response.json({
+        latest_event_id: 1,
+        latest_external_event_sequence: 1,
+        appended_count: 1,
+        run: {
+          run_id: run.runId,
+          conversation_id: conversationId,
+          latest_event_id: 1,
+          latest_external_event_sequence: 1,
+        },
+      }));
+      await write;
+      await finish;
+      assertEquals(calls.at(-1)?.status, "cancelled");
+      await persistence.cleanup();
+    });
+  });
+
+  it("propagates persistence failure through finish without reporting success", async () => {
+    const fetch = () => Promise.resolve(new Response("failed", { status: 500 }));
+    await withMockFetch(fetch, async () => {
+      const persistence = createManagedBrokerPersistence({
+        apiUrl: "https://api.example.test",
+        runEventToken: "run-event-token",
+        run,
+        modelId: "model",
+        resolveProvider: () => "provider",
+        fetch,
+      });
+      await assertRejects(() =>
+        persistence.output.write({ type: "text-delta", id: "message", delta: "fail" })
+      );
+      await assertRejects(() => persistence.output.finish({ completed: false, error: "failed" }));
+      await persistence.cleanup();
+    });
+  });
+
+  it("persists a failed terminal outcome for executor output errors", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const fetch = successfulFetch(calls);
+    await withMockFetch(fetch, async () => {
+      const persistence = createManagedBrokerPersistence({
+        apiUrl: "https://api.example.test",
+        runEventToken: "run-event-token",
+        run,
+        modelId: "model",
+        resolveProvider: () => "provider",
+        fetch,
+      });
+      await persistence.output.finish({
+        completed: false,
+        error: new Error("synthetic execution failure"),
+      });
+      assertEquals(calls.at(-1)?.status, "failed");
+      assertEquals(calls.at(-1)?.terminal_error_code, "STREAM_ERROR");
+      await persistence.cleanup();
+    });
+  });
+});

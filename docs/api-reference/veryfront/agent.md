@@ -1921,6 +1921,22 @@ Input delivered to a hosted agent-service detached execution callback.
 
 These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
 
+### `veryfront/agent/executor-runtime`
+
+```ts
+import {
+  initializeExecutorRuntimeContracts,
+  startExecutorRuntimeEntrypoint,
+} from "veryfront/agent/executor-runtime";
+```
+
+#### Functions
+
+| Name                                 | Description                                                                                                                                                                                                                                                                           | Source                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `initializeExecutorRuntimeContracts` | Install the fixed first-party contracts required before executor project imports. Concurrent and repeated startup preserves any already-registered trusted generation.                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-runtime-contracts.ts)  |
+| `startExecutorRuntimeEntrypoint`     | Dedicated executor entrypoint. The reviewed image launcher registers its first-party SchemaValidator, Bundler, ModuleLexer and SkillDocumentParserProvider before calling this function. The fixed image manifest is outside the project tree and is never selected by channel input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-runtime-entrypoint.ts) |
+
 ### `veryfront/agent/identity`
 
 ```ts
@@ -1964,3 +1980,49 @@ import {
 | `ProjectAgentRunSnapshot`                |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
 | `SourceProjectAgentExecutionIdentity`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
 | `SourceProjectAgentRunSnapshot`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+
+### `veryfront/agent/managed-broker`
+
+Managed broker composition without project runtime or application imports.
+
+```ts
+import {
+  connectExecutorTransport,
+  createHostedExecutorAllocatorClient,
+  createManagedBrokerHandler,
+} from "veryfront/agent/managed-broker";
+```
+
+#### Functions
+
+| Name                                  | Description                                                                                                                                                                                                                                                                                                                                                      | Source                                                                                                         |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `connectExecutorTransport`            | Node-only TLS 1.3 PSK. No certificate fallback, session reuse, or reconnect.                                                                                                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts)    |
+| `createHostedExecutorAllocatorClient` | Trusted broker client for the operator's dedicated TLS endpoint. Each call reads the rotated Pod-bound token. No redirects, automatic POST retries, arbitrary headers, application credentials, or ambient gateway fallback. The returned promise retains raw token-read and socket ownership; the session supplies prompt cancellation notification separately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-allocator-client.ts)  |
+| `createManagedBrokerHandler`          | Handle signed run invocations with configured detached or request-owned SSE responses.                                                                                                                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-broker-handler.ts)    |
+| `createManagedBrokerPersistence`      | Create exact-run API persistence callbacks while retaining credentials in the broker.                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/managed-broker-persistence.ts) |
+| `createManagedExecutorBroker`         | Compose an executor pool with authenticated installation and operation gates.                                                                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/managed-executor-broker.ts)    |
+| `parseBrokerRuntimeAgentIngress`      | Read and verify a signed invocation once before constructing executor-safe data.                                                                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)            |
+
+#### Classes
+
+| Name                 | Description                                                                             | Source                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `BrokerIngressError` | Fixed ingress failures contain no body, signature, credential, or verifier diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts) |
+
+#### Types
+
+| Name                                 | Description                                                                   | Source                                                                                                      |
+| ------------------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `BrokerIngressErrorCode`             | Fixed, credential-free ingress failure identifiers.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)         |
+| `BrokerIngressScopeInput`            | Signed identity and credentials supplied to the trusted scope verifier.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)         |
+| `BrokerRuntimeAgentExecutorInput`    | Validated application data that can cross the executor channel.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)         |
+| `BrokerRuntimeAgentIngress`          | Separate private authority and executor-safe invocation data.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)         |
+| `BrokerRuntimeAgentIngressOptions`   | Broker-owned verification policy for one expected run and source.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)         |
+| `BrokerRuntimeAgentPrivateAuthority` | HTTP credentials and verified authority retained exclusively in the broker.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/broker-ingress.ts)         |
+| `ConnectExecutorTransportOptions`    |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts) |
+| `ManagedBrokerOutput`                | Broker-owned output persistence for a detached run.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-broker-handler.ts) |
+| `ManagedExecutorBrokerOptions`       | Process admission and shutdown limits for a managed broker.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/managed-executor-broker.ts) |
+| `ManagedExecutorRuntime`             | Prepared executor handle with broker-owned execution and retirement.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/managed-executor-broker.ts) |
+| `ManagedExecutorStarter`             | Trusted executor admission boundary with actual settlement notification.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-broker-handler.ts) |
+| `ManagedExecutorStartInput`          | Trusted per-invocation source, model, tool, persistence, and state authority. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/managed-executor-broker.ts) |

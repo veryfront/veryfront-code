@@ -1,13 +1,11 @@
-import "#veryfront/schemas/_test-setup.ts";
-import "#veryfront/skill/_test-setup.ts";
 import { readFileSync } from "node:fs";
 import process from "node:process";
-import { register } from "#veryfront/extensions/contracts.ts";
-import { EsbuildBundler, EsModuleLexer } from "../../extensions/ext-bundler-esbuild/src/index.ts";
-import { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
+import {
+  initializeExecutorRuntimeContracts,
+  startExecutorRuntimeEntrypoint,
+} from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
 
-register("Bundler", new EsbuildBundler());
-register("ModuleLexer", new EsModuleLexer());
+await initializeExecutorRuntimeContracts();
 
 // Synthetic allocation key arrives on a private pipe; no broker environment or
 // HTTP data is inherited by this executor process.

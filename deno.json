@@ -100,6 +100,7 @@
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
     "./agent/executor-runtime": "./src/agent/hosted/executor-runtime-entrypoint.ts",
+    "./agent/managed-broker": "./src/agent/service/managed-broker.ts",
     "./agent/identity": "./src/agent/identity-contracts.ts",
     "./eval": "./src/eval/index.ts",
     "./metrics": "./src/metrics/public.ts",
