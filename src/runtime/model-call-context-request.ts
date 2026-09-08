@@ -4,20 +4,24 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import {
+  isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
+  resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { ModelCallRequest } from "./model-call-context.ts";
 
 type ModelCallRuntimeMetadata = Pick<RuntimeMetadata, "modelId" | "provider" | "modelProvider">;
-type ModelCallRequestSource = Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools"> & {
-  providerOptions?: unknown;
-};
+type ModelCallRequestSource =
+  & Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools" | "responseFormat">
+  & {
+    providerOptions?: unknown;
+  };
 
 const ReflectApply = Reflect.apply;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -67,43 +71,78 @@ function stopControl(value: unknown): string[] | undefined {
     : undefined;
 }
 
+function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
+  const provider = resolveModelCallProvider(model);
+  return provider === "openai" || (model.provider === "veryfront-cloud" &&
+    (provider === "mistral" || provider === "moonshotai"));
+}
+
+function managedOpenAITransport(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): "chat-completions" | "responses" | undefined {
+  // Custom direct runtime transport overrides are not represented by this metadata.
+  if (model.provider !== "veryfront-cloud" || !model.modelId) return undefined;
+  const catalogId = `${resolveModelCallProvider(model)}/${model.modelId}`;
+  return resolveVeryfrontCloudOpenAITransport(catalogId) ??
+    ((resolveModelCallProvider(model) === "openai" &&
+        resolveVeryfrontCloudModelThinking(catalogId)?.enabled === true) ||
+        isOpenAIReasoningModel(model.modelId, "veryfront-cloud") ||
+        options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai."))
+      ? "responses"
+      : "chat-completions");
+}
+
+function openAIProviderOptions(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): Record<string, unknown> {
+  const providerName = model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
+  return readProviderOptions(
+    options.providerOptions as Record<string, unknown> | undefined,
+    ...(providerName === "openai" ? ["openai-compatible"] : []),
+    "openai",
+    providerName,
+  );
+}
+
 /** Project effective request settings without persisting raw provider options. */
 export function buildModelCallContextRequest(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequest | undefined {
   const reasoning = resolvePersistedReasoning(model, options);
-  return buildModelCallRequest(resolvePersistedControls(model, options, reasoning), reasoning);
+  return buildModelCallRequest(resolvePersistedControls(model, options), reasoning);
 }
 
 function resolvePersistedControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
-  reasoning: RuntimeReasoningOption | undefined,
 ): ModelCallRequestSource {
   const provider = resolveModelCallProvider(model);
   if (provider === "anthropic") return resolveAnthropicControls(model, options);
   if (provider === "google") return resolveGoogleControls(model, options);
-  if (provider !== "openai") {
+  if (!usesOpenAIBuilder(model)) {
     return options;
   }
-  const providerName = model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai";
-  const providerOptions = readProviderOptions(
-    options.providerOptions as Record<string, unknown> | undefined,
-    ...(providerName === "openai" ? ["openai-compatible"] : []),
-    "openai",
-    providerName,
-  );
-  const dropSampling = reasoning?.enabled === true ||
-    (typeof model.modelId === "string" && rejectsOpenAISamplingParams(model.modelId));
+  const providerOptions = openAIProviderOptions(model, options);
+  const transport = managedOpenAITransport(model, options);
+  // Native reasoning is merged after neutral sampling is filtered.
+  const dropSampling = resolveOpenAINeutralReasoning(model, options)?.enabled === true ||
+    (typeof model.modelId === "string" && (rejectsOpenAISamplingParams(model.modelId) ||
+      (transport !== "responses" && /^kimi-k2\.5/.test(model.modelId))));
   const effective = {
     ...options,
     topK: numberControl(providerOptions.top_k),
     seed: ObjectHasOwn(providerOptions, "seed")
       ? numberControl(providerOptions.seed)
+      : transport === "responses"
+      ? undefined
       : options.seed,
     stopSequences: ObjectHasOwn(providerOptions, "stop")
       ? stopControl(providerOptions.stop)
+      : transport === "responses"
+      ? undefined
       : options.stopSequences?.length
       ? options.stopSequences
       : undefined,
@@ -119,7 +158,9 @@ function resolvePersistedControls(
     // Native options merge after neutral filtering in both OpenAI builders.
     const value = ObjectHasOwn(providerOptions, nativeField)
       ? providerOptions[nativeField]
-      : dropSampling
+      : dropSampling ||
+          (transport === "responses" &&
+            (field === "presencePenalty" || field === "frequencyPenalty"))
       ? undefined
       : options[field];
     effective[field] = typeof value === "number" ? value : undefined;
@@ -239,34 +280,71 @@ function resolvePersistedReasoning(
 ): RuntimeReasoningOption | undefined {
   const modelProvider = resolveModelCallProvider(model);
   if (modelProvider === "google") return resolveGoogleReasoning(model, options);
-  if (modelProvider === "openai" && typeof model.modelId === "string") {
-    const catalogId = `openai/${model.modelId}`;
-    if (
-      model.provider === "veryfront-cloud" &&
-      resolveVeryfrontCloudOpenAITransport(catalogId) === "chat-completions" &&
-      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false
-    ) {
-      // Match the Chat builder's native bucket precedence, including an own
-      // tools value that clears the neutral list with [] or undefined.
-      const providerOptions = readProviderOptions(
-        options.providerOptions as Record<string, unknown> | undefined,
-        "openai",
-        "veryfront-cloud",
-      );
-      const tools = ObjectHasOwn(providerOptions, "tools") ? providerOptions.tools : options.tools;
-      if (
-        Array.isArray(tools) &&
-        tools.some((tool) =>
-          tool !== null && typeof tool === "object" && "type" in tool && tool.type === "function"
-        )
-      ) {
-        return { enabled: false };
-      }
-    }
-    const reasoning = resolveOpenAIReasoningConfig(model.modelId, modelProvider, options.reasoning);
-    return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
+  if (usesOpenAIBuilder(model) && typeof model.modelId === "string") {
+    const neutral = resolveOpenAINeutralReasoning(model, options);
+    const transport = managedOpenAITransport(model, options);
+    if (!transport) return neutral;
+    if (suppressOpenAIFunctionToolReasoning(model, options)) return { enabled: false };
+    const native = openAIProviderOptions(model, options);
+    const field = transport === "responses" ? "reasoning" : "reasoning_effort";
+    if (!ObjectHasOwn(native, field)) return neutral;
+    const effort = transport === "responses"
+      ? readOwnEnumerableDataDescriptor(native.reasoning, "effort")?.value
+      : native.reasoning_effort;
+    if (effort === "none") return { enabled: false };
+    return effort === "low" || effort === "medium" || effort === "high" || effort === "max"
+      ? { enabled: true, effort }
+      : undefined;
   }
 
+  return resolveNonOpenAIReasoning(model, options);
+}
+
+function suppressOpenAIFunctionToolReasoning(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): boolean {
+  const catalogId = `openai/${model.modelId}`;
+  if (
+    model.provider === "veryfront-cloud" &&
+    resolveVeryfrontCloudOpenAITransport(catalogId) === "chat-completions" &&
+    resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false
+  ) {
+    // Match the Chat builder's native bucket precedence, including an own
+    // tools value that clears the neutral list with [] or undefined.
+    const providerOptions = openAIProviderOptions(model, options);
+    const tools = ObjectHasOwn(providerOptions, "tools") ? providerOptions.tools : options.tools;
+    if (
+      Array.isArray(tools) &&
+      tools.some((tool) =>
+        tool !== null && typeof tool === "object" && "type" in tool && tool.type === "function"
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveOpenAINeutralReasoning(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): RuntimeReasoningOption | undefined {
+  if (suppressOpenAIFunctionToolReasoning(model, options)) return { enabled: false };
+  if (!model.modelId) return options.reasoning;
+  const reasoning = resolveOpenAIReasoningConfig(
+    model.modelId,
+    model.provider === "veryfront-cloud" ? "veryfront-cloud" : "openai",
+    options.reasoning,
+  );
+  return reasoning ? { enabled: true, effort: reasoning.effort } : options.reasoning;
+}
+
+function resolveNonOpenAIReasoning(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): RuntimeReasoningOption | undefined {
+  const modelProvider = resolveModelCallProvider(model);
   // The Anthropic request builder only gives neutral reasoning precedence when
   // it enables thinking; otherwise a raw provider thinking config remains effective.
   if (modelProvider !== "anthropic" || options.reasoning?.enabled === true) {
@@ -295,7 +373,10 @@ function resolvePersistedReasoning(
     };
   }
 
-  const outputConfig = readProviderControl(model, options, "output_config")?.value;
+  // Structured output is pinned again after provider options are merged.
+  const outputConfig = options.responseFormat?.type === "json_schema"
+    ? undefined
+    : readProviderControl(model, options, "output_config")?.value;
   const effort = outputConfig && typeof outputConfig === "object" && !Array.isArray(outputConfig)
     ? readOwnEnumerableDataDescriptor(outputConfig, "effort")?.value
     : undefined;
