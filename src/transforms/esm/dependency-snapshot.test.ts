@@ -19,6 +19,36 @@ describe("dependency snapshot storage codec", () => {
       encodeDependencySnapshot(namespace, createDependencyPinningSnapshot(key, b)),
     );
   });
+  it("preserves the version-1 bytes of stored empty configuration", () => {
+    const dependencies = { react: "19.2.4" };
+    const key = `on:${hashDependencyPins(dependencies)}`;
+    const snapshot = createDependencyPinningSnapshot(key, dependencies, {});
+    const stored = JSON.stringify({
+      version: 1,
+      namespace,
+      snapshot: { cacheKey: key, dependencies, configuredVersions: {} },
+    });
+    assertEquals(encodeDependencySnapshot(namespace, snapshot), stored);
+    assertEquals(decodeDependencySnapshot(stored, namespace, key), snapshot);
+  });
+  it("preserves the existing configured-version wire key", () => {
+    const dependencies = { react: "19.2.4", zod: "4.0.0" };
+    const configuredVersions = {
+      react: { declaration: "^19", effective: "19.2.4" },
+      veryfront: { declaration: "^1", effective: "1.0.0" },
+    };
+    const key = "on:34boxm8cboikh";
+    assertEquals(`on:${hashDependencyPins(dependencies, configuredVersions)}`, key);
+    const snapshot = createDependencyPinningSnapshot(key, dependencies, configuredVersions);
+    assertEquals(
+      encodeDependencySnapshot(namespace, snapshot),
+      JSON.stringify({
+        version: 1,
+        namespace,
+        snapshot: { cacheKey: key, dependencies, configuredVersions },
+      }),
+    );
+  });
   it("rejects tampered dependencies and effective configuration under the original key", () => {
     const dependencies = { react: "19.2.4" };
     const configured = { react: { declaration: "^19", effective: "19.2.4" } };

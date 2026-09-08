@@ -9,6 +9,8 @@ import type {
 import { DependencySnapshotRegistry } from "#veryfront/transforms/esm/dependency-snapshot-registry.ts";
 import {
   createDependencyPinningSnapshot,
+  decodeDependencySnapshot,
+  encodeDependencySnapshot,
   hashDependencyPins,
 } from "#veryfront/transforms/esm/dependency-snapshot.ts";
 
@@ -27,6 +29,118 @@ function snapshot(dependencies: Record<string, string> = {}) {
   return createDependencyPinningSnapshot(`on:${hashDependencyPins(dependencies)}`, dependencies);
 }
 describe("dependency snapshot intrinsic capture", () => {
+  const codecPrimitives: Array<[string, object, PropertyKey]> = [
+    ["JSON.parse", JSON, "parse"],
+    ["JSON.stringify", JSON, "stringify"],
+    ["Object.entries", Object, "entries"],
+    ["Object.values", Object, "values"],
+    ["Object.keys", Object, "keys"],
+    ["Object.fromEntries", Object, "fromEntries"],
+    ["Object.assign", Object, "assign"],
+    ["Object.create", Object, "create"],
+    ["Object.freeze", Object, "freeze"],
+    ["Object.hasOwn", Object, "hasOwn"],
+    ["Object.getOwnPropertyDescriptor", Object, "getOwnPropertyDescriptor"],
+    ["Object.setPrototypeOf", Object, "setPrototypeOf"],
+    ["Array.isArray", Array, "isArray"],
+    ["Array.sort", Array.prototype, "sort"],
+    ["Array.some", Array.prototype, "some"],
+    ["Array.iterator", Array.prototype, Symbol.iterator],
+    ["String.localeCompare", String.prototype, "localeCompare"],
+    ["String.charCodeAt", String.prototype, "charCodeAt"],
+    ["BigInt", globalThis, "BigInt"],
+    ["BigInt.toString", BigInt.prototype, "toString"],
+    ["RegExp.exec", RegExp.prototype, "exec"],
+    ["Reflect.apply", Reflect, "apply"],
+  ];
+  for (const [name, target, property] of codecPrimitives) {
+    it(`keeps snapshot bytes and pins stable after ${name} is replaced`, () => {
+      const namespace = "a".repeat(64);
+      const dependencies = { zod: "4.0.0", react: "19.2.4" };
+      const configured = { react: { declaration: "^19", effective: "19.2.4" } };
+      const key = `on:${hashDependencyPins(dependencies, configured)}`;
+      const expected = encodeDependencySnapshot(
+        namespace,
+        createDependencyPinningSnapshot(key, dependencies, configured),
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(target, property)!;
+      const define = Object.defineProperty;
+      let touches = 0, actualKey = "", actualBytes = "";
+      let failure: unknown;
+      try {
+        define(target, property, {
+          configurable: true,
+          writable: true,
+          value: () => {
+            touches++;
+            throw new Error("Replaced codec primitive invoked");
+          },
+        });
+        actualKey = `on:${hashDependencyPins(dependencies, configured)}`;
+        const captured = createDependencyPinningSnapshot(key, dependencies, configured);
+        actualBytes = encodeDependencySnapshot(namespace, captured);
+        decodeDependencySnapshot(expected, namespace, key);
+      } catch (error) {
+        failure = error;
+      } finally {
+        define(target, property, descriptor);
+      }
+      assertEquals(failure, undefined, `${name} must not affect snapshot processing`);
+      assertEquals(touches, 0);
+      assertEquals(actualKey, key);
+      assertEquals(actualBytes, expected);
+    });
+  }
+
+  it("does not consult inherited JSON or missing-field hooks", () => {
+    const namespace = "a".repeat(64);
+    const original = snapshot({ react: "19.2.4" });
+    const expected = encodeDependencySnapshot(namespace, original);
+    const targets: Array<[object, string]> = [
+      [Object.prototype, "toJSON"],
+      [Array.prototype, "toJSON"],
+      [Object.prototype, "configuredVersions"],
+      [Object.prototype, "version"],
+    ];
+    const descriptors = targets.map(([target, key]) =>
+      Object.getOwnPropertyDescriptor(target, key)
+    );
+    let touches = 0, actualBytes = "", invalidRejected = false;
+    let failure: unknown;
+    try {
+      for (const [target, key] of targets) {
+        Object.defineProperty(target, key, {
+          configurable: true,
+          get() {
+            touches++;
+            throw new Error("Inherited codec hook invoked");
+          },
+        });
+      }
+      actualBytes = encodeDependencySnapshot(namespace, original);
+      decodeDependencySnapshot(expected, namespace, original.cacheKey);
+      try {
+        decodeDependencySnapshot("{}", namespace, original.cacheKey);
+      } catch {
+        invalidRejected = true;
+      }
+    } catch (error) {
+      failure = error;
+    } finally {
+      targets.forEach(([target, key], index) => {
+        const descriptor = descriptors[index];
+        if (descriptor) Object.defineProperty(target, key, descriptor);
+        else Reflect.deleteProperty(target, key);
+      });
+    }
+    assertEquals(failure, undefined);
+    assertEquals({ touches, actualBytes, invalidRejected }, {
+      touches: 0,
+      actualBytes: expected,
+      invalidRejected: true,
+    });
+  });
+
   it("preserves local eviction without consulting replaced Map constructors or methods", async () => {
     const OriginalMap = Map;
     const methodNames = ["get", "set", "delete", "clear", "keys", "size"] as const;
