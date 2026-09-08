@@ -124,13 +124,19 @@ export function executorToolDefinition(value: unknown, limits: ExecutorToolLimit
     Object.keys(data).some((key) =>
       !["name", "description", "parameters", "title", "annotations"].includes(key)
     ) ||
-    !getExecutorToolIdSchema().safeParse(data.name).success ||
+    typeof data.name !== "string" || !getExecutorToolIdSchema().safeParse(data.name).success ||
     typeof data.description !== "string" ||
     !data.parameters || typeof data.parameters !== "object" || Array.isArray(data.parameters) ||
     (data.title !== undefined && typeof data.title !== "string") ||
     (data.annotations !== undefined && !isToolAnnotations(data.annotations))
   ) throw new TypeError("Invalid executor tool definition");
-  return data as unknown as ToolDefinition;
+  return {
+    name: data.name,
+    description: data.description,
+    parameters: data.parameters,
+    ...(data.title === undefined ? {} : { title: data.title }),
+    ...(data.annotations === undefined ? {} : { annotations: data.annotations }),
+  };
 }
 
 export function executorToolProgress(
