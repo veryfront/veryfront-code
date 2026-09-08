@@ -130,6 +130,36 @@ describe("model call request projection", () => {
     }
   });
 
+  it("projects compatible Cloud reasoning effort without an unsupported token budget", () => {
+    for (
+      const [modelProvider, modelId] of [["mistral", "mistral-large"], [
+        "moonshotai",
+        "kimi-k2.5",
+      ]] as const
+    ) {
+      const options = {
+        prompt,
+        reasoning: { enabled: true, effort: "high" as const, budgetTokens: 2048 },
+      };
+      const body = buildOpenAIChatRequest(
+        modelId,
+        "veryfront-cloud",
+        options,
+        false,
+        createWarningCollector(),
+      );
+      const projected = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider,
+        modelId,
+      }, options);
+      assertEquals(body.reasoning_effort, "high");
+      assertEquals(projected?.reasoning, { enabled: true, effort: "high" });
+      assertEquals(projected?.reasoning?.effort, body.reasoning_effort);
+      assertEquals(projected?.reasoning?.budgetTokens, undefined);
+    }
+  });
+
   it("omits neutral seeds from managed Responses while retaining native seeds", () => {
     for (const native of [undefined, { seed: 2 }]) {
       const options = {
