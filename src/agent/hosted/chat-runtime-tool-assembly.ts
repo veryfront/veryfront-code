@@ -581,17 +581,16 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     modelInstructions,
     modelVisibleToolNames,
   );
-  const systemInstructions = flattenSystemInstructions(instructionsWithToolInventory);
-  const systemMessages = typeof modelInstructions === "string"
-    ? undefined
+  let preparedInstructions = typeof modelInstructions === "string"
+    ? flattenSystemInstructions(instructionsWithToolInventory)
     : instructionsWithToolInventory;
 
   if ("remoteToolSources" in input) {
     if (input.loadLatestConversationUserText) {
-      updateDefaultResearchArtifacts({
+      preparedInstructions = updateDefaultResearchArtifacts({
         taskContext: input.taskContext,
         latestUserText: await input.loadLatestConversationUserText(input.signal),
-        system: systemInstructions,
+        system: preparedInstructions,
       });
     }
   } else if (input.preloadLatestConversationUserText !== false) {
@@ -600,12 +599,19 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       authToken: input.taskContext.authToken,
       conversationId: input.conversationId,
     });
-    updateDefaultResearchArtifacts({
+    preparedInstructions = updateDefaultResearchArtifacts({
       taskContext: input.taskContext,
       latestUserText,
-      system: systemInstructions,
+      system: preparedInstructions,
     });
   }
+
+  const systemInstructions = typeof preparedInstructions === "string"
+    ? preparedInstructions
+    : flattenSystemInstructions(preparedInstructions);
+  const systemMessages = typeof preparedInstructions === "string"
+    ? undefined
+    : preparedInstructions;
 
   return {
     normalizedAllowedToolNames,

@@ -74,6 +74,35 @@ const unrestrictedSourceIntegrationPolicy = {
   mode: "unrestricted",
 } as const;
 
+for (const structured of [false, true]) {
+  it(`facaded assembly retains research artifact reminders in system output (${structured})`, async () => {
+    const content = "Synthetic source instructions";
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { projectId: null, model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: structured ? [{ role: "system", content }] : content,
+      localTools: {},
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      allowedToolNames: [],
+      remoteToolSources: [],
+      loadLatestConversationUserText: () =>
+        Promise.resolve("/research Research synthetic widgets and save the report to the project."),
+    });
+    assertStringIncludes(assembly.systemInstructions, content);
+    assertStringIncludes(assembly.systemInstructions, "research/synthetic-widgets/report.md");
+    if (structured) {
+      assertExists(assembly.systemMessages);
+      assertEquals(assembly.systemMessages[0], { role: "system", content });
+      assertStringIncludes(
+        JSON.stringify(assembly.systemMessages),
+        "research/synthetic-widgets/report.md",
+      );
+    } else {
+      assertEquals(assembly.systemMessages, undefined);
+    }
+  });
+}
+
 function localTool(description: string) {
   return {
     description,
