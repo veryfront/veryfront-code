@@ -48,7 +48,7 @@ describe("runtime tool provenance intrinsics", () => {
         if (key === source || key === target) exposures++;
         return originalSet.call(this, key, value);
       };
-      Object.values = (value) => {
+      Object.values = (value: Parameters<typeof originalValues>[0]) => {
         if (value === tools) exposures++;
         return originalValues(value);
       };
