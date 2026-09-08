@@ -296,22 +296,6 @@ export const getProjectWithEnvironmentsSchema = defineSchema((v) =>
   })
 );
 
-export const getDependencyMetadataHistoryResponseSchema = defineSchema((v) =>
-  v.object({
-    version: v.literal(1),
-    project_id: v.string().uuid(),
-    branch: v.string().nullable(),
-    entries: v.array(
-      v.object({
-        // Validated losslessly after the outer response schema parses. Record
-        // parsers backed by object assignment can drop an own `__proto__` key.
-        dependencies: v.unknown(),
-        expires_at: v.number().int().nonnegative(),
-      }),
-    ).max(16),
-  })
-);
-
 // ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
@@ -363,9 +347,6 @@ export type ReleaseAssetManifestStateResponse = InferSchema<
 >;
 export type ReleaseAssetManifestApiResponse = InferSchema<
   ReturnType<typeof getReleaseAssetManifestResponseSchema>
->;
-export type DependencyMetadataHistoryResponse = InferSchema<
-  ReturnType<typeof getDependencyMetadataHistoryResponseSchema>
 >;
 
 export const API_ENDPOINTS = {

@@ -392,8 +392,11 @@ interface ModuleDependencyState {
 /** Serve transformed module at /_vf_modules/* path */
 export function serveModule(req: Request, options: ModuleServerOptions): Promise<Response> {
   const url = new URL(req.url);
-  const pathPin = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1"
-    ? extractDependencyPinningPathKey(url.pathname)
+  const dependencyPinningEnabled = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
+  const extractedPathPin = extractDependencyPinningPathKey(url.pathname);
+  const pathPin = dependencyPinningEnabled ||
+      (extractedPathPin.found && !extractedPathPin.malformed)
+    ? extractedPathPin
     : { pathname: url.pathname, found: false, malformed: false };
   if (pathPin.found && !pathPin.malformed) {
     url.pathname = pathPin.pathname;
@@ -427,7 +430,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const requestedPinKey = pathPin.found ? pathPin.cacheKey : queryPinValues[0];
       const requestedPinCount = queryPinValues.length + (pathPin.found ? 1 : 0);
       const hasRequestedPinKey = requestedPinCount > 0;
-      const dependencyPinningEnabled = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
       if (
         pathPin.malformed ||
         requestedPinCount > 1 ||

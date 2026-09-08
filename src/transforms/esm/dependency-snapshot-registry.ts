@@ -166,16 +166,23 @@ export class DependencySnapshotRegistry {
    * its acknowledged expiry. This read-only path never substitutes for an
    * explicitly configured shared store and never publishes renderer state.
    */
-  async recoverHistorical(
+  async recoverHistorical<T>(
     identity: string,
     key: string,
-    load: (
-      signal: AbortSignal,
-    ) => Promise<{ snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined>,
+    load: (signal: AbortSignal) => Promise<T>,
+    select: (
+      loaded: T,
+    ) => { snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined,
   ): Promise<DependencyPinningSnapshot | undefined> {
     if (this.#store) return undefined;
     const generation = this.generation;
-    const record = await this.operation(`metadata:${identity}\0${key}`, undefined, load);
+    const loaded = await this.operation(`metadata:${identity}`, undefined, load);
+    let record: { snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined;
+    try {
+      record = select(loaded);
+    } catch {
+      throw this.unavailable();
+    }
     if (!record || record.expiresAt <= this.now()) return undefined;
     if (
       record.snapshot.cacheKey !== key || !isSafeInteger(record.expiresAt) ||

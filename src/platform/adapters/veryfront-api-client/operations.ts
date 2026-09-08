@@ -28,7 +28,6 @@ import {
   getBranchFileDetailSchema,
   getDependencyArtifactAssetUploadResponseSchema,
   getDependencyArtifactBuildResultResponseSchema,
-  getDependencyMetadataHistoryResponseSchema,
   getEnvironmentFileDetailSchema,
   getListBranchFilesResponseSchema,
   getListEnvironmentFilesResponseSchema,
@@ -69,6 +68,83 @@ const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const IntrinsicReflectOwnKeys = Reflect.ownKeys;
 const IntrinsicObjectPrototype = Object.prototype;
+const IntrinsicNumberIsSafeInteger = Number.isSafeInteger;
+const IntrinsicRegExpExec = RegExp.prototype.exec;
+const MetadataProjectIdPattern =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/i;
+
+function invalidMetadataHistoryResponse(): Error {
+  return API_CLIENT_ERROR.create({
+    detail: "Veryfront API dependency metadata history contains an invalid response",
+    status: 502,
+  });
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || IntrinsicArrayIsArray(value)) {
+    throw invalidMetadataHistoryResponse();
+  }
+  return value as Record<string, unknown>;
+}
+
+function metadataField(value: Record<string, unknown> | readonly unknown[], key: string): unknown {
+  const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) throw invalidMetadataHistoryResponse();
+  return descriptor.value;
+}
+
+function metadataEntry(value: unknown): DependencyMetadataHistory["entries"][number] {
+  const entry = metadataRecord(value);
+  const expiresAt = metadataField(entry, "expires_at");
+  if (typeof expiresAt !== "number" || !IntrinsicNumberIsSafeInteger(expiresAt) || expiresAt < 0) {
+    throw invalidMetadataHistoryResponse();
+  }
+  return IntrinsicObjectFreeze({
+    dependencies: parseDependencyMetadataMap(metadataField(entry, "dependencies")),
+    expiresAt,
+  });
+}
+
+function parseMetadataHistoryResponse(
+  value: unknown,
+  expectedProjectId: string,
+  expectedBranch: string | null,
+): DependencyMetadataHistory {
+  const response = metadataRecord(value);
+  const version = metadataField(response, "version");
+  const projectId = metadataField(response, "project_id");
+  const branch = metadataField(response, "branch");
+  const rawEntries = metadataField(response, "entries");
+  if (
+    version !== 1 || typeof projectId !== "string" ||
+    tokenBoundaryApply(IntrinsicRegExpExec, MetadataProjectIdPattern, [projectId]) === null ||
+    (branch !== null && typeof branch !== "string")
+  ) throw invalidMetadataHistoryResponse();
+  if (projectId !== expectedProjectId || branch !== expectedBranch) {
+    throw API_CLIENT_ERROR.create({
+      detail: "Veryfront API dependency metadata history identity mismatch",
+      status: 502,
+    });
+  }
+  if (!IntrinsicArrayIsArray(rawEntries) || rawEntries.length > 16) {
+    throw invalidMetadataHistoryResponse();
+  }
+  const entries: Array<DependencyMetadataHistory["entries"][number]> = [];
+  for (let index = 0; index < rawEntries.length; index++) {
+    IntrinsicObjectDefineProperty(entries, `${index}`, {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: metadataEntry(metadataField(rawEntries, `${index}`)),
+    });
+  }
+  return IntrinsicObjectFreeze({
+    version: 1,
+    projectId,
+    branch,
+    entries: IntrinsicObjectFreeze(entries),
+  });
+}
 
 function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, string>> {
   if (typeof raw !== "object" || raw === null || IntrinsicArrayIsArray(raw)) {
@@ -399,34 +475,8 @@ export class VeryfrontAPIOperations {
         status: 502,
       });
     }
-    const response = getDependencyMetadataHistoryResponseSchema().parse(decoded);
-    if (response.project_id !== expectedProjectId || response.branch !== branch) {
-      throw API_CLIENT_ERROR.create({
-        detail: "Veryfront API dependency metadata history identity mismatch",
-        status: 502,
-      });
-    }
-    // Authenticated entries must not cross mutable Array map/iterator hooks.
-    // Defining indexes also avoids inherited numeric setters on the output.
-    const entries: Array<DependencyMetadataHistory["entries"][number]> = [];
-    for (let index = 0; index < response.entries.length; index++) {
-      const entry = response.entries[index]!;
-      IntrinsicObjectDefineProperty(entries, `${index}`, {
-        configurable: false,
-        enumerable: true,
-        writable: false,
-        value: IntrinsicObjectFreeze({
-          dependencies: parseDependencyMetadataMap(entry.dependencies),
-          expiresAt: entry.expires_at,
-        }),
-      });
-    }
-    return IntrinsicObjectFreeze({
-      version: 1,
-      projectId: response.project_id,
-      branch: response.branch,
-      entries: IntrinsicObjectFreeze(entries),
-    });
+    // Host data bypasses generic validator plugins and array-copy hooks.
+    return parseMetadataHistoryResponse(decoded, expectedProjectId, branch);
   }
 
   async listBranchFiles(

@@ -156,6 +156,83 @@ describe("dependency metadata history API", () => {
     });
   }
 
+  for (const method of ["set", "subarray", "decode"] as const) {
+    it(`keeps authenticated response bytes away from replaced ${method}`, async () => {
+      const marker = "private-history-package";
+      const prepared = Response.json({
+        ...response(),
+        entries: [{ dependencies: { [marker]: "1.0.0" }, expires_at: 1_800_000_000_000 }],
+      });
+      installMockFetch(() => Promise.resolve(prepared));
+      const ops = createOps();
+      const target = method === "decode" ? TextDecoder.prototype : Uint8Array.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(target, method) ??
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), method);
+      assertExists(descriptor);
+      const ownDescriptor = Object.getOwnPropertyDescriptor(target, method);
+      const apply = Reflect.apply;
+      const define = Object.defineProperty;
+      const decode = TextDecoder.prototype.decode;
+      const decoder = new TextDecoder();
+      let exposed = false;
+      define(target, method, {
+        ...descriptor,
+        value: function (this: unknown, ...args: unknown[]) {
+          const bytes = method === "subarray" ? this : args[0];
+          if (bytes instanceof Uint8Array && apply(decode, decoder, [bytes]).includes(marker)) {
+            exposed = true;
+          }
+          return apply(descriptor.value, this, args);
+        },
+      });
+      let history: Awaited<ReturnType<typeof ops.readDependencyMetadataHistory>>;
+      try {
+        history = await ops.readDependencyMetadataHistory("project-slug", PROJECT_ID, null);
+      } finally {
+        if (ownDescriptor) define(target, method, ownDescriptor);
+        else Reflect.deleteProperty(target, method);
+      }
+      assertEquals(exposed, false);
+      assertEquals(history.entries[0]?.dependencies[marker], "1.0.0");
+    });
+  }
+
+  it("never assigns authenticated entries through an inherited numeric setter", async () => {
+    const marker = "private-history-package";
+    const prepared = Response.json({
+      ...response(),
+      entries: [{ dependencies: { [marker]: "1.0.0" }, expires_at: 1_800_000_000_000 }],
+    });
+    installMockFetch(() => Promise.resolve(prepared));
+    const ops = createOps();
+    const prior = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    const define = Object.defineProperty;
+    const own = Object.getOwnPropertyDescriptor;
+    let exposed = false;
+    define(Array.prototype, "0", {
+      configurable: true,
+      set(value: unknown) {
+        if (value !== null && typeof value === "object") {
+          const dependencies = own(value, "dependencies")?.value;
+          if (
+            dependencies !== null && typeof dependencies === "object" &&
+            own(dependencies, marker)?.value === "1.0.0"
+          ) exposed = true;
+        }
+        define(this, "0", { value, writable: true, enumerable: true, configurable: true });
+      },
+    });
+    let history: Awaited<ReturnType<typeof ops.readDependencyMetadataHistory>>;
+    try {
+      history = await ops.readDependencyMetadataHistory("project-slug", PROJECT_ID, null);
+    } finally {
+      if (prior) define(Array.prototype, "0", prior);
+      else Reflect.deleteProperty(Array.prototype, "0");
+    }
+    assertEquals(exposed, false);
+    assertEquals(history.entries[0]?.dependencies[marker], "1.0.0");
+  });
+
   it("parses authenticated history without calling a replaced JSON parser", async () => {
     const marker = "private-history-package";
     const prepared = Response.json({
@@ -298,6 +375,32 @@ describe("dependency metadata history API", () => {
       Error,
       "identity",
     );
+  });
+
+  it("rejects malformed history envelopes without echoing private content", async () => {
+    for (
+      const value of [
+        null,
+        [],
+        {},
+        { ...response(), version: 2 },
+        { ...response(), project_id: "not-a-project-id" },
+        { ...response(), branch: 1 },
+        { ...response(), entries: {} },
+        { ...response(), entries: [null] },
+        { ...response(), entries: [{ dependencies: [], expires_at: 1 }] },
+        { ...response(), entries: [{ dependencies: {}, expires_at: -1 }] },
+        { ...response(), entries: [{ dependencies: {}, expires_at: Number.MAX_SAFE_INTEGER + 1 }] },
+      ]
+    ) {
+      installMockFetch(() => Promise.resolve(Response.json(value)));
+      const error = await assertRejects(() =>
+        createOps().readDependencyMetadataHistory("project-slug", PROJECT_ID, null)
+      );
+      assertInstanceOf(error, Error);
+      assertEquals(error.cause, undefined);
+      restoreMockFetch();
+    }
   });
 
   it("rejects invalid entries and more than sixteen candidates", async () => {

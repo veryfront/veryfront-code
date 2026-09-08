@@ -161,6 +161,59 @@ describe("dependency snapshot registry", () => {
     assertExists(await registry.find("source", a.cacheKey));
     assertEquals(registry.peek("source", b.cacheKey), undefined);
   });
+  it("coalesces concurrent metadata history reads by source before selecting a key", async () => {
+    const registry = new DependencySnapshotRegistry();
+    const first = snapshot({ react: "18.3.1" });
+    const second = snapshot({ react: "19.2.4" });
+    const healthy = snapshot({ zod: "4.0.0" });
+    const expiresAt = Date.now() + 60_000;
+    let reads = 0;
+    let resolveHistory!: (
+      history: ReadonlyArray<{ snapshot: ReturnType<typeof snapshot>; expiresAt: number }>,
+    ) => void;
+    const history = new Promise<
+      ReadonlyArray<{ snapshot: ReturnType<typeof snapshot>; expiresAt: number }>
+    >((resolve) => resolveHistory = resolve);
+    const load = () => {
+      reads++;
+      return history;
+    };
+    const select = (
+      records: ReadonlyArray<{ snapshot: ReturnType<typeof snapshot>; expiresAt: number }>,
+      key: string,
+    ) => records.find((record) => record.snapshot.cacheKey === key);
+
+    const requestedKeys = [
+      first.cacheKey,
+      second.cacheKey,
+      ...Array.from({ length: 62 }, (_, index) => `on:forged-${index}`),
+    ];
+    const sourceReads = requestedKeys.map((key) =>
+      registry.recoverHistorical(
+        "source",
+        key,
+        load,
+        (records) => select(records, key),
+      )
+    );
+    await Promise.resolve();
+    assertEquals(reads, 1);
+    assertEquals(
+      await registry.recoverHistorical(
+        "healthy-source",
+        healthy.cacheKey,
+        () => Promise.resolve({ snapshot: healthy, expiresAt }),
+        (record) => record,
+      ),
+      healthy,
+    );
+    resolveHistory([{ snapshot: first, expiresAt }, { snapshot: second, expiresAt }]);
+
+    const recovered = await Promise.all(sourceReads);
+    assertEquals(recovered[0], first);
+    assertEquals(recovered[1], second);
+    assertEquals(recovered.slice(2), Array(62).fill(undefined));
+  });
   it("supports store-less standalone operation", async () => {
     const registry = new DependencySnapshotRegistry();
     const original = snapshot();
@@ -196,6 +249,7 @@ describe("dependency snapshot registry", () => {
                     reject(signal.reason);
                   }, { once: true });
                 }),
+              () => undefined,
             )
           ),
       ),
@@ -206,6 +260,7 @@ describe("dependency snapshot registry", () => {
         "healthy",
         original.cacheKey,
         () => Promise.resolve({ snapshot: original, expiresAt: Date.now() + 10_000 }),
+        (record) => record,
       ),
       original,
     );

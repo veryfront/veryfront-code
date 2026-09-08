@@ -2780,6 +2780,33 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("serves canonical pinned module paths after the pinning flag is rolled back", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-pins-rollback-" });
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.2.4" } }),
+      );
+      await Deno.writeTextFile(`${projectDir}/page.ts`, "export default 1;\n");
+      clearReactVersionCache();
+      const snapshot = await getDependencyPinningSnapshot(projectDir);
+      const pinnedPath = `/_vf_modules/_pins/${encodeURIComponent(snapshot.cacheKey)}/page.js`;
+
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
+      const response = await serve(
+        new Request(`http://localhost:3000${pinnedPath}`),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertStringIncludes(await response.text(), "stdin_default = 1");
+    } finally {
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("path-binds same-origin absolute module literals before strict child lookup", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-absolute-module-pins-" });
     const packageJsonPath = `${projectDir}/package.json`;

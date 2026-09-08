@@ -642,9 +642,10 @@ export async function resolveRequestedDependencyPinningSnapshot(
   return await snapshotRegistry(source).recoverHistorical(
     snapshotHistoryIdentity(source),
     requestedCacheKey,
-    async (signal) =>
+    reader,
+    (history) =>
       selectHistoricalDependencySnapshot(
-        await reader(signal),
+        history,
         scope,
         requestedCacheKey,
         configuredVersions,
