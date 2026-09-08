@@ -64,6 +64,28 @@ describe("StreamHandler", () => {
   });
 
   describe("handle", () => {
+    for (const status of [409, 503]) {
+      it(`preserves a ${status} render response instead of starting a fallback stream`, async () => {
+        const body = status === 409
+          ? "Unknown dependency snapshot"
+          : "Dependency snapshot storage is unavailable";
+        const failure = new Response(body, {
+          status,
+          headers: { "cache-control": "no-store", vary: RSC_DEPENDENCY_PINNING_HEADER },
+        });
+        mockRenderHandler.setHandler(() => Promise.resolve(failure));
+
+        const response = await streamHandler.handle("/", new URLSearchParams());
+        const text = await response.text();
+
+        expect(response).toBe(failure);
+        expect(response.status).toBe(status);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("vary")).toBe(RSC_DEPENDENCY_PINNING_HEADER);
+        expect(text).toBe(body);
+      });
+    }
+
     it("should return a Response with correct content-type", async () => {
       const response = await streamHandler.handle("/", new URLSearchParams());
 

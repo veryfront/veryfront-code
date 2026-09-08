@@ -31,6 +31,8 @@ import {
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 
 export interface RenderHandlerModuleOptions {
   adapter?: RuntimeAdapter;
@@ -66,20 +68,24 @@ export class RenderHandler {
     searchParams: URLSearchParams,
     request?: Request,
   ): Promise<Response> {
+    // Snapshot failures belong to the transport boundary, not renderer fallback.
+    const requestedPinKey = request?.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined;
+    const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+      this.moduleOptions.dependencyPinningSource ?? this.projectDir,
+      requestedPinKey,
+    );
+    if (!dependencySnapshot) {
+      return new Response(request?.method === "HEAD" ? null : "Unknown dependency snapshot", {
+        status: 409,
+        headers: { "cache-control": "no-store", vary: RSC_DEPENDENCY_PINNING_HEADER },
+      });
+    }
     try {
       const adapter = this.moduleOptions.adapter ??
         await (this.moduleOptions.runtimeAdapter ?? (async () => {
           const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
           return await runtime.get();
         }))();
-      const requestedPinKey = request?.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined;
-      const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
-        this.moduleOptions.dependencyPinningSource ?? this.projectDir,
-        requestedPinKey,
-      );
-      if (!dependencySnapshot) {
-        throw new Error(`Unknown dependency pinning snapshot: ${requestedPinKey}`);
-      }
       const reactVersion = await this.moduleOptions.reactVersion?.(dependencySnapshot);
       const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:") && request
         ? new URL(request.url).origin
@@ -110,6 +116,9 @@ export class RenderHandler {
       };
       return this.createResponse(payload, request);
     } catch (error) {
+      if (snapshotVeryfrontError(error)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+        throw error;
+      }
       return this.createErrorResponse(error);
     }
   }
