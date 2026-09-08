@@ -145,7 +145,9 @@ describe("suite planning parity", () => {
     for (const suite of ["runtime:node", "runtime:bun"] as const) {
       const plan = await planSuiteFiles({ suite });
       assert(
-        plan.files.includes("src/server/handlers/request/ssr/ssr-snapshot.test.ts"),
+        plan.files.includes(
+          "src/server/handlers/request/ssr/ssr-snapshot.test.ts",
+        ),
         `${suite} must execute the SSR snapshot boundary regressions`,
       );
     }
