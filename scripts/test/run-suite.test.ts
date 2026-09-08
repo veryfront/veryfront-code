@@ -782,6 +782,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
+      "tests/integration/agent/service-header-boundary.test.ts",
+      "tests/integration/agent/service-request-defaults.test.ts",
+      "tests/integration/agent/service-native-invocation.test.ts",
+      "tests/integration/security/application-request.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
@@ -802,6 +806,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
+      "tests/integration/agent/service-header-boundary.test.ts",
+      "tests/integration/agent/service-request-defaults.test.ts",
+      "tests/integration/agent/service-native-invocation.test.ts",
+      "tests/integration/security/application-request.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"

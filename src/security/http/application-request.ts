@@ -1,3 +1,6 @@
+import { assertNativeHeaderProcessing } from "./native-header-processing.ts";
+import { assertNativeRequestDefaults } from "./native-request-processing.ts";
+
 /**
  * Headers used only between trusted Veryfront infrastructure components.
  *
@@ -200,7 +203,9 @@ export function createApplicationRequestHeaders(
   headers: Headers,
   options: ApplicationRequestHeaderOptions = {},
 ): Headers {
+  assertNativeHeaderProcessing();
   const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
+  assertNativeHeaderProcessing();
   const applicationHeaders = new NativeHeaders();
   if (dynamicDenyHeaders === null) return applicationHeaders;
 
@@ -227,9 +232,14 @@ export function createApplicationRequest(
   request: Request,
   options: ApplicationRequestHeaderOptions = {},
 ): Request {
+  assertNativeHeaderProcessing();
+  assertNativeRequestDefaults();
   const cloned = apply(requestClone, request, []) as Request;
   const headers = apply(requestHeadersGetter!, cloned, []) as Headers;
+  const applicationHeaders = createApplicationRequestHeaders(headers, options);
+  assertNativeHeaderProcessing();
+  assertNativeRequestDefaults();
   return new NativeRequest(cloned, {
-    headers: createApplicationRequestHeaders(headers, options),
+    headers: applicationHeaders,
   });
 }
