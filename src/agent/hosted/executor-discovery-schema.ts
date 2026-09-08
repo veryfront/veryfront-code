@@ -1,7 +1,7 @@
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
-import { getRuntimeAgentMarkdownDefinitionSchema } from "../runtime/agent-definition.ts";
+import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import { executorAgentJson } from "./executor-agent-schema.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 

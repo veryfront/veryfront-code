@@ -3,8 +3,8 @@ import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type {
   ProjectAgentRuntimeAgentSource,
   ProjectAgentRuntimeDiscovery,
-} from "../project/agent-runtime.ts";
-import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+} from "#veryfront/agent/project/agent-runtime.ts";
+import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { type ExecutorBinding, getExecutorBindingSchema } from "../executor/protocol.ts";
 import {
@@ -85,7 +85,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   let runtime: ProjectAgentRuntimeDiscovery | undefined;
   let closing: Promise<void> | undefined;
   const definitions = new Map<string, RuntimeAgentMarkdownDefinition>();
-  const helpers = () => import("../project/agent-runtime.ts");
+  const helpers = () => import("#veryfront/agent/project/agent-runtime.ts");
 
   function assertActive() {
     if (lifetime.signal.aborted) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLOSED");
@@ -161,7 +161,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       definition = { ...projected, id: agentId };
     } else {
       if (agentSource === "code") throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
-      const files = await import("../runtime/agent-definition-files.ts");
+      const files = await import("#veryfront/agent/runtime/agent-definition-files.ts");
       const lookup = { baseDir: projectDir, id: agentId };
       if (!files.resolveRuntimeAgentDefinitionsDirInputSchema.safeParse(lookup).success) {
         throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
@@ -177,7 +177,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
           throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
         }
         const { parseRuntimeAgentMarkdownDefinition } = await import(
-          "../runtime/agent-definition.ts"
+          "#veryfront/agent/runtime/agent-definition.ts"
         );
         definition = parseRuntimeAgentMarkdownDefinition({
           id: agentId,
