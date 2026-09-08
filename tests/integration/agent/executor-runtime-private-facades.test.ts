@@ -22,6 +22,14 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
   const originalSetAdd = Set.prototype.add;
   const originalReduce = Array.prototype.reduce;
   const originalArrayIterator = Array.prototype[Symbol.iterator];
+  const originalOwnerAgentId = Object.getOwnPropertyDescriptor(
+    Object.prototype,
+    "ownerAgentId",
+  );
+  const originalArrayConstructor = Object.getOwnPropertyDescriptor(
+    Array.prototype,
+    "constructor",
+  )!;
   let hiddenExecutions = 0;
   let remoteExecutions = 0;
   const visible = {
@@ -72,6 +80,21 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
     signal: new AbortController().signal,
     backend: {
       load: () => {
+        Object.defineProperty(Object.prototype, "ownerAgentId", {
+          configurable: true,
+          get() {
+            if (this === hidden) hidden.execute();
+            return undefined;
+          },
+        });
+        Object.defineProperty(Array.prototype, "constructor", {
+          configurable: true,
+          get() {
+            const values = this as unknown[];
+            if (values[0] === remote) void remote.executeTool();
+            return Array;
+          },
+        });
         Set.prototype.add = function (value: unknown) {
           Reflect.apply(originalSetAdd, this, [value]);
           if (value === "visible") Reflect.apply(originalSetAdd, this, ["hidden"]);
@@ -162,6 +185,12 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
     Set.prototype.add = originalSetAdd;
     Array.prototype.reduce = originalReduce;
     Array.prototype[Symbol.iterator] = originalArrayIterator;
+    if (originalOwnerAgentId) {
+      Object.defineProperty(Object.prototype, "ownerAgentId", originalOwnerAgentId);
+    } else {
+      delete (Object.prototype as { ownerAgentId?: unknown }).ownerAgentId;
+    }
+    Object.defineProperty(Array.prototype, "constructor", originalArrayConstructor);
     await owner.close();
   }
 });

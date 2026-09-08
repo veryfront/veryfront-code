@@ -51,10 +51,10 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 const apply = Reflect.apply;
 const arrayFilter = Array.prototype.filter;
 const arrayIncludes = Array.prototype.includes;
-const arrayMap = Array.prototype.map;
 const arraySort = Array.prototype.sort;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 
@@ -81,7 +81,20 @@ function mapValues<T, U>(
   values: readonly T[],
   callback: (value: T, index: number, array: readonly T[]) => U,
 ): U[] {
-  return apply(arrayMap, values, [callback]) as U[];
+  const mapped: U[] = [];
+  for (let index = 0; index < values.length; index++) {
+    apply(objectDefineProperty, Object, [
+      mapped,
+      index,
+      {
+        value: callback(values[index]!, index, values),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      },
+    ]);
+  }
+  return mapped;
 }
 
 function sortValues<T>(values: T[], compare: (left: T, right: T) => number): T[] {
@@ -104,6 +117,14 @@ function recordFromEntries<T>(entries: readonly (readonly [string, T])[]): Recor
     ]);
   }
   return result;
+}
+
+function ownDataValue(value: object, key: PropertyKey): unknown {
+  try {
+    return apply(objectGetOwnPropertyDescriptor, Object, [value, key])?.value;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Context for hosted chat runtime tool assembly. */
@@ -371,8 +392,8 @@ function resolveOwnerScopedToolName(input: {
     const registeredName = pair[0];
     const tool = pair[1];
     if (
-      tool.ownerAgentId === input.agentId &&
-      tool.shortName === input.toolName
+      ownDataValue(tool, "ownerAgentId") === input.agentId &&
+      ownDataValue(tool, "shortName") === input.toolName
     ) {
       return registeredName;
     }
