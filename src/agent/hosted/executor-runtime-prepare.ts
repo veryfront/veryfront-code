@@ -550,6 +550,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           }
           : {}),
       };
+      objectSetPrototypeOf(options, null);
       const remoteToolSources: RemoteToolSource[] = [];
       for (let index = 0; index < grant.remoteToolSourceIds.length; index++) {
         const id = grant.remoteToolSourceIds[index];
@@ -589,7 +590,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         if (name !== undefined) facadeAllowedToolSet.add(name);
       }
       const facadeAllowedToolNames = [...facadeAllowedToolSet];
-      const toolAssembly = await observePrivatePromise(prepareFacadedHostedChatRuntimeToolAssembly({
+      const assemblyInput: Parameters<typeof prepareFacadedHostedChatRuntimeToolAssembly>[0] = {
         signal: context.signal,
         taskContext,
         instructions: options.instructions,
@@ -616,36 +617,45 @@ export function createExecutorRuntimePreparation(input: Options) {
           }
         },
         loadLatestConversationUserText: facades.latestConversationUserText,
-      }));
+      };
+      objectSetPrototypeOf(assemblyInput, null);
+      const toolAssembly = await observePrivatePromise(
+        prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
+      );
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
         if (!includes(toolAssembly.authorizedToolNames, name)) {
           refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
         }
       }
+      const scopedAssembly = {
+        ...toolAssembly,
+        runtimeTools: scopeHostedRuntimeToolResults(toolAssembly.runtimeTools),
+      };
+      objectSetPrototypeOf(scopedAssembly, null);
+      const runtimeInput: PreparedHostedRuntimeAgentOptions = {
+        options,
+        taskContext,
+        toolAssembly: scopedAssembly,
+        modelId,
+        sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
+        refreshSystem: facades.projectSteering
+          ? () => facades.projectSteering!.refresh(streamSignal)
+          : undefined,
+      };
+      const runtimeOptions: NonNullable<Parameters<typeof createPreparedHostedRuntimeAgent>[1]> = {
+        resolveModelRuntime,
+        preserveToolCatalog: true,
+        onStreamCompletion: (completion) => {
+          producerCompletion = completion;
+          input.discovery.retainRuntimeTask(completion);
+        },
+      };
+      objectSetPrototypeOf(runtimeInput, null);
+      objectSetPrototypeOf(runtimeOptions, null);
       const runtimeAgent = runWithProjectAgentRuntime(
         runtime,
-        () =>
-          createPreparedHostedRuntimeAgent({
-            options,
-            taskContext,
-            toolAssembly: {
-              ...toolAssembly,
-              runtimeTools: scopeHostedRuntimeToolResults(toolAssembly.runtimeTools),
-            },
-            modelId,
-            sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
-            refreshSystem: facades.projectSteering
-              ? () => facades.projectSteering!.refresh(streamSignal)
-              : undefined,
-          }, {
-            resolveModelRuntime,
-            preserveToolCatalog: true,
-            onStreamCompletion: (completion) => {
-              producerCompletion = completion;
-              input.discovery.retainRuntimeTask(completion);
-            },
-          }),
+        () => createPreparedHostedRuntimeAgent(runtimeInput, runtimeOptions),
       );
       assertActive();
       const preparedRuntimeHandle = crypto.randomUUID();
@@ -655,7 +665,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           streamSignal = streamInput.abortSignal;
           startup = chain(resolvePrivatePromise(), () => {
             assertActive();
-            return createHostedChatRuntimeDataStream({
+            const streamOptions: Parameters<typeof createHostedChatRuntimeDataStream>[0] = {
               runtimeAgent,
               sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
               agentId: definition.id,
@@ -665,7 +675,9 @@ export function createExecutorRuntimePreparation(input: Options) {
                 ? { runId: execution.runId, conversationId: execution.conversationId }
                 : {}),
               maxOutputTokens: options.maxOutputTokens,
-            }, streamInput);
+            };
+            objectSetPrototypeOf(streamOptions, null);
+            return createHostedChatRuntimeDataStream(streamOptions, streamInput);
           });
           input.discovery.retainRuntimeTask(startup);
           return startup;

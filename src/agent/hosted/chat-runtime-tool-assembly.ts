@@ -54,6 +54,7 @@ const arraySort = Array.prototype.sort;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 
@@ -725,7 +726,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ? undefined
     : preparedInstructions;
 
-  return {
+  const result: FacadedHostedChatRuntimeToolAssemblyResult = {
     normalizedAllowedToolNames,
     authorizedToolNames,
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
@@ -741,6 +742,8 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     systemInstructions,
     ...(systemMessages === undefined ? {} : { systemMessages }),
   };
+  if ("remoteToolSources" in input) objectSetPrototypeOf(result, null);
+  return result;
 }
 
 /** Prepare hosted chat runtime tool assembly. */
