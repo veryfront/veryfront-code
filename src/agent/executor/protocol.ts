@@ -1,3 +1,4 @@
+import { createPrivateTextDecoder, encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
@@ -74,7 +75,7 @@ export function encodeExecutorFrame(frame: ExecutorFrame): Uint8Array {
   if (!snapshot.success || !getExecutorFrameSchema().safeParse(snapshot.value).success) {
     throw new TypeError("Invalid executor frame");
   }
-  const payload = new TextEncoder().encode(privateJsonStringify(snapshot.value));
+  const payload = encodePrivateText(privateJsonStringify(snapshot.value));
   if (payload.byteLength > EXECUTOR_MAX_FRAME_BYTES - 4) {
     throw new TypeError("Executor frame exceeds byte limit");
   }
@@ -95,7 +96,7 @@ export async function* readExecutorFrames(
   let prefixOffset = 0;
   let payload: Uint8Array | undefined;
   let payloadOffset = 0;
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = createPrivateTextDecoder("utf-8", { fatal: true });
   while (true) {
     const { value: chunk, done } = await reader.read();
     if (done) {

@@ -1,3 +1,4 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import {
   cancelPrivateStream,
   createPrivateReadableStream,
@@ -26,7 +27,6 @@ import {
   parseExecutorAgentData,
 } from "./executor-agent-schema.ts";
 
-const textEncoder = new TextEncoder();
 const MapConstructor = Map;
 const mapSet = Map.prototype.set;
 const apply = Reflect.apply;
@@ -187,7 +187,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                   const event = parseExecutorDataEvent(frame.event);
                   terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
-                    textEncoder.encode(`data: ${privateJsonStringify(event)}\n\n`),
+                    encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`),
                   );
                 } else if (frame.type === "complete") {
                   if (!terminal || !(await iterator.next()).done) {

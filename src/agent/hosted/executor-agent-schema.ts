@@ -1,3 +1,4 @@
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
@@ -170,7 +171,7 @@ export function executorAgentJson(input: unknown, oversized: FailureCode): JsonV
   const encoded = privateJsonStringify(input);
   if (
     encoded === undefined ||
-    new TextEncoder().encode(encoded).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES
+    utf8ByteLength(encoded, EXECUTOR_AGENT_MAX_PAYLOAD_BYTES) > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES
   ) {
     throw new ExecutorAgentError(oversized);
   }

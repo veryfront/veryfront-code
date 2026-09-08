@@ -57,18 +57,23 @@ describe("private stream intrinsics", () => {
     assertEquals(exposures, 0);
   });
 
-  it("keeps raw turn messages out of a replaced array mapper", async () => {
+  it("keeps raw turn messages and output out of replaced mapping and encoding methods", async () => {
     const marker = "synthetic-private-turn-marker";
     const originalMap = Array.prototype.map;
+    const originalEncode = TextEncoder.prototype.encode;
     const apply = Reflect.apply;
     const isArray = Array.isArray;
     let exposures = 0;
-    const model = scriptedModel([{ text: "Synthetic answer" }]);
+    const model = scriptedModel([{ text: marker }]);
     const runtime = new AgentRuntime("private-messages", {
       model: "veryfront-cloud/openai/gpt-5.4",
       system: "Synthetic instructions",
     }, { resolveModelRuntime: () => model });
     try {
+      TextEncoder.prototype.encode = function (text = "") {
+        if (text.includes(marker)) exposures++;
+        return apply(originalEncode, this, [text]);
+      };
       Array.prototype.map = function (this: unknown[], ...args) {
         for (let index = 0; index < this.length; index++) {
           const message = this[index] as { parts?: unknown[] } | null;
@@ -90,6 +95,7 @@ describe("private stream intrinsics", () => {
       );
     } finally {
       Array.prototype.map = originalMap;
+      TextEncoder.prototype.encode = originalEncode;
     }
     assertEquals(model.calls.length, 1);
     assertEquals(exposures, 0);

@@ -1,3 +1,8 @@
+import {
+  createPrivateTextDecoder,
+  encodePrivateText,
+  PrivateTextEncoder,
+} from "#veryfront/security/private-text.ts";
 /**
  * Agent Runtime - Core execution engine
  *
@@ -948,7 +953,7 @@ type DeferredRecoveryOutput =
   | { kind: "callback"; chunk: string };
 
 function isTextSseChunk(chunk: Uint8Array): boolean {
-  const payload = new TextDecoder().decode(chunk);
+  const payload = createPrivateTextDecoder().decode(chunk);
   if (!payload.startsWith("data: ")) {
     return false;
   }
@@ -963,7 +968,7 @@ function isTextSseChunk(chunk: Uint8Array): boolean {
 }
 
 function isTextEndSseChunk(chunk: Uint8Array): boolean {
-  const payload = new TextDecoder().decode(chunk);
+  const payload = createPrivateTextDecoder().decode(chunk);
   if (!payload.startsWith("data: ")) {
     return false;
   }
@@ -977,7 +982,7 @@ function isTextEndSseChunk(chunk: Uint8Array): boolean {
 }
 
 function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
-  const payload = new TextDecoder().decode(chunk);
+  const payload = createPrivateTextDecoder().decode(chunk);
   if (!payload.startsWith("data: ")) {
     return undefined;
   }
@@ -1006,7 +1011,7 @@ function stripTextDeltaPrefixFromSseChunk(
   remainingPrefixLength: number,
   encoder: TextEncoder,
 ): { chunk: Uint8Array | undefined; remainingPrefixLength: number } {
-  const payload = new TextDecoder().decode(chunk);
+  const payload = createPrivateTextDecoder().decode(chunk);
   if (!payload.startsWith("data: ")) {
     return { chunk, remainingPrefixLength };
   }
@@ -1021,8 +1026,9 @@ function stripTextDeltaPrefixFromSseChunk(
       return { chunk: undefined, remainingPrefixLength: stripped.remainingPrefixLength };
     }
     return {
-      chunk: encoder.encode(
+      chunk: encodePrivateText(
         `data: ${privateJsonStringify({ ...event, delta: stripped.text })}\n\n`,
+        encoder,
       ),
       remainingPrefixLength: stripped.remainingPrefixLength,
     };
@@ -1036,7 +1042,7 @@ function rewriteRecoveryTextSseChunkId(
   fallbackId: string,
   encoder: TextEncoder,
 ): Uint8Array {
-  const payload = new TextDecoder().decode(chunk);
+  const payload = createPrivateTextDecoder().decode(chunk);
   if (!payload.startsWith("data: ")) {
     return chunk;
   }
@@ -1052,7 +1058,7 @@ function rewriteRecoveryTextSseChunkId(
     const id = typeof event.id === "string" && event.id.length > 0
       ? `${event.id}:recovery`
       : fallbackId;
-    return encoder.encode(`data: ${privateJsonStringify({ ...event, id })}\n\n`);
+    return encodePrivateText(`data: ${privateJsonStringify({ ...event, id })}\n\n`, encoder);
   } catch {
     return chunk;
   }
@@ -1393,7 +1399,7 @@ function estimateSerializedSizeBytes(value: unknown): number | undefined {
   try {
     const serialized = typeof value === "string" ? value : privateJsonStringify(value);
     if (serialized === undefined) return undefined;
-    return new TextEncoder().encode(serialized).length;
+    return encodePrivateText(serialized).length;
   } catch {
     return undefined;
   }
@@ -2401,7 +2407,7 @@ export class AgentRuntime {
 
       const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
-      const encoder = new TextEncoder();
+      const encoder = new PrivateTextEncoder();
       const streamAbortSignal = abortScope.signal;
       const streamCacheCtx = tryGetCacheKeyContext();
       const toolContext = {

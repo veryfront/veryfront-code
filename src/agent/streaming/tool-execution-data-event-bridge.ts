@@ -1,3 +1,5 @@
+import { toPrivateUint8Array } from "#veryfront/security/private-bytes.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import {
   closePrivateStream,
   createPrivateReadableStream,
@@ -21,28 +23,19 @@ export type ToolExecutionDataEventBridgeStreamInput = {
 function serializeToolExecutionDataEvent(event: ToolExecutionDataEvent): Uint8Array {
   if (typeof event.name === "string" && event.name.length > 0) {
     const data = Object.hasOwn(event, "value") ? event.value : event.data;
-    return new TextEncoder().encode(
+    return encodePrivateText(
       `data: ${privateJsonStringify({ type: `data-${event.name}`, data })}\n\n`,
     );
   }
 
-  return new TextEncoder().encode(
+  return encodePrivateText(
     `data: ${privateJsonStringify({ type: "data", data: event })}\n\n`,
   );
 }
 
 function toUint8ArrayChunk(value: unknown): Uint8Array {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
+  const bytes = toPrivateUint8Array(value);
+  if (bytes !== undefined) return bytes;
 
   throw AGENT_ERROR.create({ detail: "Agent runtime returned a non-binary stream chunk" });
 }

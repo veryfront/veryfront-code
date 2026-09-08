@@ -8,6 +8,7 @@ import { closePrivateStream, enqueuePrivateStream } from "#veryfront/security/pr
  */
 
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 
 // Runtime heuristic: detects a write to an already-closed ReadableStream controller.
 // Browser/Node and Deno use different messages for the same Web Streams state error.
@@ -28,7 +29,10 @@ export function sendSSE(
   event: Record<string, unknown>,
 ): void {
   try {
-    enqueuePrivateStream(controller, encoder.encode(`data: ${privateJsonStringify(event)}\n\n`));
+    enqueuePrivateStream(
+      controller,
+      encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`, encoder),
+    );
   } catch (error) {
     if (isClosedStreamControllerError(error)) {
       return;

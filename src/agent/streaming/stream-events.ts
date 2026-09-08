@@ -1,14 +1,13 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { enqueuePrivateStream } from "#veryfront/security/private-stream.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 export class StreamEventEmitter {
-  private encoder = new TextEncoder();
-
   constructor(private controller: ReadableStreamDefaultController) {}
 
   emit(event: Record<string, unknown>): void {
     enqueuePrivateStream(
       this.controller,
-      this.encoder.encode(`data: ${privateJsonStringify(event)}\n\n`),
+      encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`),
     );
   }
 
