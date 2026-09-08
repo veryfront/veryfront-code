@@ -14,6 +14,8 @@ import {
   parseExecutorModelData,
 } from "./executor-model-schema.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+
 type ProviderTool = Extract<ModelRuntimeToolDefinition, { type: "provider" }>;
 
 /** Broker-owned policy. No default quota or API billing authority is implied. */
@@ -77,7 +79,9 @@ function assertSingleCompletion(options: ExecutorModelDispatch["options"]): void
 
 /** Internal output allowance reserved by the effective provider thinking configuration. */
 export function getExecutorModelAdditiveReasoningTokens(
-  request: Pick<ExecutorModelDispatch, "model" | "options">,
+  request: Pick<ExecutorModelDispatch, "model"> & {
+    options: Pick<ExecutorModelDispatch["options"], "reasoning" | "providerOptions">;
+  },
 ): number {
   if (resolveModelCallProvider(request.model) !== "anthropic") return 0;
   const reasoning = buildModelCallContextRequest(request.model, request.options)?.reasoning;
@@ -91,7 +95,7 @@ export function getExecutorModelAdditiveReasoningTokens(
         ? 32768
         : 4096);
     // Match the first-party Anthropic builder; its offline contract matrix guards drift.
-    if (!Number.isSafeInteger(budget) || budget < 1024) {
+    if (!numberIsSafeInteger(budget) || budget < 1024) {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
     return budget;
@@ -107,7 +111,7 @@ export function getExecutorModelAdditiveReasoningTokens(
     (thinking as Record<string, unknown>).type === "enabled"
   ) {
     const budget = reasoning?.budgetTokens;
-    if (budget === undefined || !Number.isSafeInteger(budget) || budget < 1024) {
+    if (budget === undefined || !numberIsSafeInteger(budget) || budget < 1024) {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
     return budget;

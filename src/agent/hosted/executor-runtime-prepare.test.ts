@@ -15,7 +15,7 @@ import type {
   ToolDefinition,
 } from "#veryfront/tool";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
-import { createExecutorModelAdmission } from "./executor-model-grant.ts";
+import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
@@ -603,6 +603,69 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  const outputCases: {
+    name: string;
+    request: Record<string, JsonValue>;
+    expected?: number;
+    ceiling?: number;
+  }[] = [
+    { name: "catalog thinking default", request: {}, expected: 6144 },
+    { name: "neutral thinking default", request: { thinking: { enabled: true } }, expected: 4096 },
+    { name: "explicit narrower output", request: { maxOutputTokens: 1000 }, expected: 1000 },
+    { name: "explicit output exceeding the remainder", request: { maxOutputTokens: 6145 } },
+    { name: "no room after thinking", request: {}, ceiling: 2048 },
+    {
+      name: "invalid fixed thinking budget",
+      request: { thinking: { enabled: true, budgetTokens: 512 } },
+    },
+  ];
+  for (const test of outputCases) {
+    it(`reserves reasoning tokens during preparation: ${test.name}`, async () => {
+      const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+      let captured: ModelRuntimeCallOptions | undefined;
+      let resolutions = 0;
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: selectedModel,
+          models: new Map([[selectedModel, {
+            maxOutputTokens: test.ceiling ?? 8192,
+            providerToolNames: [],
+          }]]),
+        },
+        facades: {
+          resolveModelRuntime: () => {
+            resolutions++;
+            return {
+              ...model,
+              provider: "anthropic",
+              modelId: "claude-sonnet-4-6",
+              doStream(options) {
+                captured = options as ModelRuntimeCallOptions;
+                return finishStream();
+              },
+            };
+          },
+        },
+      });
+      try {
+        const request = { agentId: "coder", ...test.request };
+        if (test.expected === undefined) {
+          assertEquals(await prepare(f.owner, request), {
+            ok: false,
+            code: "EXECUTOR_RUNTIME_NOT_GRANTED",
+          });
+          assertEquals(resolutions, 0);
+        } else {
+          await Array.fromAsync(await preparedStream(f, request));
+          assertEquals(captured?.maxOutputTokens, test.expected);
+        }
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   it("retains the steering preparation method and its original receiver through discovery", async () => {
     class Steering {
       #calls: string[] = [];

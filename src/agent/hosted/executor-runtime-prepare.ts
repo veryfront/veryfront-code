@@ -9,10 +9,10 @@ import {
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import {
-  getVeryfrontCloudProviderFromModelId,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
+  tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
@@ -101,6 +101,7 @@ const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
 const AbortSignalConstructor = AbortSignal;
 const mathMin = Math.min;
+const numberIsSafeInteger = Number.isSafeInteger;
 const addEventListener = EventTarget.prototype.addEventListener;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const iteratorSymbol = Symbol.iterator;
@@ -455,17 +456,33 @@ export function createExecutorRuntimePreparation(input: Options) {
       ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
       const thinking = request.thinking ?? definition.thinking ??
         resolveVeryfrontCloudModelThinking(modelId);
-      const reasoning = resolveVeryfrontCloudReasoningOption(modelId, thinking);
-      const providerOptions = resolveVeryfrontCloudThinkingProviderOptions(modelId, thinking);
-      const reasoningBudget = getExecutorModelAdditiveReasoningTokens({
-        model: { id: modelId, modelId, provider: getVeryfrontCloudProviderFromModelId(modelId) },
-        options: { prompt: [], reasoning, providerOptions },
-      });
-      const availableOutputTokens = modelGrant.maxOutputTokens - reasoningBudget;
+      let availableOutputTokens = modelGrant.maxOutputTokens;
+      const modelProvider = tryGetVeryfrontCloudProviderFromModelId(modelId);
+      if (modelProvider === "anthropic") {
+        try {
+          const effectiveThinking = thinking ?? resolveVeryfrontCloudModelThinking(modelId);
+          const model = { id: modelId, modelId, provider: modelProvider };
+          const options = {
+            reasoning: resolveVeryfrontCloudReasoningOption(modelId, effectiveThinking),
+            providerOptions: resolveVeryfrontCloudThinkingProviderOptions(
+              modelId,
+              effectiveThinking,
+            ),
+          };
+          objectSetPrototypeOf(model, null);
+          objectSetPrototypeOf(options, null);
+          availableOutputTokens -= getExecutorModelAdditiveReasoningTokens({ model, options });
+        } catch {
+          refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        }
+      }
+      const maxOutputTokens = request.maxOutputTokens ?? availableOutputTokens;
       if (
-        availableOutputTokens <= 0 ||
-        (request.maxOutputTokens !== undefined && request.maxOutputTokens > availableOutputTokens)
-      ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        !numberIsSafeInteger(maxOutputTokens) || maxOutputTokens <= 0 ||
+        maxOutputTokens > availableOutputTokens
+      ) {
+        refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      }
       requireFacades(definition, grant);
       const runtime = input.discovery.getRuntime();
       // Enroll only after agent.describe returns: a failed discovery operation
@@ -612,7 +629,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           definition.maxSteps ?? grant.maxSteps,
           grant.maxSteps,
         ),
-        maxOutputTokens: request.maxOutputTokens ?? availableOutputTokens,
+        maxOutputTokens,
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
         availableSkillIds: skills.allowedSkillIds,
