@@ -2,8 +2,9 @@ import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "./agent-delegation-names.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
-const markdownDefinitionByAgent = new WeakMap<Agent, RuntimeAgentMarkdownDefinition>();
+const markdownDefinitionByAgent = createPrivateWeakStore<Agent, RuntimeAgentMarkdownDefinition>();
 
 /** Definition for create runtime agent from markdown. */
 export function createRuntimeAgentFromMarkdownDefinition(
@@ -80,5 +81,5 @@ export function getRuntimeAgentMarkdownDefinition(
 
 /** Check whether a runtime agent uses markdown configuration. */
 export function isRuntimeAgentMarkdownAgent(runtimeAgent: Agent): boolean {
-  return markdownDefinitionByAgent.has(runtimeAgent);
+  return markdownDefinitionByAgent.get(runtimeAgent) !== undefined;
 }
