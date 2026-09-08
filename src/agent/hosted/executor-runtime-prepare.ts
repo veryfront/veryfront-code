@@ -73,10 +73,14 @@ const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
+const objectDefineProperty = Object.defineProperty;
+const objectEntries = Object.entries;
 const arrayFilter = Array.prototype.filter;
 const arrayIncludes = Array.prototype.includes;
 const arrayMap = Array.prototype.map;
 const arrayReduce = Array.prototype.reduce;
+const IntrinsicSet = Set;
+const setHas = Set.prototype.has;
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
   return apply(arrayFilter, values, [predicate]) as T[];
@@ -96,6 +100,27 @@ function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
 }
 function privateMapHas<K, V>(map: ReadonlyMap<K, V>, key: K): boolean {
   return apply(mapHas, map, [key]) as boolean;
+}
+
+function selectAllowedHostTools(
+  tools: HostToolSet,
+  allowedNames: readonly string[],
+): HostToolSet {
+  const allowed = new IntrinsicSet(allowedNames);
+  const entries = apply(objectEntries, Object, [tools]) as Array<
+    [string, HostToolSet[string]]
+  >;
+  const selected: HostToolSet = {};
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined || !apply(setHas, allowed, [entry[0]])) continue;
+    apply(objectDefineProperty, Object, [
+      selected,
+      entry[0],
+      { value: entry[1], enumerable: true, configurable: true, writable: true },
+    ]);
+  }
+  return selected;
 }
 
 type CreationOptions = HostedChatRuntimeCreationOptions<
@@ -493,11 +518,31 @@ export function createExecutorRuntimePreparation(input: Options) {
           }
           : {}),
       };
+      const remoteToolSources: RemoteToolSource[] = [];
+      for (let index = 0; index < grant.remoteToolSourceIds.length; index++) {
+        const id = grant.remoteToolSourceIds[index];
+        if (id === undefined) continue;
+        let remoteToolSource = privateMapGet(facades.remoteToolSources, id)!;
+        const servers = filter(
+          definition.mcpServers ?? [],
+          (server) => (server.id ?? server.kind) === id,
+        );
+        for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+          const server = servers[serverIndex];
+          if (server !== undefined) {
+            remoteToolSource = wrapRemoteToolSourceWithMcpPolicy(
+              remoteToolSource,
+              server.toolPolicy,
+            );
+          }
+        }
+        remoteToolSources[remoteToolSources.length] = remoteToolSource;
+      }
       const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
         signal: context.signal,
         taskContext,
         instructions: options.instructions,
-        localTools,
+        localTools: selectAllowedHostTools(localTools, allowedToolNames),
         sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
         hostToolPolicy: { allow: allowedToolNames },
         allowedToolNames,
@@ -513,12 +558,7 @@ export function createExecutorRuntimePreparation(input: Options) {
             taskContext,
             error,
           }),
-        remoteToolSources: map(grant.remoteToolSourceIds, (id) =>
-          reduce(
-            filter(definition.mcpServers ?? [], (server) => (server.id ?? server.kind) === id),
-            (source, server) => wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy),
-            privateMapGet(facades.remoteToolSources, id)!,
-          )),
+        remoteToolSources,
         onSteeringMutation: (mutation) => {
           if (mutation.instructionsChanged || mutation.skillsChanged) {
             incrementSteeringRevision(taskContext);

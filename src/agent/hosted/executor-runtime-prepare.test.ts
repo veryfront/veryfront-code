@@ -705,7 +705,6 @@ describe("executor runtime preparation review regressions", () => {
       }
     });
   }
-
   for (const cancellation of ["operation", "owner"] as const) {
     it(`cancels steering refresh on ${cancellation} abort and joins it before cleanup`, async () => {
       const entered = Promise.withResolvers<void>();

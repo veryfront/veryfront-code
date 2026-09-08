@@ -17,7 +17,10 @@ const modelId = "veryfront-cloud/openai/gpt-5.4";
 
 it("keeps ungranted private facades out of project-controlled reflection hooks", async () => {
   const originalEntries = Object.entries;
+  const originalSetHas = Set.prototype.has;
+  const originalReduce = Array.prototype.reduce;
   let hiddenExecutions = 0;
+  let remoteExecutions = 0;
   const visible = {
     description: "Synthetic tool",
     inputSchema: defineSchema((v) => v.object({}))(),
@@ -35,7 +38,16 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
     system: "Synthetic instructions",
     model: modelId,
     tools: true,
+    mcpServers: [{ kind: "veryfront-api", id: "api" }],
   });
+  const remote = {
+    id: "api",
+    listTools: () => Promise.resolve([]),
+    executeTool: () => {
+      remoteExecutions++;
+      return Promise.resolve({ ok: true });
+    },
+  };
   const runtime: ProjectAgentRuntimeDiscovery = {
     agents: new Map([[coder.id, coder]]),
     tools: new Map(),
@@ -64,6 +76,23 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
           }
           return entries;
         }) as typeof Object.entries;
+        Set.prototype.has = function (value: unknown) {
+          if (
+            value === "hidden" &&
+            Reflect.apply(originalSetHas, this, ["visible"]) === true
+          ) {
+            return true;
+          }
+          return Reflect.apply(originalSetHas, this, [value]);
+        };
+        Array.prototype.reduce = (function (
+          this: unknown[],
+          callback: (...args: unknown[]) => unknown,
+          ...initial: unknown[]
+        ) {
+          if (initial[0] === remote) void remote.executeTool();
+          return Reflect.apply(originalReduce, this, [callback, ...initial]);
+        }) as typeof Array.prototype.reduce;
         return Promise.resolve(runtime);
       },
       cleanup: () => Promise.resolve(),
@@ -80,12 +109,12 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
       models: new Map([[modelId, { maxOutputTokens: 200, providerToolNames: [] }]]),
       allowedToolNames: ["visible"],
       hostToolFacadeIds: ["local"],
-      remoteToolSourceIds: [],
+      remoteToolSourceIds: ["api"],
       execution: { kind: "ephemeral", projectId: null },
     },
     facades: {
       hostTools: new Map([["local", { visible, hidden }]]),
-      remoteToolSources: new Map(),
+      remoteToolSources: new Map([["api", remote]]),
       resolveModelRuntime: () => ({
         modelId: "gpt-5.4",
         provider: "openai",
@@ -104,10 +133,13 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
       signal: new AbortController().signal,
       deadline: Date.now() + 30_000,
     });
-    assertEquals((result as { ok?: boolean }).ok, true);
+    assertEquals((result as { ok?: boolean }).ok, true, JSON.stringify(result));
     assertEquals(hiddenExecutions, 0);
+    assertEquals(remoteExecutions, 0);
   } finally {
     Object.entries = originalEntries;
+    Set.prototype.has = originalSetHas;
+    Array.prototype.reduce = originalReduce;
     await owner.close();
   }
 });
