@@ -3,7 +3,11 @@ import { fileURLToPath } from "node:url";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 
-type Module = { specifier: string; dependencies?: { code?: { specifier: string } }[] };
+type Module = {
+  specifier: string;
+  error?: unknown;
+  dependencies?: { code?: { specifier: string } }[];
+};
 type Graph = { roots: string[]; modules: Module[] };
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const forbidden = [
@@ -59,6 +63,11 @@ for (
           if (dependency.code) pending.push(dependency.code.specifier);
         }
       }
+      assertEquals(
+        [...visited].filter((specifier) => modules.get(specifier)?.error !== undefined),
+        [],
+        "Runtime imports must resolve before the boundary graph can pass",
+      );
       assertEquals(
         [...visited].filter((specifier) => forbidden.some((path) => specifier.endsWith(path))),
         [],

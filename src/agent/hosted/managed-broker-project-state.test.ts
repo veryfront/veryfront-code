@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createManagedBrokerProjectState } from "./managed-broker-project-state.ts";
 
@@ -12,6 +12,40 @@ const definition = {
 };
 
 describe("managed broker project state", () => {
+  it("joins the original catalog lookup before propagating an instruction failure", async () => {
+    const failure = new Error("synthetic instruction failure");
+    const catalog = Promise.withResolvers<Response>();
+    let listingCalls = 0;
+    const state = createManagedBrokerProjectState({
+      apiUrl: "https://api.example.test",
+      authToken: "broker-token",
+      agentId: "coder",
+      projectId: "project-1",
+      fetch: (value) => {
+        const url = new URL(value);
+        if (url.pathname.endsWith("/AGENTS.md")) return Promise.reject(failure);
+        listingCalls++;
+        return listingCalls === 1
+          ? catalog.promise
+          : Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+      },
+    });
+    let rejected = false;
+    const pending = state.prepareProjectSteering({
+      definition,
+      projectId: "project-1",
+      signal: new AbortController().signal,
+    }).catch((error) => {
+      rejected = true;
+      throw error;
+    });
+    void pending.catch(() => {});
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assertEquals(rejected, false);
+    catalog.resolve(Response.json({ data: [], page_info: { next: null } }));
+    assertStrictEquals(await assertRejects(() => pending), failure);
+  });
+
   it("uses fixed project authorization and performs a complete refresh", async () => {
     const calls: Array<{ url: URL; authorization: string | null }> = [];
     let instructionRead = 0;

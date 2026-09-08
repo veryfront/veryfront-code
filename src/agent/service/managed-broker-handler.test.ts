@@ -52,7 +52,10 @@ async function request(signal?: AbortSignal) {
   };
 }
 
-function runtimeFixture(streamFailure = false) {
+function runtimeFixture(
+  streamFailure = false,
+  terminalChunk?: "error" | "finish-error",
+) {
   const release = Promise.withResolvers<void>();
   const settled = Promise.withResolvers<void>();
   const acceptKinds: string[] = [];
@@ -82,6 +85,14 @@ function runtimeFixture(streamFailure = false) {
           toUIMessageStream: async function* () {
             await release.promise;
             if (streamFailure) throw new Error("synthetic stream failure");
+            if (terminalChunk === "error") {
+              yield { type: "error", errorText: "ordinary stream error" } as const;
+              return;
+            }
+            if (terminalChunk === "finish-error") {
+              yield { type: "finish", finishReason: "error" } as const;
+              return;
+            }
             yield { type: "start", messageId: "assistant-message" } as const;
           },
         };
@@ -109,18 +120,20 @@ async function handler(
     waitForAuthorization?: boolean;
     throwingObserver?: boolean;
     streamFailure?: boolean;
+    terminalChunk?: "error" | "finish-error";
     missingOutput?: boolean;
     waitForOutput?: boolean;
     startError?: Error;
   } = {},
 ) {
   const first = await request(options.signal);
-  const fixture = runtimeFixture(options.streamFailure);
+  const fixture = runtimeFixture(options.streamFailure, options.terminalChunk);
   let prepareCalls = 0;
   let brokerStarts = 0;
   let cleanupCalls = 0;
   const outputChunks: string[] = [];
   const outputFinishes: boolean[] = [];
+  const outputFinishErrors: unknown[] = [];
   const outputRelease = Promise.withResolvers<void>();
   let prepareSignal: AbortSignal | undefined;
   const prepareEntered = Promise.withResolvers<void>();
@@ -166,8 +179,9 @@ async function handler(
           async write(chunk: { type: string }) {
             outputChunks.push(chunk.type);
           },
-          async finish(outcome: { completed: boolean }) {
+          async finish(outcome: { completed: boolean; error?: unknown }) {
             outputFinishes.push(outcome.completed);
+            outputFinishErrors.push(outcome.error);
             if (options.waitForOutput) await outputRelease.promise;
           },
         },
@@ -193,6 +207,7 @@ async function handler(
     releaseAuthorization: authorizationRelease.resolve,
     outputChunks,
     outputFinishes,
+    outputFinishErrors,
     releaseOutput: outputRelease.resolve,
     get prepareCalls() {
       return prepareCalls;
@@ -264,6 +279,37 @@ describe("managed broker handler", () => {
     f.fixture.release();
     await f.managed.close();
     assertEquals(f.fixture.closeReasons, ["completed"]);
+  });
+
+  it("does not acknowledge a duplicate while the original run is still pending admission", async () => {
+    const f = await handler("detached", { waitForPrepare: true, failStart: true });
+    const duplicateRequest = f.first.request.clone();
+    const original = f.managed.handle(f.first.request);
+    await f.prepareEntered;
+
+    const duplicate = await f.managed.handle(duplicateRequest);
+    assertEquals(duplicate.status, 409);
+    assertEquals(await duplicate.json(), { errorCode: "BROKER_RUN_PENDING" });
+    assertEquals(f.prepareCalls, 1);
+
+    f.releasePrepare();
+    assertEquals((await original).status, 500);
+    assertEquals(f.managed.active, 0);
+    await f.managed.close();
+  });
+
+  it("marks ordinary error chunks and error finish reasons as failed durable output", async () => {
+    for (const terminalChunk of ["error", "finish-error"] as const) {
+      const f = await handler("detached", { terminalChunk });
+      assertEquals((await f.managed.handle(f.first.request)).status, 202);
+      f.fixture.release();
+      await f.managed.close();
+
+      assertEquals(f.outputFinishes, [false], terminalChunk);
+      assertEquals(f.outputFinishErrors[0] instanceof Error, true, terminalChunk);
+      assertEquals(f.outputChunks, [terminalChunk === "error" ? "error" : "finish"]);
+      assertEquals(f.fixture.closeReasons, ["canceled"], terminalChunk);
+    }
   });
 
   it("preserves request-owned SSE and releases only after response completion", async () => {
@@ -338,6 +384,27 @@ describe("managed broker handler", () => {
     await response.text();
     await f.managed.close();
     assertEquals(f.fixture.closeReasons, ["canceled"]);
+  });
+
+  it("cancels and retires request-owned SSE when the response body is canceled", async () => {
+    const f = await handler("sse");
+    const response = await f.managed.handle(f.first.request);
+    let closing: Promise<void> | undefined;
+    try {
+      await response.body?.cancel("client stopped reading");
+      closing = f.managed.close();
+      const timeout = Promise.withResolvers<false>();
+      const timeoutId = setTimeout(() => timeout.resolve(false), 25);
+      const retired = await Promise.race([closing.then(() => true), timeout.promise]);
+      clearTimeout(timeoutId);
+      assertEquals(retired, true);
+      assertEquals(f.fixture.closeReasons, ["canceled"]);
+      assertEquals(f.managed.active, 0);
+      assertEquals(f.cleanupCalls, 1);
+    } finally {
+      f.fixture.release();
+      await closing;
+    }
   });
 
   it("shields throwing detached execution observers", async () => {

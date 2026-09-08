@@ -56,7 +56,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   }>;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
-  const active = new Map<string, Promise<void>>();
+  const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
   const lifetime = new AbortController();
   let closed = false;
 
@@ -82,18 +82,23 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
       });
       assertAvailable(closed, signal);
       const runKey = managedRunKey(ingress);
-      if (active.has(runKey)) {
+      const existing = active.get(runKey);
+      if (existing) {
+        if (!existing.accepted) {
+          return Response.json({ errorCode: "BROKER_RUN_PENDING" }, { status: 409 });
+        }
         return options.responseMode === "detached"
           ? Response.json({ accepted: true, duplicate: true }, { status: 202 })
           : Response.json({ errorCode: "BROKER_RUN_ALREADY_ACTIVE" }, { status: 409 });
       }
       const reservation = Promise.withResolvers<void>();
-      active.set(runKey, reservation.promise);
+      const activeRun = { accepted: false, settled: reservation.promise };
+      active.set(runKey, activeRun);
       let preparedCleanup: (() => Promise<void>) | undefined;
       let admissionSettled: Promise<void> | undefined;
       let retirement: Promise<void> | undefined;
       const release = () => {
-        if (active.get(runKey) === reservation.promise) active.delete(runKey);
+        if (active.get(runKey) === activeRun) active.delete(runKey);
         reservation.resolve();
       };
       const retire = (settled: Promise<void> = Promise.resolve()) => {
@@ -129,6 +134,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
               ? { kind: "execution", signal: prepared.executionSignal }
               : { kind: "request" },
           );
+          activeRun.accepted = true;
         } catch (error) {
           await runtime.close("canceled").catch(() => {});
           void retire(runtime.settled).catch(() => {});
@@ -202,7 +208,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   async function close(): Promise<void> {
     closed = true;
     lifetime.abort();
-    await Promise.allSettled([...active.values()]);
+    await Promise.allSettled([...active.values()].map((run) => run.settled));
   }
 
   return {
@@ -263,7 +269,7 @@ async function createSseResponse(input: {
       completion.resolve();
     }
   })();
-  return createAgUiChatUiTrackedResponse({
+  const response = createAgUiChatUiTrackedResponse({
     agUiInput: input.agUiInput,
     defaults: { runId: input.runId, threadId: input.threadId },
     agentId: input.agentId,
@@ -278,6 +284,42 @@ async function createSseResponse(input: {
         await finish(natural && !input.requestSignal.aborted ? "completed" : "canceled");
       },
     },
+  });
+  return withResponseBodyCancellation(response, () => finish("canceled"));
+}
+
+function withResponseBodyCancellation(
+  response: Response,
+  cancel: () => Promise<void>,
+): Response {
+  if (!response.body) return response;
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          controller.close();
+          reader.releaseLock();
+          return;
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        await cancel().catch(() => {});
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await Promise.allSettled([
+        reader.cancel(reason),
+        cancel(),
+      ]);
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
   });
 }
 
@@ -294,10 +336,20 @@ async function runDetached(
       let failure: unknown;
       try {
         const result = await runtime.agent.stream({ messages, abortSignal: signal });
-        for await (const chunk of result.toUIMessageStream()) await output.write(chunk);
+        for await (const chunk of result.toUIMessageStream()) {
+          await output.write(chunk);
+          if (chunk.type === "error" && failure === undefined) {
+            failure = new Error(chunk.errorText || "Agent stream failed");
+          } else if (
+            chunk.type === "finish" && chunk.finishReason === "error" && failure === undefined
+          ) {
+            failure = new Error("Agent stream finished with an error");
+          }
+        }
+        if (failure !== undefined) throw failure;
         streamCompleted = true;
       } catch (error) {
-        failure = error;
+        failure ??= error;
         throw error;
       } finally {
         await output.finish({

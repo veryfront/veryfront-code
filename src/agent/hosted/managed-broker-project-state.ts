@@ -70,7 +70,7 @@ export function createManagedBrokerProjectState(
     signal.throwIfAborted();
     if (projectId === null) return { instructions: "", skills: [] as RuntimeSkillDefinition[] };
     const lookup = { projectId, branchId, authToken };
-    const [instructions, skills] = await Promise.all([
+    const [instructionsResult, skillsResult] = await Promise.allSettled([
       getRuntimeProjectInstructions({ ...lookup, getProjectFile: fileReader(signal) }),
       getRuntimeProjectSkillCatalog({
         ...lookup,
@@ -80,8 +80,10 @@ export function createManagedBrokerProjectState(
         skillDocumentParserProvider: options.skillDocumentParserProvider,
       }),
     ]);
+    if (instructionsResult.status === "rejected") throw instructionsResult.reason;
+    if (skillsResult.status === "rejected") throw skillsResult.reason;
     signal.throwIfAborted();
-    return { instructions, skills };
+    return { instructions: instructionsResult.value, skills: skillsResult.value };
   };
   const select = (agent: RuntimeAgentMarkdownDefinition, skills: RuntimeSkillDefinition[]) => {
     if (agent.skills === false) return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
