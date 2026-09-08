@@ -592,6 +592,54 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  it("ignores inherited initial checkpoint state during canonical preparation", async () => {
+    let inheritedReads = 0;
+    type CheckpointFacade = NonNullable<ExecutorRuntimeFacades["toolExposureCheckpoint"]>;
+    const checkpoint: CheckpointFacade = Object.create({
+      get initial() {
+        inheritedReads++;
+        return { version: 1, loadedToolNames: [] };
+      },
+    }, {
+      persist: {
+        value: () => Promise.resolve(),
+        enumerable: true,
+      },
+    });
+    let calls = 0;
+    const f = fixture({
+      grant: {
+        ...grant,
+        allowedToolNames: ["visible"],
+        hostToolFacadeIds: ["local"],
+        execution: {
+          kind: "canonical",
+          projectId: null,
+          conversationId: "synthetic-conversation",
+          runId: "synthetic-run",
+          messageId: "synthetic-message",
+          providerReplay: "disabled",
+        },
+      },
+      facades: {
+        hostTools: new Map([["local", { visible: syntheticHostTool() }]]),
+        toolExposureCheckpoint: checkpoint,
+        publishParentRunEvents: () => Promise.resolve(),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: () => finishStream(calls++ === 0 ? "visible" : undefined),
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(inheritedReads, 0);
+      assertEquals(calls, 2);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("preserves a granted provider-selected local web fetch fallback", async () => {
     let visible: string[] = [];
     const f = fixture({

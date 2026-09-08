@@ -81,6 +81,7 @@ const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
 const objectSetPrototypeOf = Object.setPrototypeOf;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
 const arrayIsArray = Array.isArray;
@@ -209,7 +210,30 @@ function snapshotGrant(
     ) || !parsed.models.some((model) => model.id === parsed.defaultModelId) ||
     createPrivateSet(parsed.models.map((model) => model.id)).size !== parsed.models.length
   ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+  objectSetPrototypeOf(parsed, null);
+  objectSetPrototypeOf(parsed.execution, null);
   return parsed;
+}
+
+function snapshotCheckpointFacade<I, C>(
+  facade: { initial?: I; persist: (checkpoint: C) => void | Promise<void> } | undefined,
+): { initial?: I; persist: (checkpoint: C) => void | Promise<void> } | undefined {
+  if (!facade) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(facade, "initial");
+  const initial = descriptor && hasOwn(descriptor, "value") ? descriptor.value as I : undefined;
+  const persist = facade.persist;
+  const snapshot = {
+    initial,
+    persist: typeof persist === "function"
+      ? (checkpoint: C) =>
+        chain(
+          resolvePrivatePromise(),
+          () => apply(persist, facade, [checkpoint]) as void | Promise<void>,
+        )
+      : persist,
+  };
+  objectSetPrototypeOf(snapshot, null);
+  return snapshot;
 }
 function sameBinding(left: ExecutorBinding, right: ExecutorBinding) {
   return left.allocationId === right.allocationId && left.generation === right.generation &&
@@ -238,10 +262,14 @@ export function createExecutorRuntimePreparation(input: Options) {
   const modelGrants = new Map(grant?.models.map((model) => [model.id, model]) ?? []);
   const binding = parseRuntimePreparationData(getExecutorBindingSchema(), input.binding);
   const source = parseRuntimePreparationData(getExecutorDiscoverySourceSchema(), input.source);
+  objectSetPrototypeOf(binding, null);
+  objectSetPrototypeOf(source, null);
   const facades: ExecutorRuntimeFacades = {
     ...input.facades,
     hostTools: new Map(input.facades.hostTools),
     remoteToolSources: new Map(input.facades.remoteToolSources),
+    toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),
+    providerReplayCheckpoint: snapshotCheckpointFacade(input.facades.providerReplayCheckpoint),
   };
   objectSetPrototypeOf(facades, null);
   const lifetime = new AbortController();
