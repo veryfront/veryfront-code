@@ -1,4 +1,8 @@
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  appendPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
@@ -294,13 +298,13 @@ function convertContentToAgentRuntimeParts(
   for (const part of message.content) {
     const convertedPart = convertStructuredPart(part);
     if (convertedPart) {
-      parts.push(convertedPart);
+      pushPrivateArray(parts, convertedPart);
     }
 
     if (part.type === "image" || part.type === "file") {
       const attachmentReference = createAttachmentReference(part);
       if (attachmentReference) {
-        attachmentReferences.push(attachmentReference);
+        pushPrivateArray(attachmentReferences, attachmentReference);
       }
       continue;
     }
@@ -310,7 +314,7 @@ function convertContentToAgentRuntimeParts(
     ? null
     : buildAttachmentContextPart(attachmentReferences);
   if (attachmentContextPart) {
-    parts.push(attachmentContextPart);
+    pushPrivateArray(parts, attachmentContextPart);
   }
 
   return parts;
@@ -474,20 +478,20 @@ function collectAgentRuntimeProviderContentParts(
 
     const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
-      textParts.push(textPart);
+      pushPrivateArray(textParts, textPart);
       continue;
     }
 
     const reasoningPart = getAgentRuntimeReasoningPart(part);
     if (reasoningPart) {
-      reasoningParts.push(reasoningPart);
+      pushPrivateArray(reasoningParts, reasoningPart);
       continue;
     }
 
     if (part.type === "image" || part.type === "file") {
       const nativePart = toNativeFilePart(part.type, part);
       if (nativePart) {
-        fileParts.push(nativePart);
+        pushPrivateArray(fileParts, nativePart);
         continue;
       }
     }
@@ -498,14 +502,14 @@ function collectAgentRuntimeProviderContentParts(
       toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
     );
     if (toolResultPart) {
-      toolResultParts.push(createToolResultPart(toolResultPart));
+      pushPrivateArray(toolResultParts, createToolResultPart(toolResultPart));
       continue;
     }
 
     const toolCallPart = getAgentRuntimeToolCallPart(part);
     if (toolCallPart) {
       toolNamesById.set(toolCallPart.toolCallId, toolCallPart.toolName);
-      toolCallParts.push({
+      pushPrivateArray(toolCallParts, {
         type: "tool-call",
         toolCallId: toolCallPart.toolCallId,
         toolName: toolCallPart.toolName,
@@ -537,7 +541,7 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       return;
     }
 
-    providerMessages.push({ role: "assistant", content: [...content] });
+    pushPrivateArray(providerMessages, { role: "assistant", content: [...content] });
     content.length = 0;
   };
 
@@ -546,7 +550,7 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       return;
     }
 
-    providerMessages.push({ role: "tool", content: [...toolResults] });
+    pushPrivateArray(providerMessages, { role: "tool", content: [...toolResults] });
     toolResults.length = 0;
   };
 
@@ -560,14 +564,14 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
         flushAssistantMessage(deferredAssistantContent);
       }
 
-      assistantContent.push(part);
+      pushPrivateArray(assistantContent, part);
       pendingToolCallIds.add(part.toolCallId);
       toolNamesById.set(part.toolCallId, part.toolName);
       return;
     }
 
     if (pendingToolCallIds.size > 0) {
-      deferredAssistantContent.push(part);
+      pushPrivateArray(deferredAssistantContent, part);
       return;
     }
 
@@ -577,11 +581,11 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       flushAssistantMessage(deferredAssistantContent);
     }
 
-    assistantContent.push(part);
+    pushPrivateArray(assistantContent, part);
   };
 
   const pushToolResult = (part: ChatToolResultPart) => {
-    toolResults.push(part);
+    pushPrivateArray(toolResults, part);
     pendingToolCallIds.delete(part.toolCallId);
   };
 
@@ -716,7 +720,7 @@ export function convertAgentRuntimeMessagesToProviderMessages(
   const converted: ProviderModelMessage[] = [];
 
   for (const message of messages) {
-    converted.push(...createProviderMessagesFromAgentRuntimeMessage(message));
+    appendPrivateArray(converted, createProviderMessagesFromAgentRuntimeMessage(message));
   }
 
   return converted;

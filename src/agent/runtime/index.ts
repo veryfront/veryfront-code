@@ -1,3 +1,9 @@
+import {
+  appendPrivateArray,
+  concatPrivateArrays,
+  mapPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import {
   createPrivateTextDecoder,
@@ -20,7 +26,6 @@ import {
  */
 
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { concatPrivateArrays, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   createPrivateReadableStream,
   enqueuePrivateStream,
@@ -764,7 +769,7 @@ function captureOpaqueProxyCloneFailureFingerprints(): readonly string[] {
     } catch (error) {
       const fingerprint = getStructuredCloneFailureFingerprint(error);
       if (fingerprint !== undefined && !fingerprints.includes(fingerprint)) {
-        fingerprints.push(fingerprint);
+        pushPrivateArray(fingerprints, fingerprint);
       }
     }
   }
@@ -1089,9 +1094,9 @@ function buildGeneratedAssistantMessage(
   metadata: { id: string; timestamp: number },
 ): Message {
   const parts: MessagePart[] = [];
-  if (response.text) parts.push({ type: "text", text: response.text });
+  if (response.text) pushPrivateArray(parts, { type: "text", text: response.text });
   for (const toolCall of response.toolCalls ?? []) {
-    parts.push({
+    pushPrivateArray(parts, {
       type: `tool-${toolCall.toolName}`,
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName,
@@ -1356,7 +1361,7 @@ function applyAgentWriteFinalResponseGuard(
       guardedTools.length > 0 &&
       !visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME)
     ) {
-      visible.push(createToolSearchDefinition());
+      pushPrivateArray(visible, createToolSearchDefinition());
     }
     return {
       ...plan,
@@ -2917,7 +2922,7 @@ export class AgentRuntime {
           id: `msg_${Date.now()}_${step}`,
           timestamp: Date.now(),
         });
-        currentMessages.push(assistantMessage);
+        pushPrivateArray(currentMessages, assistantMessage);
         await persistMessage(assistantMessage);
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
@@ -2937,7 +2942,7 @@ export class AgentRuntime {
               : generatedToolResult.result,
             generatedToolResult.providerExecuted === true,
           );
-          currentMessages.push(toolResultMessage);
+          pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
           throwIfAborted(abortSignal);
         };
@@ -2958,13 +2963,13 @@ export class AgentRuntime {
             status: "error",
             error,
           };
-          toolCalls.push(toolCall);
+          pushPrivateArray(toolCalls, toolCall);
           const errorMessage = createToolErrorMessage(
             generatedToolResult.toolCallId,
             generatedToolResult.toolName,
             error,
           );
-          currentMessages.push(errorMessage);
+          pushPrivateArray(currentMessages, errorMessage);
           await persistMessage(errorMessage);
           return true;
         };
@@ -3044,9 +3049,9 @@ export class AgentRuntime {
                 tc.toolName,
                 toolCall.error,
               );
-              currentMessages.push(errorMessage);
+              pushPrivateArray(currentMessages, errorMessage);
               await persistMessage(errorMessage);
-              toolCalls.push(toolCall);
+              pushPrivateArray(toolCalls, toolCall);
               return;
             }
             if (
@@ -3076,7 +3081,7 @@ export class AgentRuntime {
                   tc.toolName,
                   search.result,
                 );
-                currentMessages.push(toolResultMessage);
+                pushPrivateArray(currentMessages, toolResultMessage);
                 await persistMessage(toolResultMessage);
                 checkpoint = search.checkpoint;
               } catch (error) {
@@ -3087,9 +3092,9 @@ export class AgentRuntime {
                   tc.toolName,
                   toolCall.error,
                 );
-                currentMessages.push(errorMessage);
+                pushPrivateArray(currentMessages, errorMessage);
                 await persistMessage(errorMessage);
-                toolCalls.push(toolCall);
+                pushPrivateArray(toolCalls, toolCall);
                 return;
               }
               await persistToolExposureCheckpointBeforeContinuation({
@@ -3097,7 +3102,7 @@ export class AgentRuntime {
                 persist: persistToolExposureCheckpoint,
                 required: requireToolExposureCheckpointPersistence,
               });
-              toolCalls.push(toolCall);
+              pushPrivateArray(toolCalls, toolCall);
               return;
             }
 
@@ -3153,7 +3158,7 @@ export class AgentRuntime {
                     : {}),
                 }),
               );
-              toolCalls.push(toolCall);
+              pushPrivateArray(toolCalls, toolCall);
               return;
             }
 
@@ -3186,9 +3191,9 @@ export class AgentRuntime {
                 }],
                 timestamp: Date.now(),
               };
-              currentMessages.push(errorMessage);
+              pushPrivateArray(currentMessages, errorMessage);
               await persistMessage(errorMessage);
-              toolCalls.push(toolCall);
+              pushPrivateArray(toolCalls, toolCall);
               return;
             }
 
@@ -3283,7 +3288,7 @@ export class AgentRuntime {
                 tc.toolName,
                 result,
               );
-              currentMessages.push(toolResultMessage);
+              pushPrivateArray(currentMessages, toolResultMessage);
               await persistMessage(toolResultMessage);
             } catch (error) {
               throwIfAborted(abortSignal);
@@ -3300,11 +3305,11 @@ export class AgentRuntime {
                 tc.toolName,
                 toolCall.error,
               );
-              currentMessages.push(errorMessage);
+              pushPrivateArray(currentMessages, errorMessage);
               await persistMessage(errorMessage);
             }
 
-            toolCalls.push(toolCall);
+            pushPrivateArray(toolCalls, toolCall);
           });
           throwIfAborted(abortSignal);
         }
@@ -3667,7 +3672,7 @@ export class AgentRuntime {
           }
         }
         deferredRecoveryOutput.length = 0;
-        deferredRecoveryOutput.push(...retainedOutput);
+        appendPrivateArray(deferredRecoveryOutput, retainedOutput);
       };
       const reconcileDeferredRecoveryTextSegment = (
         isTextEndEvent: boolean,
@@ -3709,7 +3714,7 @@ export class AgentRuntime {
           }
           deferredRecoverySseText += textDeltaFromSseChunk(chunk) ?? "";
           const isTextEvent = isTextSseChunk(chunk);
-          deferredRecoveryOutput.push({
+          pushPrivateArray(deferredRecoveryOutput, {
             kind: "sse",
             chunk,
             isTextEvent,
@@ -3728,7 +3733,7 @@ export class AgentRuntime {
           }
           deferredRecoveryCallbackText += chunk;
           if (callbacks?.onChunk !== undefined) {
-            deferredRecoveryOutput.push({ kind: "callback", chunk });
+            pushPrivateArray(deferredRecoveryOutput, { kind: "callback", chunk });
           }
           releaseDeferredRecoveryOutputAfterDivergence();
         },
@@ -3897,7 +3902,7 @@ export class AgentRuntime {
       ) {
         latestAssistantText = stepAssistantText;
       }
-      currentMessages.push(assistantMessage);
+      pushPrivateArray(currentMessages, assistantMessage);
       await persistMessage(assistantMessage);
       await persistProviderReplayCheckpointAfterTurn({
         emission: providerReplayCheckpointEmission,
@@ -3917,7 +3922,7 @@ export class AgentRuntime {
             : { error: stringifyToolError(toolResult.error) },
           toolResult.providerExecuted === true,
         );
-        currentMessages.push(toolResultMessage);
+        pushPrivateArray(currentMessages, toolResultMessage);
         await persistMessage(toolResultMessage);
         currentStepToolResults.set(
           toolResult.toolCallId,
@@ -4068,7 +4073,7 @@ export class AgentRuntime {
           toolCall.error = matchingResult.error === undefined
             ? undefined
             : stringifyToolError(matchingResult.error);
-          toolCalls.push(toolCall);
+          pushPrivateArray(toolCalls, toolCall);
 
           if (matchingResult.error === undefined) {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
@@ -4094,7 +4099,7 @@ export class AgentRuntime {
           toolCall.status = persistedError === undefined ? "completed" : "error";
           toolCall.result = persistedResult.result;
           toolCall.error = persistedError;
-          toolCalls.push(toolCall);
+          pushPrivateArray(toolCalls, toolCall);
           if (persistedError === undefined) {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
@@ -4128,7 +4133,7 @@ export class AgentRuntime {
             args: toolCall.args,
           });
           toolCall.status = "completed";
-          toolCalls.push(toolCall);
+          pushPrivateArray(toolCalls, toolCall);
           continue;
         }
 
@@ -4172,7 +4177,7 @@ export class AgentRuntime {
             }
             toolCall.status = "completed";
             toolCall.result = search.result;
-            toolCalls.push(toolCall);
+            pushPrivateArray(toolCalls, toolCall);
             setOtelActiveSpanAttributes({
               "tool.search.result_count": search.result.resultCount,
               "tool.search.loaded_count": search.result.loadedCount,
@@ -4184,7 +4189,7 @@ export class AgentRuntime {
               output: search.result,
             });
             const toolResultMessage = createToolResultMessage(tc.id, tc.name, search.result);
-            currentMessages.push(toolResultMessage);
+            pushPrivateArray(currentMessages, toolResultMessage);
             await persistMessage(toolResultMessage);
             checkpoint = search.checkpoint;
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
@@ -4292,7 +4297,7 @@ export class AgentRuntime {
           toolCall.result = result;
           toolCall.error = resultError;
           toolCall.executionTime = Date.now() - startTime;
-          toolCalls.push(toolCall);
+          pushPrivateArray(toolCalls, toolCall);
 
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
@@ -4328,7 +4333,7 @@ export class AgentRuntime {
 
           const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
-            currentMessages.push(toolResultMessage);
+            pushPrivateArray(currentMessages, toolResultMessage);
             await persistMessage(toolResultMessage);
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
@@ -4354,7 +4359,8 @@ export class AgentRuntime {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
         ];
-        currentMessages.push(
+        pushPrivateArray(
+          currentMessages,
           markRuntimeGeneratedUserMessage({
             id: `runtime_note_${Date.now()}_${step}`,
             role: "user",
@@ -4429,7 +4435,7 @@ export class AgentRuntime {
     toolCall.status = "error";
     toolCall.error = errorStr;
     if (options.includeInResponse !== false) {
-      toolCalls.push(toolCall);
+      pushPrivateArray(toolCalls, toolCall);
     }
 
     if (options.emitSse !== false) {
@@ -4447,7 +4453,7 @@ export class AgentRuntime {
       toolCall.name,
       errorStr,
     );
-    currentMessages.push(errorMessage);
+    pushPrivateArray(currentMessages, errorMessage);
     await persistMessage(errorMessage);
   }
 

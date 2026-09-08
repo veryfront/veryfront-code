@@ -368,6 +368,13 @@ describe("chat-stream-handler", () => {
     it("accumulates streamed reasoning text with Anthropic signatures", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
+      let appendLookups = 0;
+      Object.defineProperty(state.reasoningParts, "push", {
+        get() {
+          appendLookups++;
+          return Array.prototype.push;
+        },
+      });
 
       const result = createMockResult([
         { type: "reasoning-start", id: "thinking-0" },
@@ -378,6 +385,7 @@ describe("chat-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "text-1", undefined);
 
+      assertEquals(appendLookups, 0);
       assertEquals(state.reasoningParts, [{
         id: "thinking-0",
         text: "Check evidence.",

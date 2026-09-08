@@ -2,6 +2,32 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 
 const hasOwn = Object.hasOwn;
 
+/** Append one private value without looking up push or invoking inherited setters. */
+export function pushPrivateArray<T>(values: T[], value: T): number {
+  defineOwnDataProperty(values, values.length, value, {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  return values.length;
+}
+
+/** Append another private array without consulting its iterator or inherited entries. */
+export function appendPrivateArray<T>(values: T[], items: readonly T[]): number {
+  const offset = values.length;
+  const length = items.length;
+  values.length = offset + length;
+  for (let index = 0; index < length; index++) {
+    if (!hasOwn(items, index)) continue;
+    defineOwnDataProperty(values, offset + index, items[index], {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return values.length;
+}
+
 /** Join private arrays through own indexed elements, preserving sparse positions. */
 export function concatPrivateArrays<T>(left: readonly T[], right: readonly T[]): T[] {
   const output = mapPrivateArray(left, (value) => value);

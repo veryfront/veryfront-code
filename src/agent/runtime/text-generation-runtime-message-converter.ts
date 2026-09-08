@@ -1,3 +1,4 @@
+import { appendPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
 /**
  * Text-Generation Runtime Message Converter
  *
@@ -344,13 +345,13 @@ export function convertToTextGenerationRuntimeMessage(
 
       for (const part of msg.parts) {
         if (part.type === "text" && "text" in part) {
-          content.push({ type: "text", text: (part as { text: string }).text });
+          pushPrivateArray(content, { type: "text", text: (part as { text: string }).text });
           continue;
         }
 
         const toolPart = getTextGenerationToolCallPart(part, providerExecutedToolCallIds);
         if (toolPart) {
-          content.push({
+          pushPrivateArray(content, {
             type: "tool-call",
             toolCallId: toolPart.toolCallId,
             toolName: toolPart.toolName,
@@ -363,7 +364,7 @@ export function convertToTextGenerationRuntimeMessage(
 
       // Ensure non-empty content (providers need at least empty text for tool-only messages)
       if (content.length === 0) {
-        content.push({ type: "text", text: "" });
+        pushPrivateArray(content, { type: "text", text: "" });
       }
 
       const providerMetadata = readAttachedProviderMetadata(msg);
@@ -388,7 +389,7 @@ export function convertToTextGenerationRuntimeMessage(
 
         const toolResultPart = getTextGenerationToolResultPart(part, toolNamesById);
         if (toolResultPart) {
-          content.push(toolResultPart);
+          pushPrivateArray(content, toolResultPart);
         }
       }
 
@@ -595,7 +596,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    messages.push({ role: "assistant", content: [...content] });
+    pushPrivateArray(messages, { role: "assistant", content: [...content] });
     content.length = 0;
   };
 
@@ -604,7 +605,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    messages.push({ role: "tool", content: [...toolResults] });
+    pushPrivateArray(messages, { role: "tool", content: [...toolResults] });
     toolResults.length = 0;
   };
 
@@ -620,14 +621,14 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
         flushAssistantMessage(deferredAssistantContent);
       }
 
-      assistantContent.push(part);
+      pushPrivateArray(assistantContent, part);
       pendingToolCallIds.add(part.toolCallId);
       toolNamesById.set(part.toolCallId, part.toolName);
       return;
     }
 
     if (pendingToolCallIds.size > 0) {
-      deferredAssistantContent.push(part);
+      pushPrivateArray(deferredAssistantContent, part);
       return;
     }
 
@@ -637,7 +638,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       flushAssistantMessage(deferredAssistantContent);
     }
 
-    assistantContent.push(part);
+    pushPrivateArray(assistantContent, part);
   };
 
   const pushToolResult = (part: TextGenerationRuntimeToolResultPart) => {
@@ -645,7 +646,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    toolResults.push(part);
+    pushPrivateArray(toolResults, part);
     pendingToolCallIds.delete(part.toolCallId);
   };
 
@@ -696,7 +697,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     if (isProviderReplayDelivered(message)) {
       markProviderReplayDelivered(anchorMessage);
     }
-    messages.push(anchorMessage);
+    pushPrivateArray(messages, anchorMessage);
   } else if (providerMetadata !== undefined) {
     const splitMetadata = splitAnthropicProviderMetadata(
       providerMetadata,
@@ -760,11 +761,11 @@ export function convertToTextGenerationRuntimeMessages(
       const previousMessage = textGenerationRuntimeMessages.at(-1);
 
       if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
-        previousMessage.content.push(...convertedMessage.content);
+        appendPrivateArray(previousMessage.content, convertedMessage.content);
         continue;
       }
 
-      textGenerationRuntimeMessages.push(convertedMessage);
+      pushPrivateArray(textGenerationRuntimeMessages, convertedMessage);
     }
   }
 

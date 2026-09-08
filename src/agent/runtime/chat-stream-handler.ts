@@ -1,3 +1,4 @@
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
   closePrivateStream,
@@ -853,7 +854,7 @@ export function processStreamInternal(
       }
       suppressedToolCallIds.add(toolCallId);
       pendingProviderExecutedToolCallIds.delete(toolCallId);
-      state.suppressedToolCalls.push({ id: toolCallId, name: toolName });
+      pushPrivateArray(state.suppressedToolCalls, { id: toolCallId, name: toolName });
     };
 
     /**
@@ -975,7 +976,7 @@ export function processStreamInternal(
       if (!reasoningParts.has(reasoningId)) {
         const part = { id: reasoningId, text: "" };
         reasoningParts.set(reasoningId, part);
-        state.reasoningParts.push(part);
+        pushPrivateArray(state.reasoningParts, part);
       }
       sendSSE(controller, encoder, {
         type: "reasoning-start",
@@ -1307,7 +1308,7 @@ export function processStreamInternal(
 
             tc.arguments = mergeToolInputDelta(tc.arguments, typedPart.delta);
             tc.inputDeltas ??= [];
-            tc.inputDeltas.push(typedPart.delta);
+            pushPrivateArray(tc.inputDeltas, typedPart.delta);
             break;
           }
 
@@ -1506,7 +1507,7 @@ export function processStreamInternal(
             // result to live clients, durable history, or continuation input.
             if (typedPart.preliminary === true) break;
             if (isError) {
-              state.toolResults.push({
+              pushPrivateArray(state.toolResults, {
                 toolCallId: typedPart.toolCallId,
                 toolName: typedPart.toolName,
                 error: toolResultError,
@@ -1523,7 +1524,7 @@ export function processStreamInternal(
               break;
             }
 
-            state.toolResults.push({
+            pushPrivateArray(state.toolResults, {
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
               output: toolResultOutput,
@@ -1577,7 +1578,7 @@ export function processStreamInternal(
               error: typedPart.error,
               input: typedPart.input,
             });
-            state.toolResults.push({
+            pushPrivateArray(state.toolResults, {
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
               error: typedPart.error,
