@@ -1,7 +1,7 @@
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import { defineError, VeryfrontError } from "#veryfront/errors/types.ts";
-import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
+import { getExecutorDiscoveryIdSchema } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 
 const failureStatus = {
   EXECUTOR_RUNTIME_INVALID_INPUT: 400,

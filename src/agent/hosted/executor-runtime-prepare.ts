@@ -3,47 +3,56 @@ import { VERYFRONT_CLOUD_MODEL_PREFIX } from "#veryfront/provider/veryfront-clou
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
 import { isToolVisibleTo } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
-import type { AgentSystem } from "../types.ts";
+import type { AgentSystem } from "#veryfront/agent/types.ts";
 import {
   type AgentModelRuntimeResolver,
   registerModelRuntimeResolverRevoker,
   revokeModelRuntimeResolver,
-} from "../runtime/model-transport.ts";
-import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
-import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
-import { type ExecutorBinding, getExecutorBindingSchema } from "../executor/protocol.ts";
-import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
-import type { ExecutorDiscovery } from "./executor-discovery.ts";
+} from "#veryfront/agent/runtime/model-transport.ts";
+import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
+import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+import {
+  type ExecutorBinding,
+  getExecutorBindingSchema,
+} from "#veryfront/agent/executor/protocol.ts";
+import type {
+  ExecutorOperation,
+  ExecutorOperationContext,
+} from "#veryfront/agent/executor/channel.ts";
+import type { ExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import {
   type ExecutorDiscoverySource,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoverySourceSchema,
-} from "./executor-discovery-schema.ts";
-import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
-import { executorAgentFailureCode, executorAgentJson } from "./executor-agent-schema.ts";
-import { createExecutorAgentOperations } from "./executor-agent-bridge.ts";
-import { createHostedChatRuntimeDataStream } from "./chat-runtime-agent-adapter.ts";
+} from "#veryfront/agent/hosted/executor-discovery-schema.ts";
+import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
+import {
+  executorAgentFailureCode,
+  executorAgentJson,
+} from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { createExecutorAgentOperations } from "#veryfront/agent/hosted/executor-agent-bridge.ts";
+import { createHostedChatRuntimeDataStream } from "#veryfront/agent/hosted/chat-runtime-agent-adapter.ts";
 import {
   createPreparedHostedRuntimeAgent,
   incrementSteeringRevision,
   type PreparedHostedRuntimeAgentOptions,
-} from "./default-chat-runtime.ts";
+} from "#veryfront/agent/hosted/default-chat-runtime.ts";
 import {
   prepareFacadedHostedChatRuntimeToolAssembly,
   resolveOwnerScopedToolNames,
-} from "./chat-runtime-tool-assembly.ts";
+} from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 import type {
   HostedChatRuntimeCreationOptions,
   HostedChatRuntimeProjectSteering,
-} from "./chat-runtime-contract.ts";
-import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
-import { resolveRuntimeSkillSelectorForAgent } from "../runtime/skill-metadata.ts";
-import { runWithProjectAgentRuntime } from "../project/agent-runtime.ts";
+} from "#veryfront/agent/hosted/chat-runtime-contract.ts";
+import type { RuntimeAgentThinkingConfig } from "#veryfront/agent/runtime/agent-definition.ts";
+import { resolveRuntimeSkillSelectorForAgent } from "#veryfront/agent/runtime/skill-metadata.ts";
+import { runWithProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
 import {
   applyDefaultResearchArtifactPath,
   shouldRetryCreateResearchArtifactAsUpdate,
-} from "../artifacts/default-research-artifact-support.ts";
-import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+} from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
+import { buildInteractiveVeryfrontCloudRuntimeInstructions } from "#veryfront/agent/hosted/cloud-runtime-system-messages.ts";
 import {
   type ExecutorRuntimeGrantData,
   ExecutorRuntimePreparationError,
@@ -51,7 +60,7 @@ import {
   getExecutorRuntimeGrantDataSchema,
   getExecutorRuntimePrepareRequestSchema,
   parseRuntimePreparationData,
-} from "./executor-runtime-prepare-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 
 type CreationOptions = HostedChatRuntimeCreationOptions<
   RuntimeAgentMarkdownDefinition,
