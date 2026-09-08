@@ -2,26 +2,30 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
+const apply = Reflect.apply;
 
 /** Filter private arrays through own elements without consulting array species. */
 export function filterPrivateArray<T, S extends T>(
   values: readonly T[],
   predicate: (value: T, index: number, values: readonly T[]) => value is S,
+  thisArg?: unknown,
 ): S[];
 export function filterPrivateArray<T>(
   values: readonly T[],
   predicate: (value: T, index: number, values: readonly T[]) => unknown,
+  thisArg?: unknown,
 ): T[];
 export function filterPrivateArray<T>(
   values: readonly T[],
   predicate: (value: T, index: number, values: readonly T[]) => unknown,
+  thisArg?: unknown,
 ): T[] {
   const output: T[] = [];
   const length = values.length;
   for (let index = 0; index < length; index++) {
     if (!hasOwn(values, index)) continue;
     const value = values[index]!;
-    if (predicate(value, index, values)) pushPrivateArray(output, value);
+    if (apply(predicate, thisArg, [value, index, values])) pushPrivateArray(output, value);
   }
   return output;
 }

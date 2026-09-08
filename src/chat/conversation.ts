@@ -1,3 +1,4 @@
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
@@ -438,7 +439,7 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
     }
   }
 
-  return parts.filter((part) => getMessagePartSchema().safeParse(part).success);
+  return filterPrivateArray(parts, (part) => getMessagePartSchema().safeParse(part).success);
 }
 
 function isToolComplete(part: ToolUiPart): boolean {

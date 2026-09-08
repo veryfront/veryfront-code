@@ -1,3 +1,4 @@
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
@@ -1272,11 +1273,12 @@ function assertCheckpointMatchesProjection(
   targetProviderToolResults: readonly Record<string, unknown>[],
 ): void {
   const checkpointProjection = projectCheckpointVisibleParts(checkpoint);
-  const checkpointProviderToolResults = checkpointProjection.filter((part) =>
-    part.type === "tool-result"
+  const checkpointProviderToolResults = filterPrivateArray(
+    checkpointProjection,
+    (part) => part.type === "tool-result",
   );
   const checkpointVisibleProjection = normalizeTranscriptVisibleProjection(
-    checkpointProjection.filter((part) => part.type !== "tool-result"),
+    filterPrivateArray(checkpointProjection, (part) => part.type !== "tool-result"),
   );
   const normalizedTargetProjection = normalizeTranscriptVisibleProjection(targetProjection);
   if (
@@ -1436,7 +1438,7 @@ function assertCheckpointMatchesSplitAssistantTurns(
       createCheckpointForRawBlocks(checkpoint, rawSegment.flat()),
     );
     const rawSegmentAssistantProjection = normalizeTranscriptVisibleProjection(
-      rawSegmentProjection.filter((part) => part.type !== "tool-result"),
+      filterPrivateArray(rawSegmentProjection, (part) => part.type !== "tool-result"),
     );
     const assistantProjection = normalizeTranscriptVisibleProjection(
       assistantMatches[index]!.parts.flatMap((part) => {
@@ -1730,10 +1732,10 @@ export function applyProviderReplayCheckpointsToMessages(
   }
   assertAnthropicProviderToolResultsMatchTranscript(messages, checkpoints);
   for (const checkpoint of checkpoints) {
-    const matches = messages.filter((message) => message.id === checkpoint.messageId);
+    const matches = filterPrivateArray(messages, (message) => message.id === checkpoint.messageId);
     if (matches.length === 0) continue;
-    const assistantMatches = matches.filter((message) => message.role === "assistant");
-    const toolSiblings = matches.filter((message) => message.role === "tool");
+    const assistantMatches = filterPrivateArray(matches, (message) => message.role === "assistant");
+    const toolSiblings = filterPrivateArray(matches, (message) => message.role === "tool");
     const target = assistantMatches[0];
     if (!target) {
       const role = matches[0]?.role;

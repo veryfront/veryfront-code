@@ -1,3 +1,4 @@
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   copyProviderModelMessageSourceId,
   getProviderModelMessageSourceId,
@@ -91,8 +92,9 @@ function repairToolPairsWithOptions(
       continue;
     }
 
-    const unresolvedCalls = regularToolCalls.filter((toolCall) =>
-      !hasImmediateToolResult(nextMessage, toolCall.id)
+    const unresolvedCalls = filterPrivateArray(
+      regularToolCalls,
+      (toolCall) => !hasImmediateToolResult(nextMessage, toolCall.id),
     );
     if (unresolvedCalls.length === 0) {
       continue;
@@ -115,7 +117,7 @@ function repairToolPairsWithOptions(
         }
 
         let removedFromLater = false;
-        const keptLaterContent = laterMessage.content.filter((part) => {
+        const keptLaterContent = filterPrivateArray(laterMessage.content, (part) => {
           if (!isToolResultPart(part)) {
             return true;
           }

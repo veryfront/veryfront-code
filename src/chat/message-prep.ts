@@ -1,3 +1,4 @@
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   copyProviderModelMessageSourceId,
   getProviderModelMessageSourceId,
@@ -829,7 +830,7 @@ export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[
       return [message];
     }
 
-    const parts = message.parts.filter((part) => {
+    const parts = filterPrivateArray(message.parts, (part) => {
       if (
         isRecord(part) &&
         (replayMatches.supersededToolCallParts.has(part) ||
@@ -883,7 +884,7 @@ function stripSupersededToolErrorParts(messages: ChatUiMessage[]): ChatUiMessage
       return [message];
     }
 
-    const parts = message.parts.filter((part) => {
+    const parts = filterPrivateArray(message.parts, (part) => {
       if (!isToolErrorState(part)) {
         return true;
       }
@@ -989,7 +990,10 @@ function hasValidContent(message: ProviderModelMessage): boolean {
 
 function cleanContent<T>(content: T[], role: ProviderModelMessage["role"]): T[] {
   const hasSubstantiveContent = content.some((part) => isKeepableModelPart(part, role, false));
-  return content.filter((part) => isKeepableModelPart(part, role, hasSubstantiveContent));
+  return filterPrivateArray(
+    content,
+    (part) => isKeepableModelPart(part, role, hasSubstantiveContent),
+  );
 }
 
 /** Sanitize provider model messages. */
@@ -1038,8 +1042,9 @@ function filterValidMessages(
   messages: ProviderModelMessage[],
   options: ProviderMessageSanitizationOptions = {},
 ): ProviderModelMessage[] {
-  return messages.filter((message) =>
-    hasValidContent(message) || shouldPreserveEmptyAssistantMessage(message, options)
+  return filterPrivateArray(
+    messages,
+    (message) => hasValidContent(message) || shouldPreserveEmptyAssistantMessage(message, options),
   );
 }
 
@@ -1068,8 +1073,9 @@ export function prepareProviderModelMessagesFromUiMessages(
   messages: ChatUiMessage[],
   options: PrepareProviderModelMessagesFromUiMessagesOptions = {},
 ): ProviderModelMessage[] {
-  const validMessages = messages.filter((message) =>
-    message && typeof message === "object" && "role" in message
+  const validMessages = filterPrivateArray(
+    messages,
+    (message) => message && typeof message === "object" && "role" in message,
   );
   const normalizedMessages = normalizeMessageFilePartMediaTypes(validMessages);
   const strippedProviderOwnedToolMessages = stripProviderOwnedToolParts(
@@ -1231,7 +1237,7 @@ function compactHistoricalField(
 
   if (field.kind === "string-array") {
     if (!Array.isArray(fieldValue)) return null;
-    const strings = fieldValue.filter((item) => typeof item === "string");
+    const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
     return strings.length > 0 ? strings : null;
   }
 
@@ -1263,7 +1269,7 @@ function compactHistoricalField(
   }
 
   if (Array.isArray(fieldValue)) {
-    const strings = fieldValue.filter((item) => typeof item === "string");
+    const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
     return strings.length > 0 ? strings : null;
   }
 
@@ -1406,7 +1412,7 @@ export function maskOldToolOutputs(
       if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
         return msg;
       }
-      const filtered = msg.content.filter((part) => !isReasoningPart(part));
+      const filtered = filterPrivateArray(msg.content, (part) => !isReasoningPart(part));
       if (filtered.length !== msg.content.length) {
         return copyProviderModelMessageSourceId(msg, { ...msg, content: filtered });
       }
@@ -1747,7 +1753,7 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
   const deduped: ProviderModelMessage[] = [];
 
   const filterParts = <T>(parts: T[]): { filtered: T[]; changed: boolean } => {
-    const filtered = parts.filter((part) => {
+    const filtered = filterPrivateArray(parts, (part) => {
       if (isToolCallPart(part)) {
         if (seenToolCallIds.has(part.toolCallId)) {
           mutated = true;

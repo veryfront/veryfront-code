@@ -10,6 +10,39 @@ import {
 } from "./private-array.ts";
 
 describe("private array concatenation", () => {
+  it("filters own values while preserving callback context and element identity", () => {
+    const first = { value: 1 };
+    const second = { value: 2 };
+    const source = [first, second];
+    source.length = 3;
+    let observations = 0;
+    Object.setPrototypeOf(
+      source,
+      Object.create(Array.prototype, {
+        filter: {
+          get() {
+            observations++;
+            return Array.prototype.filter;
+          },
+        },
+        2: {
+          get() {
+            observations++;
+            return { value: 3 };
+          },
+        },
+      }),
+    );
+    const context = { minimum: 2 };
+    const result = filterPrivateArray(source, function (this: typeof context, value) {
+      assertStrictEquals(this, context);
+      return value.value >= this.minimum;
+    }, context);
+    assertEquals(result, [second]);
+    assertStrictEquals(result[0], second);
+    assertEquals(observations, 0);
+  });
+
   it("filters and flattens own entries while preserving identity and callback indexes", () => {
     const kept = { value: "kept" };
     const values = [kept, , { value: "removed" }];

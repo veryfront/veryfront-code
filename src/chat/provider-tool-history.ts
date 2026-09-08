@@ -1,3 +1,4 @@
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import { getStringField } from "./conversation.ts";
 import type { ChatUiMessage } from "./types.ts";
 
@@ -48,7 +49,7 @@ export function stripProviderOwnedToolParts(
     }
 
     let mutated = false;
-    const parts = message.parts.filter((part) => {
+    const parts = filterPrivateArray(message.parts, (part) => {
       const toolName = getMessagePartToolName(part);
       const toolCallId = getMessagePartToolCallId(part);
       const ownedByName = toolName ? providerOwnedNames.has(toolName) : false;
