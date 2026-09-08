@@ -11,6 +11,7 @@
  * @module ai/agent/runtime
  */
 
+import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import {
   enterSerializedTurn,
   withRuntimeTurnLineage,
@@ -2029,7 +2030,7 @@ export class AgentRuntime {
       throw error;
     }
     let isFinalized = false;
-    const finalization = Promise.withResolvers<void>();
+    const finalization = createPrivateDeferred<void>();
     return {
       messages: persisted.length > 0 ? persisted : committedInputMessages,
       addMessage: (message) => turnMemory.add(message),
@@ -2465,7 +2466,7 @@ export class AgentRuntime {
       // an unhandled rejection under Deno (#2334).
       let inFlight: Promise<AgentResponse> | undefined;
 
-      const completion = Promise.withResolvers<void>();
+      const completion = createPrivateDeferred<void>();
       this.#onStreamCompletion?.(completion.promise);
       const runtimeStream = new IntrinsicReadableStream<Uint8Array>({
         start: async (controller) => {

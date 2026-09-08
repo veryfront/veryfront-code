@@ -20,6 +20,8 @@ import {
   type ProviderReplayCheckpoint,
 } from "../runtime/provider-replay.ts";
 
+const arrayIsArray = Array.isArray;
+
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
   HostedChatRequest,
@@ -219,21 +221,27 @@ export function resolveHostedRuntimeAllowedTools(input: {
       : [...createPrivateSet(input.requestedTools)];
   }
 
-  const configuredToolNames = createPrivateSet([
-    ...(input.configuredTools ?? []),
-    ...(input.configuredDelegates ?? []).map((id) => `${AGENT_DELEGATE_TOOL_PREFIX}${id}`),
-  ]);
+  const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
+  const delegates = input.configuredDelegates ?? [];
+  for (let index = 0; index < delegates.length; index++) {
+    const id = delegates[index];
+    if (id !== undefined) configuredToolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  }
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
 
   const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
     input.configuredSkills === true ||
-    (Array.isArray(input.configuredSkills) && input.configuredSkills.length > 0);
-  return [...createPrivateSet(input.requestedTools)].filter((toolName) =>
-    configuredToolNames.has(toolName) ||
-    (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
-  );
+    (arrayIsArray(input.configuredSkills) && input.configuredSkills.length > 0);
+  const selectedToolNames = createPrivateSet<string>();
+  for (const toolName of createPrivateSet(input.requestedTools)) {
+    if (
+      configuredToolNames.has(toolName) ||
+      (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
+    ) selectedToolNames.add(toolName);
+  }
+  return [...selectedToolNames];
 }
 
 /** Resolve provider-native tool bindings without widening direct tool access. */
@@ -246,9 +254,11 @@ export function resolveHostedRuntimeAllowedProviderTools(input: {
     return [...configuredToolNames];
   }
 
-  return [...createPrivateSet(input.requestedTools)].filter((toolName) =>
-    configuredToolNames.has(toolName)
-  );
+  const selectedToolNames = createPrivateSet<string>();
+  for (const toolName of createPrivateSet(input.requestedTools)) {
+    if (configuredToolNames.has(toolName)) selectedToolNames.add(toolName);
+  }
+  return [...selectedToolNames];
 }
 
 /** Configuration used by resolve hosted runtime request. */

@@ -1,6 +1,7 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   chainPrivatePromise as chain,
+  createPrivateDeferred,
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -80,6 +81,10 @@ const hasOwn = Object.hasOwn;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
+const abortController = AbortController.prototype.abort;
+const abortSignalAny = AbortSignal.any;
+const AbortSignalConstructor = AbortSignal;
+const mathMin = Math.min;
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
   const filtered: T[] = [];
@@ -233,7 +238,7 @@ export function createExecutorRuntimePreparation(input: Options) {
   let startup: Promise<ReadableStream<Uint8Array>> | undefined;
   let producerCompletion: Promise<void> | undefined;
   let streamSignal = lifetime.signal;
-  const settled = Promise.withResolvers<void>();
+  const settled = createPrivateDeferred<void>();
   void chain(settled.promise, () => {}, () => {});
   const assertActive = () => {
     if (lifetime.signal.aborted || input.discovery.signal.aborted) {
@@ -269,7 +274,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       if (failed) refuse("EXECUTOR_RUNTIME_CLEANUP_FAILED");
     });
     void chain(closing, settled.resolve, settled.reject);
-    lifetime.abort();
+    apply(abortController, lifetime, []);
     input.discovery.signal.removeEventListener("abort", onDiscoveryAbort);
     return closing;
   }
@@ -491,7 +496,7 @@ export function createExecutorRuntimePreparation(input: Options) {
             : definition.system ?? definition.instructions),
         temperature: request.temperature ?? definition.temperature,
         thinking: request.thinking ?? definition.thinking,
-        maxSteps: Math.min(
+        maxSteps: mathMin(
           request.maxSteps ?? grant.maxSteps,
           definition.maxSteps ?? grant.maxSteps,
           grant.maxSteps,
@@ -692,7 +697,10 @@ export function createExecutorRuntimePreparation(input: Options) {
         context.signal.addEventListener("abort", cancel, { once: true });
         preparation = prepare(request, {
           ...context,
-          signal: AbortSignal.any([context.signal, lifetime.signal]),
+          signal: apply(abortSignalAny, AbortSignalConstructor, [[
+            context.signal,
+            lifetime.signal,
+          ]]),
         });
         if (context.signal.aborted) cancel();
         try {
@@ -721,7 +729,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       if (operation?.mode !== "stream") refuse("EXECUTOR_RUNTIME_NOT_PREPARED");
       yield* operation.handle(value, {
         ...context,
-        signal: AbortSignal.any([context.signal, lifetime.signal]),
+        signal: apply(abortSignalAny, AbortSignalConstructor, [[context.signal, lifetime.signal]]),
       });
     },
   });

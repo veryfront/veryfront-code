@@ -1,6 +1,9 @@
 import { isAbsolute, join, relative, sep } from "node:path";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
-import { chainPrivatePromise as chain } from "#veryfront/security/private-promise.ts";
+import {
+  chainPrivatePromise as chain,
+  createPrivateDeferred,
+} from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type {
   ProjectAgentRuntimeAgentSource,
@@ -26,6 +29,9 @@ import {
   getExecutorDiscoverySourceSchema,
   parseDiscoveryData,
 } from "./executor-discovery-schema.ts";
+
+const apply = Reflect.apply;
+const abortController = AbortController.prototype.abort;
 
 export interface ExecutorDiscoveryBackend {
   load(signal: AbortSignal): Promise<ProjectAgentRuntimeDiscovery>;
@@ -83,7 +89,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_INPUT");
   const projectDir = input.projectDir;
   const lifetime = new AbortController();
-  const settled = Promise.withResolvers<void>();
+  const settled = createPrivateDeferred<void>();
   void chain(settled.promise, () => {}, () => {});
   let tail: Promise<void> = Promise.resolve();
   let backend = input.backend;
@@ -121,7 +127,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     });
     void chain(closing, settled.resolve, settled.reject);
     input.signal.removeEventListener("abort", onAbort);
-    lifetime.abort();
+    apply(abortController, lifetime, []);
     return closing;
   }
   const onAbort = () => {
