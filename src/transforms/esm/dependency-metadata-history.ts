@@ -55,6 +55,61 @@ function own(value: object, name: string): unknown {
   return descriptor.value;
 }
 
+type MetadataEntry = { dependencies: Record<string, string>; expiresAt: number };
+
+function readHistoryEntry(value: unknown, now: number): MetadataEntry {
+  const entry = record(value);
+  const expiresAt = own(entry, "expiresAt");
+  if (
+    typeof expiresAt !== "number" || !isSafeInteger(expiresAt) || expiresAt <= 0 ||
+    expiresAt > now + DEPENDENCY_SNAPSHOT_RETENTION_MS
+  ) throw unavailable();
+  const raw = record(own(entry, "dependencies"));
+  const dependencies: Record<string, string> = createObject(null);
+  const names = objectKeys(raw);
+  let keyIndex = 0;
+  while (keyIndex < names.length) {
+    const name = names[keyIndex++]!;
+    const declaration = own(raw, name);
+    if (
+      name.length > DEPENDENCY_SNAPSHOT_MAX_BYTES || typeof declaration !== "string" ||
+      declaration.length > DEPENDENCY_SNAPSHOT_MAX_BYTES
+    ) throw unavailable();
+    dependencies[name] = declaration;
+  }
+  return { __proto__: null, dependencies, expiresAt } as MetadataEntry;
+}
+
+function readHistoryEntries(
+  value: unknown,
+  scope: MetadataHistoryScope,
+  now: number,
+): MetadataEntry[] {
+  const history = record(value);
+  if (
+    own(history, "version") !== 1 || own(history, "projectId") !== scope.projectId ||
+    own(history, "branch") !== scope.branch
+  ) throw unavailable();
+  const entries = own(history, "entries");
+  if (!isArray(entries) || isProxyWithoutHooks(entries) || entries.length > 16) throw unavailable();
+
+  const safeEntries: MetadataEntry[] = [];
+  setPrototypeOf(safeEntries, null);
+  for (let index = 0; index < entries.length; index++) {
+    safeEntries[index] = readHistoryEntry(own(entries, `${index}`), now);
+  }
+  const safe = {
+    __proto__: null,
+    version: 1,
+    projectId: scope.projectId,
+    branch: scope.branch,
+    entries: safeEntries,
+  };
+  if (utf8ByteLength(stringify(safe)) > DEPENDENCY_SNAPSHOT_MAX_BYTES) throw unavailable();
+
+  return safeEntries;
+}
+
 /**
  * API history contains prior raw metadata, not renderer configuration or a
  * grant to publish snapshots. Only an exact reconstruction for this source
@@ -67,53 +122,14 @@ export function selectHistoricalDependencySnapshot(
   configuredVersions: DependencyPinningSnapshot["configuredVersions"],
   now: number,
 ): HistoricalDependencySnapshot | undefined {
-  const history = record(value);
-  if (
-    own(history, "version") !== 1 || own(history, "projectId") !== scope.projectId ||
-    own(history, "branch") !== scope.branch
-  ) throw unavailable();
-  const entries = own(history, "entries");
-  if (!isArray(entries) || isProxyWithoutHooks(entries) || entries.length > 16) throw unavailable();
-
-  const safeEntries: Array<{ dependencies: Record<string, string>; expiresAt: number }> = [];
-  setPrototypeOf(safeEntries, null);
-  for (let index = 0; index < entries.length; index++) {
-    const entry = record(own(entries, `${index}`));
-    const expiresAt = own(entry, "expiresAt");
-    if (
-      typeof expiresAt !== "number" || !isSafeInteger(expiresAt) || expiresAt <= 0 ||
-      expiresAt > now + DEPENDENCY_SNAPSHOT_RETENTION_MS
-    ) throw unavailable();
-    const raw = record(own(entry, "dependencies"));
-    const dependencies: Record<string, string> = createObject(null);
-    const names = objectKeys(raw);
-    for (let keyIndex = 0; keyIndex < names.length; keyIndex++) {
-      const name = names[keyIndex]!;
-      const declaration = own(raw, name);
-      if (
-        name.length > DEPENDENCY_SNAPSHOT_MAX_BYTES || typeof declaration !== "string" ||
-        declaration.length > DEPENDENCY_SNAPSHOT_MAX_BYTES
-      ) throw unavailable();
-      dependencies[name] = declaration;
-    }
-    safeEntries[index] = { __proto__: null, dependencies, expiresAt } as {
-      dependencies: Record<string, string>;
-      expiresAt: number;
-    };
-  }
-  const safe = {
-    __proto__: null,
-    version: 1,
-    projectId: scope.projectId,
-    branch: scope.branch,
-    entries: safeEntries,
-  };
-  if (utf8ByteLength(stringify(safe)) > DEPENDENCY_SNAPSHOT_MAX_BYTES) throw unavailable();
+  const safeEntries = readHistoryEntries(value, scope, now);
 
   let selected: HistoricalDependencySnapshot | undefined;
   let selectedBytes: string | undefined;
-  for (let index = 0; index < safeEntries.length; index++) {
-    const entry = safeEntries[index]!;
+  // Index access avoids invoking a mutable Array iterator.
+  let index = 0;
+  while (index < safeEntries.length) {
+    const entry = safeEntries[index++]!;
     if (entry.expiresAt <= now) continue;
     const effective = applyConfiguredDependencyOverrides(entry.dependencies, configuredVersions);
     const key = `on:${hashDependencyPins(effective, configuredVersions)}`;

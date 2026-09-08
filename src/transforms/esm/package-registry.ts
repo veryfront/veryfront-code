@@ -254,21 +254,29 @@ export function createDependencyPinningSource(
       }
       : {}),
   };
-  if (adapterFs) {
-    const reader = snapshotGetOwnPropertyDescriptor(adapterFs, "readDependencyMetadataHistory");
-    if (reader && (!snapshotHasOwn(reader, "value") || reader.value !== undefined)) {
-      if (!snapshotHasOwn(reader, "value") || typeof reader.value !== "function") {
-        throw new TypeError("Dependency metadata history must be a data-property method");
-      }
-      const method = reader.value;
-      snapshotApply(snapshotWeakSet, sourceMetadataHistoryReaders, [
-        source,
-        () => snapshotApply(method, adapterFs, []) as Promise<unknown>,
-      ]);
-    }
-  }
+  if (adapterFs) captureSourceMetadataHistoryReader(source, adapterFs);
   if (snapshotStore) snapshotApply(snapshotWeakSet, sourceSnapshotStores, [source, snapshotStore]);
   return snapshotFreeze(source);
+}
+
+function captureSourceMetadataHistoryReader(
+  source: DependencyPinningSource,
+  adapterFs: FileSystemAdapter,
+): void {
+  const reader = snapshotGetOwnPropertyDescriptor(adapterFs, "readDependencyMetadataHistory");
+  if (!reader) return;
+  if (
+    !snapshotHasOwn(reader, "value") ||
+    (reader.value !== undefined && typeof reader.value !== "function")
+  ) {
+    throw new TypeError("Dependency metadata history must be a data-property method");
+  }
+  if (reader.value === undefined) return;
+  const method = reader.value;
+  snapshotApply(snapshotWeakSet, sourceMetadataHistoryReaders, [
+    source,
+    () => snapshotApply(method, adapterFs, []) as Promise<unknown>,
+  ]);
 }
 
 let localSnapshotRegistry = new DependencySnapshotRegistry();
