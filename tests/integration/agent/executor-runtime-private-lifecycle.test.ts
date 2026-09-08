@@ -256,7 +256,7 @@ describe("executor runtime private lifecycle", () => {
       AbortController.prototype.abort = () => {};
       const closing = owner.close();
       await {
-        then(resolve: () => void) {
+        then(resolve: () => void) { // NOSONAR S7739: intentional PromiseLike scheduling fixture.
           setTimeout(resolve, 0);
         },
       };

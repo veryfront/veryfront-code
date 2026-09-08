@@ -17,7 +17,7 @@ describe("private promise lifecycle intrinsics", () => {
     let consumer: Promise<void> | undefined;
     // An own thenable supplies a test turn without relying on the replaced methods.
     const turn = {
-      then(resolve: () => void) {
+      then(resolve: () => void) { // NOSONAR S7739: intentional PromiseLike scheduling fixture.
         setTimeout(resolve, 0);
       },
     };
