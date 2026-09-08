@@ -32,7 +32,22 @@
  * Privileged state must stay unobservable from project code: every intrinsic
  * this module needs at operation time is captured here, before project code
  * runs, so replaced globals never receive the backend, the adapter, or stored
- * bytes.
+ * bytes. Two residual properties are accepted deliberately:
+ *
+ * - Promise resolution assimilates its value, so an installed
+ *   `Object.prototype.then` getter can observe any object the cache layer
+ *   resolves — backends included, here and in every existing
+ *   `Promise<CacheBackend>` across `cache/backends`. Captured intrinsics
+ *   cannot close that channel; per the adapter architecture doc, the opaque
+ *   handle is not a security sandbox, and a provider holding privileged
+ *   credentials requires an execution boundary outside project code.
+ * - Two same-value publishers that both observe an absent record can commit
+ *   in either order on the non-revisioned path, so stored retention can end
+ *   at the earlier of the two acknowledged deadlines. The shortfall is
+ *   bounded by the publishers' skew (they race the same fresh key), and the
+ *   registry renews half a retention period before expiry, so it never
+ *   outlives the next renewal. Backends exposing the revision capability
+ *   commit atomically and do not carry this property.
  */
 import {
   createDependencySnapshotStoreHandle,
