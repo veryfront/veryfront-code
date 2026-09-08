@@ -1,4 +1,7 @@
-import type { HostedChatRuntimeStreamInput } from "../hosted/chat-runtime-contract.ts";
+import type {
+  HostedChatRuntimeFinishPart,
+  HostedChatRuntimeStreamInput,
+} from "../hosted/chat-runtime-contract.ts";
 import {
   ExecutorAgentError,
   getExecutorAgentFailureCodeSchema,
@@ -234,6 +237,19 @@ function managedRunKey<TAuthorization>(ingress: BrokerRuntimeAgentIngress<TAutho
   return `${ownerKey}:${ingress.executor.run.project.projectId}:${ingress.executor.run.runId}`;
 }
 
+function buildManagedBrokerMessageMetadata(
+  runtime: ManagedExecutorRuntime,
+  part: HostedChatRuntimeFinishPart,
+) {
+  return buildChatStreamChunkMessageMetadata({
+    agentId: runtime.definition.id,
+    agentName: runtime.definition.name,
+    agentAvatarUrl: runtime.definition.avatarUrl,
+    modelId: runtime.modelId,
+    part: { type: part.type, totalUsage: part.totalUsage },
+  });
+}
+
 async function createSseResponse(input: {
   runtime: ManagedExecutorRuntime;
   messages: HostedChatRuntimeStreamInput["messages"];
@@ -248,7 +264,9 @@ async function createSseResponse(input: {
     messages: input.messages,
     abortSignal: input.requestSignal,
   });
-  const source = result.toUIMessageStream();
+  const source = result.toUIMessageStream({
+    messageMetadata: ({ part }) => buildManagedBrokerMessageMetadata(input.runtime, part),
+  });
   const completion = Promise.withResolvers<void>();
   let natural = false;
   let cleanup: Promise<void> | undefined;
@@ -339,13 +357,7 @@ async function runDetached(
         for await (
           const chunk of result.toUIMessageStream({
             messageMetadata({ part }) {
-              const metadata = buildChatStreamChunkMessageMetadata({
-                agentId: runtime.definition.id,
-                agentName: runtime.definition.name,
-                agentAvatarUrl: runtime.definition.avatarUrl,
-                modelId: runtime.modelId,
-                part: { type: part.type, totalUsage: part.totalUsage },
-              });
+              const metadata = buildManagedBrokerMessageMetadata(runtime, part);
               terminalMetadata = {
                 modelId: metadata.modelId,
                 ...(metadata.usage ? { usage: metadata.usage } : {}),

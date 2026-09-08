@@ -5,7 +5,10 @@ export {
   type ManagedExecutorRuntime,
   type ManagedExecutorStartInput,
 } from "../hosted/managed-executor-broker.ts";
-export { createManagedBrokerPersistence } from "../hosted/managed-broker-persistence.ts";
+export {
+  createManagedBrokerPersistence,
+  type ManagedBrokerOutput,
+} from "../hosted/managed-broker-persistence.ts";
 export { createHostedExecutorAllocatorClient } from "../hosted/executor-allocator-client.ts";
 export {
   connectExecutorTransport,
@@ -13,7 +16,6 @@ export {
 } from "../hosted/executor-node-transport.ts";
 export {
   createManagedBrokerHandler,
-  type ManagedBrokerOutput,
   type ManagedExecutorStarter,
 } from "./managed-broker-handler.ts";
 export {

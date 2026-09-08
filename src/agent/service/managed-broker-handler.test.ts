@@ -9,6 +9,7 @@ import type {
 import { createManagedBrokerHandler } from "./managed-broker-handler.ts";
 import { ExecutorAgentError } from "../hosted/executor-agent-schema.ts";
 import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
+import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts";
 
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
@@ -114,6 +115,7 @@ function runtimeFixture(
                     usageCaptureStatus: "complete" as const,
                   },
                 };
+                yield { type: "text-delta", id: "assistant-message", delta: "done" } as const;
                 yield {
                   type: "finish",
                   finishReason: "stop",
@@ -403,6 +405,30 @@ describe("managed broker handler", () => {
     await f.managed.close();
     assertEquals(f.fixture.closeReasons, ["completed"]);
     assertEquals(f.managed.active, 0);
+  });
+
+  it("preserves finish usage metadata in the SSE RunFinished event", async () => {
+    const f = await handler("sse", { finishWithUsage: true });
+    const response = await f.managed.handle(f.first.request);
+    f.fixture.release();
+    const parsed = await parseAgUiSseResponse(response);
+    await f.managed.close();
+    const finished = parsed.events.find((event) => event.type === agUiSseEventTypes.runFinished);
+    const metadata = finished?.metadata as Record<string, unknown> | undefined;
+
+    assertEquals({
+      inputTokens: metadata?.inputTokens,
+      outputTokens: metadata?.outputTokens,
+      totalTokens: metadata?.totalTokens,
+      usageCaptureStatus: metadata?.usageCaptureStatus,
+      finishReason: metadata?.finishReason,
+    }, {
+      inputTokens: 12,
+      outputTokens: 7,
+      totalTokens: 19,
+      usageCaptureStatus: "complete",
+      finishReason: "stop",
+    });
   });
 
   it("releases failed setup reservations and maps the error without diagnostics", async () => {
