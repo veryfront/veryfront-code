@@ -30,6 +30,7 @@ import {
   resolveHostedRuntimeAllowedProviderTools,
   resolveHostedRuntimeAllowedTools,
 } from "#veryfront/agent/hosted/runtime-request-config.ts";
+import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
 import {
   executorAgentFailureCode,
   executorAgentJson,
@@ -333,7 +334,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         configuredSkills: definition.skills,
         requestedTools: undefined,
       });
-      const allowedToolNames = intersectNames(
+      let allowedToolNames = intersectNames(
         normalizeToolNames(grant.allowedToolNames),
         Array.isArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
         request.allowedToolNames === undefined
@@ -381,6 +382,25 @@ export function createExecutorRuntimePreparation(input: Options) {
         agentId: definition.id,
         selector: definition.skills === false ? [] : definition.skills,
       });
+      if (sourceToolNames !== undefined) {
+        const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
+          allowedToolNames: normalizeToolNames(sourceToolNames),
+          localToolNames: normalizeToolNames(grant.allowedToolNames).filter((name) =>
+            Object.hasOwn(localTools, name)
+          ),
+          availableSkillIds: skills.allowedSkillIds,
+          configDerivedSelector: request.allowedToolNames === undefined &&
+            !(definition.tools === true && Boolean(definition.deniedTools?.length)),
+        });
+        allowedToolNames = intersectNames(
+          normalizeToolNames(grant.allowedToolNames),
+          effectiveSourceTools === null ? undefined : [...effectiveSourceTools],
+          request.allowedToolNames === undefined
+            ? undefined
+            : normalizeToolNames(request.allowedToolNames),
+          deniedToolNames,
+        );
+      }
       const taskContext = {
         ...execution,
         steeringRevision: 0,

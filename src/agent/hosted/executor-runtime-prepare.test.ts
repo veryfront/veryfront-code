@@ -592,6 +592,120 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  for (
+    const selection of [
+      {
+        name: "omitted tools",
+        tools: "",
+        expected: ["invoke_agent", "load_skill"],
+      },
+      {
+        name: "configured tools",
+        tools: "tools: [read_file]",
+        expected: ["invoke_agent", "load_skill", "read_file"],
+      },
+      { name: "empty caller selector", tools: "", requested: [], expected: [] },
+      {
+        name: "caller narrows configured tools",
+        tools: "tools: [read_file]",
+        requested: ["read_file"],
+        expected: ["read_file"],
+      },
+      { name: "missing grants", tools: "", granted: [], expected: [] },
+      {
+        name: "denied infrastructure",
+        tools: "denied-tools: [load_skill, load_skill_reference, invoke_agent]",
+        expected: [],
+      },
+      {
+        name: "unrestricted denial",
+        tools: "tools: true\ndenied-tools: [read_file]",
+        expected: [],
+      },
+      { name: "no matching skills", tools: "", skills: [], expected: [] },
+    ]
+  ) {
+    it(`retains granted skill infrastructure for Markdown agents: ${selection.name}`, async () => {
+      const state = runtime();
+      state.agents.set(
+        "coder",
+        createRuntimeAgentFromMarkdownDefinition(parseRuntimeAgentMarkdownDefinition({
+          id: "coder",
+          content: `---\nskills: true\n${selection.tools}\n---\nSynthetic instructions.`,
+        })),
+      );
+      const names = [
+        "load_skill",
+        "load_skill_reference",
+        "invoke_agent",
+        "execute_skill_script",
+        "read_file",
+      ];
+      let visible: string[] = [];
+      const executions: string[] = [];
+      let calls = 0;
+      const f = fixture({
+        load: () => Promise.resolve(state),
+        grant: {
+          ...grant,
+          allowedToolNames: selection.granted ?? names,
+          hostToolFacadeIds: ["skills"],
+        },
+        facades: {
+          hostTools: new Map([[
+            "skills",
+            Object.fromEntries(names.map((name) => [name, {
+              ...syntheticHostTool(),
+              execute: () => {
+                executions.push(name);
+                return { ok: true };
+              },
+            }])),
+          ]]),
+          projectSteering: {
+            prepare: ({ definition }) =>
+              Promise.resolve({
+                agent: definition,
+                initialSkills: selection.skills ??
+                  [{
+                    id: "example",
+                    name: "Example",
+                    description: "Synthetic",
+                    instructions: "Synthetic instructions",
+                    allowedTools: [],
+                  }],
+              }),
+            refresh: () => "Synthetic instructions",
+          },
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream(options) {
+              visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+              return finishStream(
+                calls++ === 0 && visible.includes("invoke_agent") ? "invoke_agent" : undefined,
+              );
+            },
+          }),
+        },
+      });
+      try {
+        await Array.fromAsync(
+          await preparedStream(f, {
+            agentId: "coder",
+            ...(selection.requested === undefined ? {} : { allowedToolNames: selection.requested }),
+          }),
+        );
+        assertEquals([...visible].sort(), [...selection.expected].sort());
+        assertEquals(
+          executions,
+          selection.expected.some((name) => name === "invoke_agent") ? ["invoke_agent"] : [],
+        );
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   for (const cancellation of ["operation", "owner"] as const) {
     it(`cancels steering refresh on ${cancellation} abort and joins it before cleanup`, async () => {
       const entered = Promise.withResolvers<void>();
