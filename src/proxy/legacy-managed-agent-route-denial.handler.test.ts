@@ -91,17 +91,24 @@ describe("proxy legacy managed agent route denial", () => {
         throw new Error("reserved route reached metadata lookup");
       },
     });
-    const request = new Request(
-      "https://project.preview.veryfront.com//api//control-plane/application-route/",
-      { method: "POST", body: "synthetic-body-marker" },
-    );
-
     try {
-      const context = await handler.processRequest(request);
-      assertEquals(context.error?.status, 404);
-      assertEquals(context.error?.message, "Not found");
+      for (
+        const path of [
+          "//api//control-plane/application-route/",
+          "/api/control-plane/runs/run_1/stream/",
+          "/channels/invoke/",
+        ]
+      ) {
+        const request = new Request(`https://project.preview.veryfront.com${path}`, {
+          method: "POST",
+          body: "synthetic-body-marker",
+        });
+        const context = await handler.processRequest(request);
+        assertEquals(context.error?.status, 404, path);
+        assertEquals(context.error?.message, "Not found", path);
+        assertEquals(request.bodyUsed, false, path);
+      }
       assertEquals(metadataRequests, 0);
-      assertEquals(request.bodyUsed, false);
     } finally {
       await handler.close();
     }

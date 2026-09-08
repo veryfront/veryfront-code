@@ -802,7 +802,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     const internalRouteKind = classifyInternalControlPlaneRequest(req.method, routePolicyPathname);
-    if (internalRouteKind === "reserved") {
+    if (
+      internalRouteKind === "reserved" ||
+      (internalRouteKind !== "public" && routePolicyPathname !== url.pathname)
+    ) {
       return createProxyErrorContext(base, { status: 404, message: "Not found" });
     }
 
