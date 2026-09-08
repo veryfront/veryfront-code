@@ -33,6 +33,11 @@ describe("legacy managed agent route denial", () => {
       ["POST", "///api/runs"],
       ["POST", "//api/runs/run_1/resume"],
       ["DELETE", "//api/control-plane/runs/run_1"],
+      ["POST", "/api/ag-ui/"],
+      ["POST", "/api//ag-ui"],
+      ["POST", "/api///runs/"],
+      ["POST", "/api/runs//run_1//resume/"],
+      ["DELETE", "/api//control-plane/runs/run_1/"],
     ] as const;
 
     for (const [method, pathname] of managedRoutes) {
@@ -47,6 +52,7 @@ describe("legacy managed agent route denial", () => {
       ["DELETE", "/api/runs/run_1/extra"],
       ["POST", "/api/control-plane/application-route"],
       ["GET", "/api/control-plane/runs/run_1/stream"],
+      ["POST", "/api/ag-ui/extra"],
     ] as const;
 
     for (const [method, pathname] of applicationRoutes) {

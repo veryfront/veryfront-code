@@ -32,6 +32,10 @@ describe("proxy legacy managed agent route denial", () => {
       ["DELETE", "/api/control-plane/runs/run_1"],
       ["POST", "//api/ag-ui"],
       ["POST", "///api/runs"],
+      ["POST", "/api/ag-ui/"],
+      ["POST", "/api//ag-ui"],
+      ["POST", "/api/runs//run_1//resume/"],
+      ["DELETE", "/api//control-plane/runs/run_1/"],
     ] as const;
     const hosts = [
       "project.preview.veryfront.com",
@@ -73,6 +77,31 @@ describe("proxy legacy managed agent route denial", () => {
         new Request("http://localhost/api/runs", { method: "POST" }),
       );
       assertEquals(context.error, undefined);
+    } finally {
+      await handler.close();
+    }
+  });
+
+  it("keeps renderer-equivalent internal namespace aliases reserved", async () => {
+    let metadataRequests = 0;
+    const handler = createProxyHandler({
+      config: BASE_CONFIG,
+      metadataFetch: () => {
+        metadataRequests++;
+        throw new Error("reserved route reached metadata lookup");
+      },
+    });
+    const request = new Request(
+      "https://project.preview.veryfront.com//api//control-plane/application-route/",
+      { method: "POST", body: "synthetic-body-marker" },
+    );
+
+    try {
+      const context = await handler.processRequest(request);
+      assertEquals(context.error?.status, 404);
+      assertEquals(context.error?.message, "Not found");
+      assertEquals(metadataRequests, 0);
+      assertEquals(request.bodyUsed, false);
     } finally {
       await handler.close();
     }

@@ -1,4 +1,5 @@
 import { isControlPlaneSurfaceRoute } from "#veryfront/channels/control-plane.ts";
+import { normalizeProxyOriginFormPath } from "./request-path.ts";
 
 export const LEGACY_MANAGED_AGENT_ROUTE_DENY_ENV =
   "VERYFRONT_PROXY_DENY_LEGACY_MANAGED_AGENT_ROUTES";
@@ -24,11 +25,22 @@ export function parseLegacyManagedAgentRouteDeny(raw: string | undefined): boole
 /** True only for legacy managed agent routes currently served by project runtimes. */
 export function isLegacyManagedAgentRoute(method: string, pathname: string): boolean {
   const normalizedMethod = method.toUpperCase();
-  const normalizedPathname = pathname.replace(/^\/\/+/, "/");
+  const normalizedPathname = normalizeProxyRoutePolicyPathname(pathname);
   if (isControlPlaneSurfaceRoute(normalizedMethod, normalizedPathname)) return true;
   if (normalizedMethod === "POST") {
     return normalizedPathname === "/api/ag-ui" || normalizedPathname === "/api/runs" ||
       DURABLE_RUN_RESUME_PATH.test(normalizedPathname);
   }
   return normalizedMethod === "DELETE" && DURABLE_RUN_PATH.test(normalizedPathname);
+}
+
+/** Match the path identity used by renderer app-route discovery. */
+export function normalizeProxyRoutePolicyPathname(pathname: string): string {
+  const originFormPathname = normalizeProxyOriginFormPath(pathname);
+  const segments = originFormPathname.split("/");
+  let normalizedPathname = "";
+  for (const segment of segments) {
+    if (segment.length > 0) normalizedPathname += `/${segment}`;
+  }
+  return normalizedPathname || "/";
 }

@@ -42,7 +42,10 @@ import {
 import { resolveProxyRequestAuthority, resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import { withProxyStreamingBodyDuplex } from "./request-init.ts";
-import { isLegacyManagedAgentRoute } from "./legacy-managed-agent-route-denial.ts";
+import {
+  isLegacyManagedAgentRoute,
+  normalizeProxyRoutePolicyPathname,
+} from "./legacy-managed-agent-route-denial.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -790,12 +793,15 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const base = { scope, host, requestAuthority, parsedDomain };
+    const routePolicyPathname = normalizeProxyRoutePolicyPathname(url.pathname);
 
-    if (denyLegacyManagedAgentRoutes && isLegacyManagedAgentRoute(req.method, url.pathname)) {
+    if (
+      denyLegacyManagedAgentRoutes && isLegacyManagedAgentRoute(req.method, routePolicyPathname)
+    ) {
       return createProxyErrorContext(base, { status: 404, message: "Not found" });
     }
 
-    const internalRouteKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
+    const internalRouteKind = classifyInternalControlPlaneRequest(req.method, routePolicyPathname);
     if (internalRouteKind === "reserved") {
       return createProxyErrorContext(base, { status: 404, message: "Not found" });
     }
