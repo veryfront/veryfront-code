@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
+import {
+  HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { setEnv } from "#veryfront/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
@@ -67,6 +72,84 @@ async function drain(stream: ReadableStream<unknown>) {
 }
 
 describe("hosted ordinary application model resolver", () => {
+  it("rejects untrusted HTTP gateways before creating application model authority", async () => {
+    await withEnv({
+      [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "",
+      [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "",
+    }, () => {
+      for (
+        const apiBaseUrl of [
+          "http://gateway.example.test",
+          "http://gateway.internal.example:4000",
+          "http://localhost.example.test:4000",
+          "http://0.0.0.0:4000",
+        ]
+      ) {
+        assertThrows(
+          () => createHostedApplicationModelResolver({ ...resolverOptions(), apiBaseUrl }),
+          TypeError,
+          "HTTPS",
+        );
+      }
+      return Promise.resolve();
+    });
+  });
+
+  it("preserves HTTPS and exact loopback gateways for application models", async () => {
+    await withEnv({
+      [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "",
+      [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "",
+    }, () => {
+      for (
+        const apiBaseUrl of [
+          "https://gateway.example.test/api",
+          "http://localhost:4000/api",
+          "http://127.0.0.1:4000/api",
+          "http://[::1]:4000/api",
+        ]
+      ) {
+        const resolver = createHostedApplicationModelResolver({ ...resolverOptions(), apiBaseUrl });
+        try {
+          assert(resolver(modelId));
+        } finally {
+          revokeModelRuntimeResolver(resolver);
+        }
+      }
+      return Promise.resolve();
+    });
+  });
+
+  it("requires exact host approval for an internal HTTP gateway origin", async () => {
+    await withEnv({
+      [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "http://gateway.internal.example:4000",
+      [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "",
+    }, () => {
+      const resolver = createHostedApplicationModelResolver({
+        ...resolverOptions(),
+        apiBaseUrl: "http://gateway.internal.example:4000/api",
+      });
+      try {
+        assert(resolver(modelId));
+      } finally {
+        revokeModelRuntimeResolver(resolver);
+      }
+      for (
+        const apiBaseUrl of [
+          "http://gateway.internal.example:4001/api",
+          "http://other.internal.example:4000/api",
+          "http://gateway.example.test/api",
+        ]
+      ) {
+        assertThrows(
+          () => createHostedApplicationModelResolver({ ...resolverOptions(), apiBaseUrl }),
+          TypeError,
+          "HTTPS",
+        );
+      }
+      return Promise.resolve();
+    });
+  });
+
   it("uses explicit application auth and clears ambient request, host, project, and billing context", async () => {
     setEnv("VERYFRONT_API_TOKEN", "synthetic-host-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "synthetic-host-project");

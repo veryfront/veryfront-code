@@ -266,8 +266,14 @@ function createAgUiSetupErrorResponse(input: {
     runId: input.runId,
   });
 
-  const statusCode = status ||
-    (code === "OVERLOADED_ERROR" ? 503 : code === "CONTEXT_LENGTH_EXCEEDED" ? 413 : 500);
+  const statusCode = status !== undefined && Number.isInteger(status) && status >= 400 &&
+      status <= 599
+    ? status
+    : code === "OVERLOADED_ERROR"
+    ? 503
+    : code === "CONTEXT_LENGTH_EXCEEDED"
+    ? 413
+    : 500;
   return createAgUiSseErrorResponse(createAgUiRunErrorEvent(message, code), statusCode);
 }
 

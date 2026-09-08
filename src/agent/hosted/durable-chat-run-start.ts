@@ -1,6 +1,9 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
-import { INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
+import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
+import { ERROR_REGISTRY, INPUT_VALIDATION_FAILED, INVALID_ARGUMENT } from "#veryfront/errors";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
+import { EXECUTOR_AGENT_FAILURE_CODES } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import {
   compactHistoricalUiMessageToolInputs,
   type HistoricalToolInputCompactionDiagnostic,
@@ -105,11 +108,16 @@ export function classifyHostedChatSetupError(
 ): { code: string; status?: number; message: string } {
   const snapshot = snapshotVeryfrontError(error);
   if (snapshot) {
+    const code = Object.hasOwn(ERROR_REGISTRY, snapshot.slug)
+      ? snapshot.slug.toUpperCase().replaceAll("-", "_")
+      : [...CURATED_PROVIDER_FAILURE_CODES, ...EXECUTOR_AGENT_FAILURE_CODES].find((value) =>
+        value.toLowerCase().replaceAll("_", "-") === snapshot.slug
+      ) ?? "EXTERNAL_SERVICE_ERROR";
     return {
-      code: snapshot.slug.toUpperCase().replaceAll("-", "_"),
+      code,
       status: snapshot.status,
-      // The registry title is stable; request/provider details stay out of SSE.
-      message: snapshot.title,
+      // Error titles can be customized after registration.
+      message: sanitizeBoundedDiagnosticText(snapshot.title),
     };
   }
 

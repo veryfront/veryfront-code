@@ -17,7 +17,10 @@ export class StreamHandler {
     searchParams: URLSearchParams,
     request?: Request,
   ): Promise<Response> {
-    const finalPayload = await this.getFinalPayload(pathname, searchParams, request);
+    const pageParam = searchParams.get("page") ?? pathname ?? "/";
+    const response = await this.renderHandler.handle(pageParam, searchParams, request);
+    if (response.status === 409 || response.status === 503) return response;
+    const finalPayload = await this.getFinalPayload(response);
     const stream = this.createStream(finalPayload.html, searchParams);
 
     return new Response(stream, {
@@ -35,13 +38,8 @@ export class StreamHandler {
   }
 
   private async getFinalPayload(
-    pathname: string,
-    searchParams: URLSearchParams,
-    request?: Request,
+    response: Response,
   ): Promise<Pick<RSCPayload, "html" | "dependencyPinningCacheKey">> {
-    const pageParam = searchParams.get("page") ?? pathname ?? "/";
-    const response = await this.renderHandler.handle(pageParam, searchParams, request);
-
     if (!response.ok) return { html: FALLBACK_HTML };
 
     try {

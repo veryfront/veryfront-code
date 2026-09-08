@@ -9,7 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { printServeReady, serveCommand, serveReadyUrl } from "./command.ts";
+import { printServeReady, runProductionServer, serveCommand, serveReadyUrl } from "./command.ts";
 import type { ServeOptions } from "./command.ts";
 
 function captureStdout(run: () => void): string {
@@ -61,6 +61,57 @@ describe("commands/serve/command", () => {
     it("accepts a single ServeOptions parameter", () => {
       assertEquals(serveCommand.length, 1);
     });
+  });
+
+  it("routes an early memory recycle request through the CLI process owner exactly once", async () => {
+    const events: string[] = [];
+    let signalHandler: ((signal: "SIGINT" | "SIGTERM") => void | Promise<void>) | undefined;
+
+    await runProductionServer(
+      {
+        mode: "production",
+        port: 0,
+        bindAddress: "127.0.0.1",
+        splitMode: false,
+        useBinary: false,
+        binaryPath: "./bin/veryfront",
+        debug: false,
+      },
+      {
+        ensureBundlerContracts: () => Promise.resolve(),
+        initializeErrorReporting: () => Promise.resolve(),
+        initializeRuntime: () => Promise.resolve(),
+        startServer: async (options) => {
+          events.push("start");
+          await options.onMemoryRecycle?.({
+            rssMB: 101,
+            rssThresholdMB: 100,
+            consecutiveSamples: 2,
+          });
+          return { ready: Promise.resolve(), stop: () => Promise.resolve() };
+        },
+        gracefullyShutdown: (options) => {
+          events.push(`shutdown:${options.signal}`);
+          return Promise.resolve(true);
+        },
+        registerTerminationSignals: (handler) => {
+          signalHandler = handler;
+        },
+        exit: (code) => {
+          events.push(`exit:${code}`);
+        },
+        reporter: {
+          captureApplicationError: () => undefined,
+          flushApplicationErrors: () => {
+            events.push("flush");
+            return Promise.resolve(true);
+          },
+        },
+      },
+    );
+
+    await signalHandler?.("SIGTERM");
+    assertEquals(events, ["start", "shutdown:memory-pressure", "flush", "exit:0"]);
   });
 
   describe("ServeOptions interface", () => {

@@ -19,7 +19,10 @@ import type {
   DependencyPinningSource,
   DependencyPinningSourceInput,
 } from "#veryfront/transforms/esm/package-registry.ts";
-import { resolveRequestedDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  resolveRequestedDependencyPinningSnapshot,
+  withDependencyPinningSourceFileSystem,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { assertNoConfiguredCommonJsBrowserImports } from "#veryfront/transforms/import-rewriter/commonjs-policy.ts";
 import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
@@ -214,6 +217,7 @@ interface AdmittedText {
 }
 
 const apply = Reflect.apply;
+const freeze = Object.freeze;
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const decodeUtf8 = TextDecoder.prototype.decode;
 
@@ -476,22 +480,16 @@ function createTrackedDependencyPinningSource(
   projectDir: string,
   tracked: TrackingAdapterResult,
 ): DependencyPinningSource {
-  const objectSource = typeof source === "object" && source !== null ? source : undefined;
-  const sourceProjectDir = objectSource
-    ? objectSource.projectDir
-    : typeof source === "string"
-    ? source
-    : projectDir;
   const assertMetadataPath = (path: string): void => {
     if (!isWithinDirectory(projectDir, path)) {
       throw new TypeError("Browser module metadata path is not trusted");
     }
   };
 
-  return Object.freeze({
-    ...(objectSource ?? {}),
-    projectDir: sourceProjectDir,
-    fs: Object.freeze({
+  return withDependencyPinningSourceFileSystem(
+    source,
+    projectDir,
+    freeze({
       stat: (path: string) => {
         assertMetadataPath(path);
         return tracked.adapter.fs.stat(path);
@@ -501,7 +499,7 @@ function createTrackedDependencyPinningSource(
         return tracked.readMetadataSource(path);
       },
     }),
-  });
+  );
 }
 
 async function buildTrackedImportMapJson(

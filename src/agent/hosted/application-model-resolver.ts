@@ -6,6 +6,7 @@ import {
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createVeryfrontCloudModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import {
   type AgentModelRuntimeResolver,
   registerModelRuntimeResolverRevoker,
@@ -32,6 +33,13 @@ function gatewayBaseUrl(value: string): string {
     url.hash
   ) {
     throw new TypeError("Hosted application inference requires a valid gateway URL");
+  }
+  try {
+    requireSecureInferenceApiBaseUrl(value);
+  } catch {
+    throw new TypeError(
+      "Hosted application inference requires HTTPS, a loopback, or a host-allowed internal gateway URL",
+    );
   }
   return value;
 }

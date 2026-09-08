@@ -30,6 +30,12 @@ export type {
   WebSocketUpgradeResponse,
 } from "./base.ts";
 export { createWebSocketUpgradeResponse, isWebSocketUpgradeResponse } from "./base.ts";
+export type {
+  DependencySnapshotRecord,
+  DependencySnapshotStore,
+  DependencySnapshotStoreHandle,
+} from "./dependency-snapshot-store.ts";
+export { createDependencySnapshotStoreHandle } from "./dependency-snapshot-store.ts";
 export {
   FileSnapshotChangedError,
   FileSnapshotPathError,
