@@ -17,6 +17,7 @@ function scriptedChannel(
   const channel: ExecutorChannel = {
     ready: Promise.resolve(),
     closed: Promise.withResolvers<Error>().promise,
+    settled: Promise.withResolvers<void>().promise,
     signal: controller.signal,
     close() {
       controller.abort();
