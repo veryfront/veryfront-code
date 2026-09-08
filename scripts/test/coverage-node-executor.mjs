@@ -9,10 +9,12 @@ import { buildRuntimeTestProcessEnv } from "./runtime-env.mjs";
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SOURCE_FILES = [
   "src/agent/hosted/executor-allocator-client.ts",
+  "src/agent/hosted/executor-node-bootstrap.ts",
   "src/agent/hosted/executor-node-transport.ts",
 ];
 const TEST_FILES = [
   "tests/integration/agent/executor-allocator-client.test.ts",
+  "tests/integration/agent/executor-node-bootstrap.test.ts",
   "tests/integration/agent/executor-node-transport.test.ts",
 ];
 

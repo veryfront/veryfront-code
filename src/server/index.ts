@@ -53,6 +53,8 @@ import {
 } from "#veryfront/extensions/websocket";
 import { type NodeUpgradeEventSource, NodeUpgradeLifecycle } from "./node-upgrade-lifecycle.ts";
 
+export type { MemoryRecycleEvent } from "#veryfront/utils/memory/index.ts";
+
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
 
@@ -60,7 +62,18 @@ export { DevServer, type DevServerHandler, startDevServer, startProductionServer
 export {
   gracefullyShutdownProductionServer,
   type GracefulProductionShutdownOptions,
+  parseShutdownCleanupTimeoutMs,
+  parseShutdownDrainTimeoutMs,
 } from "./graceful-shutdown.ts";
+export {
+  createProductionShutdownCoordinator,
+  type OwnedProductionServer,
+  type ProductionProcessOwnerOptions,
+  type ProductionShutdownCoordinator,
+  type ProductionShutdownCoordinatorOptions,
+  type ProductionShutdownReason,
+  runProductionProcessOwner,
+} from "./production-shutdown-coordinator.ts";
 export {
   createVeryfrontServer,
   type CreateVeryfrontServerOptions,

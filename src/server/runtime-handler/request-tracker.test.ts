@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -118,6 +119,26 @@ describe("server/runtime-handler/request-tracker", () => {
   });
 
   describe("waitForDrain", () => {
+    it("does not let the polling interval consume the cleanup window", async () => {
+      const time = new FakeTime();
+      requestTracker.start("req-short-drain", "proj", "/stream", "GET");
+      let outcome: boolean | undefined;
+      const draining = requestTracker.waitForDrain(10).then((result) => {
+        outcome = result;
+      });
+      try {
+        await time.tickAsync(10);
+        await time.runMicrotasks();
+        assertEquals(outcome, false);
+      } finally {
+        requestTracker.complete("req-short-drain", 200);
+        requestTracker.shutdown();
+        await time.tickAsync(100);
+        await draining;
+        time.restore();
+      }
+    });
+
     it("should return true immediately when no in-flight requests", async () => {
       const result = await requestTracker.waitForDrain(100, 10);
       assertEquals(result, true);

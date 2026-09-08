@@ -20,6 +20,7 @@ import {
   SNAPSHOT_CONFLICT_BODY,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 
 const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
 
@@ -71,6 +72,21 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     await esbuild.stop();
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
     clearReactVersionCache();
+  });
+
+  it("preserves an uncached 503 when snapshot storage fails during bundling", async () => {
+    const handler = new DevFileHandler(() =>
+      Promise.reject(DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.create())
+    );
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/app/page.tsx", "export default null;");
+    const encodedPath = base64urlEncode("app/page.tsx");
+    const request = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const result = await handler.handle(request, makeCtx({ adapter, isLocalProject: true }));
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
+    assertEquals(await result.response?.text(), "Dependency snapshot storage is unavailable");
   });
 
   it("serves file modules for local projects", async () => {

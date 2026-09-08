@@ -424,6 +424,13 @@ Cache operation failed.
 - **HTTP status:** 500
 - **What to do:** Clear the cache and try again
 
+### dependency-snapshot-store-unavailable
+
+Dependency snapshot storage is unavailable.
+
+- **HTTP status:** 503
+- **What to do:** Check shared snapshot storage availability and authorization, then retry
+
 ### file-watch-error
 
 File watcher error.

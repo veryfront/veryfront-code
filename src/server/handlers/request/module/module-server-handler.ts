@@ -5,6 +5,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { isAuthGateEnabled } from "#veryfront/security/http/auth.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { profilePhase } from "#veryfront/observability";
+import { snapshotStoreFailureResponse } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -61,6 +62,13 @@ export function handleModuleServer(
 
         return respond(response);
       } catch (error) {
+        const unavailable = snapshotStoreFailureResponse(
+          error,
+          createResponseBuilder(ctx),
+          req,
+          ctx.securityConfig,
+        );
+        if (unavailable) return respond(unavailable);
         logDebug("module server error", { error: getErrorMessage(error) }, ctx);
 
         return respond(

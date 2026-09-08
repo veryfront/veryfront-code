@@ -14,6 +14,11 @@
 
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
+const apply = Reflect.apply;
+const NativeBigInt = BigInt;
+const charCodeAt = String.prototype.charCodeAt;
+const bigintToString = BigInt.prototype.toString;
+
 export function hashString(input: string): string {
   // FNV-1a 64-bit. The previous 32-bit fold collides ~1% at 10k distinct inputs,
   // and these keys embed into module-response cache keys — a collision there
@@ -25,11 +30,11 @@ export function hashString(input: string): string {
 
   let hash = FNV_OFFSET_BASIS;
   for (let i = 0; i < input.length; i++) {
-    hash ^= BigInt(input.charCodeAt(i));
+    hash ^= NativeBigInt(apply(charCodeAt, input, [i]) as number);
     hash = (hash * FNV_PRIME) & MASK_64;
   }
 
-  return hash.toString(36);
+  return apply(bigintToString, hash, [36]) as string;
 }
 
 export async function sha256Short(input: string): Promise<string> {

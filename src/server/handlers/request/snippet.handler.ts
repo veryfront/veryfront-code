@@ -16,6 +16,7 @@ import {
   getHandlerDependencyPinningIdentity,
 } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import { buildProjectExecutionUnavailableResponse } from "#veryfront/server/handlers/utils/project-execution-unavailable.ts";
+import { snapshotStoreFailureResponse } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 
 const logger = serverLogger.component("snippet-handler");
 
@@ -133,6 +134,13 @@ export class SnippetHandler extends BaseHandler {
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );
       } catch (error) {
+        const storageFailure = snapshotStoreFailureResponse(
+          error,
+          this.createResponseBuilder(ctx),
+          req,
+          ctx.securityConfig,
+        );
+        if (storageFailure) return this.respond(storageFailure);
         if (
           error instanceof VeryfrontError && error.slug === "api-client-error" &&
           error.status === 404

@@ -66,7 +66,7 @@ export async function handleServeCommand(args: ParsedArgs): Promise<void> {
   if (opts.split || opts.mode === "proxy") {
     await ensureCliBundlerContracts();
   }
-  const { serveCommand } = await import("./command.ts");
+  const { serveCommand } = await import("#cli/commands/serve/command");
   await serveCommand({
     mode: opts.mode as "production" | "proxy" | "combined",
     port: opts.port,

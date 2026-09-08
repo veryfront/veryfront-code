@@ -28,6 +28,36 @@ Primary source areas:
    or stream protocol responses.
 5. Shared response helpers normalize CORS, not-found, static, and error output.
 
+## RSS recycle containment
+
+Production process owners can opt in to a graceful recycle after sustained RSS
+pressure. The feature is disabled when `MEMORY_RECYCLE_ENABLED` is absent or
+set to `false`. Other values fail startup instead of silently disabling the
+policy. When enabled, set all of these values:
+
+- `MEMORY_RECYCLE_ENABLED=true`
+- `MEMORY_RECYCLE_RSS_THRESHOLD_MB=<positive-megabytes>`
+- `MEMORY_RECYCLE_CONSECUTIVE_SAMPLES=<positive-integer>`
+- `MEMORY_MONITORING_INTERVAL_MS=<sample-interval>` (optional, defaults to 30000)
+
+Enabling recycle starts the existing memory monitor even when
+`ENABLE_MEMORY_MONITORING` is absent or `false`. The process emits its normal
+memory status and pressure logs at the selected sample interval.
+
+The RSS threshold must leave enough memory for native allocations and for
+requests that remain active during the configured shutdown drain period. The
+process waits for the configured number of consecutive above-threshold samples.
+A sample below the threshold resets the count, and a sustained breach initiates
+one graceful shutdown.
+
+Keep this feature disabled until a canary rollout proves the threshold and drain
+margin under representative traffic. A self-initiated exit is not serialized by
+a PodDisruptionBudget or Deployment surge settings. Activation therefore also
+requires bounded fleet staggering and verified node and namespace headroom.
+Disabling `MEMORY_RECYCLE_ENABLED` through the normal release path is the
+rollback. The recycle is containment for process RSS growth, not proof that its
+cause is fixed.
+
 ## Boundaries
 
 - Rendering internals belong in [rendering runtime](./03-rendering-runtime.md).
