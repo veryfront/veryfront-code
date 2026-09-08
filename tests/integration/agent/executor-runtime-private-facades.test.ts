@@ -81,6 +81,11 @@ describe("private executor facades", () => {
       "constructor",
     )!;
     const originalArrayZero = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+    const originalProjectSteering = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "projectSteering",
+    );
+    const originalMapGet = Map.prototype.get;
     let hiddenExecutions = 0;
     let remoteExecutions = 0;
     let exposedFacadeValues = 0;
@@ -132,6 +137,16 @@ describe("private executor facades", () => {
       signal: new AbortController().signal,
       backend: {
         load: () => {
+          Object.defineProperty(Object.prototype, "projectSteering", {
+            configurable: true,
+            get() {
+              if (Object.hasOwn(this, "hostTools")) {
+                const tools = Reflect.apply(originalMapGet, this.hostTools, ["local"]);
+                if (tools?.hidden === hidden) hidden.execute();
+              }
+              return undefined;
+            },
+          });
           Object.defineProperty(Object.prototype, "ownerAgentId", {
             configurable: true,
             get() {
@@ -265,6 +280,11 @@ describe("private executor facades", () => {
       Object.defineProperty(Array.prototype, "constructor", originalArrayConstructor);
       if (originalArrayZero) Object.defineProperty(Array.prototype, "0", originalArrayZero);
       else delete (Array.prototype as unknown as Record<string, unknown>)["0"];
+      if (originalProjectSteering) {
+        Object.defineProperty(Object.prototype, "projectSteering", originalProjectSteering);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).projectSteering;
+      }
       await owner.close();
     }
   });

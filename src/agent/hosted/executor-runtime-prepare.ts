@@ -79,6 +79,7 @@ const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
 const objectDefineProperty = Object.defineProperty;
+const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
 const abortController = AbortController.prototype.abort;
@@ -238,6 +239,7 @@ export function createExecutorRuntimePreparation(input: Options) {
     hostTools: new Map(input.facades.hostTools),
     remoteToolSources: new Map(input.facades.remoteToolSources),
   };
+  objectSetPrototypeOf(facades, null);
   const lifetime = new AbortController();
   let preparation: Promise<JsonValue> | undefined;
   let preparedOperations: ReadonlyMap<string, ExecutorOperation> | undefined;
