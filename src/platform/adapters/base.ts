@@ -372,6 +372,10 @@ export interface FileSystemAdapter {
    * callers must not carry freshness across a possible context change.
    */
   getSourceSnapshotIdentity?(): string | undefined | Promise<string | undefined>;
+  /** Read trusted prior dependency metadata for this adapter's mutable source scope. */
+  readDependencyMetadataHistory?(): Promise<
+    import("./dependency-metadata-history.ts").DependencyMetadataHistory
+  >;
 }
 
 /** A filesystem adapter that advertises genuine bounded byte reads. */

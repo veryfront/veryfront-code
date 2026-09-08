@@ -91,6 +91,36 @@ untrusted project code. Configured storage failures do not downgrade to local hi
 The provider, handle, record types, and handle factory are exported by
 `veryfront/platform`.
 
+## API-derived dependency metadata history
+
+`FileSystemAdapter.readDependencyMetadataHistory()` is an optional read-only
+capability, separate from `RuntimeAdapter.dependencySnapshotStore`. The Veryfront
+filesystem implements it through the existing authenticated project API and the
+same project-scoped token used for file reads. It does not obtain shared internal
+credentials or expose a snapshot publication endpoint to project code.
+
+Before a dependency-resolution write changes `package.json`, the API acknowledges
+storage of its own observed prior dependency map, including an absent file as an
+empty map. The read endpoint returns at most 16 recent maps within a 1 MiB response
+limit. Metadata publication has a 960 KiB admission bound so an acknowledged
+individual record fits the response. The project and canonical branch scope are
+derived by the API, with the requested branch retained in the response for matching.
+
+A cold renderer consults this capability only after local history misses and the
+current dependency key differs. It combines a prior raw map with its current
+captured React/Veryfront configuration and accepts it only if the exact requested
+key matches. Scope mismatch, corrupt data, outages and expired records fail closed.
+Recovered data keeps its acknowledged expiry and never becomes current writeback
+authority. Reader methods are captured before use and remain associated with their
+original source when file reads are wrapped for tracking.
+
+This does not weaken the shared snapshot store's acknowledged publication contract:
+an explicitly configured store never falls back to this metadata reader. Standalone
+filesystems do not require an API or shared backend. Direct package edits, concurrent
+configuration changes, history outside the bounded read window, and historical data
+predating activation can remain unavailable. They still return a conflict rather
+than interpreting an old key using current dependencies.
+
 ## Change checks
 
 - Update [support matrix](./20-support-matrix.md) when runtime support changes.

@@ -161,6 +161,44 @@ export class DependencySnapshotRegistry {
     return snapshot;
   }
 
+  /**
+   * Retain an exact match reconstructed from API-owned prior metadata, using
+   * its acknowledged expiry. This read-only path never substitutes for an
+   * explicitly configured shared store and never publishes renderer state.
+   */
+  async recoverHistorical(
+    identity: string,
+    key: string,
+    load: () => Promise<{ snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined>,
+  ): Promise<DependencyPinningSnapshot | undefined> {
+    if (this.#store) return undefined;
+    const generation = this.generation;
+    const record = await this.operation(`metadata:${identity}\0${key}`, undefined, load);
+    if (!record || record.expiresAt <= this.now()) return undefined;
+    if (
+      record.snapshot.cacheKey !== key || !isSafeInteger(record.expiresAt) ||
+      record.expiresAt > this.now() + DEPENDENCY_SNAPSHOT_RETENTION_MS
+    ) throw this.unavailable();
+    const namespace = await computeHash(identity);
+    let value: string;
+    try {
+      value = encodeDependencySnapshot(namespace, record.snapshot);
+    } catch {
+      throw this.unavailable();
+    }
+    const existing = this.entry(`${identity}\0${key}`);
+    if (existing && existing.value !== value) throw this.unavailable();
+    if (generation === this.generation) {
+      this.insert(`${identity}\0${key}`, {
+        snapshot: record.snapshot,
+        value,
+        expiresAt: record.expiresAt,
+        bytes: utf8ByteLength(value),
+      });
+    }
+    return record.snapshot;
+  }
+
   clear(): void {
     this.generation++;
     apply(mapClear, this.entries, []);

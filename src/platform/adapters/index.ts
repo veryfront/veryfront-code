@@ -36,6 +36,10 @@ export type {
   DependencySnapshotStoreHandle,
 } from "./dependency-snapshot-store.ts";
 export { createDependencySnapshotStoreHandle } from "./dependency-snapshot-store.ts";
+export type {
+  DependencyMetadataHistory,
+  DependencyMetadataHistoryEntry,
+} from "./dependency-metadata-history.ts";
 export {
   FileSnapshotChangedError,
   FileSnapshotPathError,

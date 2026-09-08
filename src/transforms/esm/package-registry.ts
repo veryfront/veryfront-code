@@ -6,7 +6,9 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { DependencySnapshotRegistry } from "./dependency-snapshot-registry.ts";
+import { selectHistoricalDependencySnapshot } from "./dependency-metadata-history.ts";
 import {
+  applyConfiguredDependencyOverrides,
   createDependencyPinningSnapshot,
   type DependencyPinningSnapshot,
   freezeConfiguredVersions,
@@ -252,6 +254,19 @@ export function createDependencyPinningSource(
       }
       : {}),
   };
+  if (adapterFs) {
+    const reader = snapshotGetOwnPropertyDescriptor(adapterFs, "readDependencyMetadataHistory");
+    if (reader && (!snapshotHasOwn(reader, "value") || reader.value !== undefined)) {
+      if (!snapshotHasOwn(reader, "value") || typeof reader.value !== "function") {
+        throw new TypeError("Dependency metadata history must be a data-property method");
+      }
+      const method = reader.value;
+      snapshotApply(snapshotWeakSet, sourceMetadataHistoryReaders, [
+        source,
+        () => snapshotApply(method, adapterFs, []) as Promise<unknown>,
+      ]);
+    }
+  }
   if (snapshotStore) snapshotApply(snapshotWeakSet, sourceSnapshotStores, [source, snapshotStore]);
   return snapshotFreeze(source);
 }
@@ -259,6 +274,8 @@ export function createDependencyPinningSource(
 let localSnapshotRegistry = new DependencySnapshotRegistry();
 let sharedSnapshotRegistries = new WeakMap<DependencySnapshotStore, DependencySnapshotRegistry>();
 const sourceSnapshotStores = new WeakMap<DependencyPinningSource, DependencySnapshotStore>();
+const sourceMetadataHistoryReaders = new WeakMap<DependencyPinningSource, () => Promise<unknown>>();
+const metadataHistoryNow = Date.now;
 const adapterSnapshotStores = new WeakMap<
   RuntimeAdapter,
   { store: DependencySnapshotStore | undefined }
@@ -286,6 +303,11 @@ export function withDependencyPinningSourceFileSystem(
   });
   const store = original && snapshotApply(snapshotWeakGet, sourceSnapshotStores, [original]);
   if (store) snapshotApply(snapshotWeakSet, sourceSnapshotStores, [result, store]);
+  const historyReader = original &&
+    snapshotApply(snapshotWeakGet, sourceMetadataHistoryReaders, [original]);
+  if (historyReader) {
+    snapshotApply(snapshotWeakSet, sourceMetadataHistoryReaders, [result, historyReader]);
+  }
   return result;
 }
 
@@ -583,7 +605,32 @@ export async function resolveRequestedDependencyPinningSnapshot(
   if (!requestedCacheKey || requestedCacheKey === current.cacheKey) {
     return current;
   }
-  return getDependencyPinningSnapshotSync(source, requestedCacheKey);
+  const remembered = getDependencyPinningSnapshotSync(source, requestedCacheKey);
+  if (remembered) return remembered;
+  if (!current.cacheKey.startsWith("on:") || typeof source !== "object" || source === null) {
+    return undefined;
+  }
+  const target = source.dependencyWritebackTarget;
+  const reader = snapshotApply(snapshotWeakGet, sourceMetadataHistoryReaders, [source]) as
+    | (() => Promise<unknown>)
+    | undefined;
+  if (!reader || !source.projectId || !target || source.releaseId) return undefined;
+  const scope = {
+    projectId: source.projectId,
+    branch: target.kind === "branch" ? target.branch : null,
+  };
+  return await snapshotRegistry(source).recoverHistorical(
+    snapshotHistoryIdentity(source),
+    requestedCacheKey,
+    async () =>
+      selectHistoricalDependencySnapshot(
+        await reader(),
+        scope,
+        requestedCacheKey,
+        current.configuredVersions,
+        metadataHistoryNow(),
+      ),
+  );
 }
 
 /**
@@ -974,20 +1021,6 @@ function captureConfiguredVersions(
       }
       : {}),
   };
-}
-
-function applyConfiguredDependencyOverrides(
-  dependencies: Readonly<Record<string, string>>,
-  configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
-): Record<string, string> {
-  const effective = copyDependencyMap(dependencies);
-  if (configuredVersions?.react) {
-    effective.react = configuredVersions.react.effective;
-  }
-  if (configuredVersions?.veryfront) {
-    effective.veryfront = configuredVersions.veryfront.effective;
-  }
-  return effective;
 }
 
 function hasEnabledDependencySnapshot(

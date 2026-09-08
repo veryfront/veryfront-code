@@ -17,6 +17,7 @@ import type {
   ResolveFileOptions,
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -1638,6 +1639,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   getSourceSnapshotIdentity(): string | undefined {
     return this.#getCurrentSourceSnapshotIdentity();
+  }
+
+  async readDependencyMetadataHistory(): Promise<DependencyMetadataHistory> {
+    await this.#ensureExactReadInitialized();
+    const source = this.getEffectiveContentContext();
+    if (source?.sourceType !== "branch") {
+      throw new TypeError("Dependency metadata history is available only for branch sources");
+    }
+    const branch = source.branch && source.branch !== "main" ? source.branch : null;
+    return await this.client.readDependencyMetadataHistory(branch);
   }
 
   getPokeMetrics(): {

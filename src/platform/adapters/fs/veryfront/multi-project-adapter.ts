@@ -6,6 +6,7 @@ import type {
   ResolveFileOptions,
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
@@ -59,6 +60,8 @@ const VeryfrontFSAdapterGetSourceSnapshotFingerprint =
   VeryfrontFSAdapterPrototype.getSourceSnapshotFingerprint;
 const VeryfrontFSAdapterGetSourceSnapshotIdentity =
   VeryfrontFSAdapterPrototype.getSourceSnapshotIdentity;
+const VeryfrontFSAdapterReadDependencyMetadataHistory =
+  VeryfrontFSAdapterPrototype.readDependencyMetadataHistory;
 type CapturedAdapterMethod = (...args: never[]) => unknown;
 type CapturedManagerMethod = (...args: never[]) => unknown;
 
@@ -95,7 +98,8 @@ function captureEffectiveAdapterMethod(
     | "ensureSourceSnapshotFresh"
     | "getSourceSnapshotVersion"
     | "getSourceSnapshotFingerprint"
-    | "getSourceSnapshotIdentity",
+    | "getSourceSnapshotIdentity"
+    | "readDependencyMetadataHistory",
   concreteMethod: CapturedAdapterMethod,
 ): CapturedAdapterMethod {
   const ownDescriptor = IntrinsicReflectApply(
@@ -592,6 +596,25 @@ export class MultiProjectFSAdapter implements FSAdapter {
       weakMapSet(this.sourceSnapshotAdapterGenerations, adapter, generation);
     }
     return `adapter:${generation}:${sourceIdentity}`;
+  }
+
+  async readDependencyMetadataHistory(): Promise<DependencyMetadataHistory> {
+    const adapter = await this.#getAdapter();
+    if (!isConcreteVeryfrontFSAdapter(adapter)) {
+      const reader = adapter.readDependencyMetadataHistory;
+      if (typeof reader !== "function") {
+        throw new TypeError(
+          "Selected Veryfront filesystem adapter cannot read dependency metadata history",
+        );
+      }
+      return await IntrinsicReflectApply(reader, adapter, []) as DependencyMetadataHistory;
+    }
+    const reader = captureEffectiveAdapterMethod(
+      adapter,
+      "readDependencyMetadataHistory",
+      VeryfrontFSAdapterReadDependencyMetadataHistory,
+    );
+    return await IntrinsicReflectApply(reader, adapter, []) as DependencyMetadataHistory;
   }
 
   dispose(): void {

@@ -28,6 +28,7 @@ import {
   getBranchFileDetailSchema,
   getDependencyArtifactAssetUploadResponseSchema,
   getDependencyArtifactBuildResultResponseSchema,
+  getDependencyMetadataHistoryResponseSchema,
   getEnvironmentFileDetailSchema,
   getListBranchFilesResponseSchema,
   getListEnvironmentFilesResponseSchema,
@@ -50,6 +51,7 @@ import {
   type ReleaseAssetManifestStateResponse,
   type ReleaseAssetUploadResponse,
 } from "./schemas/index.ts";
+import type { DependencyMetadataHistory } from "../dependency-metadata-history.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { copyFixedUint8ArrayWithinLimit } from "../file-system-capabilities.ts";
@@ -57,6 +59,58 @@ import { copyFixedUint8ArrayWithinLimit } from "../file-system-capabilities.ts";
 const logger = baseLogger.component("api");
 
 const DEFAULT_PAGE_LIMIT = 100;
+const MAX_DEPENDENCY_METADATA_HISTORY_RESPONSE_BYTES = 1024 * 1024;
+const IntrinsicArrayIsArray = Array.isArray;
+const IntrinsicObjectCreate = Object.create;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicObjectFreeze = Object.freeze;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
+const IntrinsicReflectOwnKeys = Reflect.ownKeys;
+const IntrinsicObjectPrototype = Object.prototype;
+
+function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, string>> {
+  if (typeof raw !== "object" || raw === null || IntrinsicArrayIsArray(raw)) {
+    throw API_CLIENT_ERROR.create({
+      detail: "Veryfront API dependency metadata history contains an invalid dependency map",
+      status: 502,
+    });
+  }
+  const prototype = IntrinsicObjectGetPrototypeOf(raw);
+  if (prototype !== IntrinsicObjectPrototype && prototype !== null) {
+    throw API_CLIENT_ERROR.create({
+      detail: "Veryfront API dependency metadata history contains an invalid dependency map",
+      status: 502,
+    });
+  }
+
+  const result = IntrinsicObjectCreate(IntrinsicObjectPrototype) as Record<string, string>;
+  for (const key of IntrinsicReflectOwnKeys(raw)) {
+    if (typeof key !== "string") {
+      throw API_CLIENT_ERROR.create({
+        detail: "Veryfront API dependency metadata history contains an invalid dependency name",
+        status: 502,
+      });
+    }
+    const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(raw, key);
+    if (
+      descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
+      typeof descriptor.value !== "string"
+    ) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Veryfront API dependency metadata history contains an invalid dependency version",
+        status: 502,
+      });
+    }
+    IntrinsicObjectDefineProperty(result, key, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false,
+    });
+  }
+  return IntrinsicObjectFreeze(result);
+}
 
 function requireBoundedFileContentLimit(maximumBytes: number): number {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
@@ -310,6 +364,42 @@ export class VeryfrontAPIOperations {
   async getProject(projectRef: string): Promise<Project> {
     const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`);
     return getProjectSchema().parse(raw);
+  }
+
+  async readDependencyMetadataHistory(
+    projectRef: string,
+    expectedProjectId: string,
+    requestedBranch: string | null,
+  ): Promise<DependencyMetadataHistory> {
+    const branch = requestedBranch === "main" ? null : requestedBranch;
+    const params = new URLSearchParams();
+    if (branch !== null) params.set("branch", branch);
+    const query = params.toString();
+    const endpoint = `/projects/${encodeURIComponent(projectRef)}/dependencies/history${
+      query ? `?${query}` : ""
+    }`;
+    const raw = await this.request(endpoint, {
+      maxResponseBytes: MAX_DEPENDENCY_METADATA_HISTORY_RESPONSE_BYTES,
+      includeErrorBodyInDiagnostics: false,
+    });
+    const response = getDependencyMetadataHistoryResponseSchema().parse(raw);
+    if (response.project_id !== expectedProjectId || response.branch !== branch) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Veryfront API dependency metadata history identity mismatch",
+        status: 502,
+      });
+    }
+    return IntrinsicObjectFreeze({
+      version: 1,
+      projectId: response.project_id,
+      branch: response.branch,
+      entries: IntrinsicObjectFreeze(response.entries.map((entry) =>
+        IntrinsicObjectFreeze({
+          dependencies: parseDependencyMetadataMap(entry.dependencies),
+          expiresAt: entry.expires_at,
+        })
+      )),
+    });
   }
 
   async listBranchFiles(
