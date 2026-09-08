@@ -39,10 +39,7 @@ import {
 } from "./backends/factory.ts";
 import { isRedisConfigured } from "./backends/redis.ts";
 import { captureRevisionedCacheBackendMethods } from "./capabilities.ts";
-import {
-  assertCacheValueWithinLimit,
-  captureBoundedCacheRead,
-} from "./bounded-read.ts";
+import { assertCacheValueWithinLimit, captureBoundedCacheRead } from "./bounded-read.ts";
 
 const SNAPSHOT_KEY_PREFIX = "dependency-snapshots";
 
@@ -61,9 +58,20 @@ const MAX_SNAPSHOT_RECORD_BYTES = 2 * MAX_SNAPSHOT_VALUE_BYTES + 4_096;
  * Deadline tolerance for concurrent same-value publications. Two replicas
  * publishing an identical snapshot stamp deadlines milliseconds apart, and
  * either write order must acknowledge both. A silently dropped renewal keeps a
- * deadline hours short of the requested one, far outside this slack.
+ * deadline hours short of the requested one, far outside this slack. The
+ * residual cost of the tolerance is bounded by its size: shared history can
+ * expire at most this much earlier than an acknowledged deadline, and the
+ * registry renews snapshots half a retention period (hours) before expiry, so
+ * a sub-minute shortfall never outlives the next renewal.
  */
 const RENEWAL_DEADLINE_SLACK_MS = 60_000;
+
+/** Reject promptly on an aborted operation; backend calls are not cancelable. */
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new Error("Dependency snapshot store operation was aborted");
+  }
+}
 
 function recordKey(namespace: string, key: string): string {
   return `${namespace}:${key}`;
@@ -135,15 +143,14 @@ export function createCacheBackedDependencySnapshotStore(
   }
 
   return {
-    publish: async (namespace, key, value, expiresAt) => {
+    publish: async (namespace, key, value, expiresAt, signal) => {
+      throwIfAborted(signal);
       assertCacheValueWithinLimit(value, MAX_SNAPSHOT_VALUE_BYTES);
       const backend = await requireBackend();
       const cacheKey = recordKey(namespace, key);
       const revisioned = captureRevisionedCacheBackendMethods(backend);
 
-      const existingRaw = revisioned === null
-        ? await readRecordRaw(backend, cacheKey)
-        : undefined;
+      const existingRaw = revisioned === null ? await readRecordRaw(backend, cacheKey) : undefined;
       const observed = revisioned === null
         ? undefined
         : await Reflect.apply(revisioned.getWithRevision, backend, [cacheKey]);
@@ -156,6 +163,7 @@ export function createCacheBackedDependencySnapshotStore(
         }
         if (existing.expiresAt >= expiresAt) return;
       }
+      throwIfAborted(signal);
 
       const ttlSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
       if (ttlSeconds <= 0) {
@@ -194,11 +202,16 @@ export function createCacheBackedDependencySnapshotStore(
       await verifyRetained(backend, cacheKey, value, expiresAt);
     },
 
-    read: async (namespace, key) => {
+    read: async (namespace, key, signal) => {
+      throwIfAborted(signal);
       const backend = await requireBackend();
       const raw = await readRecordRaw(backend, recordKey(namespace, key));
       if (raw === null) return null;
-      return decodeRecord(raw);
+      const record = decodeRecord(raw);
+      // The contract reserves null for missing or expired history; a backend
+      // that retains stale bytes past their TTL must not resurrect them.
+      if (record.expiresAt <= Date.now()) return null;
+      return record;
     },
   };
 }
@@ -236,7 +249,9 @@ let sharedAccessor: (() => Promise<CacheBackend | null>) | undefined;
  * configured backend is unreachable its operations reject, and the accessor
  * retries resolution on its normal failure-backoff schedule.
  */
-export function getSharedDependencySnapshotStoreHandle(): DependencySnapshotStoreHandle | undefined {
+export function getSharedDependencySnapshotStoreHandle():
+  | DependencySnapshotStoreHandle
+  | undefined {
   if (sharedHandle) return sharedHandle;
   const accessor = testBackendAccessor ??
     (isSharedBackendConfigured()

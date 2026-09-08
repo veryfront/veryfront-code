@@ -4,7 +4,6 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend, CacheRevisionMutation, CacheRevisionSnapshot } from "./types.ts";
 import { MemoryCacheBackend } from "./backends/memory.ts";
 import {
-  _createSharedDependencySnapshotCacheBackend,
   _setSharedDependencySnapshotStoreBackendForTest,
   createCacheBackedDependencySnapshotStore,
   getSharedDependencySnapshotStoreHandle,
@@ -98,7 +97,9 @@ describe("cache/dependency-snapshot-store", () => {
     it("rejects operations while the backend is unavailable", async () => {
       const store = backedStore(null);
 
-      await assertRejects(() => store.publish(NAMESPACE, KEY, "snapshot-bytes", Date.now() + 1_000));
+      await assertRejects(() =>
+        store.publish(NAMESPACE, KEY, "snapshot-bytes", Date.now() + 1_000)
+      );
       await assertRejects(() => store.read(NAMESPACE, KEY));
     });
 
@@ -144,6 +145,27 @@ describe("cache/dependency-snapshot-store", () => {
       await store.publish(NAMESPACE, KEY, value, expiresAt);
 
       assertEquals(await store.read(NAMESPACE, KEY), { value, expiresAt });
+    });
+
+    it("returns null for a stale record a backend retained past its deadline", async () => {
+      const backend = new MemoryCacheBackend();
+      await backend.set(
+        `${NAMESPACE}:${KEY}`,
+        JSON.stringify({ value: "snapshot-bytes", expiresAt: Date.now() - 1 }),
+        60,
+      );
+
+      assertEquals(await backedStore(backend).read(NAMESPACE, KEY), null);
+    });
+
+    it("rejects operations whose signal is already aborted", async () => {
+      const store = backedStore(new MemoryCacheBackend());
+      const aborted = AbortSignal.abort();
+
+      await assertRejects(() =>
+        store.publish(NAMESPACE, KEY, "snapshot-bytes", Date.now() + 60_000, aborted)
+      );
+      await assertRejects(() => store.read(NAMESPACE, KEY, aborted));
     });
 
     it("rejects a publication whose payload exceeds the snapshot limit", async () => {
@@ -214,21 +236,10 @@ describe("cache/dependency-snapshot-store", () => {
     });
   });
 
-  describe("_createSharedDependencySnapshotCacheBackend", () => {
-    it("rejects instead of falling back to a node-local backend", async () => {
-      // Without API cache or Redis configured, backend resolution yields the
-      // memory backend. The factory must reject so the distributed-cache
-      // accessor records a failure and retries, rather than caching a
-      // node-local backend as shared history for the life of the process.
-      await assertRejects(() => _createSharedDependencySnapshotCacheBackend());
-    });
-  });
-
   describe("getSharedDependencySnapshotStoreHandle", () => {
-    it("returns undefined when no shared cache backend is configured", () => {
-      assertEquals(getSharedDependencySnapshotStoreHandle(), undefined);
-    });
-
+    // Whether the handle exists at all depends on process configuration; that
+    // behavior lives in tests/integration/server/dependency-snapshot-store-wiring.test.ts
+    // where the environment can be controlled explicitly.
     it("returns a stable handle backed by the injected backend", async () => {
       _setSharedDependencySnapshotStoreBackendForTest(new MemoryCacheBackend());
       const handle = getSharedDependencySnapshotStoreHandle();
