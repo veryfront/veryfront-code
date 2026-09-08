@@ -101,10 +101,17 @@ export async function validateNativeCoverage(
       first--;
     }
     first = Math.max(1, first - 1);
+    const functionEndOffset = anchor && lines.slice(anchor.line).findIndex((line) => line === "}");
+    const functionEnd = functionEndOffset === -1 || !anchor
+      ? undefined
+      : anchor.line + functionEndOffset + 1;
     const mappedLine = anchor && entry.functions.get(anchor.name);
     if (
       !anchor || mappedLine === undefined || mappedLine < first ||
-      mappedLine > anchor.line ||
+      // Node LCOV can repeat a named function and place the later record at
+      // its first executable body range. Bound that retained record to the
+      // final top-level function's actual closing brace, never trailing code.
+      functionEnd === undefined || mappedLine > functionEnd ||
       [...entry.lines.keys()].some((line) => line < 1 || line > lines.length)
     ) {
       throw new Error(

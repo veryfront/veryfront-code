@@ -448,6 +448,13 @@ model and tool execution unavailable during preparation. Configure detached
 Detached runs require output persistence callbacks; their finalization remains
 part of the session's owned work until all writes settle.
 
+`startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
+and cancel/resume handlers to a Node server. Supply every handler, the broker
+pool, and a readiness check explicitly. It preserves `/liveness` and
+`/readiness`; shutdown stops admission before waiting for handlers and broker
+work to retire. This server adapter does not configure product policy,
+registration, credentials, or executor images.
+
 ## Verify it worked
 
 Start the service entrypoint and call the run route directly. The default

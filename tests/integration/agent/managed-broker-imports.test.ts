@@ -30,6 +30,7 @@ for (
     "src/agent/service/broker-ingress.ts",
     "src/agent/service/managed-broker-handler.ts",
     "src/agent/service/managed-broker.ts",
+    "src/agent/service/managed-node-broker.ts",
   ]
 ) {
   it(`keeps project runtime imports out of ${entry}`, { timeout: 30_000 }, async () => {

@@ -60,7 +60,11 @@ export type BrokerIngressErrorCode =
   | "CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED"
   | "CONTROL_PLANE_AGENT_SOURCE_MISMATCH";
 
-/** Fixed ingress failures contain no body, signature, credential, or verifier diagnostics. */
+/**
+ * Local HTTP-boundary errors intentionally avoid the application error registry:
+ * only a fixed code/status is exposed, never body, credential, or verifier diagnostics.
+ * These errors stay in the broker and are not executor-channel error contracts.
+ */
 export class BrokerIngressError extends Error {
   constructor(readonly status: number, readonly errorCode: BrokerIngressErrorCode) {
     super(errorCode);

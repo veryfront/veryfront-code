@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import { initializeExecutorRuntimeContracts } from "./executor-runtime-contracts.ts";
+import { initializeExecutorRuntimeContracts } from "#veryfront/agent/hosted/executor-runtime-contracts.ts";
 
 it("initializes executor runtime contracts once and preserves their trusted generations", async () => {
   await Promise.all([

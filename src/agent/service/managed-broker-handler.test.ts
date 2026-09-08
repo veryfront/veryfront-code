@@ -141,6 +141,7 @@ async function handler(
   const authorizationEntered = Promise.withResolvers<void>();
   const authorizationRelease = Promise.withResolvers<void>();
   const admitted = Promise.withResolvers<void>();
+  const executionController = new AbortController();
   const managed = createManagedBrokerHandler({
     responseMode: mode,
     broker: {
@@ -174,7 +175,7 @@ async function handler(
       return {
         start: { session: {} } as ManagedExecutorStartInput,
         messages: [],
-        executionSignal: new AbortController().signal,
+        executionSignal: executionController.signal,
         output: options.missingOutput ? undefined : {
           async write(chunk: { type: string }) {
             outputChunks.push(chunk.type);
@@ -209,6 +210,7 @@ async function handler(
     outputFinishes,
     outputFinishErrors,
     releaseOutput: outputRelease.resolve,
+    abortExecution: () => executionController.abort(),
     get prepareCalls() {
       return prepareCalls;
     },
@@ -310,6 +312,18 @@ describe("managed broker handler", () => {
       assertEquals(f.outputChunks, [terminalChunk === "error" ? "error" : "finish"]);
       assertEquals(f.fixture.closeReasons, ["canceled"], terminalChunk);
     }
+  });
+
+  it("finalizes an aborted detached execution as cancelled instead of failed", async () => {
+    const f = await handler("detached");
+    assertEquals((await f.managed.handle(f.first.request)).status, 202);
+    f.abortExecution();
+    f.fixture.release();
+    await f.managed.close();
+
+    assertEquals(f.outputFinishes, [false]);
+    assertEquals(f.outputFinishErrors, [undefined]);
+    assertEquals(f.fixture.closeReasons, ["canceled"]);
   });
 
   it("preserves request-owned SSE and releases only after response completion", async () => {

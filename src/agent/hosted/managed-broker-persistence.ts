@@ -70,16 +70,23 @@ export function createManagedBrokerPersistence(input: {
   let finished = false;
   let cleaned = false;
 
-  const queue = <T>(operation: () => Promise<T>, terminal = false): Promise<T> => {
+  const queue = <T>(
+    operation: (priorFailure: { failed: boolean; error: unknown }) => Promise<T>,
+    terminal = false,
+  ): Promise<T> => {
     if (cleaned) return Promise.reject(new TypeError("Managed broker persistence is closed"));
     if (finished && !terminal) {
       return Promise.reject(new TypeError("Managed broker persistence is finished"));
     }
     const current = tail.then(async () => {
-      if (failed) throw failure;
+      const priorFailure = { failed, error: failure };
+      if (priorFailure.failed && !terminal) throw priorFailure.error;
       try {
-        return await operation();
+        const result = await operation(priorFailure);
+        if (priorFailure.failed) throw priorFailure.error;
+        return result;
       } catch (error) {
+        if (priorFailure.failed) throw priorFailure.error;
         failure = error;
         failed = true;
         throw error;
@@ -115,19 +122,39 @@ export function createManagedBrokerPersistence(input: {
         return Promise.reject(new TypeError("Completed managed output cannot carry an error"));
       }
       finished = true;
-      return queue(async () => {
-        await flush();
-        if (result.completed) {
-          await terminal.dispatch({ status: "completed" });
-        } else if (result.error !== undefined) {
-          await terminal.dispatch(resolveConversationHostedStreamErrorState(result.error));
-        } else {
-          await terminal.dispatch({
-            status: "cancelled",
-            terminalErrorCode: "ABORTED",
-            terminalErrorMessage: "Managed executor output was cancelled",
-          });
+      return queue(async (priorFailure) => {
+        // Terminal reporting is an independent best-effort path: even a poisoned
+        // write tail or final drain must attempt a failed terminal update, while
+        // callers still receive the original persistence error.
+        let terminalFailure = priorFailure;
+        if (!terminalFailure.failed) {
+          try {
+            await flush();
+          } catch (error) {
+            terminalFailure = { failed: true, error };
+          }
         }
+        try {
+          if (terminalFailure.failed) {
+            await terminal.dispatch(
+              resolveConversationHostedStreamErrorState(terminalFailure.error),
+            );
+          } else if (result.completed) {
+            await terminal.dispatch({ status: "completed" });
+          } else if (result.error !== undefined) {
+            await terminal.dispatch(resolveConversationHostedStreamErrorState(result.error));
+          } else {
+            await terminal.dispatch({
+              status: "cancelled",
+              terminalErrorCode: "ABORTED",
+              terminalErrorMessage: "Managed executor output was cancelled",
+            });
+          }
+        } catch (terminalDispatchError) {
+          if (terminalFailure.failed) throw terminalFailure.error;
+          throw terminalDispatchError;
+        }
+        if (terminalFailure.failed && !priorFailure.failed) throw terminalFailure.error;
       }, true);
     },
   };

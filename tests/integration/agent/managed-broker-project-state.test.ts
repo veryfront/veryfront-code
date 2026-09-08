@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createManagedBrokerProjectState } from "./managed-broker-project-state.ts";
+import { createManagedBrokerProjectState } from "#veryfront/agent/hosted/managed-broker-project-state.ts";
 
 const definition = {
   id: "coder",

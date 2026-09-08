@@ -151,5 +151,9 @@ describe("managed agent ingress", () => {
 
     assertEquals(result, response);
     assertEquals(request.bodyUsed, false);
+    assertEquals(
+      request.headers.get("X-Veryfront-Run-Event-Token"),
+      "must-stay-broker-private",
+    );
   });
 });

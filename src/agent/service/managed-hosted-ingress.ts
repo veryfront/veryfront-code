@@ -1,6 +1,9 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  createApplicationRequest,
+  isInfrastructureOnlyRequestHeader,
+} from "#veryfront/security/http/application-request.ts";
 import {
   buildParsedHostedAgUiRequest,
   createHostedAgUiValidationErrorResponse,
@@ -130,6 +133,15 @@ function sanitizeForwardedProps(value: unknown): unknown {
   return Object.keys(sanitized).length > 0 ? sanitized : null;
 }
 
+/** Bun retains source headers when Request init supplies a replacement list. */
+function removeRetainedInfrastructureHeaders(request: Request): Request {
+  const headers = request.headers;
+  for (const name of [...headers.keys()]) {
+    if (isInfrastructureOnlyRequestHeader(name)) headers.delete(name);
+  }
+  return request;
+}
+
 function boundedExecutorRequest(value: unknown): ManagedAgentExecutorRequest {
   const snapshot = snapshotBoundedJsonValue(value);
   if (!snapshot.success) {
@@ -242,7 +254,9 @@ export async function parseManagedAgUiAgentIngress(
   request: Request,
   options: ParseManagedAgUiAgentIngressOptions,
 ): Promise<ManagedAgUiAgentIngressResult | Response> {
-  const applicationRequest = createApplicationRequest(request);
+  const applicationRequest = removeRetainedInfrastructureHeaders(
+    createApplicationRequest(request),
+  );
   const principal = await options.authenticate(applicationRequest);
   if (isResponseLike(principal)) return principal;
 

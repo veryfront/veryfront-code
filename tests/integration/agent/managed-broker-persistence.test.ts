@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
+import { createManagedBrokerPersistence } from "#veryfront/agent/hosted/managed-broker-persistence.ts";
 
 const conversationId = "00000000-0000-4000-8000-000000000001";
 const messageId = "00000000-0000-4000-8000-000000000002";
@@ -145,8 +145,19 @@ describe("managed broker persistence", () => {
     });
   });
 
-  it("propagates persistence failure through finish without reporting success", async () => {
-    const fetch = () => Promise.resolve(new Response("failed", { status: 500 }));
+  it("preserves a poisoned write error while independently finalizing the run as failed", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const fallback = successfulFetch(calls);
+    let failEventAppend = true;
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      if (failEventAppend && Array.isArray(body.events)) {
+        failEventAppend = false;
+        calls.push(body);
+        return new Response("failed", { status: 500 });
+      }
+      return await fallback(input, init);
+    };
     await withMockFetch(fetch, async () => {
       const persistence = createManagedBrokerPersistence({
         apiUrl: "https://api.example.test",
@@ -156,10 +167,18 @@ describe("managed broker persistence", () => {
         resolveProvider: () => "provider",
         fetch,
       });
-      await assertRejects(() =>
-        persistence.output.write({ type: "text-delta", id: "message", delta: "fail" })
-      );
-      await assertRejects(() => persistence.output.finish({ completed: false, error: "failed" }));
+      const write = persistence.output.write({
+        type: "text-delta",
+        id: "message",
+        delta: "fail",
+      });
+      const finish = persistence.output.finish({ completed: true });
+      const [writeResult, finishResult] = await Promise.allSettled([write, finish]);
+      const writeError = writeResult.status === "rejected" ? writeResult.reason : undefined;
+      assertEquals(writeError instanceof Error, true);
+      const finishError = finishResult.status === "rejected" ? finishResult.reason : undefined;
+      assertEquals(finishError === writeError, true);
+      assertEquals(calls.at(-1)?.status, "failed");
       await persistence.cleanup();
     });
   });

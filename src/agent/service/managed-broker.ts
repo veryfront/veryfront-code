@@ -33,3 +33,8 @@ export {
   parseManagedAgUiAgentIngress,
   parseManagedDurableAgentIngress,
 } from "./managed-hosted-ingress.ts";
+export {
+  type ManagedNodeBrokerHandler,
+  type ManagedNodeBrokerPool,
+  startNodeManagedAgentBroker,
+} from "./managed-node-broker.ts";

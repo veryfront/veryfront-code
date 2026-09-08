@@ -220,6 +220,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   };
 }
 
+/** Private lifecycle sentinel mapped locally to a fixed HTTP error without serializing diagnostics. */
 class BrokerHandlerUnavailableError extends Error {}
 
 function assertAvailable(closed: boolean, signal: AbortSignal): void {
@@ -346,6 +347,7 @@ async function runDetached(
             failure = new Error("Agent stream finished with an error");
           }
         }
+        signal.throwIfAborted();
         if (failure !== undefined) throw failure;
         streamCompleted = true;
       } catch (error) {
@@ -354,7 +356,7 @@ async function runDetached(
       } finally {
         await output.finish({
           completed: streamCompleted,
-          ...(failure === undefined ? {} : { error: failure }),
+          ...(failure === undefined || signal.aborted ? {} : { error: failure }),
         });
       }
     });
