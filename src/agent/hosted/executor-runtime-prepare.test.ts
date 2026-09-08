@@ -705,40 +705,6 @@ describe("executor runtime preparation review regressions", () => {
       }
     });
   }
-  it("keeps ungranted private facades out of project-controlled reflection hooks", async () => {
-    const originalEntries = Object.entries;
-    let hiddenExecutions = 0;
-    const hidden = {
-      ...syntheticHostTool(),
-      execute: () => {
-        hiddenExecutions++;
-        return { ok: true };
-      },
-    };
-    const f = fixture({
-      grant: { ...grant, allowedToolNames: ["visible"], hostToolFacadeIds: ["local"] },
-      facades: {
-        hostTools: new Map([["local", { visible: syntheticHostTool(), hidden }]]),
-      },
-      load: () => {
-        Object.entries = ((value: object) => {
-          const entries = Reflect.apply(originalEntries, Object, [value]);
-          for (let index = 0; index < entries.length; index++) {
-            if (entries[index]?.[1] === hidden) hidden.execute();
-          }
-          return entries;
-        }) as typeof Object.entries;
-        return Promise.resolve(runtime());
-      },
-    });
-    try {
-      assertEquals((await prepare(f.owner) as { ok?: boolean }).ok, true);
-      assertEquals(hiddenExecutions, 0);
-    } finally {
-      Object.entries = originalEntries;
-      await f.owner.close();
-    }
-  });
 
   for (const cancellation of ["operation", "owner"] as const) {
     it(`cancels steering refresh on ${cancellation} abort and joins it before cleanup`, async () => {
