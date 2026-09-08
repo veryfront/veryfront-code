@@ -184,7 +184,7 @@ export function createExecutorToolBroker(options: {
       if (mode === "execute") {
         yield executorToolJson({
           type: "result",
-          result: executorToolJson(result, limits.maxResultBytes),
+          result: executorToolJson(result === undefined ? null : result, limits.maxResultBytes),
         });
       } else {
         if (

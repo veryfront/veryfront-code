@@ -104,6 +104,27 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
+  it("completes void tools as null and preserves other falsy results without replay", async () => {
+    for (const result of [undefined, null, false, 0, ""]) {
+      let executions = 0;
+      const f = fixture({
+        executeTool: () => {
+          executions++;
+          return Promise.resolve(result);
+        },
+      });
+      const channels = pair(f.operations);
+      try {
+        const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+        assert(facade);
+        assertEquals(await facade.executeTool("lookup", {}), result === undefined ? null : result);
+        assertEquals(executions, 1);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
   it("clears omitted caller correlation for listing and execution without mutating broker context", async () => {
     const observed: ToolExecutionContext[] = [];
     const trusted: ToolExecutionContext = {
