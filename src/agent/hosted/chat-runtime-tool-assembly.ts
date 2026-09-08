@@ -119,7 +119,7 @@ function recordFromEntries<T>(entries: readonly (readonly [string, T])[]): Recor
   return result;
 }
 
-function ownDataValue(value: object, key: PropertyKey): unknown {
+function ownDataValue(value: HostToolSet[string], key: PropertyKey): unknown {
   try {
     return apply(objectGetOwnPropertyDescriptor, Object, [value, key])?.value;
   } catch {
