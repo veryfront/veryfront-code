@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { isDeepStrictEqual } from "node:util";
 import type {
   AgentContext,
@@ -744,7 +745,7 @@ function providerSystemMessages(system: AgentSystem): Message[] {
   const layers = typeof system === "string"
     ? [{ role: "system" as const, content: system }]
     : system;
-  return layers.map((layer, index) => ({
+  return mapPrivateArray(layers, (layer, index) => ({
     id: `provider-system-${index}`,
     role: "system",
     parts: [{ type: "text", text: layer.content }],
@@ -819,11 +820,11 @@ function copySanitizedTextPart(part: MessagePart, text: string): MessagePart {
 function sanitizeStructuredInput(validator: InputValidator, messages: Message[]): Message[] {
   let changed = false;
 
-  const sanitizedMessages = messages.map((message) => {
+  const sanitizedMessages = mapPrivateArray(messages, (message) => {
     if (!VALIDATED_INPUT_ROLES.has(message.role)) return message;
 
     let messageChanged = false;
-    let parts = message.parts.map((part) => {
+    let parts = mapPrivateArray(message.parts, (part) => {
       if (!isTextPart(part)) return part;
       const sanitized = sanitizeTextToFixpoint(validator, part.text);
       if (sanitized === part.text) return part;
@@ -922,7 +923,7 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
   }
 
   if (rewrites.size === 0) return messages;
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (message) => {
     const parts = rewrites.get(message);
     if (parts === undefined) return message;
     const rewritten = { ...message, parts };
@@ -1460,10 +1461,12 @@ export function securityMiddleware(
           .filter((message) => message.role === "system");
         // Separate occurrences even when a memory adapter returns the same
         // object twice. Current inputs are appended after historical messages.
-        const callerMessages = messages.map((message) =>
-          message.role === "system"
-            ? { id: message.id, role: message.role, parts: message.parts }
-            : message
+        const callerMessages = mapPrivateArray(
+          messages,
+          (message) =>
+            message.role === "system"
+              ? { id: message.id, role: message.role, parts: message.parts }
+              : message,
         );
         const currentSystemMessages = new Set<Message>();
         for (let index = messages.length - 1; index >= 0; index--) {
@@ -1626,7 +1629,7 @@ export function securityMiddleware(
       }
       const approvedMessages = typeof context.input === "string"
         ? undefined
-        : context.input.map((message) => ({ id: message.id, role: message.role }));
+        : mapPrivateArray(context.input, (message) => ({ id: message.id, role: message.role }));
 
       // A middleware later in the chain can still replace `context.input` or
       // mutate a message in place after this middleware approved it, and the

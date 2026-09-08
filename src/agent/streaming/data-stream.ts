@@ -1,3 +1,4 @@
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/encoder.ts";
@@ -50,7 +51,7 @@ export function parseDataStreamSseEvents(chunk: string): {
 export async function* streamDataStreamEvents(
   stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<AgUiRuntimeStreamEvent> {
-  const reader = stream.getReader();
+  const reader = getPrivateStreamReader(stream);
   const decoder = new TextDecoder();
   let remainder = "";
   let completed = false;

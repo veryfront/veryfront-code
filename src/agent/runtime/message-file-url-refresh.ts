@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   type ChatUiMessage,
   type FileUIPartWithUpload,
@@ -72,13 +73,13 @@ export async function resolveRuntimeMessageFileUrls(
   const urlByUploadId = new Map<string, Promise<string | undefined>>();
 
   return Promise.all(
-    messages.map(async (message) => {
+    mapPrivateArray(messages, async (message) => {
       if (!message.parts.some((part) => getUploadId(part))) {
         return message;
       }
 
       const parts = await Promise.all(
-        message.parts.map(async (part) => {
+        mapPrivateArray(message.parts, async (part) => {
           const uploadId = getUploadId(part);
           if (!uploadId) return part;
 
@@ -188,7 +189,7 @@ export async function inlineRuntimeMessageFileContents(
     }
   }
 
-  return messages.map((message, messageIndex) => {
+  return mapPrivateArray(messages, (message, messageIndex) => {
     if (!message.parts.some((part) => shouldInlineFileContent(part))) {
       return message;
     }

@@ -1,3 +1,4 @@
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { EXECUTOR_MAX_RETAINED_BYTES } from "../executor/protocol.ts";
 import {
@@ -21,7 +22,7 @@ export async function* readExecutorDataEvents(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
 ) {
-  const reader = stream.getReader();
+  const reader = getPrivateStreamReader(stream);
   const validator = new TextDecoder("utf-8", { fatal: true });
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let pending = new Uint8Array(4096);

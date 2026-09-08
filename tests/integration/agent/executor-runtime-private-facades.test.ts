@@ -86,6 +86,7 @@ describe("private executor facades", () => {
       "projectSteering",
     );
     const originalMapGet = Map.prototype.get;
+    const originalDelegates = Object.getOwnPropertyDescriptor(Object.prototype, "delegates");
     let hiddenExecutions = 0;
     let remoteExecutions = 0;
     let exposedFacadeValues = 0;
@@ -137,6 +138,15 @@ describe("private executor facades", () => {
       signal: new AbortController().signal,
       backend: {
         load: () => {
+          Object.defineProperty(Object.prototype, "delegates", {
+            configurable: true,
+            get() {
+              if (this.id === "veryfront-hosted-runtime" && this.tools?.visible?.execute) {
+                exposedFacadeValues++;
+              }
+              return undefined;
+            },
+          });
           Object.defineProperty(Object.prototype, "projectSteering", {
             configurable: true,
             get() {
@@ -272,6 +282,9 @@ describe("private executor facades", () => {
       Set.prototype.add = originalSetAdd;
       Array.prototype.reduce = originalReduce;
       Array.prototype[Symbol.iterator] = originalArrayIterator;
+      if (originalDelegates) {
+        Object.defineProperty(Object.prototype, "delegates", originalDelegates);
+      } else delete (Object.prototype as Record<string, unknown>).delegates;
       if (originalOwnerAgentId) {
         Object.defineProperty(Object.prototype, "ownerAgentId", originalOwnerAgentId);
       } else {

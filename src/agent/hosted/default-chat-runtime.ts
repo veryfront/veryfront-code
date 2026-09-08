@@ -66,6 +66,7 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 const apply = Reflect.apply;
 const TypeErrorConstructor = TypeError;
 const objectEntries = Object.entries;
+const objectSetPrototypeOf = Object.setPrototypeOf;
 
 function mapOwnRecord<TInput, TOutput>(
   input: Record<string, TInput>,
@@ -378,6 +379,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
       remoteToolSource: input.toolAssembly.remoteToolSources[0],
     }),
   };
+  objectSetPrototypeOf(runtimeConfig, null);
   return runtimeConfig;
 }
 
@@ -613,8 +615,13 @@ export function createPreparedHostedRuntimeAgent(
   input: PreparedHostedRuntimeAgentOptions,
   runtimeOptions: AgentRuntimeInternalOptions,
 ) {
-  return createEphemeralAgentWithRuntimeOptions(createRuntimeAgentConfig(input), {
+  const resolvedRuntimeOptions = {
     ...runtimeOptions,
     modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
-  });
+  };
+  objectSetPrototypeOf(resolvedRuntimeOptions, null);
+  return createEphemeralAgentWithRuntimeOptions(
+    createRuntimeAgentConfig(input),
+    resolvedRuntimeOptions,
+  );
 }

@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
@@ -68,7 +69,7 @@ export function normalizeInput(input: string | Message[]): Message[] {
     return [message];
   }
 
-  return input.map((msg, index) => {
+  return mapPrivateArray(input, (msg, index) => {
     if (typeof msg.id === "string" && msg.id.trim().length === 0) {
       throw INVALID_ARGUMENT.create({ detail: "Message id cannot be empty." });
     }

@@ -94,6 +94,31 @@ function settleAbortedRun(): Promise<void> {
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
+  it("copies turn messages without consulting an overridden array mapper", async () => {
+    let reads = 0;
+    const messages = [{
+      id: "synthetic-message",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Synthetic private input" }],
+    }];
+    Object.defineProperty(messages, "map", {
+      get() {
+        reads++;
+        return Array.prototype.map;
+      },
+    });
+    const model = scriptedModel([{ text: "Synthetic answer" }]);
+    const runtime = new AgentRuntime("private-messages", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic instructions",
+    }, {
+      resolveModelRuntime: () => model,
+    });
+    await Array.fromAsync(await runtime.stream(messages));
+    assertEquals(reads, 0);
+    assertEquals(model.calls.length, 1);
+  });
+
   it("reserves completion before producer work and joins failure finalization after cancellation", async () => {
     const entered = Promise.withResolvers<void>();
     const unblock = Promise.withResolvers<void>();

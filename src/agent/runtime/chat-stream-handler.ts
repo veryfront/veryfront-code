@@ -1,3 +1,4 @@
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 /**
  * Model Runtime Stream Handler
  *
@@ -107,7 +108,7 @@ export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
 function wrapRuntimeProviderReadableStream(
   stream: ReadableStream<unknown>,
 ): ReadableStream<unknown> {
-  const reader = stream.getReader();
+  const reader = getPrivateStreamReader(stream);
   let released = false;
   const releaseReader = () => {
     if (released) return;

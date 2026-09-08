@@ -1,3 +1,4 @@
+import { cancelPrivateStream, isPrivateStreamLocked } from "#veryfront/security/private-stream.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ExecutorChannel, ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -36,7 +37,7 @@ async function startExecutorRuntimeStream(
   // that lifetime; a noncooperative setup is fenced by the handler deadline.
   const stream = await start();
   if (signal.aborted) {
-    await stream.cancel().catch(() => {});
+    await cancelPrivateStream(stream).catch(() => {});
     throw new ExecutorAgentError("ABORTED");
   }
   return stream;
@@ -92,7 +93,9 @@ export function createExecutorAgentOperations(options: {
       } finally {
         // A return while suspended at ready can precede acquisition of the
         // SSE reader. Close that unconsumed source as well as the runtime.
-        if (stream && !stream.locked) await stream.cancel().catch(() => {});
+        if (stream && !isPrivateStreamLocked(stream)) {
+          await cancelPrivateStream(stream).catch(() => {});
+        }
         if (ownsRuntime) {
           try {
             await options.cleanup?.();

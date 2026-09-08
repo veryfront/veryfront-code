@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
@@ -325,12 +326,12 @@ function toJsonValue(value: unknown): JsonValue {
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => toJsonValue(item));
+    return mapPrivateArray(value, (item) => toJsonValue(item));
   }
 
   if (isRecord(value)) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, toJsonValue(entry)]),
+      mapPrivateArray(Object.entries(value), ([key, entry]) => [key, toJsonValue(entry)]),
     );
   }
 
@@ -453,7 +454,7 @@ export function createToolResultPart(part: {
 }
 
 function joinTextParts(textParts: readonly ProviderTextPart[]): string {
-  return textParts.map((part) => part.text).join("\n\n");
+  return mapPrivateArray(textParts, (part) => part.text).join("\n\n");
 }
 
 function collectAgentRuntimeProviderContentParts(
@@ -698,7 +699,7 @@ function createProviderMessagesFromAgentRuntimeMessage(
 export function convertProviderMessagesToAgentRuntimeMessages(
   messages: readonly ProviderModelMessage[],
 ): AgentRuntimeMessage[] {
-  return messages.map((message, index) => ({
+  return mapPrivateArray(messages, (message, index) => ({
     id: createAgentRuntimeMessageId(message, index),
     role: message.role,
     parts: convertContentToAgentRuntimeParts(message),

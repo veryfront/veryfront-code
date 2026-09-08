@@ -12,6 +12,7 @@
  */
 
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 
 import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import {
@@ -364,6 +365,7 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
@@ -1733,6 +1735,7 @@ export class AgentRuntime {
       : { status: "absent" };
     this.id = id;
     this.config = { ...config };
+    if (ObjectGetPrototypeOf(config) === null) ObjectSetPrototypeOf(this.config, null);
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -1768,7 +1771,7 @@ export class AgentRuntime {
   private async restoreInputReplayMetadata(inputMessages: Message[]): Promise<void> {
     const checkpoints = getRuntimeProviderReplayCheckpoints(this.config);
     if (!checkpoints?.length) return;
-    const history = (await this.memory.getMessages()).map(cloneMessageForCommit);
+    const history = mapPrivateArray(await this.memory.getMessages(), cloneMessageForCommit);
     applyProviderReplayCheckpointsToMessages([...history, ...inputMessages], checkpoints);
   }
 
@@ -1957,7 +1960,7 @@ export class AgentRuntime {
     rollback: () => Promise<void>;
     finalized: Promise<void>;
   }> {
-    const committedInputMessages = inputMessages.map((message) => {
+    const committedInputMessages = mapPrivateArray(inputMessages, (message) => {
       const cloned = cloneMessageForCommit(message);
       propagateSyntheticMessageMarks(message, cloned);
       return isRuntimeGeneratedUserMessage(message)
@@ -2006,7 +2009,7 @@ export class AgentRuntime {
       // provenance detached from every object the transaction receives, while
       // preserving replay metadata that determines provider message boundaries.
       if (validateTurnMessages || validateProjectedMessages) {
-        validated = validated.map((message) => {
+        validated = mapPrivateArray(validated, (message) => {
           const snapshot = cloneMessageForCommit(message);
           propagateSyntheticMessageMarks(message, snapshot);
           if (isRuntimeGeneratedUserMessage(message)) markRuntimeGeneratedUserMessage(snapshot);
@@ -2687,6 +2690,7 @@ export class AgentRuntime {
         ...this.config,
         __vfToolLoadingMode: hasToolReplacements ? "eager" : toolLoadingResolution.mode,
       };
+      if (ObjectGetPrototypeOf(this.config) === null) ObjectSetPrototypeOf(runConfig, null);
       const runtimeStepConfig: AgentConfig = hasToolReplacements
         ? {
           ...runConfig,
@@ -2697,6 +2701,7 @@ export class AgentRuntime {
           sandbox: undefined,
         }
         : runConfig;
+      if (ObjectGetPrototypeOf(this.config) === null) ObjectSetPrototypeOf(runtimeStepConfig, null);
       const runtimeStepToolLoading = resolveRuntimeToolLoading(runtimeStepConfig);
       const allowedRemoteToolNames = hasToolReplacements
         ? undefined
@@ -3362,6 +3367,7 @@ export class AgentRuntime {
       ...this.config,
       __vfToolLoadingMode: toolLoadingResolution.mode,
     };
+    if (ObjectGetPrototypeOf(this.config) === null) ObjectSetPrototypeOf(runtimeStepConfig, null);
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);

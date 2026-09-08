@@ -12,6 +12,29 @@ function requireStreamController(
 }
 
 describe("createToolExecutionDataEventBridgeStream", () => {
+  it("does not expose its source through an overridden reader factory", async () => {
+    let reads = 0;
+    const baseStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("Synthetic private output"));
+        controller.close();
+      },
+    });
+    Object.defineProperty(baseStream, "getReader", {
+      get() {
+        reads++;
+        return ReadableStream.prototype.getReader;
+      },
+    });
+    const stream = createToolExecutionDataEventBridgeStream({
+      baseStream,
+      installPublisher: () => {},
+    });
+    const chunks = await Array.fromAsync(stream);
+    assertEquals(reads, 0);
+    assertEquals(new TextDecoder().decode(chunks[0]), "Synthetic private output");
+  });
+
   it("emits published tool data events before forwarding upstream data stream chunks", async () => {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();

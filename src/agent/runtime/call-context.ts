@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 /**
  * Agent Call Context
  *
@@ -450,7 +451,7 @@ function removeStructuredCacheControls(
   messages: readonly ChatSystemMessage[],
   anthropicProviderAlias: string,
 ): ChatSystemMessage[] {
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (message) => {
     const providerOptions = snapshotOwnEnumerableDataRecord(
       message.providerOptions,
       "Structured system message providerOptions",
@@ -520,7 +521,7 @@ function applyStructuredCacheTtl(
   }
 
   const breakpointIndex = messages.length - 1;
-  const cacheMetadata = messages.map((message) => {
+  const cacheMetadata = mapPrivateArray(messages, (message) => {
     const providerOptions = snapshotOwnEnumerableDataRecord(
       message.providerOptions,
       "Structured system message providerOptions",
@@ -555,7 +556,7 @@ function applyStructuredCacheTtl(
     breakpointIndexes.slice(-ANTHROPIC_MAX_CACHE_BREAKPOINTS),
   );
 
-  return messages.map((message, index) => {
+  return mapPrivateArray(messages, (message, index) => {
     const { providerOptions, cacheProviderBuckets, undefinedCacheProviderBuckets } =
       cacheMetadata[index]!;
     const shouldAddCanonicalBreakpoint = addCanonicalBreakpoint && index === breakpointIndex;
