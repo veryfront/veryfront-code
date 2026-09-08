@@ -8,6 +8,7 @@ import type {
 } from "../hosted/managed-executor-broker.ts";
 import { createManagedBrokerHandler } from "./managed-broker-handler.ts";
 import { ExecutorAgentError } from "../hosted/executor-agent-schema.ts";
+import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
 
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
@@ -54,7 +55,7 @@ async function request(signal?: AbortSignal) {
 
 function runtimeFixture(
   streamFailure = false,
-  terminalChunk?: "error" | "finish-error",
+  terminalChunk?: "error" | "coded-error" | "finish-error",
   finishWithUsage?: true,
 ) {
   const release = Promise.withResolvers<void>();
@@ -89,6 +90,14 @@ function runtimeFixture(
               if (streamFailure) throw new Error("synthetic stream failure");
               if (terminalChunk === "error") {
                 yield { type: "error", errorText: "ordinary stream error" } as const;
+                return;
+              }
+              if (terminalChunk === "coded-error") {
+                yield {
+                  type: "error",
+                  errorText: "INSUFFICIENT_CREDITS",
+                  code: "INSUFFICIENT_CREDITS",
+                } as const;
                 return;
               }
               if (terminalChunk === "finish-error") {
@@ -140,7 +149,7 @@ async function handler(
     waitForAuthorization?: boolean;
     throwingObserver?: boolean;
     streamFailure?: boolean;
-    terminalChunk?: "error" | "finish-error";
+    terminalChunk?: "error" | "coded-error" | "finish-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
     waitForOutput?: boolean;
@@ -351,6 +360,19 @@ describe("managed broker handler", () => {
       assertEquals(f.outputChunks, [terminalChunk === "error" ? "error" : "finish"]);
       assertEquals(f.fixture.closeReasons, ["canceled"], terminalChunk);
     }
+  });
+
+  it("preserves a validated executor error chunk through durable terminal classification", async () => {
+    const f = await handler("detached", { terminalChunk: "coded-error" });
+    assertEquals((await f.managed.handle(f.first.request)).status, 202);
+    f.fixture.release();
+    await f.managed.close();
+
+    assertEquals(resolveConversationHostedStreamErrorState(f.outputFinishErrors[0]), {
+      status: "failed",
+      terminalErrorCode: "INSUFFICIENT_CREDITS",
+      terminalErrorMessage: "Insufficient AI credits",
+    });
   });
 
   it("finalizes an aborted detached execution as cancelled instead of failed", async () => {

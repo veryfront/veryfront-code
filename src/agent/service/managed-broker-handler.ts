@@ -1,6 +1,9 @@
 import type { HostedChatRuntimeStreamInput } from "../hosted/chat-runtime-contract.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
-import { ExecutorAgentError } from "../hosted/executor-agent-schema.ts";
+import {
+  ExecutorAgentError,
+  getExecutorAgentFailureCodeSchema,
+} from "../hosted/executor-agent-schema.ts";
 import { ExecutorRuntimePreparationError } from "../hosted/executor-runtime-prepare-schema.ts";
 import { ExecutorDiscoveryError } from "../hosted/executor-discovery-schema.ts";
 import { HostedServiceAuthError } from "./auth.ts";
@@ -363,7 +366,10 @@ async function runDetached(
         ) {
           await output.write(chunk);
           if (chunk.type === "error" && failure === undefined) {
-            failure = new Error(chunk.errorText || "Agent stream failed");
+            const code = getExecutorAgentFailureCodeSchema().safeParse(chunk.code);
+            failure = code.success
+              ? new ExecutorAgentError(code.data)
+              : new Error(chunk.errorText || "Agent stream failed");
           } else if (
             chunk.type === "finish" && chunk.finishReason === "error" && failure === undefined
           ) {
