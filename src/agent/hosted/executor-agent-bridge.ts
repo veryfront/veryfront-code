@@ -1,4 +1,8 @@
-import { cancelPrivateStream, isPrivateStreamLocked } from "#veryfront/security/private-stream.ts";
+import {
+  cancelPrivateStream,
+  createPrivateReadableStream,
+  isPrivateStreamLocked,
+} from "#veryfront/security/private-stream.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ExecutorChannel, ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -172,7 +176,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
           if (consumed) throw new ExecutorAgentError("EXECUTOR_AGENT_ALREADY_STARTED");
           consumed = true;
           let terminal = false;
-          const stream = new ReadableStream<Uint8Array>({
+          const stream = createPrivateReadableStream<Uint8Array>({
             async pull(controller) {
               try {
                 const next = await iterator.next();

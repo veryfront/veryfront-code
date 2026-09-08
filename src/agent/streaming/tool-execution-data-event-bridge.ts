@@ -1,10 +1,10 @@
 import {
   closePrivateStream,
+  createPrivateReadableStream,
   enqueuePrivateStream,
   errorPrivateStream,
-  PrivateReadableStream,
+  getPrivateStreamReader,
 } from "#veryfront/security/private-stream.ts";
-import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
@@ -54,7 +54,7 @@ export function createToolExecutionDataEventBridgeStream(
   let baseReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let closed = false;
 
-  return new PrivateReadableStream<Uint8Array>({
+  return createPrivateReadableStream<Uint8Array>({
     start(controller) {
       input.installPublisher((event) => {
         if (closed) {

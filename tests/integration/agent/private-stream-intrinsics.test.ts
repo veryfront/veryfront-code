@@ -6,6 +6,57 @@ import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 
 describe("private stream intrinsics", () => {
+  it("forwards private chunks without invoking replaced constructors or controller methods", async () => {
+    const NativeReadableStream = ReadableStream;
+    const originalEnqueue = ReadableStreamDefaultController.prototype.enqueue;
+    const originalPull = Object.getOwnPropertyDescriptor(Object.prototype, "pull");
+    const apply = Reflect.apply;
+    const construct = Reflect.construct;
+    const defineProperty = Object.defineProperty;
+    const ownDescriptor = Object.getOwnPropertyDescriptor;
+    const chunk = new TextEncoder().encode("Synthetic private forwarding chunk");
+    const source = new NativeReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    let exposures = 0;
+    let chunks: Uint8Array[] = [];
+    try {
+      globalThis.ReadableStream = new Proxy(NativeReadableStream, {
+        construct(target, args, newTarget) {
+          exposures++;
+          return construct(target, args, newTarget);
+        },
+      });
+      ReadableStreamDefaultController.prototype.enqueue = function (value) {
+        if (value === chunk) exposures++;
+        return apply(originalEnqueue, this, [value]);
+      };
+      defineProperty(Object.prototype, "pull", {
+        configurable: true,
+        get() {
+          if (typeof ownDescriptor(this, "start")?.value === "function") exposures++;
+          return undefined;
+        },
+      });
+      chunks = await Array.fromAsync(
+        createToolExecutionDataEventBridgeStream({
+          baseStream: source,
+          installPublisher: () => {},
+        }),
+      );
+    } finally {
+      globalThis.ReadableStream = NativeReadableStream;
+      ReadableStreamDefaultController.prototype.enqueue = originalEnqueue;
+      if (originalPull) defineProperty(Object.prototype, "pull", originalPull);
+      else delete (Object.prototype as Record<string, unknown>).pull;
+    }
+    assertEquals(chunks, [chunk]);
+    assertEquals(exposures, 0);
+  });
+
   it("keeps raw turn messages out of a replaced array mapper", async () => {
     const marker = "synthetic-private-turn-marker";
     const originalMap = Array.prototype.map;

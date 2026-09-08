@@ -1,8 +1,22 @@
-import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
+import {
+  chainPrivatePromise,
+  observePrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 
 const apply = Reflect.apply;
 const setPrototypeOf = Object.setPrototypeOf;
 const freeze = Object.freeze;
+const ownDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
+const NativeReadableStream = ReadableStream;
+const controllerEnqueue = ReadableStreamDefaultController.prototype.enqueue;
+const controllerClose = ReadableStreamDefaultController.prototype.close;
+const controllerError = ReadableStreamDefaultController.prototype.error;
+const controllerDesiredSize = ownDescriptor(
+  ReadableStreamDefaultController.prototype,
+  "desiredSize",
+)!.get!;
 const streamGetReader = ReadableStream.prototype.getReader;
 const streamCancel = ReadableStream.prototype.cancel;
 const streamLocked = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "locked")!.get!;
@@ -13,6 +27,76 @@ const readerClosed = Object.getOwnPropertyDescriptor(
   ReadableStreamDefaultReader.prototype,
   "closed",
 )!.get!;
+
+function ownData<T extends object, K extends keyof T>(value: T, key: K): T[K] | undefined {
+  const descriptor = ownDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!hasOwn(descriptor, "value")) {
+    throw new TypeError("Private stream options require data properties");
+  }
+  return descriptor.value as T[K];
+}
+
+function privateController<T>(
+  controller: ReadableStreamDefaultController<T>,
+): ReadableStreamDefaultController<T> {
+  const facade: ReadableStreamDefaultController<T> = {
+    enqueue: (chunk?: T) => {
+      apply(controllerEnqueue, controller, [chunk]);
+    },
+    close: () => {
+      apply(controllerClose, controller, []);
+    },
+    error: (reason?: unknown) => {
+      apply(controllerError, controller, [reason]);
+    },
+    get desiredSize() {
+      return apply(controllerDesiredSize, controller, []) as number | null;
+    },
+  };
+  setPrototypeOf(facade, null);
+  return freeze(facade);
+}
+
+/** Construct a default stream without exposing its source or controller through global hooks. */
+export function createPrivateReadableStream<T>(
+  source: UnderlyingDefaultSource<T>,
+  strategy?: QueuingStrategy<T>,
+): ReadableStream<T> {
+  const start = ownData(source, "start");
+  const pull = ownData(source, "pull");
+  const cancel = ownData(source, "cancel");
+  let controller: ReadableStreamDefaultController<T>;
+  const invoke = (callback: unknown, args: unknown[]) => {
+    if (callback === undefined) return undefined;
+    if (typeof callback !== "function") {
+      throw new TypeError("Private stream callback must be a function");
+    }
+    const result = apply(callback, source, args);
+    return result === undefined
+      ? undefined
+      : chainPrivatePromise(resolvePrivatePromise(), () => result);
+  };
+  const privateSource = {
+    __proto__: null,
+    start(nativeController: ReadableStreamDefaultController<T>) {
+      controller = privateController(nativeController);
+      return invoke(start, [controller]);
+    },
+    pull() {
+      return invoke(pull, [controller]);
+    },
+    cancel(reason: unknown) {
+      return invoke(cancel, [reason]);
+    },
+  };
+  const privateStrategy = {
+    __proto__: null,
+    highWaterMark: strategy === undefined ? undefined : ownData(strategy, "highWaterMark"),
+    size: strategy === undefined ? undefined : ownData(strategy, "size"),
+  };
+  return new NativeReadableStream<T>(privateSource, privateStrategy);
+}
 
 /** Keep private stream consumption independent of replaced Web Streams methods. */
 export function getPrivateStreamReader<T>(
@@ -46,13 +130,7 @@ export function isPrivateStreamLocked(stream: ReadableStream<unknown>): boolean 
   return apply(streamLocked, stream, []) as boolean;
 }
 
-const enqueue = ReadableStreamDefaultController.prototype.enqueue;
-const close = ReadableStreamDefaultController.prototype.close;
-const error = ReadableStreamDefaultController.prototype.error;
-const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const hasOwn = Object.hasOwn;
-
-export const PrivateReadableStream = ReadableStream;
+export const PrivateReadableStream = NativeReadableStream;
 
 type ControllerOperation = (...args: never[]) => unknown;
 
@@ -62,20 +140,20 @@ function controllerMethod(
   native: ControllerOperation,
 ): ControllerOperation {
   // Internal forwarding controllers provide own methods; native controllers inherit theirs.
-  const descriptor = getOwnPropertyDescriptor(controller, key);
+  const descriptor = ownDescriptor(controller, key);
   return descriptor && hasOwn(descriptor, "value") && typeof descriptor.value === "function"
     ? descriptor.value
     : native;
 }
 
 export function enqueuePrivateStream<T>(controller: ReadableStreamDefaultController<T>, value: T) {
-  apply(controllerMethod(controller, "enqueue", enqueue), controller, [value]);
+  apply(controllerMethod(controller, "enqueue", controllerEnqueue), controller, [value]);
 }
 
 export function closePrivateStream(controller: ReadableStreamDefaultController) {
-  apply(controllerMethod(controller, "close", close), controller, []);
+  apply(controllerMethod(controller, "close", controllerClose), controller, []);
 }
 
 export function errorPrivateStream(controller: ReadableStreamDefaultController, reason: unknown) {
-  apply(controllerMethod(controller, "error", error), controller, [reason]);
+  apply(controllerMethod(controller, "error", controllerError), controller, [reason]);
 }

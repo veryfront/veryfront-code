@@ -1,4 +1,3 @@
-import { enqueuePrivateStream } from "#veryfront/security/private-stream.ts";
 /**
  * Agent Runtime - Core execution engine
  *
@@ -14,6 +13,10 @@ import { enqueuePrivateStream } from "#veryfront/security/private-stream.ts";
 
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  createPrivateReadableStream,
+  enqueuePrivateStream,
+} from "#veryfront/security/private-stream.ts";
 
 import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import {
@@ -359,7 +362,6 @@ const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicStructuredClone = globalThis.structuredClone;
-const IntrinsicReadableStream = ReadableStream;
 const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
@@ -2476,7 +2478,7 @@ export class AgentRuntime {
 
       const completion = createPrivateDeferred<void>();
       this.#onStreamCompletion?.(completion.promise);
-      const runtimeStream = new IntrinsicReadableStream<Uint8Array>({
+      const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
           try {
             throwIfAborted(streamAbortSignal);
