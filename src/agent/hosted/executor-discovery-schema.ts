@@ -1,9 +1,48 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import { executorAgentJson } from "./executor-agent-schema.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
+
+const objectCreate = Object.create;
+const objectKeys = Object.keys;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const arrayIsArray = Array.isArray;
+
+function snapshotDiscoveryRecords(
+  value: unknown,
+  budget = { remaining: 100_000 },
+  depth = 0,
+): unknown {
+  if (--budget.remaining < 0 || depth > 64) throw new Error("Invalid discovery data");
+  if (value === null || typeof value !== "object") return value;
+  const array = arrayIsArray(value);
+  if (array && value.length > 100_000) throw new Error("Invalid discovery data");
+  const result = array ? [] : objectCreate(null);
+  const keys = objectKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    if (!descriptor || !objectHasOwn(descriptor, "value")) {
+      throw new Error("Invalid discovery accessor");
+    }
+    defineOwnDataProperty(
+      result,
+      key,
+      snapshotDiscoveryRecords(descriptor.value, budget, depth + 1),
+      {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      },
+    );
+  }
+  if (array) result.length = value.length;
+  return result;
+}
 
 export const EXECUTOR_DISCOVERY_MAX_AGENTS = 256;
 export const EXECUTOR_DISCOVERY_MAX_DEFINITION_BYTES = 64 * 1024;
@@ -165,13 +204,15 @@ export const getExecutorAgentDescribeResultSchema = defineSchema((v) =>
 );
 
 export function parseDiscoveryData<T>(schema: Schema<T>, value: unknown, output = false): T {
-  const result = schema.safeParse(value);
-  if (!result.success) {
-    throw new ExecutorDiscoveryError(
-      output ? "EXECUTOR_DISCOVERY_INVALID_OUTPUT" : "EXECUTOR_DISCOVERY_INVALID_INPUT",
-    );
+  try {
+    const result = schema.safeParse(snapshotDiscoveryRecords(value));
+    if (result.success) return snapshotDiscoveryRecords(result.data) as T;
+  } catch {
+    // Snapshot and validation failures share the fixed boundary diagnostic.
   }
-  return result.data;
+  throw new ExecutorDiscoveryError(
+    output ? "EXECUTOR_DISCOVERY_INVALID_OUTPUT" : "EXECUTOR_DISCOVERY_INVALID_INPUT",
+  );
 }
 
 export function discoverySuccess(value: unknown): JsonValue {

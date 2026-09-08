@@ -8,6 +8,8 @@ import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 
+const objectSetPrototypeOf = Object.setPrototypeOf;
+
 /** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
   v.object({
@@ -246,7 +248,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     ? parseMcpServers(attrs.mcpServers)
     : undefined;
 
-  return getRuntimeAgentMarkdownDefinitionSchema().parse({
+  const definition = {
     id: parsedInput.id,
     name,
     description,
@@ -262,7 +264,9 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(deniedTools === undefined ? {} : { deniedTools }),
     ...(delegates === undefined ? {} : { delegates }),
     ...(mcpServers === undefined ? {} : { mcpServers }),
-  });
+  };
+  objectSetPrototypeOf(definition, null);
+  return getRuntimeAgentMarkdownDefinitionSchema().parse(definition);
 }
 
 /**

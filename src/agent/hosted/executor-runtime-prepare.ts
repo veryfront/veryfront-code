@@ -32,6 +32,7 @@ import {
   type ExecutorDiscoverySource,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoverySourceSchema,
+  parseDiscoveryData,
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
@@ -389,11 +390,13 @@ export function createExecutorRuntimePreparation(input: Options) {
       }
       const operation = privateMapGet(input.discovery.operations, "agent.describe");
       if (operation?.mode !== "unary") refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
-      const described = getExecutorAgentDescribeResultSchema().parse(
+      const described = parseDiscoveryData(
+        getExecutorAgentDescribeResultSchema(),
         await chain(
           resolvePrivatePromise(),
           () => operation.handle({ agentId: request.agentId }, context),
         ),
+        true,
       );
       if (
         !described.ok || described.value.definition.id !== grant.agentId ||
@@ -525,6 +528,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           ? { parentRunId: execution.runId, parentMessageId: execution.messageId }
           : {}),
       };
+      objectSetPrototypeOf(taskContext, null);
       const options: PreparedHostedRuntimeAgentOptions["options"] = {
         ...execution,
         agentId: definition.id,

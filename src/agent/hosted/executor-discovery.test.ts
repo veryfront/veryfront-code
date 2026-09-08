@@ -11,8 +11,10 @@ import { createExecutorDiscovery, type ExecutorDiscoveryBackend } from "./execut
 import {
   EXECUTOR_DISCOVERY_MAX_AGENTS,
   ExecutorDiscoveryError,
+  getExecutorAgentDefinitionSchema,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoveryResultSchema,
+  parseDiscoveryData,
 } from "./executor-discovery-schema.ts";
 
 const binding = { allocationId: "allocation", invocationId: "invocation", generation: 1 };
@@ -96,6 +98,24 @@ async function call(
 }
 
 describe("executor discovery operations", () => {
+  it("validates only own definition fields without reading inherited selectors", () => {
+    let reads = 0;
+    const definition = Object.create({
+      get tools() {
+        reads++;
+        return true;
+      },
+    }, {
+      id: { value: "coder", enumerable: true },
+      name: { value: "Coder", enumerable: true },
+      description: { value: "Synthetic", enumerable: true },
+      instructions: { value: "Synthetic instructions", enumerable: true },
+    });
+    const parsed = parseDiscoveryData(getExecutorAgentDefinitionSchema(), definition, true);
+    assertEquals(reads, 0);
+    assertEquals(parsed.tools, undefined);
+  });
+
   it("is lazy, exposes only metadata operations, and retains the runtime locally", async () => {
     const f = fixture();
     try {
