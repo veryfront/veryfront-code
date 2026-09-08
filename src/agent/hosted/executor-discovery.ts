@@ -32,6 +32,11 @@ import {
 } from "./executor-discovery-schema.ts";
 
 const apply = Reflect.apply;
+const MapConstructor = Map;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const abortController = AbortController.prototype.abort;
 const addEventListener = EventTarget.prototype.addEventListener;
 const removeEventListener = EventTarget.prototype.removeEventListener;
@@ -103,7 +108,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   let closing: Promise<void> | undefined;
   let cleanupStarted = false;
   const runtimeTasks = createPrivateSet<Promise<void>>();
-  const definitions = new Map<string, RuntimeAgentMarkdownDefinition>();
+  const definitions = new MapConstructor<string, RuntimeAgentMarkdownDefinition>();
   const helpers = () => import("#veryfront/agent/project/agent-runtime.ts");
 
   function assertActive() {
@@ -125,7 +130,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
         throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLEANUP_FAILED");
       } finally {
         runtime = undefined;
-        definitions.clear();
+        apply(mapClear, definitions, []);
       }
     });
     void chain(closing, settled.resolve, settled.reject);
@@ -170,13 +175,17 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   }
 
   async function describeAgent(discovery: ProjectAgentRuntimeDiscovery, agentId: string) {
-    const cached = definitions.get(agentId);
+    const cached = apply(mapGet, definitions, [agentId]) as
+      | RuntimeAgentMarkdownDefinition
+      | undefined;
     if (cached) return cached;
-    if (definitions.size >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
+    if ((apply(mapSize, definitions, []) as number) >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_BUSY");
     }
     const module = await observePrivatePromise(helpers());
-    const found = discovery.agents.get(agentId);
+    const found = apply(mapGet, discovery.agents, [agentId]) as ReturnType<
+      ProjectAgentRuntimeDiscovery["agents"]["get"]
+    >;
     let definition: RuntimeAgentMarkdownDefinition;
     if (found && module.doesProjectAgentRuntimeAgentMatchSource(found, agentSource)) {
       const projected = await observePrivatePromise(module.runWithProjectAgentRuntime(
@@ -220,7 +229,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     if (parsed.id !== agentId) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
     }
-    definitions.set(agentId, parsed);
+    apply(mapSet, definitions, [agentId, parsed]);
     return parsed;
   }
 
@@ -275,7 +284,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     }
   }
 
-  const operations = new Map<string, ExecutorOperation>([
+  const operations = new MapConstructor<string, ExecutorOperation>([
     ["discovery.describe", {
       mode: "unary",
       handle(value, context) {
