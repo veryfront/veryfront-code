@@ -1,4 +1,5 @@
 import { isAbsolute, join, relative, sep } from "node:path";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type {
   ProjectAgentRuntimeAgentSource,
@@ -91,7 +92,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   let runtime: ProjectAgentRuntimeDiscovery | undefined;
   let closing: Promise<void> | undefined;
   let cleanupStarted = false;
-  const runtimeTasks = new Set<Promise<void>>();
+  const runtimeTasks = createPrivateSet<Promise<void>>();
   const definitions = new Map<string, RuntimeAgentMarkdownDefinition>();
   const helpers = () => import("#veryfront/agent/project/agent-runtime.ts");
 

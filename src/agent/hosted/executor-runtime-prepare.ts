@@ -75,12 +75,20 @@ const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
 const arrayFilter = Array.prototype.filter;
 const arrayIncludes = Array.prototype.includes;
+const arrayMap = Array.prototype.map;
+const arrayReduce = Array.prototype.reduce;
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
   return apply(arrayFilter, values, [predicate]) as T[];
 }
 function includes<T>(values: readonly T[], value: T): boolean {
   return apply(arrayIncludes, values, [value]) as boolean;
+}
+function map<T, U>(values: readonly T[], callback: (value: T) => U): U[] {
+  return apply(arrayMap, values, [callback]) as U[];
+}
+function reduce<T, U>(values: readonly T[], callback: (result: U, value: T) => U, initial: U): U {
+  return apply(arrayReduce, values, [callback, initial]) as U;
 }
 
 function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
@@ -180,6 +188,7 @@ function intersectNames(
  */
 export function createExecutorRuntimePreparation(input: Options) {
   const grant = snapshotGrant(input.grant);
+  const modelGrants = new Map(grant?.models.map((model) => [model.id, model]) ?? []);
   const binding = parseRuntimePreparationData(getExecutorBindingSchema(), input.binding);
   const source = parseRuntimePreparationData(getExecutorDiscoverySourceSchema(), input.source);
   const facades: ExecutorRuntimeFacades = {
@@ -306,7 +315,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
       const definition = described.value.definition;
       const modelId = request.modelId ?? grant.defaultModelId;
-      const modelGrant = grant.models.find((model) => model.id === modelId);
+      const modelGrant = privateMapGet(modelGrants, modelId);
       if (
         !modelGrant || (request.maxSteps !== undefined && request.maxSteps > grant.maxSteps) ||
         (request.maxOutputTokens !== undefined &&
@@ -371,7 +380,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       );
       const resolveModelRuntime: AgentModelRuntimeResolver = (id) => {
         assertActive();
-        if (!grant.models.some((entry) => entry.id === id)) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        if (!privateMapHas(modelGrants, id)) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
         return facades.resolveModelRuntime(id) ?? refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       };
       registerModelRuntimeResolverRevoker(
@@ -504,13 +513,12 @@ export function createExecutorRuntimePreparation(input: Options) {
             taskContext,
             error,
           }),
-        remoteToolSources: grant.remoteToolSourceIds.map((id) =>
-          filter(definition.mcpServers ?? [], (server) => (server.id ?? server.kind) === id)
-            .reduce(
-              (source, server) => wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy),
-              privateMapGet(facades.remoteToolSources, id)!,
-            )
-        ),
+        remoteToolSources: map(grant.remoteToolSourceIds, (id) =>
+          reduce(
+            filter(definition.mcpServers ?? [], (server) => (server.id ?? server.kind) === id),
+            (source, server) => wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy),
+            privateMapGet(facades.remoteToolSources, id)!,
+          )),
         onSteeringMutation: (mutation) => {
           if (mutation.instructionsChanged || mutation.skillsChanged) {
             incrementSteeringRevision(taskContext);
