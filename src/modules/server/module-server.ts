@@ -8,7 +8,8 @@ import { serverLogger, VERSION } from "#veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
-import { getErrorMessage } from "#veryfront/errors";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE, getErrorMessage } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import {
   markRequestProfilePhase,
@@ -1260,6 +1261,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
+        if (snapshotVeryfrontError(error)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+          return moduleServiceUnavailable(method, "Dependency snapshot storage is unavailable");
+        }
         if (error instanceof BrowserModuleDependencySnapshotError) {
           return unknownDependencySnapshot(method);
         }

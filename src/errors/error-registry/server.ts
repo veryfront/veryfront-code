@@ -25,6 +25,14 @@ export const CACHE_ERROR = defineError({
   suggestion: "Clear the cache and try again",
 });
 
+export const DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE = defineError({
+  slug: "dependency-snapshot-store-unavailable",
+  category: "SERVER",
+  status: 503,
+  title: "Dependency snapshot storage is unavailable",
+  suggestion: "Check shared snapshot storage availability and authorization, then retry",
+});
+
 export const FILE_WATCH_ERROR = defineError({
   slug: "file-watch-error",
   category: "SERVER",
@@ -166,6 +174,7 @@ export const SERVER_REGISTRY = {
   "port-in-use": PORT_IN_USE,
   "server-start-error": SERVER_START_ERROR,
   "cache-error": CACHE_ERROR,
+  "dependency-snapshot-store-unavailable": DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE,
   "file-watch-error": FILE_WATCH_ERROR,
   "request-error": REQUEST_ERROR,
   "service-overloaded": SERVICE_OVERLOADED,

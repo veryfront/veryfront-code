@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -108,6 +109,32 @@ function restoreEnv(name: string, value: string | undefined): void {
 }
 
 describe("server/handlers/request/module/data-endpoint-handler", () => {
+  it("preserves an unavailable history read as uncached 503", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const ctx = makeCtx("/project");
+      ctx.isLocalProject = false;
+      ctx.adapter = {
+        ...ctx.adapter,
+        dependencySnapshotStore: createDependencySnapshotStoreHandle({
+          publish: () => Promise.reject(new Error("unavailable")),
+          read: () => Promise.reject(new Error("unavailable")),
+        }),
+      };
+      const response = await callDataEndpoint(
+        new Request("http://localhost/_veryfront/data/docs.json", {
+          headers: { [DEPENDENCY_PINNING_HEADER]: "on:54uvgwr2ih7p" },
+        }),
+        ctx,
+      );
+      assertEquals(response.status, 503);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      await response.body?.cancel();
+    } finally {
+      restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+    }
+  });
   afterEach(async () => {
     clearReactVersionCache();
     await destroyRendererAdapter();

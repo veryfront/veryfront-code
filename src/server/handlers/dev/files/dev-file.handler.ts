@@ -22,6 +22,7 @@ import {
   readSnapshotQuery,
   resolveSnapshotForRequest,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import {
   createLocalControlAccessDeniedResponse,
@@ -127,6 +128,13 @@ export class DevFileHandler extends BaseHandler {
 
       return this.respond(response);
     } catch (error) {
+      const storageFailure = snapshotStoreFailureResponse(
+        error,
+        this.createResponseBuilder(ctx),
+        req,
+        ctx.securityConfig,
+      );
+      if (storageFailure) return this.respond(storageFailure);
       const reason = this.getErrorMessage(error);
       this.logDebug("dev fs request failed", { path: absPath, reason }, ctx);
       return this.respond(
