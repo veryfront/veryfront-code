@@ -27,6 +27,28 @@ const readerClosed = Object.getOwnPropertyDescriptor(
   ReadableStreamDefaultReader.prototype,
   "closed",
 )!.get!;
+const streamGetWriter = WritableStream.prototype.getWriter;
+const writerWrite = WritableStreamDefaultWriter.prototype.write;
+const writerAbort = WritableStreamDefaultWriter.prototype.abort;
+const writerReleaseLock = WritableStreamDefaultWriter.prototype.releaseLock;
+
+/** Keep private transport writes and cleanup independent of replaced stream methods. */
+export function getPrivateStreamWriter<T>(
+  stream: WritableStream<T>,
+): Pick<WritableStreamDefaultWriter<T>, "write" | "abort" | "releaseLock"> {
+  const writer = apply(streamGetWriter, stream, []) as WritableStreamDefaultWriter<T>;
+  const facade = {
+    __proto__: null,
+    write: (chunk?: T) =>
+      observePrivatePromise(apply(writerWrite, writer, [chunk]) as Promise<void>),
+    abort: (reason?: unknown) =>
+      observePrivatePromise(apply(writerAbort, writer, [reason]) as Promise<void>),
+    releaseLock: () => {
+      apply(writerReleaseLock, writer, []);
+    },
+  };
+  return freeze(facade);
+}
 
 function ownData<T extends object, K extends keyof T>(value: T, key: K): T[K] | undefined {
   const descriptor = ownDescriptor(value, key);

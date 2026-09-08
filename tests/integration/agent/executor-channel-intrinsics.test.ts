@@ -9,7 +9,17 @@ import {
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 
 describe("private executor channel dispatch", () => {
-  for (const hook of ["operation lookup", "text codecs", "byte copies", "transport reads"]) {
+  for (
+    const hook of [
+      "operation lookup",
+      "text codecs",
+      "byte copies",
+      "transport reads",
+      "transport writes",
+      "queued payloads",
+      "call tracking",
+    ]
+  ) {
     it(`keeps request payloads out of replaced ${hook}`, async () => {
       const binding = { allocationId: "channel", invocationId: "channel", generation: 1 };
       const marker = "synthetic-private-channel-message";
@@ -32,6 +42,9 @@ describe("private executor channel dispatch", () => {
       });
       const originalSet = Uint8Array.prototype.set;
       const originalRead = ReadableStreamDefaultReader.prototype.read;
+      const originalWrite = WritableStreamDefaultWriter.prototype.write;
+      const originalPush = Array.prototype.push;
+      const originalAdd = Set.prototype.add;
       const decoder = new TextDecoder();
       const originalGet = Map.prototype.get;
       const originalEncode = TextEncoder.prototype.encode;
@@ -62,6 +75,24 @@ describe("private executor channel dispatch", () => {
             ) observations++;
             return Reflect.apply(originalSet, this, [source, offset]);
           };
+        } else if (hook === "transport writes") {
+          WritableStreamDefaultWriter.prototype.write = function (chunk) {
+            if (
+              chunk instanceof Uint8Array &&
+              Reflect.apply(originalDecode, decoder, [chunk]).includes(marker)
+            ) observations++;
+            return Reflect.apply(originalWrite, this, [chunk]);
+          };
+        } else if (hook === "queued payloads") {
+          Array.prototype.push = function (...items) {
+            for (const item of items) if (item?.value?.text === marker) observations++;
+            return Reflect.apply(originalPush, this, items);
+          };
+        } else if (hook === "call tracking") {
+          Set.prototype.add = function (value) {
+            if (value?.pendingRequest?.value?.text === marker) observations++;
+            return Reflect.apply(originalAdd, this, [value]);
+          };
         } else if (hook === "transport reads") {
           ReadableStreamDefaultReader.prototype.read = async function () {
             const result = await Reflect.apply(originalRead, this, []);
@@ -85,6 +116,9 @@ describe("private executor channel dispatch", () => {
         received = await Array.fromAsync(caller.stream("agent.stream", { text: marker }));
         received.push(...await Array.fromAsync(caller.stream("agent.stream", { text: marker })));
       } finally {
+        WritableStreamDefaultWriter.prototype.write = originalWrite;
+        Array.prototype.push = originalPush;
+        Set.prototype.add = originalAdd;
         Uint8Array.prototype.set = originalSet;
         ReadableStreamDefaultReader.prototype.read = originalRead;
         Map.prototype.get = originalGet;
