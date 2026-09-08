@@ -2,11 +2,67 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent } from "#veryfront/agent/factory.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import type { RuntimeToolFilterConfig } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { executorAgentFailureCode } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
 
 describe("executor runtime private lifecycle", () => {
+  it("retains original producer completion when project code replaces promise latches", async () => {
+    const entered = Promise.withResolvers<void>();
+    const unblock = Promise.withResolvers<void>();
+    const finalizationReleased = Promise.withResolvers<void>();
+    let completion: Promise<void> | undefined;
+    let completed = false;
+    const config: RuntimeToolFilterConfig = {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic instructions",
+      __vfProviderReplayCheckpointTurnFailed: async () => {
+        entered.resolve();
+        await unblock.promise;
+        finalizationReleased.resolve();
+      },
+    };
+    const runtime = new AgentRuntime("synthetic-runtime", config, {
+      resolveModelRuntime: () => ({
+        provider: "openai",
+        modelId: "gpt-5.4",
+        doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+        doStream: () => Promise.reject(new Error("Synthetic stream failure")),
+      }),
+      onStreamCompletion: (pending) => {
+        completion = pending;
+        void pending.then(() => {
+          completed = true;
+        });
+      },
+    });
+    const original = Promise.withResolvers;
+    try {
+      Promise.withResolvers = (() => ({
+        promise: Promise.resolve(),
+        resolve: () => {},
+        reject: () => {},
+      })) as typeof original;
+      const stream = await runtime.stream([{
+        id: "synthetic-message",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic input" }],
+      }]);
+      await entered.promise;
+      await stream.cancel();
+      assert(completion);
+      assertEquals(completed, false);
+    } finally {
+      Promise.withResolvers = original;
+      unblock.resolve();
+      await finalizationReleased.promise;
+      await completion;
+    }
+    assertEquals(completed, true);
+  });
+
   it("classifies private errors without exposing them to a replaced descriptor intrinsic", () => {
     const original = Object.getOwnPropertyDescriptor;
     const privateError = { code: "PERMISSION_DENIED", detail: "Synthetic private detail" };
@@ -25,7 +81,7 @@ describe("executor runtime private lifecycle", () => {
     assertEquals(exposures, 0);
   });
 
-  it("releases prepared facades and discovery after project code replaces promise chaining", async () => {
+  it("releases prepared facades and discovery after project code replaces lifecycle methods", async () => {
     const binding = { allocationId: "lifecycle", invocationId: "lifecycle", generation: 1 };
     const source = { type: "release", releaseId: "synthetic-release" } as const;
     const modelId = "veryfront-cloud/openai/gpt-5.4";
@@ -33,6 +89,7 @@ describe("executor runtime private lifecycle", () => {
       id: "coder",
       system: "Synthetic source instructions.",
       model: modelId,
+      maxSteps: 3,
       tools: {},
     });
     let facadeCleanups = 0;
@@ -95,7 +152,17 @@ describe("executor runtime private lifecycle", () => {
       },
     });
     const originalThen = Promise.prototype.then;
+    const originalAbort = AbortController.prototype.abort;
+    const originalMin = Math.min;
+    let stepLimitOverrides = 0;
     try {
+      Math.min = (...values) => {
+        if (values.length === 3 && values[0] === 5 && values[1] === 3 && values[2] === 5) {
+          stepLimitOverrides++;
+          return 100;
+        }
+        return originalMin(...values);
+      };
       const operation = owner.operations.get("runtime.prepare");
       assert(operation?.mode === "unary");
       const result = await operation.handle({ agentId: "coder" }, {
@@ -105,11 +172,17 @@ describe("executor runtime private lifecycle", () => {
       });
       assertEquals((result as { ok?: boolean }).ok, true, JSON.stringify(result));
       Promise.prototype.then = (() => Promise.resolve()) as typeof originalThen;
+      AbortController.prototype.abort = () => {};
       await owner.close();
     } finally {
       Promise.prototype.then = originalThen;
+      AbortController.prototype.abort = originalAbort;
+      Math.min = originalMin;
       await owner.close();
     }
+    assertEquals(owner.signal.aborted, true);
+    assertEquals(stepLimitOverrides, 0);
+    assertEquals(discovery.signal.aborted, true);
     assertEquals(facadeCleanups, 1);
     assertEquals(discoveryCleanups, 1);
     await owner.settled;

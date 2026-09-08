@@ -7,6 +7,10 @@ import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agen
 import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
 import type { HostToolSet } from "#veryfront/tool";
+import {
+  resolveHostedRuntimeAllowedProviderTools,
+  resolveHostedRuntimeAllowedTools,
+} from "#veryfront/agent/hosted/runtime-request-config.ts";
 
 const binding = {
   allocationId: "reflection-allocation",
@@ -17,6 +21,51 @@ const source = { type: "release", releaseId: "synthetic-release" } as const;
 const modelId = "veryfront-cloud/openai/gpt-5.4";
 
 describe("private executor facades", () => {
+  it("preserves authored selectors when project code replaces array selection methods", () => {
+    const tools = ["visible"];
+    const delegates = ["helper"];
+    const originalIterator = Array.prototype[Symbol.iterator];
+    const originalMap = Array.prototype.map;
+    const originalFilter = Array.prototype.filter;
+    let configured: string[] | undefined;
+    let requested: string[] | undefined;
+    let provider: string[] | undefined;
+    try {
+      Array.prototype[Symbol.iterator] = function () {
+        return originalIterator.call(this === tools ? ["hidden"] : this);
+      };
+      Array.prototype.map = function (callback, thisArg) {
+        const mapped = this === delegates ? ["hidden"] : originalMap.call(this, callback, thisArg);
+        return mapped as ReturnType<typeof callback>[];
+      };
+      Array.prototype.filter = function () {
+        return this;
+      };
+      const config = {
+        configuredTools: tools,
+        configuredDelegates: delegates,
+        configuredSkills: [],
+        requestedTools: undefined,
+      };
+      configured = resolveHostedRuntimeAllowedTools(config);
+      requested = resolveHostedRuntimeAllowedTools({
+        ...config,
+        requestedTools: ["visible", "hidden"],
+      });
+      provider = resolveHostedRuntimeAllowedProviderTools({
+        configuredProviderTools: ["visible"],
+        requestedTools: ["visible", "hidden"],
+      });
+    } finally {
+      Array.prototype[Symbol.iterator] = originalIterator;
+      Array.prototype.map = originalMap;
+      Array.prototype.filter = originalFilter;
+    }
+    assertEquals(configured, ["visible", "agent_helper"]);
+    assertEquals(requested, ["visible"]);
+    assertEquals(provider, ["visible"]);
+  });
+
   it("keeps ungranted private facades out of project-controlled reflection hooks", async () => {
     const originalEntries = Object.entries;
     const originalSetHas = Set.prototype.has;
