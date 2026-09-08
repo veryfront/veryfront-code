@@ -139,10 +139,20 @@ describe("executor serialization intrinsics", () => {
     assertEquals(exposures, 0);
   });
 
-  for (const hook of ["JSON", "text encoding", "text decoding", "SSE mapping", "byte validation"]) {
+  for (
+    const hook of [
+      "JSON",
+      "inherited toJSON",
+      "text encoding",
+      "text decoding",
+      "SSE mapping",
+      "byte validation",
+    ]
+  ) {
     it(`keeps synthetic requests and model events out of replaced ${hook} methods`, async () => {
       const marker = "synthetic-private-json-marker";
       const request = { messages: [{ text: marker }] };
+      const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
       const originalParse = JSON.parse;
       const originalStringify = JSON.stringify;
       const originalEncode = TextEncoder.prototype.encode;
@@ -176,6 +186,14 @@ describe("executor serialization intrinsics", () => {
             if (text.includes(marker)) observations++;
             return originalParse(text);
           }) as typeof JSON.parse;
+        } else if (hook === "inherited toJSON") {
+          Object.defineProperty(Object.prototype, "toJSON", {
+            configurable: true,
+            value() {
+              observations++;
+              return this;
+            },
+          });
         } else if (hook === "text encoding") {
           TextEncoder.prototype.encode = function (text = "") {
             if (text.includes(marker)) observations++;
@@ -223,6 +241,8 @@ describe("executor serialization intrinsics", () => {
           received.push(event);
         }
       } finally {
+        if (originalToJson) Object.defineProperty(Object.prototype, "toJSON", originalToJson);
+        else Reflect.deleteProperty(Object.prototype, "toJSON");
         JSON.stringify = originalStringify;
         JSON.parse = originalParse;
         TextEncoder.prototype.encode = originalEncode;

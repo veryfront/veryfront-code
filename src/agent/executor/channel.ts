@@ -1,5 +1,6 @@
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -18,6 +19,13 @@ import {
   getExecutorBindingSchema,
   readExecutorFrames,
 } from "./protocol.ts";
+
+const apply = Reflect.apply;
+const mapGet = Map.prototype.get;
+
+function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return apply(mapGet, map, [key]) as V | undefined;
+}
 
 /** A connection authenticated by its owner before channel construction. No reconnect or replay. */
 export interface ExecutorByteTransport {
@@ -185,7 +193,7 @@ class Channel implements ExecutorChannel {
     );
     const handshakeTimeout = positiveBound(options.handshakeTimeoutMs ?? 5_000, 60_000);
     this.#operations = new Map(options.operations);
-    this.#reader = options.transport.readable.getReader();
+    this.#reader = getPrivateStreamReader(options.transport.readable);
     this.#writer = options.transport.writable.getWriter();
     this.#handshakeTimer = setTimeout(
       () => this.#fail("Executor handshake deadline exceeded"),
@@ -466,7 +474,7 @@ class Channel implements ExecutorChannel {
       return;
     }
     if (message.type === "released") {
-      const call = this.#outgoingById.get(message.id);
+      const call = privateMapGet(this.#outgoingById, message.id);
       if (!call?.releaseAck || !call.ended) {
         throw new ExecutorProtocolError("Executor unknown release acknowledgement");
       }
@@ -475,7 +483,7 @@ class Channel implements ExecutorChannel {
       return;
     }
     if (message.type === "data" || message.type === "end") {
-      const call = this.#outgoingById.get(message.id);
+      const call = privateMapGet(this.#outgoingById, message.id);
       if (!call || call.ended || call.released) {
         throw new ExecutorProtocolError("Executor unknown or completed response");
       }
@@ -504,7 +512,7 @@ class Channel implements ExecutorChannel {
       call.wake?.();
       return;
     }
-    const call = this.#incoming.get(message.id);
+    const call = privateMapGet(this.#incoming, message.id);
     if (!call || call.released) throw new ExecutorProtocolError("Executor unknown call control");
     if (message.type === "credit") {
       if (
@@ -566,7 +574,7 @@ class Channel implements ExecutorChannel {
   ): Promise<void> {
     let iterator: AsyncIterator<JsonValue> | undefined;
     try {
-      const operation = this.#operations.get(message.operation);
+      const operation = privateMapGet(this.#operations, message.operation);
       if (!operation) {
         await this.#end(call, "operation-not-found");
         return;
