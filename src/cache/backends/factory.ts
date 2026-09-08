@@ -149,6 +149,21 @@ export function isDistributedBackend(backend: CacheBackend): boolean {
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
 const MAX_DISTRIBUTED_CACHE_SCOPES = 128;
 
+// Captured before project code runs: accessor state holds private backend
+// objects, and replaced collection or promise prototype methods must never
+// observe them (see docs/architecture/15-runtime-adapters.md on the opaque
+// snapshot-store handle this accessor can sit behind).
+const accessorApply = Reflect.apply;
+const AccessorMap = Map;
+const accessorMapGet = AccessorMap.prototype.get;
+const accessorMapSet = AccessorMap.prototype.set;
+const accessorMapDelete = AccessorMap.prototype.delete;
+const accessorMapKeys = AccessorMap.prototype.keys;
+const accessorMapSize = Object.getOwnPropertyDescriptor(AccessorMap.prototype, "size")!.get!;
+const accessorMapIteratorNext = Object.getPrototypeOf(new AccessorMap<string, unknown>().keys())
+  .next as () => IteratorResult<string>;
+const accessorPromiseFinally = Promise.prototype.finally;
+
 interface DistributedCacheAccessorState {
   backend: CacheBackend | null | undefined;
   lastFailureTime: number;
@@ -160,21 +175,27 @@ export function createDistributedCacheAccessor(
   name: string,
   getScopeKey?: () => string,
 ): () => Promise<CacheBackend | null> {
-  const states = new Map<string, DistributedCacheAccessorState>();
+  const states = new AccessorMap<string, DistributedCacheAccessorState>();
 
   return () => {
     const scopeKey = getScopeKey?.() ?? "";
-    let state = states.get(scopeKey);
+    let state = accessorApply(accessorMapGet, states, [scopeKey]) as
+      | DistributedCacheAccessorState
+      | undefined;
     if (!state) {
-      if (states.size >= MAX_DISTRIBUTED_CACHE_SCOPES) {
-        const leastRecentlyUsedScope = states.keys().next().value as string | undefined;
-        if (leastRecentlyUsedScope !== undefined) states.delete(leastRecentlyUsedScope);
+      if (accessorApply(accessorMapSize, states, []) >= MAX_DISTRIBUTED_CACHE_SCOPES) {
+        const iterator = accessorApply(accessorMapKeys, states, []);
+        const leastRecentlyUsedScope = accessorApply(accessorMapIteratorNext, iterator, [])
+          .value as string | undefined;
+        if (leastRecentlyUsedScope !== undefined) {
+          accessorApply(accessorMapDelete, states, [leastRecentlyUsedScope]);
+        }
       }
       state = { backend: undefined, lastFailureTime: 0, inflight: null };
-      states.set(scopeKey, state);
+      accessorApply(accessorMapSet, states, [scopeKey, state]);
     } else if (getScopeKey) {
-      states.delete(scopeKey);
-      states.set(scopeKey, state);
+      accessorApply(accessorMapDelete, states, [scopeKey]);
+      accessorApply(accessorMapSet, states, [scopeKey, state]);
     }
 
     if (state.backend !== undefined) {
@@ -190,29 +211,34 @@ export function createDistributedCacheAccessor(
     }
 
     if (!state.inflight) {
-      state.inflight = (async () => {
-        try {
-          const b = await factory();
-          if (!isDistributedBackend(b)) {
-            state.backend = null;
-            state.lastFailureTime = 0;
-            logger.debug(`[${name}] No distributed cache available (memory only)`);
+      const settled = state;
+      state.inflight = accessorApply(
+        accessorPromiseFinally,
+        (async () => {
+          try {
+            const b = await factory();
+            if (!isDistributedBackend(b)) {
+              settled.backend = null;
+              settled.lastFailureTime = 0;
+              logger.debug(`[${name}] No distributed cache available (memory only)`);
+              return null;
+            }
+
+            settled.backend = b;
+            settled.lastFailureTime = 0;
+            logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
+            return b;
+          } catch (error) {
+            logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+            settled.backend = null;
+            settled.lastFailureTime = Date.now();
             return null;
           }
-
-          state.backend = b;
-          state.lastFailureTime = 0;
-          logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
-          return b;
-        } catch (error) {
-          logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
-          state.backend = null;
-          state.lastFailureTime = Date.now();
-          return null;
-        }
-      })().finally(() => {
-        state.inflight = null;
-      });
+        })(),
+        [() => {
+          settled.inflight = null;
+        }],
+      ) as Promise<CacheBackend | null>;
     }
 
     return state.inflight;

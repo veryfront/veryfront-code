@@ -26,6 +26,8 @@ const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 const reflectOwnKeys = Reflect.ownKeys;
 const arrayIsArray = Array.isArray;
+const universalObjectPrototype = Object.prototype;
+const universalFunctionPrototype = Function.prototype;
 
 const MAX_CACHE_CAPABILITY_PROTOTYPE_DEPTH = 64;
 
@@ -38,6 +40,12 @@ function findCallableDataProperty(
   let inspectedDepth = 0;
 
   while (current !== null) {
+    // A capability inherited from a universal prototype is an injection, not
+    // a backend method: project code adding these names to Object.prototype
+    // must never have them invoked with a private backend as `this`.
+    if (current === universalObjectPrototype || current === universalFunctionPrototype) {
+      return null;
+    }
     if (inspectedDepth >= MAX_CACHE_CAPABILITY_PROTOTYPE_DEPTH) return null;
     inspectedDepth += 1;
     if (reflectApply(setHas, visited, [current])) return null;

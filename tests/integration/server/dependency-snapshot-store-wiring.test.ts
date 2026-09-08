@@ -239,4 +239,72 @@ describe("host-configured dependency snapshot store", () => {
 
     assertEquals(observedLeaks, []);
   });
+
+  it("ignores revision capabilities injected through universal prototypes", async () => {
+    // Project code adding getWithRevision/compareExchange to Object.prototype
+    // must never have them invoked with the private backend as `this`, and a
+    // faked exchange must never acknowledge a publication nothing stored.
+    const backend = new MemoryCacheBackend();
+    const store = createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend));
+    const invoked: unknown[] = [];
+    // deno-lint-ignore no-explicit-any
+    const prototypeHost = Object.prototype as any;
+    prototypeHost.getWithRevision = function () {
+      invoked.push(this);
+      return Promise.resolve({ value: null, revision: "0" });
+    };
+    prototypeHost.compareExchange = function () {
+      invoked.push(this);
+      return Promise.resolve(true);
+    };
+
+    const namespace = "a".repeat(64);
+    const expiresAt = Date.now() + 60_000;
+    try {
+      await store.publish(namespace, "on:54uvgwr2ih7p", "snapshot-bytes", expiresAt);
+    } finally {
+      delete prototypeHost.getWithRevision;
+      delete prototypeHost.compareExchange;
+    }
+
+    assertEquals(invoked, [], "injected prototype methods must never run");
+    assertEquals(await store.read(namespace, "on:54uvgwr2ih7p"), {
+      value: "snapshot-bytes",
+      expiresAt,
+    }, "publication must store through the real backend, not a faked exchange");
+  });
+
+  it("keeps accessor state away from replaced Map methods", async () => {
+    // The distributed-cache accessor behind the factory handle tracks state
+    // (including the resolved backend) in a Map. Replaced Map prototype
+    // methods must never observe those entries.
+    const observed: unknown[] = [];
+    const originals = { get: Map.prototype.get, set: Map.prototype.set };
+    Map.prototype.get = function <K, V>(this: Map<K, V>, key: K) {
+      const result = originals.get.call(this, key);
+      if (result !== null && typeof result === "object" && "backend" in (result as object)) {
+        observed.push(result);
+      }
+      return result;
+    } as typeof Map.prototype.get;
+    Map.prototype.set = function <K, V>(this: Map<K, V>, key: K, value: V) {
+      if (value !== null && typeof value === "object" && "backend" in (value as object)) {
+        observed.push(value);
+      }
+      return originals.set.call(this, key, value);
+    } as typeof Map.prototype.set;
+
+    try {
+      const store = resolveDependencySnapshotStoreHandle(
+        createCacheDependencySnapshotStoreHandle(),
+      );
+      await assertRejects(() => store.read("a".repeat(64), "on:54uvgwr2ih7p"));
+      await assertRejects(() => store.read("a".repeat(64), "on:54uvgwr2ih7p"));
+    } finally {
+      Map.prototype.get = originals.get;
+      Map.prototype.set = originals.set;
+    }
+
+    assertEquals(observed, [], "accessor state must not pass through ambient Map methods");
+  });
 });
