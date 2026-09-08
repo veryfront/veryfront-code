@@ -129,8 +129,10 @@ export async function createExecutorRemoteToolSources(options: {
       async listTools(context?: ToolExecutionContext) {
         const definitions: ToolDefinition[] = [];
         const names = new Set<string>();
-        const request = executorToolJson({ sourceId, ...callerCorrelation(context) });
-        parseExecutorToolData(getExecutorToolListSchema(), request);
+        const request = parseExecutorToolData(getExecutorToolListSchema(), {
+          sourceId,
+          ...callerCorrelation(context),
+        });
         await consume("tool.list", request, (frame) => {
           if (
             frame.type !== "tool" || definitions.length >= limits.maxToolsPerSource ||
@@ -151,14 +153,13 @@ export async function createExecutorRemoteToolSources(options: {
         args: Record<string, unknown>,
         context?: ToolExecutionContext,
       ) {
-        const request = {
+        const request = parseExecutorToolData(getExecutorToolCallSchema(), {
           sourceId,
           toolName,
           args: executorToolJson(args, limits.maxArgumentBytes),
           ...callerCorrelation(context),
-        };
-        parseExecutorToolData(getExecutorToolCallSchema(), request);
-        return await consume("tool.execute", executorToolJson(request), () => {
+        });
+        return await consume("tool.execute", request, () => {
           throw new TypeError("Invalid executor tool execution frame");
         }, context);
       },

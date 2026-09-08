@@ -11,11 +11,11 @@ import {
   createExecutorChannel,
   type ExecutorOperation,
   type ExecutorOperationContext,
-} from "../executor/channel.ts";
+} from "#veryfront/agent/executor/channel.ts";
 import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
-import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
+import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
 import { executorToolBytes } from "./executor-tool-schema.ts";
 
 const binding = { allocationId: "allocation-test", generation: 1, invocationId: "invocation-test" };

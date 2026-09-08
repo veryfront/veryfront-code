@@ -3,7 +3,7 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { defineError } from "#veryfront/errors/types.ts";
-import type { ExecutorChannel } from "../executor/channel.ts";
+import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 
