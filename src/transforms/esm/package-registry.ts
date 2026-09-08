@@ -245,7 +245,11 @@ export function createDependencyPinningSource(
     dependencyWritebackToken: options.dependencyWritebackToken,
     ...(adapterFs ? { fs: adapterFs } : {}),
     ...(adapterFs || snapshotStore
-      ? { cacheNamespace: JSON.stringify([projectKey, contentKey]) }
+      ? {
+        cacheNamespace: snapshotStringify(
+          snapshotSetPrototypeOf([projectKey, contentKey], null),
+        ),
+      }
       : {}),
   };
   if (snapshotStore) snapshotApply(snapshotWeakSet, sourceSnapshotStores, [source, snapshotStore]);
@@ -265,6 +269,8 @@ const snapshotWeakGet = WeakMap.prototype.get;
 const snapshotWeakSet = WeakMap.prototype.set;
 const snapshotHasOwn = Object.hasOwn;
 const snapshotFreeze = Object.freeze;
+const snapshotStringify = JSON.stringify;
+const snapshotSetPrototypeOf = Object.setPrototypeOf;
 
 /** Rebind tracked filesystem reads without exposing the private host store association. */
 export function withDependencyPinningSourceFileSystem(

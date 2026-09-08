@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -66,6 +66,61 @@ describe("shared dependency history", () => {
     });
     return { adapter, source };
   }
+  for (const hook of ["stringify", "array-toJSON", "object-toJSON"] as const) {
+    it(`preserves standalone history across mounts after ${hook} is replaced`, async () => {
+      const store = createDependencySnapshotStoreHandle(storeFixture());
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/mount-a/package.json", '{"dependencies":{}}');
+      adapter.fs.files.set("/mount-b/package.json", '{"dependencies":{"react":"19.2.4"}}');
+      const options = {
+        projectId: "standalone-namespace-hooks",
+        isLocalProject: true,
+        snapshotStore: store,
+      };
+      const clean = createDependencyPinningSource({ ...options, projectDir: "/mount-b" });
+      const target = hook === "stringify"
+        ? JSON
+        : hook === "array-toJSON"
+        ? Array.prototype
+        : Object.prototype;
+      const key = hook === "stringify" ? "stringify" : "toJSON";
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      let source: ReturnType<typeof createDependencyPinningSource> | undefined;
+      let touches = 0;
+      try {
+        Object.defineProperty(target, key, {
+          configurable: true,
+          writable: true,
+          value: () => {
+            touches++;
+            return undefined;
+          },
+        });
+        source = createDependencyPinningSource({ ...options, projectDir: "/mount-a" });
+      } finally {
+        if (descriptor) Object.defineProperty(target, key, descriptor);
+        else Reflect.deleteProperty(target, key);
+      }
+      assertExists(source);
+      const writer = withDependencyPinningSourceFileSystem(source, "/mount-a", adapter.fs);
+      const reader = withDependencyPinningSourceFileSystem(clean, "/mount-b", adapter.fs);
+      const original = await getDependencyPinningSnapshot(writer);
+      clearReactVersionCache();
+      const recovered = await resolveRequestedDependencyPinningSnapshot(reader, original.cacheKey);
+      assertEquals(
+        recovered,
+        original,
+        "the cold mount must recover history instead of its current dependencies",
+      );
+      assertEquals(source.cacheNamespace, clean.cacheNamespace);
+      assertEquals(
+        touches,
+        0,
+        "namespace construction must not invoke project serialization hooks",
+      );
+    });
+  }
+
   it("shares explicit standalone project identity across different mount paths", async () => {
     const store = storeFixture();
     const a = createDependencyPinningSource({
