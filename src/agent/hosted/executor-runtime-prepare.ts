@@ -83,6 +83,7 @@ const objectDefineProperty = Object.defineProperty;
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
+const arrayIsArray = Array.isArray;
 const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
 const AbortSignalConstructor = AbortSignal;
@@ -402,12 +403,13 @@ export function createExecutorRuntimePreparation(input: Options) {
           localTools,
         })!,
       ];
-      const deniedToolNames = [
-        ...createPrivateSet([
-          ...definition.deniedTools ?? [],
-          ...normalizeToolNames(definition.deniedTools ?? []),
-        ]),
-      ];
+      const deniedToolSet = createPrivateSet(definition.deniedTools ?? []);
+      const normalizedDenials = normalizeToolNames(definition.deniedTools ?? []);
+      for (let index = 0; index < normalizedDenials.length; index++) {
+        const name = normalizedDenials[index];
+        if (name !== undefined) deniedToolSet.add(name);
+      }
+      const deniedToolNames = [...deniedToolSet];
       const sourceToolNames = resolveHostedRuntimeAllowedTools({
         configuredTools: definition.tools,
         configuredDeniedTools: definition.deniedTools,
@@ -417,7 +419,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       });
       let allowedToolNames = intersectNames(
         normalizeToolNames(grant.allowedToolNames),
-        Array.isArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
+        arrayIsArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
         request.allowedToolNames === undefined
           ? undefined
           : normalizeToolNames(request.allowedToolNames),

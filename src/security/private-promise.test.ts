@@ -3,12 +3,17 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { chainPrivatePromise, resolvePrivatePromise } from "./private-promise.ts";
 
 describe("owned promise chains", () => {
-  for (const phase of ["input", "callback"] as const) {
+  for (const phase of ["input", "callback", "callback with copied constructor"] as const) {
     it(`joins the original ${phase} promise despite its own constructor and then hooks`, async () => {
       const work = Promise.withResolvers<number>();
       let hooks = 0;
       Object.defineProperties(work.promise, {
-        constructor: { value: function ForeignConstructor() {}, configurable: true },
+        constructor: {
+          value: phase === "callback with copied constructor"
+            ? resolvePrivatePromise().constructor
+            : function ForeignConstructor() {},
+          configurable: true,
+        },
         then: {
           value: (fulfilled: (value: number) => void) => {
             hooks++;

@@ -7,6 +7,7 @@ const promiseResolve = Promise.resolve;
 const promiseWithResolvers = Promise.withResolvers;
 const nativeHasInstance = Function.prototype[Symbol.hasInstance];
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 const freeze = Object.freeze;
 const species: typeof Symbol.species = Symbol.species;
 
@@ -41,8 +42,12 @@ freeze(PrivatePromise);
 const privateThen = PrivatePromise.prototype.then;
 
 function protectPromise<T>(promise: Promise<T>): Promise<T> {
-  if (getOwnPropertyDescriptor(promise, "constructor")?.value !== PrivatePromise) {
+  const constructor = getOwnPropertyDescriptor(promise, "constructor");
+  if (!constructor || !hasOwn(constructor, "value") || constructor.value !== PrivatePromise) {
     defineOwnDataProperty(promise, "constructor", PrivatePromise);
+  }
+  const then = getOwnPropertyDescriptor(promise, "then");
+  if (!then || !hasOwn(then, "value") || then.value !== privateThen) {
     defineOwnDataProperty(promise, "then", privateThen);
   }
   return promise;
