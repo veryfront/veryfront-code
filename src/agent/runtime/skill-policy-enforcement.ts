@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import type { Message } from "../types.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { serverLogger } from "#veryfront/utils";
@@ -250,7 +251,7 @@ export function applySkillActivationResult(
 
 function parseToolResultJson(result: string): unknown {
   try {
-    return JSON.parse(result);
+    return privateJsonParse(result);
   } catch {
     return null;
   }

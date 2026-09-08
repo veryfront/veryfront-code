@@ -1,3 +1,4 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isInvalidToolInputError, isNoSuchToolError } from "./runtime-tool-errors.ts";
 import type { RuntimeToolCallRepairFunction } from "./runtime-tool-types.ts";
 
@@ -31,7 +32,7 @@ export const repairToolCall: RuntimeToolCallRepairFunction = async ({
   let normalizedQuery = trimmedInput;
 
   try {
-    const parsedInput = JSON.parse(trimmedInput) as unknown;
+    const parsedInput = privateJsonParse(trimmedInput) as unknown;
     if (typeof parsedInput === "string") {
       normalizedQuery = parsedInput.trim();
     }
@@ -45,6 +46,6 @@ export const repairToolCall: RuntimeToolCallRepairFunction = async ({
 
   return {
     ...toolCall,
-    input: JSON.stringify({ query: normalizedQuery }),
+    input: privateJsonStringify({ query: normalizedQuery }),
   };
 };

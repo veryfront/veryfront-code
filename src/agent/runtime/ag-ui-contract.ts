@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
@@ -17,7 +18,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
-    return encoder.encode(JSON.stringify(value)).byteLength <= maxBytes;
+    return encoder.encode(privateJsonStringify(value)).byteLength <= maxBytes;
   } catch {
     return false;
   }

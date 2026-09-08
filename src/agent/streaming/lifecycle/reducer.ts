@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   mergeToolCallInput,
   mergeToolInputDelta,
@@ -503,7 +504,7 @@ function closeOpenContent(state: StreamReducerState, emit: FrameEmitter): void {
 
 function serializeToolInput(input: unknown): string | null {
   try {
-    return JSON.stringify(input ?? null) ?? "null";
+    return privateJsonStringify(input ?? null) ?? "null";
   } catch {
     return null;
   }

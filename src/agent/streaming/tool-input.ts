@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = serverLogger.component("agent-tool-input");
@@ -139,7 +140,7 @@ export function parseToolInputObject(input: unknown): Record<string, unknown> {
 
   if (typeof input === "string") {
     try {
-      const parsed = JSON.parse(stripLeadingEmptyObjectPlaceholder(input));
+      const parsed = privateJsonParse(stripLeadingEmptyObjectPlaceholder(input));
       if (isRecord(parsed)) {
         return parsed;
       }

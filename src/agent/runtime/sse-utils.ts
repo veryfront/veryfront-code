@@ -6,6 +6,8 @@
  * @module ai/agent/runtime/sse-utils
  */
 
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+
 // Runtime heuristic: detects a write to an already-closed ReadableStream controller.
 // Browser/Node and Deno use different messages for the same Web Streams state error.
 // Keep this narrow so unrelated TypeErrors still surface.
@@ -25,7 +27,7 @@ export function sendSSE(
   event: Record<string, unknown>,
 ): void {
   try {
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+    controller.enqueue(encoder.encode(`data: ${privateJsonStringify(event)}\n\n`));
   } catch (error) {
     if (isClosedStreamControllerError(error)) {
       return;

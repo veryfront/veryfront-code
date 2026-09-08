@@ -1,3 +1,4 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { Buffer } from "node:buffer";
 import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
@@ -29,7 +30,7 @@ function origin(value: string): URL {
 }
 
 function payload(value: unknown): Buffer {
-  const encoded = Buffer.from(JSON.stringify(value));
+  const encoded = Buffer.from(privateJsonStringify(value));
   if (encoded.byteLength > MAX_BYTES) {
     encoded.fill(0);
     throw new TypeError("Executor allocator request is too large");
@@ -139,7 +140,9 @@ export function createHostedExecutorAllocatorClient(options: {
             try {
               const body = Buffer.concat(chunks, size);
               try {
-                responseValue = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+                responseValue = privateJsonParse(
+                  new TextDecoder("utf-8", { fatal: true }).decode(body),
+                );
               } finally {
                 body.fill(0);
               }

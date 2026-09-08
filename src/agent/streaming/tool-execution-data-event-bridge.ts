@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 
@@ -14,11 +15,13 @@ function serializeToolExecutionDataEvent(event: ToolExecutionDataEvent): Uint8Ar
   if (typeof event.name === "string" && event.name.length > 0) {
     const data = Object.hasOwn(event, "value") ? event.value : event.data;
     return new TextEncoder().encode(
-      `data: ${JSON.stringify({ type: `data-${event.name}`, data })}\n\n`,
+      `data: ${privateJsonStringify({ type: `data-${event.name}`, data })}\n\n`,
     );
   }
 
-  return new TextEncoder().encode(`data: ${JSON.stringify({ type: "data", data: event })}\n\n`);
+  return new TextEncoder().encode(
+    `data: ${privateJsonStringify({ type: "data", data: event })}\n\n`,
+  );
 }
 
 function toUint8ArrayChunk(value: unknown): Uint8Array {

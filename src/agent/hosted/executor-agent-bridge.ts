@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ExecutorChannel, ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
@@ -179,7 +180,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                   const event = parseExecutorDataEvent(frame.event);
                   terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
-                    textEncoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+                    textEncoder.encode(`data: ${privateJsonStringify(event)}\n\n`),
                   );
                 } else if (frame.type === "complete") {
                   if (!terminal || !(await iterator.next()).done) {

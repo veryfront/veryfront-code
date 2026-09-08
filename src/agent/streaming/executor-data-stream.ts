@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { EXECUTOR_MAX_RETAINED_BYTES } from "../executor/protocol.ts";
 import {
   EXECUTOR_AGENT_MAX_PAYLOAD_BYTES,
@@ -11,7 +12,7 @@ function parseBlock(block: string) {
     throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
   }
   return parseExecutorDataEvent(
-    JSON.parse(lines.map((line) => line.slice(5).trimStart()).join("\n")),
+    privateJsonParse(lines.map((line) => line.slice(5).trimStart()).join("\n")),
   );
 }
 

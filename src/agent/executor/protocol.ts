@@ -1,3 +1,4 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -73,7 +74,7 @@ export function encodeExecutorFrame(frame: ExecutorFrame): Uint8Array {
   if (!snapshot.success || !getExecutorFrameSchema().safeParse(snapshot.value).success) {
     throw new TypeError("Invalid executor frame");
   }
-  const payload = new TextEncoder().encode(JSON.stringify(snapshot.value));
+  const payload = new TextEncoder().encode(privateJsonStringify(snapshot.value));
   if (payload.byteLength > EXECUTOR_MAX_FRAME_BYTES - 4) {
     throw new TypeError("Executor frame exceeds byte limit");
   }
@@ -126,7 +127,7 @@ export async function* readExecutorFrames(
       if (payloadOffset === payload.byteLength) {
         let decoded: unknown;
         try {
-          decoded = JSON.parse(decoder.decode(payload));
+          decoded = privateJsonParse(decoder.decode(payload));
         } catch {
           throw new ExecutorProtocolError("Invalid executor frame encoding");
         }

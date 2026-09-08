@@ -22,6 +22,60 @@ import {
 } from "#veryfront/tool/remote-tool-provenance.ts";
 
 describe("runtime tool provenance intrinsics", () => {
+  for (const kind of ["typed", "dynamic"] as const) {
+    it(`keeps ${kind} factory configs out of inherited optional-field getters`, () => {
+      const definition = {
+        description: "Synthetic private tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        ...(kind === "dynamic" ? { inputSchemaJson: { type: "object" as const } } : {}),
+        execute: () => ({ ok: true }),
+      };
+      const fields = [
+        "outputSchema",
+        "toModelOutput",
+        "allowUnknownSchema",
+        "delegatedIntegrationTools",
+      ];
+      const originals = fields.map((field) =>
+        Object.getOwnPropertyDescriptor(Object.prototype, field)
+      );
+      const defineProperty = Object.defineProperty;
+      const ownDescriptor = Object.getOwnPropertyDescriptor;
+      let exposures = 0;
+      let materialized = false;
+      try {
+        for (const field of fields) {
+          defineProperty(Object.prototype, field, {
+            configurable: true,
+            get() {
+              if (typeof ownDescriptor(this, "execute")?.value === "function") exposures++;
+              return undefined;
+            },
+            set(value: unknown) {
+              defineProperty(this, field, {
+                value,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+            },
+          });
+        }
+        materialized =
+          createToolsFromHostDefinitions({ private: definition }).private !== undefined;
+      } finally {
+        for (let index = 0; index < fields.length; index++) {
+          const field = fields[index]!;
+          const original = originals[index];
+          if (original) defineProperty(Object.prototype, field, original);
+          else delete (Object.prototype as Record<string, unknown>)[field];
+        }
+      }
+      assertEquals(materialized, true);
+      assertEquals(exposures, 0);
+    });
+  }
+
   it("keeps fallback facade entries private from inherited array setters", async () => {
     const definition = {
       description: "Synthetic fetch tool",

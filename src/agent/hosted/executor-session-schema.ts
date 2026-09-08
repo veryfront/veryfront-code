@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isIP } from "node:net";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -115,7 +116,7 @@ export function parseHostedExecutorData<T>(schema: Schema<T>, value: unknown): T
   const snapshot = snapshotBoundedJsonValue(value);
   if (
     !snapshot.success ||
-    new TextEncoder().encode(JSON.stringify(snapshot.value)).byteLength > 32 * 1024
+    new TextEncoder().encode(privateJsonStringify(snapshot.value)).byteLength > 32 * 1024
   ) {
     throw new Error("Executor session invalid allocator data");
   }

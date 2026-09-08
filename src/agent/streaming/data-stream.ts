@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/encoder.ts";
 
@@ -32,7 +33,7 @@ export function parseDataStreamSseEvents(chunk: string): {
     }
 
     try {
-      return [JSON.parse(payload) as AgUiRuntimeStreamEvent];
+      return [privateJsonParse(payload) as AgUiRuntimeStreamEvent];
     } catch (error) {
       logger.warn("Dropped malformed SSE data block", {
         errorName: error instanceof Error ? error.name : typeof error,

@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { type AddressInfo, isIP, type Socket } from "node:net";
@@ -88,7 +89,7 @@ function validateOptions(
   }
   if (options.signal?.aborted) throw new Error("Executor transport aborted");
   // Fixed tuple ordering and a versioned domain prevent ambiguous identity encodings.
-  const identity = createHash("sha256").update(JSON.stringify([
+  const identity = createHash("sha256").update(privateJsonStringify([
     "veryfront-executor-tls",
     1,
     binding.allocationId,

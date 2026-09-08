@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import {
@@ -701,7 +702,7 @@ class Channel implements ExecutorChannel {
   }
 
   #retainPayload(value: JsonValue): number {
-    const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    const bytes = new TextEncoder().encode(privateJsonStringify(value)).byteLength;
     if (this.#retainedBytes + bytes > this.#maxRetainedBytes) {
       this.#fail("Executor retained payload budget exceeded");
       throw new ExecutorProtocolError("Executor retained payload budget exceeded");

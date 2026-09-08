@@ -8,6 +8,8 @@
  * @module agent/runtime/chat-stream-handler
  */
 
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import {
@@ -370,12 +372,12 @@ function normalizeToolInputString(input: unknown): string {
     return input;
   }
 
-  return JSON.stringify(input ?? null) ?? "null";
+  return privateJsonStringify(input ?? null) ?? "null";
 }
 
 function tryParseToolInputObject(input: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(stripLeadingEmptyObjectPlaceholder(input));
+    const parsed = privateJsonParse(stripLeadingEmptyObjectPlaceholder(input));
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;

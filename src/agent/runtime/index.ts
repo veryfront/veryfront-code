@@ -11,6 +11,8 @@
  * @module ai/agent/runtime
  */
 
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+
 import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import {
   enterSerializedTurn,
@@ -947,7 +949,7 @@ function isTextSseChunk(chunk: Uint8Array): boolean {
   }
 
   try {
-    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    const event = privateJsonParse(payload.slice("data: ".length)) as { type?: unknown };
     return event.type === "text-start" || event.type === "text-delta" ||
       event.type === "text-end";
   } catch {
@@ -962,7 +964,7 @@ function isTextEndSseChunk(chunk: Uint8Array): boolean {
   }
 
   try {
-    const event = JSON.parse(payload.slice("data: ".length)) as { type?: unknown };
+    const event = privateJsonParse(payload.slice("data: ".length)) as { type?: unknown };
     return event.type === "text-end";
   } catch {
     return false;
@@ -976,7 +978,7 @@ function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
   }
 
   try {
-    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    const event = privateJsonParse(payload.slice("data: ".length)) as Record<string, unknown>;
     return event.type === "text-delta" && typeof event.delta === "string" ? event.delta : undefined;
   } catch {
     return undefined;
@@ -1005,7 +1007,7 @@ function stripTextDeltaPrefixFromSseChunk(
   }
 
   try {
-    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    const event = privateJsonParse(payload.slice("data: ".length)) as Record<string, unknown>;
     if (event.type !== "text-delta" || typeof event.delta !== "string") {
       return { chunk, remainingPrefixLength };
     }
@@ -1014,7 +1016,9 @@ function stripTextDeltaPrefixFromSseChunk(
       return { chunk: undefined, remainingPrefixLength: stripped.remainingPrefixLength };
     }
     return {
-      chunk: encoder.encode(`data: ${JSON.stringify({ ...event, delta: stripped.text })}\n\n`),
+      chunk: encoder.encode(
+        `data: ${privateJsonStringify({ ...event, delta: stripped.text })}\n\n`,
+      ),
       remainingPrefixLength: stripped.remainingPrefixLength,
     };
   } catch {
@@ -1033,7 +1037,7 @@ function rewriteRecoveryTextSseChunkId(
   }
 
   try {
-    const event = JSON.parse(payload.slice("data: ".length)) as Record<string, unknown>;
+    const event = privateJsonParse(payload.slice("data: ".length)) as Record<string, unknown>;
     if (
       event.type !== "text-start" && event.type !== "text-delta" &&
       event.type !== "text-end"
@@ -1043,7 +1047,7 @@ function rewriteRecoveryTextSseChunkId(
     const id = typeof event.id === "string" && event.id.length > 0
       ? `${event.id}:recovery`
       : fallbackId;
-    return encoder.encode(`data: ${JSON.stringify({ ...event, id })}\n\n`);
+    return encoder.encode(`data: ${privateJsonStringify({ ...event, id })}\n\n`);
   } catch {
     return chunk;
   }
@@ -1355,7 +1359,7 @@ function synchronizeRuntimeToolInventory(
 
 function parseToolResultJson(result: string): unknown {
   try {
-    return JSON.parse(result);
+    return privateJsonParse(result);
   } catch {
     return null;
   }
@@ -1382,7 +1386,7 @@ type RuntimeTraceAttributes = Record<string, string | number | boolean | undefin
 
 function estimateSerializedSizeBytes(value: unknown): number | undefined {
   try {
-    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    const serialized = typeof value === "string" ? value : privateJsonStringify(value);
     if (serialized === undefined) return undefined;
     return new TextEncoder().encode(serialized).length;
   } catch {

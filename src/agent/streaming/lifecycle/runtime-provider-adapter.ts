@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isDynamicTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
 import {
@@ -313,7 +314,7 @@ function toolReadySignals(
   const streamed = prior?.inputText ?? "";
   const finalText = typeof typed.input === "string"
     ? typed.input
-    : JSON.stringify(typed.input ?? {});
+    : privateJsonStringify(typed.input ?? {});
   const merged = mergeToolCallInput(streamed, finalText);
   const parsed = parseCanonicalToolInput(
     typeof typed.input === "object" && typed.input !== null &&

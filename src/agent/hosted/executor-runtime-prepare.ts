@@ -225,7 +225,7 @@ function snapshotCheckpointFacade<I, C>(
   if (!facade) return undefined;
   const descriptor = objectGetOwnPropertyDescriptor(facade, "initial");
   const initial = descriptor && hasOwn(descriptor, "value") ? descriptor.value as I : undefined;
-  const persist = facade.persist;
+  const persist = snapshotFacadeMethod(facade, "persist");
   const snapshot = {
     initial,
     persist: typeof persist === "function"
@@ -295,10 +295,13 @@ export function createExecutorRuntimePreparation(input: Options) {
   const source = parseRuntimePreparationData(getExecutorDiscoverySourceSchema(), input.source);
   objectSetPrototypeOf(binding, null);
   objectSetPrototypeOf(source, null);
+  const installedModelResolver = input.facades.resolveModelRuntime;
   const facades: ExecutorRuntimeFacades = {
-    ...input.facades,
+    resolveModelRuntime: snapshotFacadeMethod(input.facades, "resolveModelRuntime"),
     cleanup: snapshotFacadeMethod(input.facades, "cleanup"),
     projectSteering: snapshotSteeringFacade(input.facades.projectSteering),
+    latestConversationUserText: snapshotFacadeMethod(input.facades, "latestConversationUserText"),
+    publishParentRunEvents: snapshotFacadeMethod(input.facades, "publishParentRunEvents"),
     hostTools: new Map(input.facades.hostTools),
     remoteToolSources: new Map(input.facades.remoteToolSources),
     toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),
@@ -509,7 +512,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       };
       registerModelRuntimeResolverRevoker(
         resolveModelRuntime,
-        () => revokeModelRuntimeResolver(facades.resolveModelRuntime),
+        () => revokeModelRuntimeResolver(installedModelResolver),
       );
       // The first facade call can reserve resources before throwing.
       resourcesStarted = true;

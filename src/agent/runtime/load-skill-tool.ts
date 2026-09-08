@@ -1,3 +1,4 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type { InferSchema, JsonSchema } from "#veryfront/extensions/schema/index.ts";
@@ -620,7 +621,7 @@ function buildRuntimeSkillCacheKey(
   skillId: string,
 ): string {
   const skillSourcePaths = readOwnDataProperty(context, "skillSourcePaths");
-  return JSON.stringify([
+  return privateJsonStringify([
     skillId,
     readOwnDataProperty(context, "agentId") ?? null,
     readOwnDataProperty(context, "projectId") ?? null,
@@ -634,7 +635,7 @@ function buildRuntimeSkillReferenceCacheKey(
   skillId: string,
   normalizedFile: string,
 ): string {
-  return JSON.stringify([
+  return privateJsonStringify([
     buildRuntimeSkillCacheKey(context, skillId),
     normalizedFile,
   ]);
@@ -1096,7 +1097,7 @@ function snapshotLoadedSkillMarker(
 
 function isScopedRuntimeSkillCacheKey(cacheKey: string, skillId: string): boolean {
   try {
-    const parsed = JSON.parse(cacheKey);
+    const parsed = privateJsonParse(cacheKey);
     return isRuntimeLoadSkillArray(parsed) &&
       (parsed.length === 4 || parsed.length === 5) &&
       parsed[0] === skillId;

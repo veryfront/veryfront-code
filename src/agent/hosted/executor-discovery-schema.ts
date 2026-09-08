@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
@@ -109,7 +110,7 @@ export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
       }).strict(),
     ).max(64).optional(),
   }).strict().refine((value) =>
-    new TextEncoder().encode(JSON.stringify(value)).byteLength <=
+    new TextEncoder().encode(privateJsonStringify(value)).byteLength <=
       EXECUTOR_DISCOVERY_MAX_DEFINITION_BYTES
   );
 });

@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
@@ -21,7 +22,7 @@ const INFERENCE_CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
-    return encoder.encode(JSON.stringify(value)).byteLength <= maxBytes;
+    return encoder.encode(privateJsonStringify(value)).byteLength <= maxBytes;
   } catch {
     return false;
   }

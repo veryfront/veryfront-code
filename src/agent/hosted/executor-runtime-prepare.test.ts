@@ -674,6 +674,38 @@ describe("executor runtime preparation review regressions", () => {
   }
 
   for (const method of ["own", "prototype"] as const) {
+    it(`preserves the original receiver for ${method} model resolver methods`, async () => {
+      class Facades implements ExecutorRuntimeFacades {
+        #modelCalls = 0;
+        hostTools = new Map<string, HostToolSet>();
+        remoteToolSources = new Map<string, RemoteToolSource>();
+        resolveModelRuntime() {
+          this.#modelCalls++;
+          return model;
+        }
+        cleanup() {
+          return Promise.resolve();
+        }
+        get modelCalls() {
+          return this.#modelCalls;
+        }
+      }
+      const facades = new Facades();
+      if (method === "own") {
+        Object.defineProperty(facades, "resolveModelRuntime", {
+          value: facades.resolveModelRuntime,
+          enumerable: true,
+        });
+      }
+      const f = fixture({ facadeInstance: facades });
+      try {
+        assertEquals((await prepare(f.owner) as { ok: boolean }).ok, true);
+        assert(facades.modelCalls > 0);
+      } finally {
+        await f.owner.close();
+      }
+    });
+
     it(`preserves the original receiver for ${method} cleanup methods`, async () => {
       class Facades implements ExecutorRuntimeFacades {
         #cleanups = 0;

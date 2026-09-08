@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
@@ -489,7 +490,7 @@ async function readPublicJsonResponseWithinLimit(
     if (byteLength > byteLimit) {
       throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
     }
-    return JSON.parse(text);
+    return privateJsonParse(text);
   }
 
   const reader = response.body.getReader();
@@ -577,7 +578,7 @@ async function readPublicJsonResponseWithinLimit(
   if (currentBlock && currentBlockLength > 0) {
     bytes.set(currentBlock.subarray(0, currentBlockLength), offset);
   }
-  return JSON.parse(publicProjectFileUtf8Decoder.decode(bytes));
+  return privateJsonParse(publicProjectFileUtf8Decoder.decode(bytes));
 }
 
 /** Return a runtime project file with strict hosted-boundary enforcement. */
@@ -1835,7 +1836,7 @@ async function readBoundedJsonResponse(
   );
   throwIfStrictProjectFilesRequestExpired(requestScope);
   try {
-    const value = JSON.parse(text);
+    const value = privateJsonParse(text);
     throwIfStrictProjectFilesRequestExpired(requestScope);
     return value;
   } catch {
@@ -1876,7 +1877,7 @@ async function readApiErrorMessage(response: Response): Promise<string> {
     success: false;
   };
   try {
-    const jsonValue = JSON.parse(body);
+    const jsonValue = privateJsonParse(body);
     const result = getApiErrorBodySchema().safeParse(jsonValue);
     parsedJson = result.success ? { success: true, data: result.data } : { success: false };
   } catch {
@@ -1924,7 +1925,7 @@ async function readStrictApiErrorMessage(
     success: false;
   };
   try {
-    const jsonValue = JSON.parse(body);
+    const jsonValue = privateJsonParse(body);
     const result = getStrictApiErrorBodySchema().safeParse(jsonValue);
     parsedJson = result.success ? { success: true, data: result.data } : { success: false };
   } catch {

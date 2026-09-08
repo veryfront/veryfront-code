@@ -177,22 +177,26 @@ export function createToolsFromHostDefinitions(
     try {
       let materializedTool: Tool | undefined;
       if (definition.inputSchemaJson) {
-        materializedTool = dynamicTool({
+        const config = {
+          __proto__: null,
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
           execute,
           mcp: definition.mcp,
-        });
+        };
+        materializedTool = dynamicTool(config);
       } else if (isSchemaLike(definition.inputSchema)) {
-        materializedTool = tool({
+        const config = {
+          __proto__: null,
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
-        });
+        };
+        materializedTool = tool(config);
       }
       if (materializedTool) {
         const canonicalRemoteToolName = getRemoteToolProvenance(originalDefinition);

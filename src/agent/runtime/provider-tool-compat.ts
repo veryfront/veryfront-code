@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema";
 
@@ -607,8 +608,8 @@ function getMergedPropertySchema(
 ): unknown {
   if (schemas.length === 1) return schemas[0];
   const [first, ...rest] = schemas;
-  const serializedFirst = JSON.stringify(first);
-  if (rest.every((schema) => JSON.stringify(schema) === serializedFirst)) {
+  const serializedFirst = privateJsonStringify(first);
+  if (rest.every((schema) => privateJsonStringify(schema) === serializedFirst)) {
     return first;
   }
   return { [keyword]: schemas };

@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
@@ -333,7 +334,7 @@ function toJsonValue(value: unknown): JsonValue {
     );
   }
 
-  return JSON.stringify(value);
+  return privateJsonStringify(value);
 }
 
 function toToolResultOutput(value: unknown): { type: "json"; value: JsonValue } {

@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
@@ -152,7 +153,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       assertActive();
       backend = createNodeExecutorDiscoveryBackend({
         projectDir,
-        cacheKey: JSON.stringify(binding),
+        cacheKey: privateJsonStringify(binding),
       });
     }
     loadStarted = true;

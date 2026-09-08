@@ -1,3 +1,4 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -166,14 +167,14 @@ export function parseExecutorAgentData<T>(schema: Schema<T>, input: unknown): T 
 
 /** Serialize schema-validated values; optional undefined properties are omitted. */
 export function executorAgentJson(input: unknown, oversized: FailureCode): JsonValue {
-  const encoded = JSON.stringify(input);
+  const encoded = privateJsonStringify(input);
   if (
     encoded === undefined ||
     new TextEncoder().encode(encoded).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES
   ) {
     throw new ExecutorAgentError(oversized);
   }
-  const snapshot = snapshotBoundedJsonValue(JSON.parse(encoded));
+  const snapshot = snapshotBoundedJsonValue(privateJsonParse(encoded));
   if (!snapshot.success) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_INPUT");
   return snapshot.value;
 }

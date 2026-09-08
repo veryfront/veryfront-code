@@ -1,10 +1,11 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 export class StreamEventEmitter {
   private encoder = new TextEncoder();
 
   constructor(private controller: ReadableStreamDefaultController) {}
 
   emit(event: Record<string, unknown>): void {
-    this.controller.enqueue(this.encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+    this.controller.enqueue(this.encoder.encode(`data: ${privateJsonStringify(event)}\n\n`));
   }
 
   private emitToolEvent(
