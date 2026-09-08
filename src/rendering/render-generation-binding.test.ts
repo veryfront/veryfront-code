@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderGeneration } from "./render-generation.ts";
 import { RenderGenerationPool } from "./render-generation-pool.ts";
@@ -25,6 +26,7 @@ describe("render generation binding", () => {
     const first = await resolveRenderGenerationIdentity(binding());
     const second = await resolveRenderGenerationIdentity({ ...binding() });
     assertEquals(first, second);
+    // Changing the framing or hash domains requires a version bump and new vectors.
     assertEquals(first, {
       scopeId: "d1f4e59c809a7600f08cc9b738e04eda45b9b09b4189b0a1440d144cd8b27730",
       generationId: "c5f732ad26027ce9d6b5c276b1a7f638d68bf2f3b45c723db07d80153f8bbaeb",
@@ -71,24 +73,29 @@ describe("render generation binding", () => {
   it("rejects incomplete, extra, inherited, and invalid fields", async () => {
     for (const field of Object.keys(binding())) {
       for (const value of [undefined, null, "", 1, "x".repeat(1025), "\ud800"]) {
-        await assertRejects(
+        const error = await assertRejects(
           () =>
             resolveRenderGenerationIdentity(
               { ...binding(), [field]: value } as RenderGenerationBinding,
             ),
-          TypeError,
+          VeryfrontError,
           "Render generation binding",
         );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+        assertEquals(error.status, 400);
       }
     }
     for (
       const value of [null, [], Object.create(binding()), { ...binding(), extra: "unsupported" }]
     ) {
-      await assertRejects(
+      const error = await assertRejects(
         () => resolveRenderGenerationIdentity(value as RenderGenerationBinding),
-        TypeError,
+        VeryfrontError,
         "Render generation binding",
       );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
     }
     await resolveRenderGenerationIdentity({ ...binding(), sourceSnapshotId: "x".repeat(1024) });
   });
@@ -109,11 +116,14 @@ describe("render generation binding", () => {
       },
     });
     for (const value of [accessor, proxy]) {
-      await assertRejects(
+      const error = await assertRejects(
         () => resolveRenderGenerationIdentity(value),
-        TypeError,
+        VeryfrontError,
         "Render generation binding",
       );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+      assertEquals(error.status, 400);
     }
     assertEquals(hooks, 0);
   });

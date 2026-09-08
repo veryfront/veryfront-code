@@ -3,6 +3,7 @@ import {
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import type { WorkerGenerationIdentity } from "#veryfront/security/sandbox/worker-generation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 
@@ -48,6 +49,8 @@ const fields = freeze(
  * Every field must be an own data property containing 1 to 1024 well-formed
  * UTF-16 code units. All fields are captured before asynchronous hashing.
  * Field order, framing and hash domains are versioned and replica-independent.
+ * Native proxy detection is required, as provided by Deno, Node and Bun.
+ * Unsupported hosts reject binding validation without inspecting its fields.
  *
  * The trusted caller must first authorize the project/environment and capture
  * the actual immutable inputs named here. This checks their identity shape,
@@ -61,20 +64,30 @@ export async function resolveRenderGenerationIdentity(
   if (
     !canIdentifyProxyWithoutHooks || binding === null || typeof binding !== "object" ||
     isProxyWithoutHooks(binding) || ownKeys(binding).length !== fields.length
-  ) throw new TypeError("Render generation binding requires exactly its non-proxy data fields");
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Render generation binding requires exactly its non-proxy data fields",
+    });
+  }
 
   let scope = "veryfront-render-scope:v1:";
   let generation = "veryfront-render-generation:v1:";
   for (let index = 0; index < fields.length; index++) {
     const descriptor = getOwnPropertyDescriptor(binding, fields[index]!);
     if (!descriptor || !hasOwn(descriptor, "value")) {
-      throw new TypeError("Render generation binding fields must be own data properties");
+      throw INVALID_ARGUMENT.create({
+        detail: "Render generation binding fields must be own data properties",
+      });
     }
     const value: unknown = descriptor.value;
     if (
       typeof value !== "string" || value.length < 1 || value.length > 1024 ||
       !isWellFormedString(value)
-    ) throw new TypeError("Render generation binding fields must be bounded non-empty text");
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Render generation binding fields must be bounded non-empty text",
+      });
+    }
     const framed = `${value.length}:${value}`;
     if (index < 2) scope += framed;
     generation += framed;
