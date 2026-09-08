@@ -162,6 +162,7 @@ describe("executor runtime private lifecycle", () => {
     });
     let facadeCleanups = 0;
     let discoveryCleanups = 0;
+    const cleanupFinished = Promise.withResolvers<void>();
     const discovery = createExecutorDiscovery({
       binding,
       source,
@@ -215,11 +216,15 @@ describe("executor runtime private lifecycle", () => {
         }),
         cleanup: () => {
           facadeCleanups++;
-          return Promise.resolve();
+          return cleanupFinished.promise;
         },
       },
     });
     const originalThen = Promise.prototype.then;
+    const originalPromiseConstructor = Object.getOwnPropertyDescriptor(
+      Promise.prototype,
+      "constructor",
+    )!;
     const originalAbort = AbortController.prototype.abort;
     const originalMin = Math.min;
     let stepLimitOverrides = 0;
@@ -239,13 +244,32 @@ describe("executor runtime private lifecycle", () => {
         deadline: Date.now() + 30_000,
       });
       assertEquals((result as { ok?: boolean }).ok, true, JSON.stringify(result));
-      Promise.prototype.then = (() => Promise.resolve()) as typeof originalThen;
+      Object.defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        writable: true,
+        value: function ProjectPromise() {},
+      });
+      Promise.prototype.then = (function (fulfilled: ((value: unknown) => unknown) | undefined) {
+        fulfilled?.(undefined);
+        return Promise.resolve();
+      }) as typeof originalThen;
       AbortController.prototype.abort = () => {};
-      await owner.close();
+      const closing = owner.close();
+      await {
+        then(resolve: () => void) {
+          setTimeout(resolve, 0);
+        },
+      };
+      assertEquals(facadeCleanups, 1);
+      assertEquals(discoveryCleanups, 0);
+      cleanupFinished.resolve();
+      await closing;
     } finally {
+      Object.defineProperty(Promise.prototype, "constructor", originalPromiseConstructor);
       Promise.prototype.then = originalThen;
       AbortController.prototype.abort = originalAbort;
       Math.min = originalMin;
+      cleanupFinished.resolve();
       await owner.close();
     }
     assertEquals(owner.signal.aborted, true);
