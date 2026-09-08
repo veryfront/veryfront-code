@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { VERYFRONT_CLOUD_MODEL_PREFIX } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
@@ -151,7 +152,7 @@ function snapshotGrant(
       !model.id.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX) ||
       model.id.length === VERYFRONT_CLOUD_MODEL_PREFIX.length
     ) || !parsed.models.some((model) => model.id === parsed.defaultModelId) ||
-    new Set(parsed.models.map((model) => model.id)).size !== parsed.models.length
+    createPrivateSet(parsed.models.map((model) => model.id)).size !== parsed.models.length
   ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
   return parsed;
 }
@@ -336,7 +337,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         })!,
       ];
       const deniedToolNames = [
-        ...new Set([
+        ...createPrivateSet([
           ...definition.deniedTools ?? [],
           ...normalizeToolNames(definition.deniedTools ?? []),
         ]),

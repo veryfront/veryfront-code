@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import {
   createRemoteMCPToolSource,
@@ -255,8 +256,8 @@ export function augmentVeryfrontApiMcpServerPolicy(
     if (server.kind !== "veryfront-api" || !server.toolPolicy?.allow) {
       return server;
     }
-    const denied = new Set(server.toolPolicy.deny ?? []);
-    const allow = new Set(server.toolPolicy.allow);
+    const denied = createPrivateSet(server.toolPolicy.deny ?? []);
+    const allow = createPrivateSet(server.toolPolicy.allow);
     for (const toolName of integrationToolNames) {
       if (!denied.has(toolName)) allow.add(toolName);
     }
@@ -274,7 +275,7 @@ function withoutDeniedHostTools(
   if (!deniedToolNames?.length) {
     return tools;
   }
-  const denied = new Set(deniedToolNames);
+  const denied = createPrivateSet(deniedToolNames);
   return recordFromEntries(
     filterValues(ownEntries(tools), ([toolName, tool]) =>
       !denied.has(toolName) &&
@@ -314,7 +315,7 @@ function applyHostedHostToolPolicy(
   if (policy === undefined) {
     return tools;
   }
-  const allowed = new Set(policy.allow);
+  const allowed = createPrivateSet(policy.allow);
   return recordFromEntries(
     filterValues(ownEntries(tools), ([registeredName, tool]) =>
       allowed.has(registeredName) ||
@@ -348,7 +349,7 @@ function filterPostFormInputLocalTools(
     return tools;
   }
 
-  const blockedToolNames = new Set(["form_input", "load_skill"]);
+  const blockedToolNames = createPrivateSet(["form_input", "load_skill"]);
   return recordFromEntries(
     filterValues(ownEntries(tools), ([toolName]) => !blockedToolNames.has(toolName)),
   );
@@ -391,7 +392,7 @@ export function resolveOwnerScopedToolNames(input: {
     return input.toolNames;
   }
 
-  const resolvedToolNames = new Set<string>();
+  const resolvedToolNames = createPrivateSet<string>();
   for (const toolName of toolNames) {
     resolvedToolNames.add(
       resolveOwnerScopedToolName({
@@ -479,7 +480,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     allowedToolNames,
     sourceProviderToolNames: input.sourceProviderToolNames,
   });
-  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
+  const sourceProviderToolNames = createPrivateSet(input.sourceProviderToolNames ?? []);
   const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
     input.allowedProviderToolNames,
   );
@@ -572,7 +573,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     listedRemoteToolNames,
     input.sourceIntegrationPolicy,
   );
-  const localProviderToolNames = new Set(
+  const localProviderToolNames = createPrivateSet(
     filterValues(
       ownKeys(sortedLocalTools),
       (toolName) => includesValue(providerNativeToolNames, toolName),
@@ -581,7 +582,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   // Explicit denials also bind provider-native tools: a denied name must not
   // reach the model through the provider channel after the host and remote
   // paths filtered it out.
-  const deniedProviderToolNames = new Set(input.deniedToolNames ?? []);
+  const deniedProviderToolNames = createPrivateSet(input.deniedToolNames ?? []);
   const selectedProviderToolNames = filterValues(
     providerNativeToolNames,
     (toolName) =>
@@ -607,7 +608,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     ? "deferred"
     : "eager";
   const authorizedToolNames = [
-    ...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames]),
+    ...createPrivateSet([...localToolNames, ...providerToolNames, ...remoteToolNames]),
   ];
   sortValues(authorizedToolNames, compareStrings);
   // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
@@ -619,7 +620,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       model: input.taskContext.model,
       requiredToolNames: localToolNames,
     });
-  const compatibleToolNames = new Set(availableToolNames);
+  const compatibleToolNames = createPrivateSet(availableToolNames);
   const compatibleLocalRuntimeTools = toolLoadingMode === "deferred"
     ? localRuntimeTools
     : recordFromEntries(

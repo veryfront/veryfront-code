@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { ChatRuntimeOverrides } from "../../chat/types.ts";
 import { type HostedChatRequest, hostedChatRuntimeOverridesSchema } from "./chat-request.ts";
 import type {
@@ -81,7 +82,7 @@ export function getServerResolvedToolExposureCheckpoint(
     !isSupportedToolExposureCheckpointVersion(value.version) ||
     !Array.isArray(value.loadedToolNames) ||
     !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
-    new Set(value.loadedToolNames).size !== value.loadedToolNames.length
+    createPrivateSet(value.loadedToolNames).size !== value.loadedToolNames.length
   ) {
     return undefined;
   }
@@ -213,10 +214,12 @@ export function resolveHostedRuntimeAllowedTools(input: {
 }): string[] | undefined {
   if (input.configuredTools === true) {
     if (input.configuredDeniedTools?.length) return [];
-    return input.requestedTools === undefined ? undefined : [...new Set(input.requestedTools)];
+    return input.requestedTools === undefined
+      ? undefined
+      : [...createPrivateSet(input.requestedTools)];
   }
 
-  const configuredToolNames = new Set([
+  const configuredToolNames = createPrivateSet([
     ...(input.configuredTools ?? []),
     ...(input.configuredDelegates ?? []).map((id) => `${AGENT_DELEGATE_TOOL_PREFIX}${id}`),
   ]);
@@ -227,7 +230,7 @@ export function resolveHostedRuntimeAllowedTools(input: {
   const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
     input.configuredSkills === true ||
     (Array.isArray(input.configuredSkills) && input.configuredSkills.length > 0);
-  return [...new Set(input.requestedTools)].filter((toolName) =>
+  return [...createPrivateSet(input.requestedTools)].filter((toolName) =>
     configuredToolNames.has(toolName) ||
     (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
   );
@@ -238,12 +241,14 @@ export function resolveHostedRuntimeAllowedProviderTools(input: {
   configuredProviderTools: RuntimeAgentMarkdownDefinition["providerTools"];
   requestedTools: string[] | undefined;
 }): string[] {
-  const configuredToolNames = new Set(input.configuredProviderTools ?? []);
+  const configuredToolNames = createPrivateSet(input.configuredProviderTools ?? []);
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
 
-  return [...new Set(input.requestedTools)].filter((toolName) => configuredToolNames.has(toolName));
+  return [...createPrivateSet(input.requestedTools)].filter((toolName) =>
+    configuredToolNames.has(toolName)
+  );
 }
 
 /** Configuration used by resolve hosted runtime request. */
