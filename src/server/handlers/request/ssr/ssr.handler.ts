@@ -44,6 +44,7 @@ import {
   readSnapshotHeader,
   resolveSnapshotForRequest,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import { isProductionMode, shouldHideRouteInProduction } from "../route-visibility-policy.ts";
@@ -138,6 +139,13 @@ export class SSRHandler extends BaseHandler {
 
     return this.setupContextAndRender(req, ctx, slug, requestId, url).catch((error) => {
       endRequest(requestId);
+      const unavailable = snapshotStoreFailureResponse(
+        error,
+        this.createResponseBuilder(ctx, generateNonce()),
+        req,
+        ctx.securityConfig,
+      );
+      if (unavailable) return this.respond(unavailable);
       throw error;
     });
   }

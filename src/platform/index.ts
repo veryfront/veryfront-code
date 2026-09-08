@@ -15,6 +15,12 @@
 // Adapters
 export { createMockAdapter } from "./adapters/mock.ts";
 export type { RuntimeAdapter } from "./adapters/base.ts";
+export type {
+  DependencySnapshotRecord,
+  DependencySnapshotStore,
+  DependencySnapshotStoreHandle,
+} from "./adapters/dependency-snapshot-store.ts";
+export { createDependencySnapshotStoreHandle } from "./adapters/dependency-snapshot-store.ts";
 
 // Compat: process
 export {

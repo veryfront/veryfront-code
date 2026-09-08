@@ -1,5 +1,10 @@
-import { cwd } from "veryfront/platform";
-import { gracefullyShutdownProductionServer } from "veryfront/server";
+import { cwd, getEnv } from "veryfront/platform";
+import {
+  gracefullyShutdownProductionServer,
+  parseShutdownCleanupTimeoutMs,
+  parseShutdownDrainTimeoutMs,
+  runProductionProcessOwner,
+} from "veryfront/server";
 import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
@@ -32,6 +37,13 @@ type ProductionServerDependencies = {
   initializeErrorReporting?: () => Promise<unknown>;
   loadSentryModule?: () => Promise<ProductionSentryModule>;
   reporter?: StartupErrorReporter;
+  startServer?: typeof startCliProductionServer;
+  gracefullyShutdown?: typeof gracefullyShutdownProductionServer;
+  registerTerminationSignals?: (
+    handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
+  ) => void | (() => void);
+  exit?: typeof exitProcess;
+  initializeRuntime?: () => Promise<void>;
 };
 
 type ServeCommandDependencies = {
@@ -242,76 +254,98 @@ export async function runProductionServer(
       deferredReporter.setSentryModule(sentryModule);
       await sentryModule.initializeSentryFromEnv();
     });
+  let shutdownTimeouts: {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } | undefined;
+  // Capture one split when shutdown is first requested. Normal requests see
+  // project .env loaded by server startup; an earlier signal deliberately uses
+  // the parent environment rather than waiting for unfinished bootstrap.
+  const resolveShutdownTimeouts = (): {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } =>
+    shutdownTimeouts ??= {
+      drainTimeoutMs: parseShutdownDrainTimeoutMs(
+        getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+      ),
+      cleanupTimeoutMs: parseShutdownCleanupTimeoutMs(
+        getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+      ),
+    };
 
-  const { server, shutdownController } = await runProductionStartupWithErrorReporting(
-    async () => {
-      const { clearAllLocalCaches } = await import(
-        "veryfront/transforms/mdx-cache"
-      );
-      await clearAllLocalCaches();
-
-      const { initializeOTLPWithApis } = await import(
-        "veryfront/observability/otlp-setup"
-      );
-      const { initializeDistributedCaches } = await import(
-        "veryfront/cache"
-      );
-      const { defaultDistributedCacheInitializers } = await import(
-        "veryfront/server"
-      );
-      await Promise.allSettled([
-        initializeOTLPWithApis(),
-        initializeDistributedCaches(defaultDistributedCacheInitializers),
-      ]);
-
-      const projectDir = cwd();
-      const shutdownController = new AbortController();
-      const defaultProjectId = generateDefaultProjectId(projectDir);
-
-      const server = await startCliProductionServer({
-        projectDir,
-        port: options.port,
-        bindAddress: options.bindAddress,
-        debug: options.debug,
-        signal: shutdownController.signal,
-        defaultProjectSlug: defaultProjectId,
-        defaultProjectId,
-      });
-      await server.ready;
-
-      return { server, shutdownController };
+  await runProductionProcessOwner({
+    shutdownTimeoutMs: () => {
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
+      return drainTimeoutMs + cleanupTimeoutMs;
     },
-    reporter,
-    dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
-    initializeErrorReporting,
-  );
+    start: ({ signal, onMemoryRecycle }) =>
+      runProductionStartupWithErrorReporting(
+        async () => {
+          if (dependencies.initializeRuntime) {
+            await dependencies.initializeRuntime();
+          } else {
+            const { clearAllLocalCaches } = await import(
+              "veryfront/transforms/mdx-cache"
+            );
+            await clearAllLocalCaches();
 
-  printServeReady({ port: options.port, bindAddress: options.bindAddress });
+            const { initializeOTLPWithApis } = await import(
+              "veryfront/observability/otlp-setup"
+            );
+            const { initializeDistributedCaches } = await import(
+              "veryfront/cache"
+            );
+            const { defaultDistributedCacheInitializers } = await import(
+              "veryfront/server"
+            );
+            await Promise.allSettled([
+              initializeOTLPWithApis(),
+              initializeDistributedCaches(defaultDistributedCacheInitializers),
+            ]);
+          }
 
-  let shuttingDown = false;
-  const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-
-    try {
-      await gracefullyShutdownProductionServer({
-        signal,
-        abort: () => shutdownController.abort(),
-        stop: server.stop,
+          const projectDir = cwd();
+          const defaultProjectId = generateDefaultProjectId(projectDir);
+          const server = await (dependencies.startServer ?? startCliProductionServer)({
+            projectDir,
+            port: options.port,
+            bindAddress: options.bindAddress,
+            debug: options.debug,
+            signal,
+            defaultProjectSlug: defaultProjectId,
+            defaultProjectId,
+            onMemoryRecycle,
+          });
+          return {
+            ...server,
+            ready: runWithStartupErrorReporting(() => server.ready, reporter),
+          };
+        },
+        reporter,
+        dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
+        initializeErrorReporting,
+      ),
+    shutdown: async (reason, server, abort) => {
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
+      await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
+        signal: reason,
+        drainTimeoutMs,
+        cleanupTimeoutMs,
+        abort,
+        stop: server?.stop ?? (() => Promise.resolve()),
         logger: cliLogger,
       });
-    } catch (error) {
+    },
+    flush: reporter.flushApplicationErrors,
+    exit: dependencies.exit ?? exitProcess,
+    registerSignals: dependencies.registerTerminationSignals ?? registerTerminationSignals,
+    onReady: () => printServeReady({ port: options.port, bindAddress: options.bindAddress }),
+    onError: (error, reason) => {
       reporter.captureApplicationError(error, { boundary: "process.shutdown" });
-      cliLogger.warn("Error while shutting down production server:", error);
-    } finally {
-      await reporter.flushApplicationErrors();
-      exitProcess(0);
-    }
-  };
-
-  registerTerminationSignals(shutdown);
-
-  await new Promise(() => {});
+      cliLogger.warn("Error while shutting down production server", { reason, error });
+    },
+  });
 }
 
 export async function serveCommand(

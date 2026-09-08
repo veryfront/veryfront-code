@@ -141,6 +141,18 @@ describe("suite planning parity", () => {
     );
   });
 
+  it("includes the SSR snapshot boundary in both native runtime suites", async () => {
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(
+          "src/server/handlers/request/ssr/ssr-snapshot.test.ts",
+        ),
+        `${suite} must execute the SSR snapshot boundary regressions`,
+      );
+    }
+  });
+
   it("keeps the Deno unit-preload transport test out of external runtimes", async () => {
     const denoOnlyFile = "src/testing/offline-react-transport.test.ts";
 
@@ -765,6 +777,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
+      "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
+      "tests/integration/server/dependency-snapshot-stream.test.ts",
+      "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
@@ -781,6 +797,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
+      "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
+      "tests/integration/server/dependency-snapshot-stream.test.ts",
+      "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];

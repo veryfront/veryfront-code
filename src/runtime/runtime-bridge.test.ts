@@ -815,7 +815,8 @@ describe("runtime-bridge", () => {
       assertEquals(recorded?.model, { id: bareModelId, modelProvider });
       assertEquals(
         recorded?.request?.reasoning,
-        modelProvider === "openai"
+        // Cloud Mistral uses the same OpenAI-compatible effort-only builder.
+        modelProvider === "openai" || modelProvider === "mistral"
           ? { enabled: true, effort: "high" }
           : { enabled: true, effort: "high", budgetTokens: 2048 },
       );

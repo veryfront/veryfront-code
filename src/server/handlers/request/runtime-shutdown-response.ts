@@ -9,16 +9,15 @@ export const RUNTIME_SHUTTING_DOWN_MESSAGE =
   "Runtime is shutting down; retry against another instance";
 
 /**
- * Builds the 503 response used to reject new agent-work requests while the
- * renderer is draining. Sends `Connection: close` so the API drops the keep-alive
+ * Builds the 503 response used to reject new work while the
+ * renderer is draining. Sends `Connection: close` so callers drop the keep-alive
  * connection to this terminating pod, and deliberately omits the runtime-owner
  * invoke URL header so the API does not re-pin the run to this pod's IP.
  */
-export function buildRuntimeShuttingDownResponse(builder: ResponseBuilder): Response {
+export function buildRuntimeShuttingDownResponse(builder?: ResponseBuilder): Response {
+  const headers = { Connection: "close" };
+  const body = { code: RUNTIME_SHUTTING_DOWN_CODE, message: RUNTIME_SHUTTING_DOWN_MESSAGE };
   return builder
-    .withHeaders({ Connection: "close" })
-    .json(
-      { code: RUNTIME_SHUTTING_DOWN_CODE, message: RUNTIME_SHUTTING_DOWN_MESSAGE },
-      HTTP_UNAVAILABLE,
-    );
+    ? builder.withHeaders(headers).json(body, HTTP_UNAVAILABLE)
+    : Response.json(body, { status: HTTP_UNAVAILABLE, headers });
 }

@@ -6,6 +6,7 @@
     ".": "./main.ts"
   },
   "imports": {
+    "#cli/commands/serve/command": "./commands/serve/command.ts",
     "#cli/auth/callback-server": "./auth/callback-server.ts",
     "#cli/shared/args": "./shared/args.ts",
     "#cli/shared/types": "./shared/types.ts",

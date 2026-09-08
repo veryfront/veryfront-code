@@ -133,7 +133,8 @@ function stripIpv6HostnameBrackets(value: string): string {
   return value;
 }
 
-function requireSecureInferenceApiBaseUrl(value: string): void {
+/** @internal Apply the host-owned inference credential transport policy. */
+export function requireSecureInferenceApiBaseUrl(value: string): void {
   const url = parseVeryfrontCloudApiBaseUrl(value);
   const hostname = stripIpv6HostnameBrackets(
     IntrinsicReflectApply(

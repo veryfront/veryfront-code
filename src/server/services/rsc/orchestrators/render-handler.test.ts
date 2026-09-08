@@ -1,12 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderHandler } from "./render-handler.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import {
   clearReactVersionCache,
+  createDependencyPinningSource,
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -18,6 +21,27 @@ import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 describe("server/services/rsc/orchestrators/render-handler", () => {
   describe("handle", () => {
+    it("propagates storage failures raised after snapshot validation to the transport boundary", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/app/page.tsx",
+        "export default function Page() { return null; }",
+      );
+      const source = createDependencyPinningSource({
+        projectDir: "/project",
+        projectId: "late-render-storage-error",
+        adapter,
+        isLocalProject: false,
+      });
+      const handler = new RenderHandler("/project", () => null, "production", "app", {
+        adapter,
+        dependencyPinningSource: source,
+        moduleLoader: () => Promise.reject(DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.create()),
+      });
+      const error = await assertRejects(() => handler.handle("/", new URLSearchParams()));
+      assertEquals(snapshotVeryfrontError(error)?.slug, "dependency-snapshot-store-unavailable");
+    });
+
     it("returns error response when component is not found", async () => {
       const handler = new RenderHandler(
         "/tmp/nonexistent-project",

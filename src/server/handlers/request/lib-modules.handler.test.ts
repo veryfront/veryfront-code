@@ -22,6 +22,7 @@ import {
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { createMockAdapter, type MockRuntimeAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import type { HandlerContext } from "../types.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -487,6 +488,44 @@ describe("LibModulesHandler", () => {
       assertEquals(response.headers.get("x-content-type-options"), "nosniff");
     });
 
+    for (const method of ["GET", "HEAD"]) {
+      it(`returns the snapshot storage failure response for ${method}`, async () => {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        const origin = "https://studio.example.com";
+        let storeReads = 0;
+        const adapter = {
+          ...createAdapter(),
+          dependencySnapshotStore: createDependencySnapshotStoreHandle({
+            publish: () => Promise.resolve(),
+            read: () => {
+              storeReads++;
+              return Promise.reject(new Error("store unavailable"));
+            },
+          }),
+        };
+        const ctx = createContext(adapter, {
+          isLocalProject: false,
+          projectId: "project-id",
+          releaseId: "release-a",
+          securityConfig: { cors: { origin } },
+        });
+
+        const response = await requestChat(ctx, "?pins=on%3A54uvgwr2ih7p", method, { origin });
+
+        assertEquals(storeReads, 1);
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(
+          response.headers.get("vary")?.toLowerCase().includes("x-veryfront-dependency-pins"),
+          true,
+        );
+        assertEquals(response.headers.get("access-control-allow-origin"), origin);
+        assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+        if (method === "HEAD") assertEquals(response.body, null);
+        else assertEquals(await response.text(), "Dependency snapshot storage is unavailable");
+      });
+    }
+
     it("uses the canonical bodyless conflict response for HEAD", async () => {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       const response = await requestChat(
@@ -567,6 +606,9 @@ describe("LibModulesHandler", () => {
       const failure = new Proxy({}, {
         get() {
           throw new Error("snapshot failure must not be inspected");
+        },
+        getPrototypeOf() {
+          throw new Error("snapshot failure prototype must not be inspected");
         },
       });
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
