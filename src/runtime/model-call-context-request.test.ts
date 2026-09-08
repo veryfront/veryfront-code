@@ -34,6 +34,186 @@ const samplingFields = [
 ] as const;
 
 describe("model call request projection", () => {
+  it("matches OpenAI-compatible Cloud controls including Kimi fixed sampling", () => {
+    for (
+      const [modelProvider, modelId] of [["mistral", "mistral-large"], [
+        "moonshotai",
+        "kimi-k2.5",
+      ]] as const
+    ) {
+      for (const native of [undefined, { temperature: 0.2, top_k: 3 }]) {
+        const options = {
+          prompt,
+          ...sampling,
+          topK: 9,
+          providerOptions: native ? { "veryfront-cloud": native } : undefined,
+        };
+        const projected = buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider,
+          modelId,
+        }, options);
+        const body = buildOpenAIChatRequest(
+          modelId,
+          "veryfront-cloud",
+          options,
+          false,
+          createWarningCollector(),
+        );
+        for (const [field, nativeField] of [...samplingFields, ["topK", "top_k"]] as const) {
+          assertEquals(projected?.[field], (body as Record<string, unknown>)[nativeField]);
+        }
+      }
+    }
+  });
+
+  it("matches managed OpenAI native reasoning precedence and tool suppression", () => {
+    for (const modelId of ["gpt-5.4", "o3"]) {
+      for (const nativeEffort of ["low", "none", undefined]) {
+        const native = modelId === "o3"
+          ? { reasoning: { effort: nativeEffort } }
+          : { reasoning_effort: nativeEffort };
+        const options = {
+          prompt,
+          ...sampling,
+          reasoning: { enabled: true, effort: "high" as const },
+          providerOptions: {
+            openai: { reasoning_effort: "medium", reasoning: { effort: "medium" } },
+            "veryfront-cloud": native,
+          },
+        };
+        const projected = buildModelCallContextRequest({
+          provider: "veryfront-cloud",
+          modelProvider: "openai",
+          modelId,
+        }, options);
+        const body = modelId === "o3"
+          ? buildOpenAIResponsesRequest(
+            modelId,
+            "veryfront-cloud",
+            options,
+            false,
+            createWarningCollector(),
+          )
+          : buildOpenAIChatRequest(
+            modelId,
+            "veryfront-cloud",
+            options,
+            false,
+            createWarningCollector(),
+            { reasoningWithFunctionTools: false },
+          );
+        assertEquals(
+          modelId === "o3" ? (body.reasoning as { effort?: string }).effort : body.reasoning_effort,
+          nativeEffort,
+        );
+        assertEquals(
+          projected?.reasoning,
+          nativeEffort === "low"
+            ? { enabled: true, effort: "low" }
+            : nativeEffort === "none"
+            ? { enabled: false }
+            : undefined,
+        );
+        assertEquals(projected?.temperature, body.temperature);
+        if (modelId === "gpt-5.4") {
+          assertEquals(
+            buildModelCallContextRequest({
+              provider: "veryfront-cloud",
+              modelProvider: "openai",
+              modelId,
+            }, { ...options, tools })?.reasoning,
+            { enabled: false },
+          );
+        }
+      }
+    }
+  });
+
+  it("omits neutral seeds from managed Responses while retaining native seeds", () => {
+    for (const native of [undefined, { seed: 2 }]) {
+      const options = {
+        prompt,
+        seed: 7,
+        providerOptions: native ? { "veryfront-cloud": native } : undefined,
+      };
+      const projected = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "openai",
+        modelId: "o3",
+      }, options);
+      const body = buildOpenAIResponsesRequest(
+        "o3",
+        "veryfront-cloud",
+        options,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(projected?.seed, body.seed);
+      assertEquals(projected?.seed, native?.seed);
+    }
+  });
+
+  it("matches controls when managed web-search tools select Responses", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      ...sampling,
+      seed: 7,
+      stopSequences: ["STOP"],
+      tools: [{ type: "provider", id: "openai.web_search", name: "web_search", args: {} }],
+      providerOptions: { "veryfront-cloud": { reasoning: { effort: "low" } } },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    }, options);
+    const body = buildOpenAIResponsesRequest(
+      "gpt-4o",
+      "veryfront-cloud",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    for (
+      const [field, nativeField] of [...samplingFields, ["seed", "seed"], [
+        "stopSequences",
+        "stop",
+      ]] as const
+    ) {
+      assertEquals(projected?.[field], body[nativeField]);
+    }
+    assertEquals(projected?.reasoning, { enabled: true, effort: "low" });
+  });
+
+  it("omits adaptive effort overwritten by Anthropic structured output", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      responseFormat: {
+        type: "json_schema",
+        name: "result",
+        schema: { type: "object", properties: {} },
+      },
+      providerOptions: {
+        anthropic: { thinking: { type: "adaptive" }, output_config: { effort: "high" } },
+      },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "anthropic",
+      modelId: "claude-opus-4-7",
+    }, options);
+    const body = buildAnthropicMessagesRequest(
+      "claude-opus-4-7",
+      "veryfront-cloud",
+      options,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(projected?.reasoning, { enabled: true });
+    assertEquals((body.output_config as Record<string, unknown>).effort, undefined);
+  });
+
   for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
     it(`matches ${modelId} Cloud Chat reasoning with and without function tools`, () => {
       const catalogId = `openai/${modelId}`;
