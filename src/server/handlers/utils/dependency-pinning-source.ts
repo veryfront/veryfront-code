@@ -58,8 +58,13 @@ export function createHandlerDependencyPinningSource(
     // replica keeps hydrating on every other replica after dependency writeback
     // changes the current key. A host that configures snapshot storage on its
     // adapter owns that decision — captured absence included — and the
-    // cache-backed default applies only when the adapter says nothing.
-    ...(ctx.adapter && Object.hasOwn(ctx.adapter, "dependencySnapshotStore")
+    // cache-backed default applies only when the adapter says nothing. Local
+    // projects always keep process-local history: a CLI-authenticated dev
+    // process can satisfy the shared-backend predicates without holding a
+    // cache-authorized tenant context, and a failing publication would break
+    // local rendering — while a single local process needs no shared history.
+    ...(ctx.isLocalProject === true ||
+        (ctx.adapter && Object.hasOwn(ctx.adapter, "dependencySnapshotStore"))
       ? {}
       : { snapshotStore: getSharedDependencySnapshotStoreHandle() }),
   });

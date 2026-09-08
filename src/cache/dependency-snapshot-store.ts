@@ -49,8 +49,13 @@ const SNAPSHOT_KEY_PREFIX = "dependency-snapshots";
 /** The store contract bounds snapshot payloads to 1 MiB. */
 const MAX_SNAPSHOT_VALUE_BYTES = 1_048_576;
 
-/** The payload bound plus room for the JSON record envelope around it. */
-const MAX_SNAPSHOT_RECORD_BYTES = MAX_SNAPSHOT_VALUE_BYTES + 4_096;
+/**
+ * The record embeds the payload as a JSON string. Snapshot payloads are
+ * themselves JSON text (see `encodeDependencySnapshot`), so they carry no raw
+ * control characters and worst-case escaping doubles quotes and backslashes.
+ * Twice the payload bound plus envelope room admits every valid payload.
+ */
+const MAX_SNAPSHOT_RECORD_BYTES = 2 * MAX_SNAPSHOT_VALUE_BYTES + 4_096;
 
 /**
  * Deadline tolerance for concurrent same-value publications. Two replicas
@@ -175,6 +180,13 @@ export function createCacheBackedDependencySnapshotStore(
         throw new Error("Dependency snapshot publication lost a conflicting race");
       }
 
+      // Without the revision capability the write itself is unconditional, and
+      // read-back verification cannot serialize two publishers. That residual
+      // race never surfaces legitimate divergence: a snapshot value is the
+      // canonical serialization of exactly the state hashed into its key
+      // (encodeDependencySnapshot sorts and canonicalizes), so concurrent
+      // publishers at one key carry identical bytes unless storage is
+      // corrupted — and corruption is what the checks above still catch.
       await backend.set(cacheKey, encoded, ttlSeconds);
       // The backends fail open on `set`, and acknowledged retention is the
       // whole point of publication: a document only advertises a pin its

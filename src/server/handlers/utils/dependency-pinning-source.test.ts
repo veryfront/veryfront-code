@@ -283,6 +283,25 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
       assertEquals(recovered?.dependencies, document.dependencies);
     });
 
+    it("keeps local projects on process-local history", async () => {
+      // A CLI-authenticated local dev process can satisfy the shared-backend
+      // predicates without holding a cache-authorized tenant context, and a
+      // failing publication would break local rendering. Local projects never
+      // get the automatic store.
+      const backend = new MemoryCacheBackend();
+      _setSharedDependencySnapshotStoreBackendForTest(backend);
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/package.json", '{"dependencies":{}}');
+
+      const source = createHandlerDependencyPinningSource(
+        makeCtx({ adapter, projectId: "local-history-project", isLocalProject: true }),
+      );
+      const document = await getDependencyPinningSnapshot(source);
+
+      assertEquals(document.cacheKey.startsWith("on:"), true);
+      assertEquals(backend.size, 0, "a local project must not publish to the shared store");
+    });
+
     it("defers to an adapter that configures its own snapshot store", async () => {
       _setSharedDependencySnapshotStoreBackendForTest(new MemoryCacheBackend());
       const published: string[] = [];

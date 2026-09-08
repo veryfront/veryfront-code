@@ -134,6 +134,18 @@ describe("cache/dependency-snapshot-store", () => {
       await assertRejects(() => backedStore(backend).read(NAMESPACE, KEY));
     });
 
+    it("round-trips a near-limit payload dense with JSON escaping", async () => {
+      // The record embeds the payload as a JSON string, so quotes and
+      // backslashes double in size. A payload at the 1 MiB contract limit must
+      // still publish and read back even at worst-case escaping inflation.
+      const store = backedStore(new MemoryCacheBackend(10, { maxSizeBytes: 8 * 1024 * 1024 }));
+      const value = '"\\'.repeat(524_288); // 1,048,576 bytes, all escaping
+      const expiresAt = Date.now() + 60_000;
+      await store.publish(NAMESPACE, KEY, value, expiresAt);
+
+      assertEquals(await store.read(NAMESPACE, KEY), { value, expiresAt });
+    });
+
     it("rejects a publication whose payload exceeds the snapshot limit", async () => {
       await assertRejects(() =>
         backedStore(new MemoryCacheBackend(10, { maxSizeBytes: 8 * 1024 * 1024 })).publish(
