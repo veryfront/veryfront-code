@@ -74,6 +74,7 @@ import {
   type ExecutorRuntimePrepareRequest,
   getExecutorRuntimeGrantDataSchema,
   getExecutorRuntimePrepareRequestSchema,
+  getExecutorRuntimeSteeringSchema,
   parseRuntimePreparationData,
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 
@@ -483,7 +484,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       resourcesStarted = true;
       resolveModelRuntime(modelId);
       const execution = grant.execution;
-      const steering = facades.projectSteering
+      const steeringResult = facades.projectSteering
         ? await observePrivatePromise(facades.projectSteering.prepare({
           definition,
           projectId: execution.projectId,
@@ -491,6 +492,10 @@ export function createExecutorRuntimePreparation(input: Options) {
           signal: context.signal,
         }))
         : undefined;
+      const steering = steeringResult === undefined ? undefined : parseRuntimePreparationData(
+        getExecutorRuntimeSteeringSchema(),
+        steeringResult,
+      );
       assertActive();
       if (steering && steering.agent.id !== definition.id) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
       const skills = resolveRuntimeSkillSelectorForAgent({

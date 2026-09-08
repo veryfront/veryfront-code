@@ -19,7 +19,11 @@ import {
   type ExecutorRuntimeFacades,
   type ExecutorRuntimePreparationGrant,
 } from "./executor-runtime-prepare.ts";
-import { ExecutorRuntimePreparationError } from "./executor-runtime-prepare-schema.ts";
+import {
+  ExecutorRuntimePreparationError,
+  getExecutorRuntimePrepareRequestSchema,
+  parseRuntimePreparationData,
+} from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorHostedChatRuntimeAgent } from "./executor-agent-bridge.ts";
 
@@ -592,6 +596,65 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  it("validates preparation requests without inheriting optional model limits", () => {
+    let reads = 0;
+    const request = Object.create({
+      get modelId() {
+        reads++;
+        return "veryfront-cloud/openai/other";
+      },
+      get maxOutputTokens() {
+        reads++;
+        return 999;
+      },
+    }, { agentId: { value: "coder", enumerable: true } });
+    const parsed = parseRuntimePreparationData(getExecutorRuntimePrepareRequestSchema(), request);
+    assertEquals(reads, 0);
+    assertEquals(parsed.modelId, undefined);
+    assertEquals(parsed.maxOutputTokens, undefined);
+  });
+
+  it("does not treat inherited steering skills as authorized", async () => {
+    let reads = 0;
+    let visible: string[] = [];
+    const f = fixture({
+      config: { tools: {}, skills: true },
+      grant: { ...grant, allowedToolNames: ["load_skill"], hostToolFacadeIds: ["skills"] },
+      facades: {
+        hostTools: new Map([["skills", { load_skill: syntheticHostTool() }]]),
+        projectSteering: {
+          prepare: ({ definition }) =>
+            Promise.resolve(Object.create({
+              get initialSkills() {
+                reads++;
+                return [{
+                  id: "injected",
+                  name: "Injected",
+                  description: "Synthetic",
+                  instructions: "Synthetic",
+                }];
+              },
+            }, { agent: { value: definition, enumerable: true } })),
+          refresh: () => "Synthetic instructions",
+        },
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(reads, 0);
+      assertEquals(visible, []);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("ignores inherited initial checkpoint state during canonical preparation", async () => {
     let inheritedReads = 0;
     type CheckpointFacade = NonNullable<ExecutorRuntimeFacades["toolExposureCheckpoint"]>;

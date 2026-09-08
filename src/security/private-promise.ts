@@ -91,7 +91,9 @@ class PrivatePromise<T> extends NativePromise<T> {
     return PrivatePromise;
   }
 
-  override then<F = T, R = never>(
+  // This native Promise subclass intentionally implements the Promise protocol.
+  // Its override routes await/then through protected reactions rather than mutable hooks.
+  override then<F = T, R = never>( // NOSONAR S7739: intentional Promise override, not an accidental thenable.
     fulfilled?: ((value: T) => F | PromiseLike<F>) | null,
     rejected?: ((reason: unknown) => R | PromiseLike<R>) | null,
   ): Promise<F | R> {
