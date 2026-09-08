@@ -44,7 +44,7 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
       return { ok: true };
     },
   };
-  const coder = agent({
+  const coder = agent<any>({
     id: "coder",
     system: "Synthetic instructions",
     model: modelId,
