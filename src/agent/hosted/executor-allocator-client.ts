@@ -1,3 +1,4 @@
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { Buffer } from "node:buffer";
 import { lookup } from "node:dns/promises";
@@ -141,7 +142,7 @@ export function createHostedExecutorAllocatorClient(options: {
               const body = Buffer.concat(chunks, size);
               try {
                 responseValue = privateJsonParse(
-                  new TextDecoder("utf-8", { fatal: true }).decode(body),
+                  createPrivateTextDecoder("utf-8", { fatal: true }).decode(body),
                 );
               } finally {
                 body.fill(0);

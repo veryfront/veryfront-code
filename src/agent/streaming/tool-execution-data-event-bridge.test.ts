@@ -12,6 +12,32 @@ function requireStreamController(
 }
 
 describe("createToolExecutionDataEventBridgeStream", () => {
+  it("normalizes byte views without consulting overridden metadata getters", async () => {
+    const bytes = new Uint8Array([11, 22, 33, 44]);
+    const view = new DataView(bytes.buffer, 1, 2);
+    let reads = 0;
+    for (const key of ["buffer", "byteOffset", "byteLength"] as const) {
+      const value = view[key];
+      Object.defineProperty(view, key, {
+        get() {
+          reads++;
+          return value;
+        },
+      });
+    }
+    const baseStream = new ReadableStream<unknown>({
+      start(controller) {
+        controller.enqueue(view);
+        controller.close();
+      },
+    }) as ReadableStream<Uint8Array>;
+    const chunks = await Array.fromAsync(
+      createToolExecutionDataEventBridgeStream({ baseStream, installPublisher: () => {} }),
+    );
+    assertEquals(reads, 0);
+    assertEquals(chunks, [new Uint8Array([22, 33])]);
+  });
+
   it("does not expose its source through an overridden reader factory", async () => {
     let reads = 0;
     const baseStream = new ReadableStream<Uint8Array>({

@@ -1,3 +1,5 @@
+import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
@@ -10,7 +12,7 @@ const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_RUNTIME_MESSAGES = 100;
 
-const encoder = new TextEncoder();
+const encoder = new PrivateTextEncoder();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -18,7 +20,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
-    return encoder.encode(privateJsonStringify(value)).byteLength <= maxBytes;
+    return privateByteLength(encodePrivateText(privateJsonStringify(value), encoder)) <= maxBytes;
   } catch {
     return false;
   }

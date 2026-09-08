@@ -7,6 +7,138 @@ import { createToolExecutionDataEventBridgeStream } from "#veryfront/agent/strea
 import { StreamEventEmitter } from "#veryfront/agent/streaming/stream-events.ts";
 
 describe("executor serialization intrinsics", () => {
+  it("keeps private text out of replaced encoder and decoder operations", async () => {
+    const marker = "synthetic-private-codec-marker";
+    const request = { messages: [{ text: marker }] };
+    const NativeEncoder = TextEncoder;
+    const NativeDecoder = TextDecoder;
+    const encode = TextEncoder.prototype.encode;
+    const decode = TextDecoder.prototype.decode;
+    const apply = Reflect.apply;
+    const construct = Reflect.construct;
+    const payload = new NativeEncoder().encode(
+      `data: {"type":"text-delta","delta":"${marker}"}\n\ndata: {"type":"message-finish"}\n\n`,
+    );
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(payload);
+        controller.close();
+      },
+    });
+    let exposures = 0;
+    const events: unknown[] = [];
+    let snapshot: unknown;
+    try {
+      globalThis.TextEncoder = new Proxy(NativeEncoder, {
+        construct(target, args, newTarget) {
+          exposures++;
+          return construct(target, args, newTarget);
+        },
+      });
+      globalThis.TextDecoder = new Proxy(NativeDecoder, {
+        construct(target, args, newTarget) {
+          exposures++;
+          return construct(target, args, newTarget);
+        },
+      });
+      NativeEncoder.prototype.encode = function (input) {
+        if (input?.includes(marker)) exposures++;
+        return apply(encode, this, [input]);
+      };
+      NativeDecoder.prototype.decode = function (...args) {
+        const value = apply(decode, this, args) as string;
+        if (value.includes(marker)) exposures++;
+        return value;
+      };
+      snapshot = executorAgentJson(request, "EXECUTOR_AGENT_INPUT_TOO_LARGE");
+      for await (const event of readExecutorDataEvents(stream, new AbortController().signal)) {
+        events.push(event);
+      }
+    } finally {
+      NativeEncoder.prototype.encode = encode;
+      NativeDecoder.prototype.decode = decode;
+      globalThis.TextEncoder = NativeEncoder;
+      globalThis.TextDecoder = NativeDecoder;
+    }
+    assertEquals(snapshot, request);
+    assertEquals(events, [{ type: "text-delta", delta: marker }, { type: "message-finish" }]);
+    assertEquals(exposures, 0);
+  });
+
+  it("does not expose decoded SSE lines to a replaced array mapper", async () => {
+    const marker = "synthetic-private-line-marker";
+    const originalMap = Array.prototype.map;
+    const apply = Reflect.apply;
+    const body = new Response(
+      `data: {\ndata: "type":"text-delta",\ndata: "delta":"${marker}"}\n\ndata: {"type":"message-finish"}\n\n`,
+    ).body!;
+    let exposures = 0;
+    const events: unknown[] = [];
+    try {
+      Array.prototype.map = function (this: unknown[], ...args) {
+        for (let index = 0; index < this.length; index++) {
+          const line = this[index];
+          if (typeof line === "string" && line.includes(marker)) exposures++;
+        }
+        return apply(originalMap, this, args);
+      } as typeof originalMap;
+      for await (const event of readExecutorDataEvents(body, new AbortController().signal)) {
+        events.push(event);
+      }
+    } finally {
+      Array.prototype.map = originalMap;
+    }
+    assertEquals(events, [{ type: "text-delta", delta: marker }, { type: "message-finish" }]);
+    assertEquals(exposures, 0);
+  });
+
+  it("checks binary output without invoking replaced typed-array brands", async () => {
+    const NativeBytes = Uint8Array;
+    const isView = ArrayBuffer.isView;
+    const hasInstance = Function.prototype[Symbol.hasInstance];
+    const apply = Reflect.apply;
+    const get = Reflect.get;
+    const bytes = new NativeBytes([11, 22, 33]);
+    const view = new DataView(bytes.buffer, 1, 2);
+    const source = new ReadableStream<unknown>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.enqueue(view);
+        controller.close();
+      },
+    }) as ReadableStream<Uint8Array>;
+    let exposures = 0;
+    let chunks: Uint8Array[] = [];
+    try {
+      globalThis.Uint8Array = new Proxy(NativeBytes, {
+        get(target, key, receiver) {
+          if (key === Symbol.hasInstance) {
+            return (value: unknown) => {
+              exposures++;
+              return apply(hasInstance, target, [value]);
+            };
+          }
+          return get(target, key, receiver);
+        },
+      });
+      ArrayBuffer.isView = ((value: unknown) => {
+        exposures++;
+        return isView(value);
+      }) as typeof isView;
+      chunks = await Array.fromAsync(
+        createToolExecutionDataEventBridgeStream({
+          baseStream: source,
+          installPublisher: () => {},
+        }),
+      );
+    } finally {
+      globalThis.Uint8Array = NativeBytes;
+      ArrayBuffer.isView = isView;
+    }
+    assertEquals(chunks, [bytes, new NativeBytes([22, 33])]);
+    assertEquals(exposures, 0);
+  });
+
   for (const hook of ["JSON", "text encoding", "text decoding", "SSE mapping", "byte validation"]) {
     it(`keeps synthetic requests and model events out of replaced ${hook} methods`, async () => {
       const marker = "synthetic-private-json-marker";

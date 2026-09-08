@@ -1,3 +1,5 @@
+import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
 import {
   attachProviderMetadata,
@@ -26,7 +28,7 @@ const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
 const MAX_PROVIDER_REPLAY_TOTAL_PARTS = 10_000;
 const MAX_PROVIDER_REPLAY_MESSAGE_ID_LENGTH = 256;
-const UTF8_ENCODER = new TextEncoder();
+const UTF8_ENCODER = new PrivateTextEncoder();
 
 const CHECKPOINT_KEYS = new Set([
   "version",
@@ -270,7 +272,7 @@ export function captureProviderReplayCheckpoint(
   // the mirror's event budget fails the run rather than silently dropping the
   // replay state. Monitor checkpoint sizes before enabling the host gate.
   if (
-    UTF8_ENCODER.encode(stringifyChatJson(eventForSizeCheck)).byteLength >
+    privateByteLength(encodePrivateText(stringifyChatJson(eventForSizeCheck), UTF8_ENCODER)) >
       MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
   ) {
     invalidCheckpoint("provider replay checkpoint event exceeds the durable event limit");

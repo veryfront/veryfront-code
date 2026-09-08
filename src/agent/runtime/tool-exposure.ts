@@ -1,3 +1,5 @@
+import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
@@ -44,7 +46,7 @@ const TOOL_SEARCH_SCHEMA_MAX_NODES = 4_096;
 const TOOL_SEARCH_SCHEMA_MAX_BYTES = 65_536;
 const TOOL_SEARCH_TOTAL_SCHEMA_NODES = 65_536;
 const TOOL_SEARCH_TOTAL_SCHEMA_BYTES = 524_288;
-const UTF8_ENCODER = new TextEncoder();
+const UTF8_ENCODER = new PrivateTextEncoder();
 const ArrayIsArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -173,7 +175,8 @@ function compareAscii(left: string, right: string): number {
 }
 
 function isUtf8LengthWithin(value: string, maxBytes: number): boolean {
-  return value.length <= maxBytes && UTF8_ENCODER.encode(value).byteLength <= maxBytes;
+  return value.length <= maxBytes &&
+    privateByteLength(encodePrivateText(value, UTF8_ENCODER)) <= maxBytes;
 }
 
 /** Return whether a persisted name matches the existing non-empty tool id contract. */
@@ -208,7 +211,7 @@ function snapshotSchemaDescriptions(
 
   const debitBytes = (value: string): boolean => {
     if (value.length > TOOL_SEARCH_SCHEMA_MAX_BYTES) return false;
-    const length = UTF8_ENCODER.encode(value).byteLength;
+    const length = privateByteLength(encodePrivateText(value, UTF8_ENCODER));
     bytes += length;
     aggregate.bytes += length;
     return bytes <= TOOL_SEARCH_SCHEMA_MAX_BYTES &&

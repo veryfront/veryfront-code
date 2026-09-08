@@ -1,3 +1,5 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -663,7 +665,8 @@ class Channel implements ExecutorChannel {
     // Bound both queued bytes and control-frame bookkeeping, including the active write.
     if (
       this.#writes.length >= this.#maxCalls * 4 + EXECUTOR_STREAM_WINDOW ||
-      this.#queuedBytes + bytes.byteLength > EXECUTOR_STREAM_WINDOW * EXECUTOR_MAX_FRAME_BYTES
+      this.#queuedBytes + privateByteLength(bytes) >
+        EXECUTOR_STREAM_WINDOW * EXECUTOR_MAX_FRAME_BYTES
     ) {
       this.#fail("Executor write queue limit exceeded");
       return Promise.reject(this.#error);
@@ -671,7 +674,7 @@ class Channel implements ExecutorChannel {
     this.#sendSequence++;
     const done = Promise.withResolvers<void>();
     this.#writes.push({ bytes, done });
-    this.#queuedBytes += bytes.byteLength;
+    this.#queuedBytes += privateByteLength(bytes);
     if (!this.#writing) void this.#flush();
     return done.promise;
   }
@@ -684,7 +687,7 @@ class Channel implements ExecutorChannel {
         await this.#writer.write(entry.bytes);
         if (this.#error) return;
         this.#writes.shift();
-        this.#queuedBytes -= entry.bytes.byteLength;
+        this.#queuedBytes -= privateByteLength(entry.bytes);
         entry.done.resolve();
       }
     } catch {
@@ -702,7 +705,7 @@ class Channel implements ExecutorChannel {
   }
 
   #retainPayload(value: JsonValue): number {
-    const bytes = new TextEncoder().encode(privateJsonStringify(value)).byteLength;
+    const bytes = privateByteLength(encodePrivateText(privateJsonStringify(value)));
     if (this.#retainedBytes + bytes > this.#maxRetainedBytes) {
       this.#fail("Executor retained payload budget exceeded");
       throw new ExecutorProtocolError("Executor retained payload budget exceeded");

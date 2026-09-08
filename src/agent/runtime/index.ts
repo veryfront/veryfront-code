@@ -1,3 +1,4 @@
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import {
   createPrivateTextDecoder,
   encodePrivateText,
@@ -1399,7 +1400,7 @@ function estimateSerializedSizeBytes(value: unknown): number | undefined {
   try {
     const serialized = typeof value === "string" ? value : privateJsonStringify(value);
     if (serialized === undefined) return undefined;
-    return encodePrivateText(serialized).length;
+    return utf8ByteLength(serialized);
   } catch {
     return undefined;
   }

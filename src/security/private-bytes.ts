@@ -16,6 +16,7 @@ const set = NativeUint8Array.prototype.set;
 const minimum = Math.min;
 const maximum = Math.max;
 const truncate = Math.trunc;
+const numberIsNaN = Number.isNaN;
 
 export const PrivateUint8Array = NativeUint8Array;
 
@@ -52,7 +53,7 @@ export function privateByteLength(value: Uint8Array): number {
 export function privateByteSubarray(value: Uint8Array, start: number, end?: number): Uint8Array {
   const length = privateByteLength(value);
   const index = (value: number): number => {
-    const integer = value === value ? truncate(value) : 0;
+    const integer = numberIsNaN(value) ? 0 : truncate(value);
     return integer < 0 ? maximum(length + integer, 0) : minimum(integer, length);
   };
   const first = index(start);
@@ -62,6 +63,6 @@ export function privateByteSubarray(value: Uint8Array, start: number, end?: numb
   return new NativeUint8Array(buffer, offset + first, maximum(last - first, 0));
 }
 
-export function setPrivateBytes(target: Uint8Array, source: Uint8Array): void {
-  apply(set, target, [source]);
+export function setPrivateBytes(target: Uint8Array, source: Uint8Array, offset = 0): void {
+  apply(set, target, [source, offset]);
 }

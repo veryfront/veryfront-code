@@ -1,3 +1,4 @@
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   type ChatUiMessage,
@@ -332,7 +333,7 @@ async function readRuntimeTextFileContent(
   }
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = createPrivateTextDecoder();
   let content = "";
   let shouldCancelReader = false;
 

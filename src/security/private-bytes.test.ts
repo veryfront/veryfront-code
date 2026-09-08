@@ -1,8 +1,36 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { privateByteSubarray, toPrivateUint8Array } from "./private-bytes.ts";
+import {
+  privateByteLength,
+  privateByteSubarray,
+  PrivateUint8Array,
+  setPrivateBytes,
+  toPrivateUint8Array,
+} from "./private-bytes.ts";
 
 describe("private binary views", () => {
+  it("views and copies bytes without consulting metadata or species getters", () => {
+    const bytes = new Uint8Array([11, 22, 33, 44]);
+    let reads = 0;
+    for (const key of ["constructor", "buffer", "byteOffset", "byteLength"] as const) {
+      const value = bytes[key];
+      Object.defineProperty(bytes, key, {
+        get() {
+          reads++;
+          return value;
+        },
+      });
+    }
+    const target = new PrivateUint8Array(3);
+    setPrivateBytes(target, privateByteSubarray(bytes, -3, -1), 1);
+    assertEquals(privateByteLength(bytes), 4);
+    assertEquals(target, new Uint8Array([0, 22, 33]));
+    assertEquals(reads, 0);
+    assertEquals(toPrivateUint8Array(new DataView(target.buffer, 1, 2)), new Uint8Array([22, 33]));
+    assertEquals(toPrivateUint8Array(target.buffer), target);
+    assertEquals(toPrivateUint8Array("invalid"), undefined);
+  });
+
   it("keeps normalization within the supplied view's byte window", () => {
     const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
     for (

@@ -1,3 +1,9 @@
+import {
+  createPrivateTextDecoder,
+  encodePrivateText,
+  PrivateTextEncoder,
+} from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -70,8 +76,8 @@ const PUBLIC_PROJECT_FILE_LIST_PAGE_MAX_BYTES =
 const PUBLIC_PROJECT_FILE_RESPONSE_BLOCK_BYTES = 65_536;
 const PUBLIC_PROJECT_FILE_RESPONSE_YIELD_CHUNKS = 256;
 const PUBLIC_PROJECT_FILE_RESPONSE_MAX_CONSECUTIVE_EMPTY_CHUNKS = 4_096;
-const publicProjectFileUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
-const publicProjectFileUtf8Encoder = new TextEncoder();
+const publicProjectFileUtf8Decoder = createPrivateTextDecoder("utf-8", { fatal: true });
+const publicProjectFileUtf8Encoder = new PrivateTextEncoder();
 
 /** Whether a value is a canonical project-relative file path. */
 export function isRuntimeProjectFilePath(path: unknown): path is string {
@@ -485,7 +491,7 @@ async function readPublicJsonResponseWithinLimit(
   if (!response.body) {
     const text = await response.text();
     throwIfRuntimeProjectFilesAborted(abortSignal);
-    const byteLength = publicProjectFileUtf8Encoder.encode(text).byteLength;
+    const byteLength = privateByteLength(encodePrivateText(text, publicProjectFileUtf8Encoder));
     listingBudget?.consumeBytes(byteLength);
     if (byteLength > byteLimit) {
       throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
@@ -1809,7 +1815,7 @@ async function readBoundedResponseText(
 
   throwIfStrictProjectFilesRequestExpired(requestScope);
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    const text = createPrivateTextDecoder("utf-8", { fatal: true }).decode(
       bytes.subarray(0, byteLength),
     );
     throwIfStrictProjectFilesRequestExpired(requestScope);
