@@ -18,7 +18,7 @@ import type { WorkerGenerationIdentity } from "#veryfront/security/sandbox/worke
 import {
   type RenderGenerationBinding,
   resolveRenderGenerationIdentity,
-} from "./render-generation-binding.ts";
+} from "#veryfront/rendering/render-generation-binding.ts";
 
 type PreparedImport = () => Promise<Record<string, unknown>>;
 type DataRecord = Record<PropertyKey, unknown>;
@@ -31,7 +31,7 @@ export interface PreparedRenderModuleLoaderOptions {
   readonly sources: Readonly<Record<string, PreparedImport>>;
   /** Compiler-generated imports indexed by exact package specifiers. */
   readonly packages: Readonly<Record<string, PreparedImport>>;
-  /** Combined source/package entry budget; source and artifact bytes are bounded separately. */
+  /** Combined source/package entry budget. The caller must bound source and artifact bytes. */
   readonly maxEntries: number;
 }
 
