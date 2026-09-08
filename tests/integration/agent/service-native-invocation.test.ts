@@ -43,7 +43,7 @@ function createRuntimeInvocationRequest(canary: string): Request {
   });
 }
 
-for (const mutation of ["iterator", "dispatcher"] as const) {
+for (const mutation of ["iterator", "dispatcher", "serialization"] as const) {
   it(`rejects changed native ${mutation} before copying runtime invocation credentials`, async () => {
     if (!isNode) return;
 
@@ -58,7 +58,21 @@ for (const mutation of ["iterator", "dispatcher"] as const) {
     const apply = Reflect.apply;
     const getHeader = Headers.prototype.get;
     const dispatcherDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "dispatcher");
+    const toJSONDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    let serializationCalls = 0;
     let observations = 0;
+    const replaceDispatcher = () => {
+      Object.defineProperty(Object.prototype, "dispatcher", {
+        configurable: true,
+        get(this: RequestInit) {
+          if (
+            this.headers instanceof Headers &&
+            apply(getHeader, this.headers, ["X-Veryfront-Inference-Token"]) === canary
+          ) observations++;
+          return undefined;
+        },
+      });
+    };
     let verificationCompleted = false;
     let detachedDispatches = 0;
     let response: Response | undefined;
@@ -74,17 +88,18 @@ for (const mutation of ["iterator", "dispatcher"] as const) {
       verifyRunEventAppendToken: async () => {
         verificationCompleted = true;
         if (mutation === "dispatcher") {
-          Object.defineProperty(Object.prototype, "dispatcher", {
+          replaceDispatcher();
+        } else if (mutation === "serialization") {
+          Object.defineProperty(Object.prototype, "toJSON", {
             configurable: true,
-            get(this: RequestInit) {
-              if (
-                this.headers instanceof Headers &&
-                apply(getHeader, this.headers, ["X-Veryfront-Inference-Token"]) === canary
-              ) observations++;
-              return undefined;
+            value: function (this: unknown) {
+              serializationCalls++;
+              replaceDispatcher();
+              return this;
             },
           });
-        } else {Object.defineProperty(Headers.prototype, Symbol.iterator, {
+        } else {
+          Object.defineProperty(Headers.prototype, Symbol.iterator, {
             ...iteratorDescriptor,
             value: function (this: Headers) {
               const iterator = apply(nativeIterator, this, []) as Iterator<[string, string]>;
@@ -99,7 +114,8 @@ for (const mutation of ["iterator", "dispatcher"] as const) {
                 },
               };
             },
-          });}
+          });
+        }
         return true;
       },
       prepareExecution: async () => ({ executionId: "exec-1" }),
@@ -118,12 +134,15 @@ for (const mutation of ["iterator", "dispatcher"] as const) {
       failure = error;
     } finally {
       Object.defineProperty(Headers.prototype, Symbol.iterator, iteratorDescriptor);
+      if (toJSONDescriptor) Object.defineProperty(Object.prototype, "toJSON", toJSONDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "toJSON");
       if (dispatcherDescriptor) {
         Object.defineProperty(Object.prototype, "dispatcher", dispatcherDescriptor);
       } else Reflect.deleteProperty(Object.prototype, "dispatcher");
     }
 
     assertEquals(verificationCompleted, true, "the mutation occurs after verification");
+    if (mutation === "serialization") assertEquals(serializationCalls > 0, true);
     assertEquals(observations, 0, "the modified native operation never observes the credential");
     assertEquals(failure instanceof TypeError, true, "the compromised operation fails explicitly");
     assertEquals(response, undefined, "the route never substitutes a success response");

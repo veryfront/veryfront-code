@@ -229,11 +229,12 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   assertNativeHeaderProcessing();
   const headers = new NativeHeaders(readRequestValue<Headers>(request, RequestHeadersGet));
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
+  const body = JSON.stringify(sanitizedPayload);
   assertNativeHeaderProcessing();
   assertNativeRequestDefaults();
   return createApplicationRequest(
     new NativeRequest(readRequestValue<string>(request, RequestUrlGet), {
-      body: JSON.stringify(sanitizedPayload),
+      body,
       headers,
       method: readRequestValue<string>(request, RequestMethodGet),
       signal: readRequestValue<AbortSignal>(request, RequestSignalGet),
