@@ -8,6 +8,7 @@ import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const objectEntries = Object.entries;
+const objectDefineProperty = Object.defineProperty;
 
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -150,10 +151,12 @@ export function createToolsFromHostDefinitions(
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
           : materializedTool;
-        tools[toolName] = inheritTrustedHostToolProvenance(
-          definition,
-          toolWithRemoteProvenance,
-        );
+        objectDefineProperty(tools, toolName, {
+          value: inheritTrustedHostToolProvenance(definition, toolWithRemoteProvenance),
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
       }
     } catch (error) {
       agentLogger.warn("Skipping host tool: schema conversion failed", {

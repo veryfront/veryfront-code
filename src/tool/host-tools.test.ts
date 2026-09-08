@@ -15,6 +15,19 @@ import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("materializes prototype-named tools as own data properties", async () => {
+    const tools = createToolsFromHostDefinitions({
+      ["__proto__"]: {
+        description: "Synthetic tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      },
+    });
+    assertEquals(Object.keys(tools), ["__proto__"]);
+    assertEquals(Object.getPrototypeOf(tools), Object.prototype);
+    assertEquals(await tools["__proto__"]?.execute({}), { ok: true });
+  });
+
   it("preserves trusted host provenance through materialization", () => {
     const trustedDefinition = markTrustedHostToolProvenance({
       description: "Trusted framework tool",

@@ -447,7 +447,9 @@ export async function listProjectScopedRemoteToolNames(
   const remoteToolNames = new Set<string>();
   const sourceContext = withActiveProjectContext(options.context, options.projectId);
 
-  for (const source of remoteSources) {
+  for (let index = 0; index < remoteSources.length; index++) {
+    const source = remoteSources[index];
+    if (source === undefined) continue;
     const toolDefinitions = filterProjectScopedRemoteToolDefinitions(
       await source.listTools(sourceContext),
       options.projectId,

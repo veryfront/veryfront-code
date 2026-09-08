@@ -37,6 +37,20 @@ function toolDefinition(input: {
   };
 }
 
+it("lists indexed source entries without invoking a caller-supplied array iterator", async () => {
+  const sources: RemoteToolSource[] = [{
+    id: "synthetic-source",
+    listTools: () => Promise.resolve([toolDefinition({ name: "read_file" })]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  }];
+  Object.defineProperty(sources, Symbol.iterator, {
+    value: () => {
+      throw new Error("Source-array iterator must not receive private sources");
+    },
+  });
+  assertEquals(await listProjectScopedRemoteToolNames(sources, { projectId: null }), ["read_file"]);
+});
+
 it("filterProjectScopedRemoteToolDefinitions hides project-bound tools when no active project exists", () => {
   const tools = [
     toolDefinition({ name: "list_projects" }),
