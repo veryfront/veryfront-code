@@ -26,7 +26,10 @@ import {
   getExecutorDiscoverySourceSchema,
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
-import { resolveHostedRuntimeAllowedTools } from "#veryfront/agent/hosted/runtime-request-config.ts";
+import {
+  resolveHostedRuntimeAllowedProviderTools,
+  resolveHostedRuntimeAllowedTools,
+} from "#veryfront/agent/hosted/runtime-request-config.ts";
 import {
   executorAgentFailureCode,
   executorAgentJson,
@@ -303,15 +306,13 @@ export function createExecutorRuntimePreparation(input: Options) {
           ...normalizeToolNames(definition.deniedTools ?? []),
         ]),
       ];
-      const sourceToolNames = Array.isArray(definition.tools)
-        ? resolveHostedRuntimeAllowedTools({
-          configuredTools: definition.tools,
-          configuredDeniedTools: definition.deniedTools,
-          configuredDelegates: definition.delegates,
-          configuredSkills: definition.skills,
-          requestedTools: undefined,
-        })
-        : definition.tools;
+      const sourceToolNames = resolveHostedRuntimeAllowedTools({
+        configuredTools: definition.tools,
+        configuredDeniedTools: definition.deniedTools,
+        configuredDelegates: definition.delegates,
+        configuredSkills: definition.skills,
+        requestedTools: undefined,
+      });
       const allowedToolNames = intersectNames(
         normalizeToolNames(grant.allowedToolNames),
         Array.isArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
@@ -322,7 +323,10 @@ export function createExecutorRuntimePreparation(input: Options) {
       );
       const providerToolNames = intersectNames(
         modelGrant.providerToolNames,
-        definition.providerTools,
+        resolveHostedRuntimeAllowedProviderTools({
+          configuredProviderTools: definition.providerTools,
+          requestedTools: undefined,
+        }),
         request.providerToolNames,
         definition.deniedTools,
       );

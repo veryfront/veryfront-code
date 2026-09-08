@@ -548,14 +548,30 @@ describe("executor runtime preparation review regressions", () => {
       { name: "empty request", requested: [], expected: [] },
       { name: "denied delegate", denied: ["agent_writer"], expected: ["read_file"] },
       { name: "missing grant", granted: [], expected: [] },
+      { name: "omitted tools", frontmatter: "", expected: [] },
+      {
+        name: "omitted tools with delegates",
+        frontmatter: "delegates: [writer, ungranted]",
+        expected: ["agent_writer"],
+      },
+      {
+        name: "unrestricted tools with a denial",
+        frontmatter: "tools: true",
+        denied: ["read_file"],
+        expected: [],
+      },
+      {
+        name: "unrestricted tools without denials",
+        frontmatter: "tools: true",
+        expected: ["read_file", "agent_writer", "agent_undeclared"],
+      },
     ]
   ) {
-    it(`preserves Markdown delegate bindings within authority: ${selection.name}`, async () => {
+    it(`applies Markdown tool bindings within authority: ${selection.name}`, async () => {
       const definition = parseRuntimeAgentMarkdownDefinition({
         id: "coder",
         content: `---
-tools: [read_file]
-delegates: [writer, ungranted]
+${selection.frontmatter ?? "tools: [read_file]\ndelegates: [writer, ungranted]"}
 denied-tools: ${JSON.stringify(selection.denied ?? [])}
 ---
 Synthetic source instructions.`,
@@ -611,6 +627,58 @@ Synthetic source instructions.`,
           executions,
           selection.expected.some((name) => name === "agent_writer") ? ["agent_writer"] : [],
         );
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
+  for (
+    const selection of [
+      { name: "omitted binding", expected: [] },
+      { name: "explicit binding", configured: ["web_search"], expected: ["web_search"] },
+      { name: "empty binding", configured: [], expected: [] },
+      { name: "request cannot add a binding", requested: ["web_search"], expected: [] },
+      { name: "binding requires a grant", configured: ["web_search"], granted: [], expected: [] },
+      {
+        name: "request removes a binding",
+        configured: ["web_search"],
+        requested: [],
+        expected: [],
+      },
+    ]
+  ) {
+    it(`selects provider tools within authored bindings: ${selection.name}`, async () => {
+      let visible: string[] = [];
+      const f = fixture({
+        config: { providerTools: selection.configured },
+        grant: {
+          ...grant,
+          models: new Map([[modelId, {
+            maxOutputTokens: 200,
+            providerToolNames: selection.granted ?? ["web_search"],
+          }]]),
+        },
+        facades: {
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream(options) {
+              visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+              return finishStream();
+            },
+          }),
+        },
+      });
+      try {
+        await Array.fromAsync(
+          await preparedStream(f, {
+            agentId: "coder",
+            ...(selection.requested === undefined
+              ? {}
+              : { providerToolNames: selection.requested }),
+          }),
+        );
+        assertEquals(visible, selection.expected);
       } finally {
         await f.owner.close();
       }
