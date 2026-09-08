@@ -533,7 +533,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   ) {
     const hostedWebFetchTool = postFormInputLocalTools.web_fetch;
     if (hostedWebFetchTool !== undefined) {
-      sortedLocalToolEntries[sortedLocalToolEntries.length] = ["web_fetch", hostedWebFetchTool];
+      objectDefineProperty(sortedLocalToolEntries, sortedLocalToolEntries.length, {
+        value: ["web_fetch", hostedWebFetchTool],
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
   }
   const sortedLocalTools = recordFromEntries(

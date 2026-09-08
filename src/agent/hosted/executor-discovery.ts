@@ -32,6 +32,8 @@ import {
 
 const apply = Reflect.apply;
 const abortController = AbortController.prototype.abort;
+const addEventListener = EventTarget.prototype.addEventListener;
+const removeEventListener = EventTarget.prototype.removeEventListener;
 
 export interface ExecutorDiscoveryBackend {
   load(signal: AbortSignal): Promise<ProjectAgentRuntimeDiscovery>;
@@ -126,14 +128,14 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       }
     });
     void chain(closing, settled.resolve, settled.reject);
-    input.signal.removeEventListener("abort", onAbort);
+    apply(removeEventListener, input.signal, ["abort", onAbort]);
     apply(abortController, lifetime, []);
     return closing;
   }
   const onAbort = () => {
     void chain(close(), () => {}, () => {});
   };
-  input.signal.addEventListener("abort", onAbort, { once: true });
+  apply(addEventListener, input.signal, ["abort", onAbort, { once: true }]);
   if (input.signal.aborted) onAbort();
 
   async function discover() {
@@ -234,7 +236,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     const onCancel = () => {
       void chain(close(), () => {}, () => {});
     };
-    context.signal.addEventListener("abort", onCancel, { once: true });
+    apply(addEventListener, context.signal, ["abort", onCancel, { once: true }]);
     const work = chain(tail, async () => {
       if (context.signal.aborted || Date.now() >= context.deadline) {
         onCancel();
@@ -268,7 +270,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       }
       return { ok: false, code };
     } finally {
-      context.signal.removeEventListener("abort", onCancel);
+      apply(removeEventListener, context.signal, ["abort", onCancel]);
     }
   }
 

@@ -85,6 +85,15 @@ const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
 const AbortSignalConstructor = AbortSignal;
 const mathMin = Math.min;
+const addEventListener = EventTarget.prototype.addEventListener;
+const removeEventListener = EventTarget.prototype.removeEventListener;
+const iteratorSymbol = Symbol.iterator;
+
+function combineSignals(...signals: AbortSignal[]): AbortSignal {
+  const inputs = createPrivateSet(signals);
+  objectDefineProperty(signals, iteratorSymbol, { value: () => inputs.values() });
+  return apply(abortSignalAny, AbortSignalConstructor, [signals]) as AbortSignal;
+}
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
   const filtered: T[] = [];
@@ -275,13 +284,13 @@ export function createExecutorRuntimePreparation(input: Options) {
     });
     void chain(closing, settled.resolve, settled.reject);
     apply(abortController, lifetime, []);
-    input.discovery.signal.removeEventListener("abort", onDiscoveryAbort);
+    apply(removeEventListener, input.discovery.signal, ["abort", onDiscoveryAbort]);
     return closing;
   }
   const onDiscoveryAbort = () => {
     void chain(close(), () => {}, () => {});
   };
-  input.discovery.signal.addEventListener("abort", onDiscoveryAbort, { once: true });
+  apply(addEventListener, input.discovery.signal, ["abort", onDiscoveryAbort, { once: true }]);
   if (input.discovery.signal.aborted) onDiscoveryAbort();
 
   function requireFacades(
@@ -438,7 +447,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           definition,
           projectId: execution.projectId,
           branchId: execution.branchId,
-          signal: lifetime.signal,
+          signal: context.signal,
         })
         : undefined;
       assertActive();
@@ -694,19 +703,16 @@ export function createExecutorRuntimePreparation(input: Options) {
         const cancel = () => {
           void chain(close(), () => {}, () => {});
         };
-        context.signal.addEventListener("abort", cancel, { once: true });
+        apply(addEventListener, context.signal, ["abort", cancel, { once: true }]);
         preparation = prepare(request, {
           ...context,
-          signal: apply(abortSignalAny, AbortSignalConstructor, [[
-            context.signal,
-            lifetime.signal,
-          ]]),
+          signal: combineSignals(context.signal, lifetime.signal),
         });
         if (context.signal.aborted) cancel();
         try {
           return await preparation;
         } finally {
-          context.signal.removeEventListener("abort", cancel);
+          apply(removeEventListener, context.signal, ["abort", cancel]);
         }
       } catch (error) {
         return {
@@ -729,7 +735,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       if (operation?.mode !== "stream") refuse("EXECUTOR_RUNTIME_NOT_PREPARED");
       yield* operation.handle(value, {
         ...context,
-        signal: apply(abortSignalAny, AbortSignalConstructor, [[context.signal, lifetime.signal]]),
+        signal: combineSignals(context.signal, lifetime.signal),
       });
     },
   });

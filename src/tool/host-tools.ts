@@ -9,6 +9,10 @@ const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const objectEntries = Object.entries;
 const objectDefineProperty = Object.defineProperty;
+const objectCreate = Object.create;
+const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
 
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -83,6 +87,21 @@ function defaultToolCallId(toolName: string): string {
   return `${toolName}-${crypto.randomUUID()}`;
 }
 
+function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const descriptors = objectGetOwnPropertyDescriptors(value);
+  const snapshot: Record<string, unknown> = objectCreate(null);
+  const keys = objectKeys(descriptors);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const descriptor = descriptors[key];
+    if (descriptor && objectHasOwn(descriptor, "value")) {
+      objectDefineProperty(snapshot, key, { value: descriptor.value, enumerable: true });
+    }
+  }
+  return snapshot;
+}
+
 function normalizeExecutionContext(
   toolName: string,
   context: ToolExecutionContext | undefined,
@@ -120,11 +139,15 @@ export function createToolsFromHostDefinitions(
     const entry = entries[index];
     if (entry === undefined) continue;
     const toolName = entry[0];
-    const definition = entry[1];
+    const originalDefinition = entry[1];
+    const definition = snapshotHostToolDefinition(originalDefinition);
     if (!isHostToolDefinition(definition)) continue;
 
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
-      await definition.execute(input, normalizeExecutionContext(toolName, context, options));
+      await apply(definition.execute, originalDefinition, [
+        input,
+        normalizeExecutionContext(toolName, context, options),
+      ]);
 
     try {
       let materializedTool: Tool | undefined;
@@ -147,12 +170,12 @@ export function createToolsFromHostDefinitions(
         });
       }
       if (materializedTool) {
-        const canonicalRemoteToolName = getRemoteToolProvenance(definition);
+        const canonicalRemoteToolName = getRemoteToolProvenance(originalDefinition);
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
           : materializedTool;
         objectDefineProperty(tools, toolName, {
-          value: inheritTrustedHostToolProvenance(definition, toolWithRemoteProvenance),
+          value: inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
           enumerable: true,
           configurable: true,
           writable: true,
