@@ -16,6 +16,13 @@ type CapturedRevisionMethods = Readonly<{
 
 type UncheckedCallable = (...args: never[]) => unknown;
 
+// Captured before project code runs: capability inspection receives private
+// backend objects, and a replaced reflection global must never observe them.
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectGetPrototypeOf = Reflect.getPrototypeOf;
+const reflectOwnKeys = Reflect.ownKeys;
+const arrayIsArray = Array.isArray;
+
 const MAX_CACHE_CAPABILITY_PROTOTYPE_DEPTH = 64;
 
 function findCallableDataProperty(
@@ -32,14 +39,14 @@ function findCallableDataProperty(
     if (visited.has(current)) return null;
     visited.add(current);
 
-    const descriptor = Reflect.getOwnPropertyDescriptor(current, key);
+    const descriptor = reflectGetOwnPropertyDescriptor(current, key);
     if (descriptor !== undefined) {
       if (!("value" in descriptor) || typeof descriptor.value !== "function") {
         return null;
       }
       return descriptor.value;
     }
-    current = Reflect.getPrototypeOf(current);
+    current = reflectGetPrototypeOf(current);
   }
 
   return null;
@@ -87,7 +94,7 @@ export function isRevisionedCacheBackend(
 function readOwnDataProperty(value: object, key: string): unknown {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    descriptor = reflectGetOwnPropertyDescriptor(value, key);
   } catch (cause) {
     throw new TypeError(`Cache revision ${key} could not be inspected`, { cause });
   }
@@ -99,13 +106,13 @@ function readOwnDataProperty(value: object, key: string): unknown {
 
 /** Validate and detach a provider-returned revision snapshot. */
 export function snapshotCacheRevisionResult(value: unknown): CacheRevisionSnapshot {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || arrayIsArray(value)) {
     throw new TypeError("Cache revision result must be an object");
   }
 
   let keys: PropertyKey[];
   try {
-    keys = Reflect.ownKeys(value);
+    keys = reflectOwnKeys(value);
   } catch (cause) {
     throw new TypeError("Cache revision result could not be inspected", { cause });
   }

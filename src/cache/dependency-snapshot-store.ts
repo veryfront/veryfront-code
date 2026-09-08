@@ -182,7 +182,9 @@ export function createCacheBackedDependencySnapshotStore(
       if (ttlSeconds <= 0) {
         throw new Error("Dependency snapshot retention window has already passed");
       }
-      const encoded = jsonStringify({ value, expiresAt });
+      // Null prototype: an installed Object.prototype.toJSON must never see
+      // the record or alter its serialization.
+      const encoded = jsonStringify({ __proto__: null, value, expiresAt });
 
       if (revisioned !== null) {
         const accepted = await apply(revisioned.compareExchange, backend, [

@@ -172,6 +172,9 @@ describe("host-configured dependency snapshot store", () => {
       parse: JSON.parse,
       stringify: JSON.stringify,
       hasOwn: Object.hasOwn,
+      getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor,
+      getPrototypeOf: Reflect.getPrototypeOf,
+      ownKeys: Reflect.ownKeys,
     };
     Reflect.apply = ((target: never, thisArg: unknown, argumentsList: readonly unknown[]) => {
       inspect("Reflect.apply", [thisArg, ...argumentsList]);
@@ -189,6 +192,23 @@ describe("host-configured dependency snapshot store", () => {
       inspect("Object.hasOwn", [target]);
       return originals.hasOwn(target, property);
     }) as typeof Object.hasOwn;
+    Reflect.getOwnPropertyDescriptor = ((target: object, property: PropertyKey) => {
+      inspect("Reflect.getOwnPropertyDescriptor", [target]);
+      return originals.getOwnPropertyDescriptor(target, property);
+    }) as typeof Reflect.getOwnPropertyDescriptor;
+    Reflect.getPrototypeOf = ((target: object) => {
+      inspect("Reflect.getPrototypeOf", [target]);
+      return originals.getPrototypeOf(target);
+    }) as typeof Reflect.getPrototypeOf;
+    Reflect.ownKeys = ((target: object) => {
+      inspect("Reflect.ownKeys", [target]);
+      return originals.ownKeys(target);
+    }) as typeof Reflect.ownKeys;
+    // deno-lint-ignore no-explicit-any
+    (Object.prototype as any).toJSON = function () {
+      inspect("Object.prototype.toJSON", [this]);
+      return this;
+    };
 
     try {
       await store.publish(namespace, "on:54uvgwr2ih7p", value, expiresAt);
@@ -198,6 +218,11 @@ describe("host-configured dependency snapshot store", () => {
       JSON.parse = originals.parse;
       JSON.stringify = originals.stringify;
       Object.hasOwn = originals.hasOwn;
+      Reflect.getOwnPropertyDescriptor = originals.getOwnPropertyDescriptor;
+      Reflect.getPrototypeOf = originals.getPrototypeOf;
+      Reflect.ownKeys = originals.ownKeys;
+      // deno-lint-ignore no-explicit-any
+      delete (Object.prototype as any).toJSON;
     }
 
     assertEquals(observedLeaks, []);
