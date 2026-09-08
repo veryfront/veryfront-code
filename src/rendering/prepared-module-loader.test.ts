@@ -223,13 +223,15 @@ describe("prepared render module loader", () => {
   });
 
   it("rejects missing options and invalid table entries before any import", async () => {
+    // A malformed inferred function name crashes Deno's coverage serializer.
+    const preparedImport = async () => ({});
     const invalidOptions = [
       Object.create(options()),
       { ...options(), sources: null },
       { ...options(), packages: { react: undefined } },
       { ...options(), packages: { "": async () => ({}) } },
       { ...options(), sources: { [Symbol("unexpected")]: async () => ({}) } },
-      { ...options(), sources: { "\ud800": async () => ({}) } },
+      { ...options(), sources: { "\ud800": preparedImport } },
       { ...options(), binding: { ...binding(), artifactId: "" } },
     ];
     for (const input of invalidOptions) {
