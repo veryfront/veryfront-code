@@ -18,7 +18,6 @@ const SOURCE_FILES = [
 const TEST_FILES = [
   "tests/integration/agent/executor-allocator-client.test.ts",
   "tests/integration/agent/executor-node-bootstrap.test.ts",
-  "tests/integration/agent/executor-runtime-entrypoint.test.ts",
   "tests/integration/agent/executor-node-transport.test.ts",
   "tests/integration/agent/service-header-boundary.test.ts",
   "tests/integration/agent/service-request-defaults.test.ts",

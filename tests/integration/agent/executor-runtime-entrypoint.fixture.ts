@@ -18,33 +18,8 @@ import { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor
 const root = new URL("../../../", import.meta.url);
 const resolver = fileURLToPath(new URL("tests/node/resolver.mjs", root));
 
-if (typeof Deno !== "undefined") {
-  it(
-    "runs the actual executor entrypoint in a separate Node process",
-    { timeout: 60_000 },
-    async () => {
-      const child = spawn(
-        "node",
-        ["--import", resolver, "--test", fileURLToPath(import.meta.url)],
-        { cwd: fileURLToPath(root), stdio: ["ignore", "pipe", "pipe"] },
-      );
-      let output = "";
-      child.stdout.on("data", (chunk) => output += chunk);
-      child.stderr.on("data", (chunk) => output += chunk);
-      const timer = setTimeout(() => child.kill(), 55_000);
-      try {
-        const code = await new Promise<number | null>((resolve, reject) => {
-          child.once("error", reject);
-          child.once("close", resolve);
-        });
-        assertEquals(code, 0, output);
-      } finally {
-        clearTimeout(timer);
-        child.kill();
-      }
-    },
-  );
-} else {
+/** Register beside the fixed-port bootstrap tests so Deno file parallelism cannot race port 8081. */
+export function registerExecutorRuntimeEntrypointTests(): void {
   it("rejects missing first-party runtime contracts before reading an allocation key", async () => {
     let keyReads = 0;
     let executor: Awaited<ReturnType<typeof startExecutorRuntimeEntrypoint>> | undefined;

@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { type AddressInfo, isIP, type Socket } from "node:net";
 import process from "node:process";
+import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { connect, createServer, type TLSSocket } from "node:tls";
 import type { ExecutorByteTransport } from "#veryfront/agent/executor/channel.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
@@ -57,7 +58,7 @@ function validateOptions(
   listen = false,
 ) {
   if (
-    "Deno" in globalThis || "Bun" in globalThis || process.release.name !== "node" ||
+    !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) {
     throw new Error("Executor TLS transport requires Node.js 22 or newer");

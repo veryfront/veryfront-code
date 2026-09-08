@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import process from "node:process";
+import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import {
   createExecutorChannel,
@@ -141,7 +142,7 @@ export async function startExecutorNodeBootstrap(
   options: ExecutorNodeBootstrapOptions,
 ): Promise<ExecutorNodeBootstrap> {
   if (
-    "Deno" in globalThis || "Bun" in globalThis || process.release.name !== "node" ||
+    !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) throw new Error("Executor bootstrap requires Node.js 22 or newer");
   const startedAt = Date.now();

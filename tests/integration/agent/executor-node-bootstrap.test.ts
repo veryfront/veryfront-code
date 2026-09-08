@@ -17,6 +17,7 @@ import { connectExecutorTransport } from "#veryfront/agent/hosted/executor-node-
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { registerExecutorRuntimeEntrypointTests } from "./executor-runtime-entrypoint.fixture.ts";
 
 const binding = {
   allocationId: "00000000-0000-4000-8000-000000000001",
@@ -84,6 +85,34 @@ if (typeof Deno !== "undefined") {
   );
 } else {
   describe("fixed Node executor bootstrap", () => {
+    registerExecutorRuntimeEntrypointTests();
+    it("accepts native Node when a Deno compatibility namespace is present", async () => {
+      const original = Object.getOwnPropertyDescriptor(globalThis, "Deno");
+      const key = randomBytes(32);
+      let bootstrap: Awaited<ReturnType<typeof startExecutorNodeBootstrap>> | undefined;
+      let caller: Awaited<ReturnType<typeof connectCaller>> | undefined;
+      Object.defineProperty(globalThis, "Deno", {
+        configurable: true,
+        value: { version: { deno: "compatibility" } },
+      });
+      try {
+        bootstrap = await startExecutorNodeBootstrap({
+          operations,
+          environment: environment(),
+          readKey: () => Promise.resolve(new Uint8Array(key)),
+        });
+        caller = await connectCaller(bootstrap.address.port, key);
+        await caller.ready;
+        assertEquals(await caller.request("echo", "packaged-node"), "packaged-node");
+      } finally {
+        if (original) Object.defineProperty(globalThis, "Deno", original);
+        else Reflect.deleteProperty(globalThis, "Deno");
+        caller?.close();
+        bootstrap?.close();
+        await caller?.settled;
+        await bootstrap?.ready.then((channel) => channel.settled, () => {});
+      }
+    });
     it("rejects missing and noncanonical bootstrap values before reading a key", async () => {
       let reads = 0;
       const invalid: Record<string, string | undefined>[] = Object.keys(values).map((name) => ({
