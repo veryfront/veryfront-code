@@ -26,6 +26,7 @@ import {
   readSnapshotHeader,
   resolveSnapshotForRequest,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
   stripSnapshotHeader,
   withSnapshotResponseHeaders,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
@@ -245,6 +246,13 @@ export function handlePageDataEndpoint(
             .build(payload.body, 200),
         );
       } catch (e) {
+        const unavailable = snapshotStoreFailureResponse(
+          e,
+          createResponseBuilder(ctx),
+          req,
+          ctx.securityConfig,
+        );
+        if (unavailable) return respondPageData(unavailable);
         if (e instanceof TimeoutError) {
           serverLogger.warn("[page-data] Request timed out", {
             pathname,

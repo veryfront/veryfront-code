@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { expect } from "#std/expect.ts";
 import { RenderHandler } from "./render-handler.ts";
 import { StreamHandler } from "./stream-handler.ts";
@@ -64,6 +65,28 @@ describe("StreamHandler", () => {
   });
 
   describe("handle", () => {
+    for (const status of [409, 503]) {
+      it(`preserves a ${status} render response instead of starting a fallback stream`, async () => {
+        const body = status === 409
+          ? "Unknown dependency snapshot"
+          : "Dependency snapshot storage is unavailable";
+        const failure = new Response(body, {
+          status,
+          headers: { "cache-control": "no-store", vary: RSC_DEPENDENCY_PINNING_HEADER },
+        });
+        mockRenderHandler.setHandler(() => Promise.resolve(failure));
+
+        const response = await streamHandler.handle("/", new URLSearchParams());
+        const text = await response.text();
+
+        assertStrictEquals(response, failure);
+        assertEquals(response.status, status);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(response.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
+        assertEquals(text, body);
+      });
+    }
+
     it("should return a Response with correct content-type", async () => {
       const response = await streamHandler.handle("/", new URLSearchParams());
 

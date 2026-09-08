@@ -2,12 +2,15 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
-import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
+import { cwd, exit, getEnv, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
+  getMemoryRecycleConfig,
+  type MemoryRecycleEvent,
   startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
@@ -24,6 +27,7 @@ import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-sc
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import {
   gracefullyShutdownProductionServer,
+  parseShutdownCleanupTimeoutMs,
   parseShutdownDrainTimeoutMs,
 } from "./graceful-shutdown.ts";
 import {
@@ -41,6 +45,11 @@ import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts"
 import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
 import { runRequestInterceptor } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  awaitBeforeDeadline,
+  runProductionProcessOwner,
+} from "./production-shutdown-coordinator.ts";
+import { isServerShuttingDown } from "./shutdown-state.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -176,17 +185,56 @@ export interface StartProductionServerOptions extends ServerOptions {
    * masked. Rejections are reported at error level either way.
    */
   unhandledRejectionGuard?: boolean;
+  /**
+   * Process-owner callback for an explicitly enabled RSS recycle policy.
+   * Embedded callers must omit this so the server never terminates its host.
+   */
+  onMemoryRecycle?: (event: MemoryRecycleEvent) => void | Promise<void>;
+}
+
+interface DirectProductionServerDependencies {
+  flush: () => Promise<unknown>;
+  captureError: (error: unknown, context: { boundary: string }) => void;
+  initializeErrorReporting?: () => Promise<unknown>;
+  initializeRuntime?: () => Promise<void>;
+  getAdapter?: () => Promise<RuntimeAdapter>;
+  bootstrap?: typeof bootstrapProd;
+  startServer?: typeof startProductionServer;
+  gracefullyShutdown?: typeof gracefullyShutdownProductionServer;
+  exit?: (code: number) => void;
+  registerSignals?: (
+    handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
+  ) => void | (() => void);
+}
+
+interface StartProductionServerDependencies {
+  bootstrap: typeof bootstrapProd;
 }
 
 /** Starts production server. */
 export function startProductionServer(
   options: StartProductionServerOptions,
 ): Promise<ServerHandle> {
+  return startProductionServerWithDependencies(options, { bootstrap: bootstrapProd });
+}
+
+/** @internal Starts a production server with explicit lifecycle dependencies. */
+export function startProductionServerWithDependencies(
+  options: StartProductionServerOptions,
+  dependencies: StartProductionServerDependencies,
+): Promise<ServerHandle> {
   const suppliedBootstrap = options.bootstrapResult;
   const suppliedProviderSource = suppliedBootstrap?.nodeWebSocketServerProvider;
   const suppliedNodeWebSocketServerProvider = suppliedProviderSource === undefined
     ? undefined
     : snapshotNodeWebSocketServerProvider(suppliedProviderSource);
+  let ownedBootstrap: BootstrapResult | undefined;
+  let ownedBootstrapDisposal: Promise<void> | undefined;
+  const disposeOwnedBootstrap = (): Promise<void> => {
+    if (!ownedBootstrap) return Promise.resolve();
+    ownedBootstrapDisposal ??= Promise.resolve().then(() => ownedBootstrap?.dispose?.());
+    return ownedBootstrapDisposal;
+  };
 
   return withSpan(
     "server.startProductionServer",
@@ -206,9 +254,22 @@ export function startProductionServer(
         localProjects,
       } = options;
 
-      const baseAdapter = options.adapter ?? (await runtime.get());
-      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
-      const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      const baseAdapter = suppliedBootstrap?.adapter ?? options.adapter ?? (await runtime.get());
+      let initialOnRecycle = options.onMemoryRecycle;
+      if (!suppliedBootstrap && initialOnRecycle) {
+        try {
+          getMemoryRecycleConfig(baseAdapter.env);
+        } catch (error) {
+          if (!(error instanceof VeryfrontError) || error.slug !== "invalid-argument") throw error;
+          // Project .env may complete the parent policy. Validate it again
+          // after bootstrap, before opening a listener; do not recycle yet.
+          initialOnRecycle = undefined;
+        }
+      }
+      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env, {
+        onRecycle: initialOnRecycle,
+      });
+      let ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
       // Installed before bootstrap so a rejection during startup is contained
       // too. This process serves every project on the pod, so one dropped
       // promise must not take the others down with it. Embedders that own the
@@ -219,7 +280,18 @@ export function startProductionServer(
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        const bootstrap = suppliedBootstrap ?? await bootstrapProd(projectDir, baseAdapter);
+        const bootstrap = suppliedBootstrap ??
+          await dependencies.bootstrap(projectDir, baseAdapter);
+        if (!suppliedBootstrap) {
+          ownedBootstrap = bootstrap;
+          // Bootstrap loads the project's .env. Keep parent-env monitoring active
+          // during startup, then validate and adopt the final project policy.
+          const config = startConfiguredMemoryMonitoring(bootstrap.adapter.env, {
+            onRecycle: options.onMemoryRecycle,
+          });
+          if (ownsMemoryMonitoring && !config.enabled) stopMemoryMonitoring();
+          ownsMemoryMonitoring = config.enabled;
+        }
         const adapter = bootstrap.adapter;
         const nodeWebSocketServerProvider = suppliedBootstrap === undefined
           ? bootstrap.nodeWebSocketServerProvider
@@ -319,6 +391,11 @@ export function startProductionServer(
         const handler = requestInterceptor
           ? Object.assign(
             async (req: Request) => {
+              // Admission closes before caller-owned interception so a draining
+              // process cannot start more proxy I/O or allocate transformed
+              // request state. The core handler still owns the fixed probe
+              // responses and the standard shutdown response.
+              if (isServerShuttingDown()) return coreHandler(req);
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
               if (isWebSocketUpgrade) return coreHandler(req);
               return coreHandler(await runRequestInterceptor(req, requestInterceptor));
@@ -334,8 +411,11 @@ export function startProductionServer(
 
         const ready = (async () => {
           await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
-          // Mark server as initialized when ready resolves
-          setServerInitialized(true);
+          // Readiness can settle after a signal or memory-pressure shutdown has
+          // already entered lame-duck mode. Never publish ready again then.
+          if (!signal?.aborted && !isServerShuttingDown()) {
+            setServerInitialized(true);
+          }
         })();
 
         const server = await adapter.serve(handler, {
@@ -359,17 +439,199 @@ export function startProductionServer(
           } catch (error) {
             logger.debug("Server stop failed", { error });
           }
+          await disposeOwnedBootstrap();
         };
 
         return { ready, stop };
       } catch (error) {
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
         rejectionGuard?.dispose();
+        try {
+          await awaitBeforeDeadline(
+            disposeOwnedBootstrap(),
+            Date.now() + parseShutdownCleanupTimeoutMs(
+              baseAdapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+            ),
+          );
+        } catch (disposeError) {
+          logger.warn("Failed to dispose production bootstrap after startup error", {
+            error: disposeError,
+          });
+        }
         throw error;
       }
     },
     { "server.port": options.port, "server.bindAddress": options.bindAddress ?? "0.0.0.0" },
   );
+}
+
+/** Own the direct production entry from initialization through process exit. */
+export async function runDirectProductionServer(
+  dependencies: DirectProductionServerDependencies,
+): Promise<void> {
+  let bootstrap: BootstrapResult | undefined;
+  let bootstrapAtShutdownStart: BootstrapResult | undefined;
+  let finalizedLateBootstrap: BootstrapResult | undefined;
+  let bootstrapDisposal: Promise<void> | undefined;
+  let adapterEnv: RuntimeAdapter["env"] | undefined;
+  let shutdownTimeouts: {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } | undefined;
+  // Snapshot one pair at the first shutdown request. Adapter/bootstrap state
+  // may arrive later, but it must not extend or repartition that deadline.
+  const resolveShutdownTimeouts = (): {
+    drainTimeoutMs: number;
+    cleanupTimeoutMs: number;
+  } =>
+    shutdownTimeouts ??= {
+      drainTimeoutMs: parseShutdownDrainTimeoutMs(
+        adapterEnv
+          ? adapterEnv.get("SHUTDOWN_DRAIN_TIMEOUT_MS")
+          : getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+      ),
+      cleanupTimeoutMs: parseShutdownCleanupTimeoutMs(
+        adapterEnv
+          ? adapterEnv.get("SHUTDOWN_CLEANUP_TIMEOUT_MS")
+          : getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+      ),
+    };
+  const disposeBootstrap = (): Promise<void> => {
+    if (!bootstrap) return Promise.resolve();
+    bootstrapDisposal ??= Promise.resolve().then(() => bootstrap?.dispose?.());
+    return bootstrapDisposal;
+  };
+
+  await runProductionProcessOwner({
+    start: async ({ signal, onMemoryRecycle }) => {
+      await dependencies.initializeErrorReporting?.();
+      if (dependencies.initializeRuntime) {
+        await dependencies.initializeRuntime();
+      } else {
+        const [otlpResult, cacheResult] = await Promise.allSettled([
+          initializeOTLPWithApis(),
+          initializeDistributedCaches(defaultDistributedCacheInitializers),
+        ]);
+
+        if (otlpResult.status === "rejected") {
+          logger.warn("OTLP initialization failed, continuing without tracing", {
+            error: otlpResult.reason,
+          });
+        }
+        if (cacheResult.status === "rejected") {
+          logger.warn("Distributed cache initialization failed, using memory fallback", {
+            error: cacheResult.reason,
+          });
+        }
+      }
+
+      const adapter = await (dependencies.getAdapter ? dependencies.getAdapter() : runtime.get());
+      adapterEnv = adapter.env;
+      const projectDir = cwd();
+      const port = Number(
+        adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
+      );
+      const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
+      bootstrap = await (dependencies.bootstrap ?? bootstrapProd)(projectDir, adapter);
+      adapterEnv = bootstrap.adapter.env;
+      if (signal.aborted) {
+        // Begin releasing a bootstrap acquired after shutdown, but leave the
+        // process owner to join it only within the remaining shutdown budget.
+        void disposeBootstrap().catch(() => {});
+        signal.throwIfAborted();
+      }
+      try {
+        const server = await (dependencies.startServer ?? startProductionServer)({
+          projectDir,
+          port,
+          bindAddress,
+          debug: isDebugEnabled(adapter.env),
+          adapter,
+          bootstrapResult: bootstrap,
+          signal,
+          onMemoryRecycle,
+        });
+        return {
+          ready: server.ready,
+          stop: async () => {
+            let didStopFail = false;
+            let stopError: unknown;
+            try {
+              await server.stop();
+            } catch (error) {
+              didStopFail = true;
+              stopError = error;
+            }
+            try {
+              await disposeBootstrap();
+            } catch (error) {
+              if (!didStopFail) throw error;
+            }
+            if (didStopFail) throw stopError;
+          },
+        };
+      } catch (error) {
+        try {
+          await awaitBeforeDeadline(
+            disposeBootstrap(),
+            Date.now() + resolveShutdownTimeouts().cleanupTimeoutMs,
+          );
+        } catch {
+          // Preserve the server startup failure as the process-owner result.
+        }
+        throw error;
+      }
+    },
+    shutdownTimeoutMs: () => {
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
+      return drainTimeoutMs + cleanupTimeoutMs;
+    },
+    shutdown: async (reason, server, abort) => {
+      bootstrapAtShutdownStart = bootstrap;
+      const { drainTimeoutMs, cleanupTimeoutMs } = resolveShutdownTimeouts();
+      await (dependencies.gracefullyShutdown ?? gracefullyShutdownProductionServer)({
+        signal: reason,
+        drainTimeoutMs,
+        cleanupTimeoutMs,
+        abort,
+        dispose: disposeBootstrap,
+        stop: server?.stop ?? (() => Promise.resolve()),
+        logger,
+      });
+      // A bootstrap acquired after this snapshot is joined by the process
+      // owner's deadline-aware pre-exit finalization.
+    },
+    flush: dependencies.flush,
+    beforeExit: () =>
+      bootstrap && bootstrap !== bootstrapAtShutdownStart ? disposeBootstrap() : Promise.resolve(),
+    finalizeBeforeExit: () => {
+      if (
+        !bootstrap || bootstrap === bootstrapAtShutdownStart ||
+        bootstrap === finalizedLateBootstrap
+      ) return undefined;
+      finalizedLateBootstrap = bootstrap;
+      return disposeBootstrap();
+    },
+    exit: dependencies.exit ?? exit,
+    registerSignals: dependencies.registerSignals ?? ((handler) => {
+      const disposeInterrupt = onSignal("SIGINT", () => handler("SIGINT"));
+      try {
+        const disposeTerminate = onSignal("SIGTERM", () => handler("SIGTERM"));
+        return () => {
+          disposeInterrupt();
+          disposeTerminate();
+        };
+      } catch (error) {
+        disposeInterrupt();
+        throw error;
+      }
+    }),
+    onReady: () => logger.info("Server fully initialized, ready to accept traffic"),
+    onError: (error, reason) => {
+      dependencies.captureError(error, { boundary: "process.shutdown" });
+      logger.warn("Unhandled error while shutting down production server", { reason, error });
+    },
+  });
 }
 
 if (import.meta.main) {
@@ -378,7 +640,6 @@ if (import.meta.main) {
     flushApplicationErrors,
   } = await import("#veryfront/observability/application-errors.ts");
   const { initializeSentryFromEnv } = await import("#veryfront/observability/sentry.ts");
-  await initializeSentryFromEnv();
 
   // Register global error handlers FIRST to prevent process crashes from application errors
   // This ensures the renderer stays up even if user code throws unhandled exceptions
@@ -419,86 +680,11 @@ if (import.meta.main) {
   });
 
   try {
-    // Initialize OpenTelemetry tracing and distributed caches in parallel
-    // Both can fail independently without blocking the other
-    // Backend: API (production) > Redis (local dev) > Memory (fallback)
-    const [otlpResult, cacheResult] = await Promise.allSettled([
-      initializeOTLPWithApis(),
-      initializeDistributedCaches(defaultDistributedCacheInitializers),
-    ]);
-
-    if (otlpResult.status === "rejected") {
-      logger.warn("OTLP initialization failed, continuing without tracing", {
-        error: otlpResult.reason,
-      });
-    }
-
-    if (cacheResult.status === "rejected") {
-      logger.warn("Distributed cache initialization failed, using memory fallback", {
-        error: cacheResult.reason,
-      });
-    }
-
-    const adapter = await runtime.get();
-
-    const shutdownController = new AbortController();
-    const projectDir = cwd();
-    const port = Number(
-      adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
-    );
-    // BIND_ADDRESS: 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
-    // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
-    const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
-
-    const bootstrap = await bootstrapProd(projectDir, adapter);
-
-    const server = await startProductionServer({
-      projectDir,
-      port,
-      bindAddress,
-      debug: isDebugEnabled(adapter.env),
-      adapter, // Pass adapter to avoid re-detection
-      bootstrapResult: bootstrap,
-      signal: shutdownController.signal,
+    await runDirectProductionServer({
+      flush: flushApplicationErrors,
+      captureError: captureApplicationError,
+      initializeErrorReporting: initializeSentryFromEnv,
     });
-
-    // Wait for server to be fully ready before accepting traffic
-    // This prevents K8s readiness probe from passing too early
-    // Note: setServerInitialized(true) is called inside ready promise
-    await server.ready;
-    logger.info("Server fully initialized, ready to accept traffic");
-
-    // Graceful shutdown for direct CLI execution (e.g., deno run)
-    // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
-    const drainTimeoutMs = parseShutdownDrainTimeoutMs(
-      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
-    );
-
-    let shuttingDown = false;
-    const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-
-      await gracefullyShutdownProductionServer({
-        signal,
-        drainTimeoutMs,
-        abort: () => shutdownController.abort(),
-        dispose: bootstrap.dispose,
-        stop: server.stop,
-        logger,
-      });
-      await flushApplicationErrors();
-    };
-
-    const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
-      void shutdown(signal).catch((error) => {
-        captureApplicationError(error, { boundary: "process.shutdown" });
-        logger.warn("Unhandled error while shutting down production server", { signal, error });
-      });
-    };
-
-    onSignal("SIGINT", () => handleSignal("SIGINT"));
-    onSignal("SIGTERM", () => handleSignal("SIGTERM"));
   } catch (e) {
     captureApplicationError(e, { boundary: "process.startup" });
     logger.error("Failed to start production server:", e);

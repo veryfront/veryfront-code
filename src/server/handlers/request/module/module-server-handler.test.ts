@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -31,6 +32,53 @@ describe(
       clearReactVersionCache();
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
+    });
+
+    it("returns uncached 503 when shared historical storage is unavailable", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        const adapter = {
+          ...createMockAdapter(),
+          dependencySnapshotStore: createDependencySnapshotStoreHandle({
+            publish: () => Promise.reject(new Error("unavailable")),
+            read: () => Promise.reject(new Error("unavailable")),
+          }),
+        };
+        adapter.fs.files.set("/project/app/page.ts", "export const value = 1;");
+        for (
+          const [method, path] of [
+            ["GET", "_veryfront/react/server-render-context.js"],
+            ["HEAD", "_veryfront/react/server-render-context.js"],
+            ["GET", "app/page.js"],
+            ["HEAD", "app/page.js"],
+          ]
+        ) {
+          const result = await handleModuleServer(
+            new Request(
+              `http://localhost/_vf_modules/_pins/on%3A54uvgwr2ih7p/${path}`,
+              { method },
+            ),
+            {
+              projectDir: "/project",
+              projectId: "test-project",
+              isLocalProject: false,
+              adapter,
+              securityConfig: null,
+            },
+            () => new ResponseBuilder(),
+            (response) => ({ response, continue: false }),
+            () => {},
+            () => "unavailable",
+          );
+          assertEquals(result.response?.status, 503);
+          assertEquals(result.response?.headers.get("cache-control"), "no-store");
+          const body = await result.response!.text();
+          if (method === "HEAD") assertEquals(body, "");
+        }
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      }
     });
 
     it("resolves document snapshot A after B through branch-only module and RSC contexts", async () => {

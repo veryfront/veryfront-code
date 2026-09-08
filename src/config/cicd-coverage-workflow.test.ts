@@ -151,7 +151,7 @@ describe("cicd coverage workflow", () => {
     assertStringIncludes(workflow, "Download unit coverage lcov files");
     assertStringIncludes(workflow, "pattern: coverage-shard-*");
     assertStringIncludes(workflow, "sonar:");
-    assertStringIncludes(workflow, "name: sonar");
+    assertStringIncludes(workflow, "name: SonarQube Cloud scan");
     assertStringIncludes(
       await readRepoFile("sonar-project.properties"),
       "sonar.javascript.node.maxspace=8192",

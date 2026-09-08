@@ -2,6 +2,7 @@
  * Runtime identifier for platform-specific code paths
  ***********************/
 import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import type { DependencySnapshotStoreHandle } from "./dependency-snapshot-store.ts";
 
 export type RuntimeId = "deno" | "node" | "bun" | "cloudflare" | "memory";
 
@@ -31,6 +32,9 @@ export interface RuntimeAdapter {
    * This capability does not grant permission to execute project code in a host.
    */
   readonly moduleLoader?: RuntimeModuleLoader;
+
+  /** Host-owned shared dependency history for replicated rendering, fixed before project code runs. */
+  readonly dependencySnapshotStore?: DependencySnapshotStoreHandle;
 
   /** Environment variable access */
   env: EnvironmentAdapter;

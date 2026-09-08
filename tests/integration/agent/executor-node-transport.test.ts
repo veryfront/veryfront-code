@@ -3,6 +3,7 @@ import { getEventListeners } from "node:events";
 import { connect as connectTcp, createServer as createTcpServer } from "node:net";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { setImmediate } from "node:timers/promises";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -108,6 +109,42 @@ if (typeof Deno !== "undefined") {
       } finally {
         listener.close();
         client.close();
+      }
+    });
+
+    it("keeps the TLS attachment available after a plain TCP startup probe", async () => {
+      const key = randomBytes(32);
+      const listener = await listenExecutorTransport({ host, port: 0, binding, key, timeoutMs });
+      let attachment = "pending";
+      void listener.connection.then(() => attachment = "resolved", () => attachment = "rejected");
+      const probe = connectTcp({ host, port: listener.address.port });
+      const probeClosed = new Promise<void>((resolve) => probe.once("close", resolve));
+      let client: ExecutorNodeTransport | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          probe.once("connect", resolve);
+          probe.once("error", reject);
+        });
+        probe.end();
+        await probeClosed;
+        await setImmediate();
+        assertEquals(attachment, "pending");
+        client = await connectExecutorTransport({
+          podIp: host,
+          port: listener.address.port,
+          binding,
+          key,
+          timeoutMs,
+        });
+        const server = await listener.connection;
+        const receiving = readBytes(client, 1);
+        await server.writable.getWriter().write(new Uint8Array([7]));
+        assertEquals(await receiving, new Uint8Array([7]));
+      } finally {
+        probe.destroy();
+        client?.close();
+        listener.close();
+        key.fill(0);
       }
     });
 

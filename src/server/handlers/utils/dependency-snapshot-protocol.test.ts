@@ -8,6 +8,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
 import {
   applySnapshotResponseHeaders,
   DEPENDENCY_PINS_HEADER,
@@ -16,6 +17,7 @@ import {
   resolveSnapshotForRequest,
   SNAPSHOT_CONFLICT_BODY,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
   stripSnapshotHeader,
   stripSnapshotQuery,
   withSnapshotResponseHeaders,
@@ -28,6 +30,27 @@ function headers(init: Record<string, string> = {}): Headers {
 }
 
 describe("server/handlers/utils/dependency-snapshot-protocol", () => {
+  it("does not invoke an accessor while classifying a storage failure", () => {
+    const error = DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.create();
+    let reads = 0;
+    Object.defineProperty(error, "slug", {
+      get() {
+        reads++;
+        throw new Error("Error identity must not invoke accessors");
+      },
+    });
+    assertEquals(
+      snapshotStoreFailureResponse(
+        error,
+        createResponseBuilder(),
+        new Request("http://localhost/page"),
+        null,
+      ),
+      undefined,
+    );
+    assertEquals(reads, 0);
+  });
+
   describe("reading the requested snapshot", () => {
     it("reports an absent header as unpinned", () => {
       assertEquals(readSnapshotHeader(headers()), { kind: "absent" });

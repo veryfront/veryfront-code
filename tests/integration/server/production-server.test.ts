@@ -10,6 +10,8 @@
  * - Performance and concurrency
  */
 
+import { ensureTestSchemaValidator } from "#veryfront/schemas/_test-setup.ts";
+
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
@@ -23,6 +25,14 @@ import { MultiProjectFSAdapter } from "../../../src/platform/adapters/fs/veryfro
 import type { RuntimeAdapter } from "../../../src/platform/adapters/base.ts";
 import type { BootstrapResult } from "../../../src/server/bootstrap.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
+import {
+  isServerInitialized,
+  setServerInitialized,
+} from "../../../src/server/handlers/monitoring/health.handler.ts";
+import {
+  __resetServerShuttingDownForTests,
+  markServerShuttingDown,
+} from "../../../src/server/shutdown-state.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
@@ -459,7 +469,61 @@ describe(
     describe(
       "Production Server - Project middleware",
       () => {
+        it("does not republish readiness when startup settles after shutdown begins", async () => {
+          const mockAdapter = createMockAdapter();
+          let publishListen: (() => void) | undefined;
+          const controller = new AbortController();
+          const adapter: RuntimeAdapter = {
+            ...mockAdapter,
+            serve: (_handler, options) => {
+              publishListen = () =>
+                options.onListen?.({
+                  hostname: options.hostname ?? "127.0.0.1",
+                  port: options.port ?? 0,
+                });
+              return Promise.resolve({
+                stop: () => Promise.resolve(),
+                addr: {
+                  hostname: options.hostname ?? "127.0.0.1",
+                  port: options.port ?? 0,
+                },
+              });
+            },
+          };
+
+          let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          setServerInitialized(false);
+          try {
+            server = await startProductionServer({
+              projectDir: "/app",
+              port: 0,
+              bindAddress: "127.0.0.1",
+              adapter,
+              signal: controller.signal,
+              bootstrapResult: {
+                adapter,
+                config: { fs: { veryfront: { proxyMode: true } } },
+                usingFSAdapter: false,
+                fsAdapterType: "MockRuntimeAdapter",
+                extensionLoader: {} as BootstrapResult["extensionLoader"],
+              },
+            });
+
+            markServerShuttingDown();
+            controller.abort();
+            publishListen?.();
+            await server.ready;
+
+            assertEquals(isServerInitialized(), false);
+          } finally {
+            await server?.stop();
+            setServerInitialized(false);
+            __resetServerShuttingDownForTests();
+          }
+        });
+
         it("does not read project middleware before proxy request context exists", async () => {
+          ensureTestSchemaValidator();
           const multiProjectFs = new MultiProjectFSAdapter({
             veryfront: {
               apiBaseUrl: "https://api.example.com",
@@ -518,6 +582,7 @@ describe(
         });
 
         it("refuses shared proxy middleware after trusted request context is resolved", async () => {
+          ensureTestSchemaValidator();
           const trustEnvName = "VERYFRONT_TRUST_FORWARDED_HEADERS";
           const originalProxyTrust = getHostEnv(trustEnvName);
           const projectSlug = "shared-middleware-project";
