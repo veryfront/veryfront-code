@@ -1,4 +1,5 @@
 import type { HandlerContext } from "../types.ts";
+import { getSharedDependencySnapshotStoreHandle } from "#veryfront/cache/dependency-snapshot-store.ts";
 import {
   createDependencyPinningSource,
   type DependencyPinningSource,
@@ -53,5 +54,9 @@ export function createHandlerDependencyPinningSource(
     ...identity,
     dependencyWritebackTarget,
     dependencyWritebackToken: dependencyWritebackTarget ? ctx.proxyToken : undefined,
+    // Replicated runtimes share snapshot history, so a document rendered on one
+    // replica keeps hydrating on every other replica after dependency writeback
+    // changes the current key.
+    snapshotStore: getSharedDependencySnapshotStoreHandle(),
   });
 }

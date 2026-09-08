@@ -1,7 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { MemoryCacheBackend } from "#veryfront/cache/backends/memory.ts";
+import { _setSharedDependencySnapshotStoreBackendForTest } from "#veryfront/cache/dependency-snapshot-store.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import type { HandlerContext } from "../types.ts";
 import {
   createHandlerDependencyPinningSource,
@@ -217,5 +225,61 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
       { kind: "branch", branch: "feature" },
       "a preview-resolved context targets its branch even when requestContext.mode says production",
     );
+  });
+
+  describe("shared snapshot history", () => {
+    const prior = new Map<string, string | undefined>();
+    beforeEach(() => {
+      for (
+        const name of [
+          "VERYFRONT_DEPENDENCY_PINNING",
+          "VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT",
+        ]
+      ) {
+        prior.set(name, getHostEnv(name));
+        setEnv(name, name.endsWith("PERCENT") ? "100" : "1");
+      }
+      clearReactVersionCache();
+    });
+    afterEach(() => {
+      for (const [name, value] of prior) {
+        if (value === undefined) deleteEnv(name);
+        else setEnv(name, value);
+      }
+      _setSharedDependencySnapshotStoreBackendForTest(undefined);
+      clearReactVersionCache();
+    });
+
+    it("resolves a pre-writeback snapshot on a cold replica through the shared store", async () => {
+      _setSharedDependencySnapshotStoreBackendForTest(new MemoryCacheBackend());
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/package.json", '{"dependencies":{}}');
+      const renderingReplica = createHandlerDependencyPinningSource(
+        makeCtx({ adapter, projectId: "shared-history-project", isLocalProject: false }),
+      );
+
+      const document = await getDependencyPinningSnapshot(renderingReplica);
+      assertEquals(document.cacheKey.startsWith("on:"), true);
+
+      // Dependency writeback pins the resolved versions, changing the current key.
+      adapter.fs.files.set("/project/package.json", '{"dependencies":{"react":"19.2.4"}}');
+      // A cold replica holds no process-local history for the rendered key.
+      clearReactVersionCache();
+
+      const coldReplica = createHandlerDependencyPinningSource(
+        makeCtx({ adapter, projectId: "shared-history-project", isLocalProject: false }),
+      );
+      const recovered = await resolveRequestedDependencyPinningSnapshot(
+        coldReplica,
+        document.cacheKey,
+      );
+
+      assertEquals(
+        recovered?.cacheKey,
+        document.cacheKey,
+        "a cold replica must recover the rendered snapshot instead of conflicting",
+      );
+      assertEquals(recovered?.dependencies, document.dependencies);
+    });
   });
 });
