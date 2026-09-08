@@ -7,8 +7,76 @@ import type { RuntimeToolFilterConfig } from "#veryfront/agent/runtime/runtime-t
 import { executorAgentFailureCode } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
+import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
+import type { JsonValue } from "#veryfront/schemas/index.ts";
 
 describe("executor runtime private lifecycle", () => {
+  it("propagates operation cancellation after project code replaces listener registration", async () => {
+    const binding = { allocationId: "listeners", invocationId: "listeners", generation: 1 };
+    const source = { type: "release", releaseId: "synthetic-release" } as const;
+    const modelId = "veryfront-cloud/openai/gpt-5.4";
+    const entered = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<ProjectAgentRuntimeDiscovery>();
+    let backendSignal: AbortSignal | undefined;
+    const discovery = createExecutorDiscovery({
+      binding,
+      source,
+      projectDir: "/synthetic-project",
+      signal: new AbortController().signal,
+      backend: {
+        load: (signal) => {
+          backendSignal = signal;
+          entered.resolve();
+          return finish.promise;
+        },
+        cleanup: () => Promise.resolve(),
+      },
+    });
+    const owner = createExecutorRuntimePreparation({
+      binding,
+      source,
+      discovery,
+      grant: {
+        agentId: "coder",
+        defaultModelId: modelId,
+        maxSteps: 5,
+        models: new Map([[modelId, { maxOutputTokens: 200, providerToolNames: [] }]]),
+        allowedToolNames: [],
+        hostToolFacadeIds: [],
+        remoteToolSourceIds: [],
+        execution: { kind: "ephemeral", projectId: null },
+      },
+      facades: {
+        hostTools: new Map(),
+        remoteToolSources: new Map(),
+        resolveModelRuntime: () => undefined,
+        cleanup: () => Promise.resolve(),
+      },
+    });
+    const original = EventTarget.prototype.addEventListener;
+    const controller = new AbortController();
+    let preparing: JsonValue | Promise<JsonValue> | undefined;
+    try {
+      EventTarget.prototype.addEventListener = () => {};
+      const operation = owner.operations.get("runtime.prepare");
+      assert(operation?.mode === "unary");
+      preparing = operation.handle({ agentId: "coder" }, {
+        binding,
+        signal: controller.signal,
+        deadline: Date.now() + 30_000,
+      });
+      await entered.promise;
+      controller.abort();
+      assertEquals(owner.signal.aborted, true);
+      assertEquals(backendSignal?.aborted, true);
+    } finally {
+      EventTarget.prototype.addEventListener = original;
+      finish.reject(new DOMException("Synthetic cancellation", "AbortError"));
+      await owner.close();
+      await preparing;
+    }
+  });
+
   it("retains original producer completion when project code replaces promise latches", async () => {
     const entered = Promise.withResolvers<void>();
     const unblock = Promise.withResolvers<void>();
