@@ -3,6 +3,8 @@ import {
   createPrivateTextDecoder,
   encodePrivateText,
   PrivateTextEncoder,
+  privateTextSlice,
+  privateTextStartsWith,
 } from "#veryfront/security/private-text.ts";
 /**
  * Agent Runtime - Core execution engine
@@ -18,13 +20,13 @@ import {
  */
 
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { concatPrivateArrays, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   createPrivateReadableStream,
   enqueuePrivateStream,
 } from "#veryfront/security/private-stream.ts";
 
-import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import {
   enterSerializedTurn,
   withRuntimeTurnLineage,
@@ -959,12 +961,14 @@ type DeferredRecoveryOutput =
 
 function isTextSseChunk(chunk: Uint8Array): boolean {
   const payload = createPrivateTextDecoder().decode(chunk);
-  if (!payload.startsWith("data: ")) {
+  if (!privateTextStartsWith(payload, "data: ")) {
     return false;
   }
 
   try {
-    const event = privateJsonParse(payload.slice("data: ".length)) as { type?: unknown };
+    const event = privateJsonParse(privateTextSlice(payload, "data: ".length)) as {
+      type?: unknown;
+    };
     return event.type === "text-start" || event.type === "text-delta" ||
       event.type === "text-end";
   } catch {
@@ -974,12 +978,14 @@ function isTextSseChunk(chunk: Uint8Array): boolean {
 
 function isTextEndSseChunk(chunk: Uint8Array): boolean {
   const payload = createPrivateTextDecoder().decode(chunk);
-  if (!payload.startsWith("data: ")) {
+  if (!privateTextStartsWith(payload, "data: ")) {
     return false;
   }
 
   try {
-    const event = privateJsonParse(payload.slice("data: ".length)) as { type?: unknown };
+    const event = privateJsonParse(privateTextSlice(payload, "data: ".length)) as {
+      type?: unknown;
+    };
     return event.type === "text-end";
   } catch {
     return false;
@@ -988,12 +994,15 @@ function isTextEndSseChunk(chunk: Uint8Array): boolean {
 
 function textDeltaFromSseChunk(chunk: Uint8Array): string | undefined {
   const payload = createPrivateTextDecoder().decode(chunk);
-  if (!payload.startsWith("data: ")) {
+  if (!privateTextStartsWith(payload, "data: ")) {
     return undefined;
   }
 
   try {
-    const event = privateJsonParse(payload.slice("data: ".length)) as Record<string, unknown>;
+    const event = privateJsonParse(privateTextSlice(payload, "data: ".length)) as Record<
+      string,
+      unknown
+    >;
     return event.type === "text-delta" && typeof event.delta === "string" ? event.delta : undefined;
   } catch {
     return undefined;
@@ -1006,7 +1015,7 @@ function stripLeadingText(
 ): { text: string; remainingPrefixLength: number } {
   const consumedLength = Math.min(text.length, remainingPrefixLength);
   return {
-    text: text.slice(consumedLength),
+    text: privateTextSlice(text, consumedLength),
     remainingPrefixLength: remainingPrefixLength - consumedLength,
   };
 }
@@ -1017,12 +1026,15 @@ function stripTextDeltaPrefixFromSseChunk(
   encoder: TextEncoder,
 ): { chunk: Uint8Array | undefined; remainingPrefixLength: number } {
   const payload = createPrivateTextDecoder().decode(chunk);
-  if (!payload.startsWith("data: ")) {
+  if (!privateTextStartsWith(payload, "data: ")) {
     return { chunk, remainingPrefixLength };
   }
 
   try {
-    const event = privateJsonParse(payload.slice("data: ".length)) as Record<string, unknown>;
+    const event = privateJsonParse(privateTextSlice(payload, "data: ".length)) as Record<
+      string,
+      unknown
+    >;
     if (event.type !== "text-delta" || typeof event.delta !== "string") {
       return { chunk, remainingPrefixLength };
     }
@@ -1048,12 +1060,15 @@ function rewriteRecoveryTextSseChunkId(
   encoder: TextEncoder,
 ): Uint8Array {
   const payload = createPrivateTextDecoder().decode(chunk);
-  if (!payload.startsWith("data: ")) {
+  if (!privateTextStartsWith(payload, "data: ")) {
     return chunk;
   }
 
   try {
-    const event = privateJsonParse(payload.slice("data: ".length)) as Record<string, unknown>;
+    const event = privateJsonParse(privateTextSlice(payload, "data: ".length)) as Record<
+      string,
+      unknown
+    >;
     if (
       event.type !== "text-start" && event.type !== "text-delta" &&
       event.type !== "text-end"
@@ -1786,7 +1801,10 @@ export class AgentRuntime {
     const checkpoints = getRuntimeProviderReplayCheckpoints(this.config);
     if (!checkpoints?.length) return;
     const history = mapPrivateArray(await this.memory.getMessages(), cloneMessageForCommit);
-    applyProviderReplayCheckpointsToMessages([...history, ...inputMessages], checkpoints);
+    applyProviderReplayCheckpointsToMessages(
+      concatPrivateArrays(history, inputMessages),
+      checkpoints,
+    );
   }
 
   private prepareTurnMessages(
@@ -1830,7 +1848,7 @@ export class AgentRuntime {
 
     const leaveLineage = enterSerializedTurn(this);
     const predecessor = this.#turnCommitQueue;
-    const task = awaitAbortable(predecessor, abortSignal).then(async () => {
+    const task = chainPrivatePromise(awaitAbortable(predecessor, abortSignal), async () => {
       try {
         throwIfAborted(abortSignal);
         const prepared = await this.#commitTurnMessages(inputMessages, context);
@@ -1859,13 +1877,10 @@ export class AgentRuntime {
       leaveLineage();
       throw error;
     });
-    const finalized = task.then(
-      ({ finalized }) => finalized,
-      () => undefined,
-    );
+    const finalized = chainPrivatePromise(task, ({ finalized }) => finalized, () => undefined);
     // Cancellation releases this caller, not the preceding turn's queue slot.
     // Later turns must still wait until that predecessor has finalized.
-    this.#turnCommitQueue = Promise.all([predecessor, finalized]).then(() => undefined);
+    this.#turnCommitQueue = chainPrivatePromise(predecessor, () => finalized);
     return task;
   }
 
@@ -1897,7 +1912,7 @@ export class AgentRuntime {
     const commit = async (): Promise<void> => {
       if (rejection) throw rejection.error;
       if (transaction === undefined) return;
-      finalization ??= transaction.then(async (prepared) => {
+      finalization ??= chainPrivatePromise(transaction, async (prepared) => {
         try {
           await prepared.commit();
         } catch (error) {
@@ -1913,10 +1928,14 @@ export class AgentRuntime {
       if (finalization !== undefined) {
         // The original caller observes commit or rollback errors. Cleanup must
         // still finish so streaming can report that error and close replay state.
-        await finalization.catch(() => undefined);
+        await chainPrivatePromise(finalization, () => undefined, () => undefined);
         return;
       }
-      finalization = transaction.catch(() => undefined).then((prepared) => prepared?.rollback());
+      finalization = chainPrivatePromise(
+        transaction,
+        (prepared) => prepared.rollback(),
+        () => undefined,
+      );
       await finalization;
     };
     const persistence = {
@@ -1929,7 +1948,7 @@ export class AgentRuntime {
           context,
           abortSignal,
         );
-        return transaction.then(({ messages }) => messages);
+        return chainPrivatePromise(transaction, ({ messages }) => messages);
       },
       commit,
       addMessage: async (message: Message) => {
@@ -2005,7 +2024,7 @@ export class AgentRuntime {
     try {
       if (validateTurnMessages || validateProjectedMessages || validateProviderRequest) {
         history = await turnMemory.getMessages();
-        if (history.length > 0) validated = [...history, ...committedInputMessages];
+        if (history.length > 0) validated = concatPrivateArrays(history, committedInputMessages);
         // Durable provider replay metadata can keep a reasoning-only assistant
         // turn in the actual provider request. Attach it before validation so
         // the validator does not incorrectly merge the user turns around it.
@@ -2035,7 +2054,9 @@ export class AgentRuntime {
           return snapshot;
         });
       }
-      for (const msg of committedInputMessages) await turnMemory.add(msg);
+      for (let index = 0; index < committedInputMessages.length; index++) {
+        await turnMemory.add(committedInputMessages[index]!);
+      }
       persisted = await turnMemory.getMessages();
       if (persisted.length > 0 && !providerTranscriptsEqual(persisted, validated)) {
         if (validateProjectedMessages) {
@@ -2140,7 +2161,7 @@ export class AgentRuntime {
           providerOptionKey,
         ),
       }),
-      messages: [...messages],
+      messages: mapPrivateArray(messages, (message) => message),
       context,
     });
 
@@ -2673,7 +2694,7 @@ export class AgentRuntime {
       const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
       const toolCalls: ToolCall[] = [];
-      const currentMessages = [...messages];
+      const currentMessages = mapPrivateArray(messages, (message) => message);
       applyProviderReplayCheckpointsToMessages(
         currentMessages,
         getRuntimeProviderReplayCheckpoints(this.config),
@@ -3354,7 +3375,7 @@ export class AgentRuntime {
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
     const toolCalls: ToolCall[] = [];
-    const currentMessages = [...messages];
+    const currentMessages = mapPrivateArray(messages, (message) => message);
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
@@ -3538,7 +3559,7 @@ export class AgentRuntime {
         ? `recovery:step:${step}`
         : `${stepTextPartId}:recovery`;
       const remainingRecoveryReplayText = () =>
-        previousRecoveryText.slice(suppressedRecoveryReplayTextLength);
+        privateTextSlice(previousRecoveryText, suppressedRecoveryReplayTextLength);
       const flushDeferredRecoveryOutput = (
         interruptedRecoveryPrefixLength: number,
         repeatsInterruptedRecoveryText: boolean,
@@ -3588,15 +3609,18 @@ export class AgentRuntime {
         if (deferredRecoveryOutput === undefined || releasedDeferredRecoveryOutput) return;
 
         const expectedReplayText = remainingRecoveryReplayText();
-        const sseDiverged = !expectedReplayText.startsWith(deferredRecoverySseText);
+        const sseDiverged = !privateTextStartsWith(expectedReplayText, deferredRecoverySseText);
         const callbackDiverged = callbacks?.onChunk === undefined ||
-          !expectedReplayText.startsWith(deferredRecoveryCallbackText);
+          !privateTextStartsWith(expectedReplayText, deferredRecoveryCallbackText);
         if (!sseDiverged || !callbackDiverged) return;
 
         const observedRecoveryText = callbacks?.onChunk === undefined
           ? deferredRecoverySseText
           : deferredRecoveryCallbackText;
-        const extendsPreviousRecoveryText = observedRecoveryText.startsWith(expectedReplayText);
+        const extendsPreviousRecoveryText = privateTextStartsWith(
+          observedRecoveryText,
+          expectedReplayText,
+        );
         flushDeferredRecoveryOutput(
           extendsPreviousRecoveryText ? expectedReplayText.length : 0,
           false,
@@ -3651,9 +3675,9 @@ export class AgentRuntime {
         if (
           !isTextEndEvent || deferredRecoveryOutput === undefined ||
           releasedDeferredRecoveryOutput ||
-          !remainingRecoveryReplayText().startsWith(deferredRecoverySseText) ||
+          !privateTextStartsWith(remainingRecoveryReplayText(), deferredRecoverySseText) ||
           (callbacks?.onChunk !== undefined &&
-            !remainingRecoveryReplayText().startsWith(deferredRecoveryCallbackText))
+            !privateTextStartsWith(remainingRecoveryReplayText(), deferredRecoveryCallbackText))
         ) {
           return;
         }
@@ -3725,15 +3749,16 @@ export class AgentRuntime {
       throwIfAborted(abortSignal);
       const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
         ? 0
-        : state.accumulatedText.startsWith(previousRecoveryText)
+        : privateTextStartsWith(state.accumulatedText, previousRecoveryText)
         ? previousRecoveryText.length
-        : previousRecoveryText.startsWith(state.accumulatedText)
+        : privateTextStartsWith(previousRecoveryText, state.accumulatedText)
         ? state.accumulatedText.length
         : 0;
       const recoveryPresentationPrefixLength = suppressedRecoveryReplayTextLength > 0
         ? suppressedRecoveryReplayTextLength
         : interruptedRecoveryPrefixLength;
-      const recoveryPresentationText = state.accumulatedText.slice(
+      const recoveryPresentationText = privateTextSlice(
+        state.accumulatedText,
         recoveryPresentationPrefixLength,
       );
       const repeatsInterruptedRecoveryText = interruptedRecoveryPrefixLength > 0 &&
@@ -3863,7 +3888,7 @@ export class AgentRuntime {
       } else if (
         step === interruptedLocalToolBatchRecoveryStep && interruptedRecoveryPrefixLength > 0
       ) {
-        latestAssistantText = previousRecoveryText.startsWith(state.accumulatedText)
+        latestAssistantText = privateTextStartsWith(previousRecoveryText, state.accumulatedText)
           ? previousRecoveryText
           : state.accumulatedText;
       } else if (

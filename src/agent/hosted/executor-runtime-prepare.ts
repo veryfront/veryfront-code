@@ -8,7 +8,14 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import { VERYFRONT_CLOUD_MODEL_PREFIX } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  getVeryfrontCloudProviderFromModelId,
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
+  resolveVeryfrontCloudThinkingProviderOptions,
+  VERYFRONT_CLOUD_MODEL_PREFIX,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
 import { isToolVisibleTo } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
@@ -446,6 +453,19 @@ export function createExecutorRuntimePreparation(input: Options) {
         (request.maxOutputTokens !== undefined &&
           request.maxOutputTokens > modelGrant.maxOutputTokens)
       ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      const thinking = request.thinking ?? definition.thinking ??
+        resolveVeryfrontCloudModelThinking(modelId);
+      const reasoning = resolveVeryfrontCloudReasoningOption(modelId, thinking);
+      const providerOptions = resolveVeryfrontCloudThinkingProviderOptions(modelId, thinking);
+      const reasoningBudget = getExecutorModelAdditiveReasoningTokens({
+        model: { id: modelId, modelId, provider: getVeryfrontCloudProviderFromModelId(modelId) },
+        options: { prompt: [], reasoning, providerOptions },
+      });
+      const availableOutputTokens = modelGrant.maxOutputTokens - reasoningBudget;
+      if (
+        availableOutputTokens <= 0 ||
+        (request.maxOutputTokens !== undefined && request.maxOutputTokens > availableOutputTokens)
+      ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
       requireFacades(definition, grant);
       const runtime = input.discovery.getRuntime();
       // Enroll only after agent.describe returns: a failed discovery operation
@@ -586,13 +606,13 @@ export function createExecutorRuntimePreparation(input: Options) {
             })
             : definition.system ?? definition.instructions),
         temperature: request.temperature ?? definition.temperature,
-        thinking: request.thinking ?? definition.thinking,
+        thinking,
         maxSteps: mathMin(
           request.maxSteps ?? grant.maxSteps,
           definition.maxSteps ?? grant.maxSteps,
           grant.maxSteps,
         ),
-        maxOutputTokens: request.maxOutputTokens ?? modelGrant.maxOutputTokens,
+        maxOutputTokens: request.maxOutputTokens ?? availableOutputTokens,
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
         availableSkillIds: skills.allowedSkillIds,

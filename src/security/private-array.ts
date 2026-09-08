@@ -2,6 +2,21 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 
 const hasOwn = Object.hasOwn;
 
+/** Join private arrays through own indexed elements, preserving sparse positions. */
+export function concatPrivateArrays<T>(left: readonly T[], right: readonly T[]): T[] {
+  const output = mapPrivateArray(left, (value) => value);
+  output.length = left.length + right.length;
+  for (let index = 0; index < right.length; index++) {
+    if (!hasOwn(right, index)) continue;
+    defineOwnDataProperty(output, left.length + index, right[index], {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return output;
+}
+
 /** Map private arrays without consulting caller-visible methods or array species. */
 export function mapPrivateArray<T, U>(
   values: readonly T[],

@@ -145,7 +145,8 @@ export function hydrateActiveSkillStateFromMessages(
     activeSkillDelegationOverrides: undefined,
   };
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     for (const part of message.parts) {
       if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
       state = applySkillActivationResult(state, part.result);

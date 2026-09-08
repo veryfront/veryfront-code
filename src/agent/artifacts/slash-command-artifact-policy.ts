@@ -132,7 +132,8 @@ function containsSlashCommand(messages: readonly unknown[]): boolean {
 function containsExactArtifactPath(messages: readonly unknown[]): boolean {
   const toolCallNamesById = new Map<string, string>();
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (!isRecord(message) || !Array.isArray(message.content)) {
       continue;
     }

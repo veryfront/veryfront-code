@@ -15,6 +15,7 @@ import type {
   ToolDefinition,
 } from "#veryfront/tool";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
+import { createExecutorModelAdmission } from "./executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
@@ -1842,6 +1843,61 @@ Synthetic source instructions.`,
     });
   }
 
+  it("reserves the catalog thinking budget when the request omits thinking and output limits", async () => {
+    const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+    let captured: ModelRuntimeCallOptions | undefined;
+    const f = fixture({
+      grant: {
+        ...grant,
+        defaultModelId: selectedModel,
+        models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+      },
+      facades: {
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: (options) => {
+            captured = options as ModelRuntimeCallOptions;
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assert(captured);
+      assertEquals(captured.reasoning, { enabled: true, budgetTokens: 2048 });
+      assertEquals(captured.maxOutputTokens, 6144);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  for (
+    const request of [
+      { agentId: "coder", thinking: { enabled: true, budgetTokens: 8192 } },
+      { agentId: "coder", thinking: { enabled: true, budgetTokens: 4096 }, maxOutputTokens: 4097 },
+    ]
+  ) {
+    it(`rejects preparation when fixed thinking leaves insufficient output allowance: ${JSON.stringify(request)}`, async () => {
+      const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: selectedModel,
+          models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+        },
+      });
+      try {
+        assertEquals(await prepare(f.owner, request as JsonValue), {
+          ok: false,
+          code: "EXECUTOR_RUNTIME_NOT_GRANTED",
+        });
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   for (
     const selectedModel of [
       modelId,
@@ -1895,6 +1951,28 @@ Synthetic source instructions.`,
                 },
               }
               : undefined,
+          );
+          const admission = createExecutorModelAdmission({
+            maxCalls: 1,
+            maxConcurrentCalls: 1,
+            models: new Map([[selectedModel, { maxOutputTokens: 8192, providerTools: [] }]]),
+          }, new Set([selectedModel]));
+          const expectedOutput = selectedModel.includes("claude-sonnet") && thinking.enabled
+            ? 4096
+            : 8192;
+          assertEquals(captured.maxOutputTokens, expectedOutput);
+          assertEquals(
+            admission.normalize({
+              identity: { binding, sequence: 1 },
+              mode: "stream",
+              model: {
+                id: selectedModel,
+                modelId: selectedModel,
+                provider: selectedModel.includes("anthropic") ? "anthropic" : "openai",
+              },
+              options: captured,
+            }).maxOutputTokens,
+            expectedOutput,
           );
           assertPersistedModelOptions({
             identity: { binding, sequence: 1 },

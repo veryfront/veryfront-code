@@ -75,7 +75,10 @@ function assertSingleCompletion(options: ExecutorModelDispatch["options"]): void
   for (const bucket of Object.values(options.providerOptions ?? {})) inspect(bucket);
 }
 
-function additiveReasoningTokens(request: ExecutorModelDispatch): number {
+/** Internal output allowance reserved by the effective provider thinking configuration. */
+export function getExecutorModelAdditiveReasoningTokens(
+  request: Pick<ExecutorModelDispatch, "model" | "options">,
+): number {
   if (resolveModelCallProvider(request.model) !== "anthropic") return 0;
   const reasoning = buildModelCallContextRequest(request.model, request.options)?.reasoning;
   if (request.options.reasoning?.enabled === true) {
@@ -188,7 +191,7 @@ export function createExecutorModelAdmission(
       const policy = policies.get(request.model.id);
       if (!policy) throw new TypeError("Executor model is not granted");
       assertSingleCompletion(request.options);
-      const budget = additiveReasoningTokens(request);
+      const budget = getExecutorModelAdditiveReasoningTokens(request);
       const available = policy.maxOutputTokens - budget;
       const maxOutputTokens = request.options.maxOutputTokens ?? available;
       if (

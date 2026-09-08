@@ -9,7 +9,9 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 
 describe("prepared executor private iteration", () => {
-  for (const probe of ["async generators", "inherited metadata"]) {
+  for (
+    const probe of ["async generators", "inherited metadata", "array iteration", "promise chaining"]
+  ) {
     it(`keeps stream requests and model output out of replaced ${probe}`, async () => {
       const binding = { allocationId: "iterators", invocationId: "iterators", generation: 1 };
       const source = { type: "release", releaseId: "synthetic-release" } as const;
@@ -88,11 +90,31 @@ describe("prepared executor private iteration", () => {
         transport: { readable: forward.readable, writable: backward.writable },
       });
       const prototype = Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})()));
+      const originalArrayIterator = Array.prototype[Symbol.iterator];
+      const originalThen = Promise.prototype.then;
       const originalMetadata = Object.getOwnPropertyDescriptor(Object.prototype, "metadata");
       const originalNext = prototype.next;
       const originalReturn = prototype.return;
       let observations = 0;
       let frames: JsonValue[] = [];
+      const observeMessages = (value: unknown) => {
+        const messages = Array.isArray(value)
+          ? value
+          : value !== null && typeof value === "object"
+          ? Object.getOwnPropertyDescriptor(value, "messages")?.value
+          : undefined;
+        if (!Array.isArray(messages)) return;
+        for (let index = 0; index < messages.length; index++) {
+          const parts = messages[index]?.parts;
+          if (!Array.isArray(parts)) continue;
+          for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+            if (parts[partIndex]?.text === marker) {
+              observations++;
+              return;
+            }
+          }
+        }
+      };
       const hook = (original: typeof originalNext) =>
         async function (this: unknown, ...args: unknown[]) {
           const result = await Reflect.apply(original, this, args) as IteratorResult<unknown>;
@@ -104,6 +126,24 @@ describe("prepared executor private iteration", () => {
         if (probe === "async generators") {
           prototype.next = hook(originalNext);
           prototype.return = hook(originalReturn);
+        } else if (probe === "array iteration") {
+          Array.prototype[Symbol.iterator] = (function (this: unknown[]) {
+            observeMessages(this);
+            return Reflect.apply(originalArrayIterator, this, []);
+          }) as typeof originalArrayIterator;
+        } else if (probe === "promise chaining") {
+          Promise.prototype.then = (function (
+            this: Promise<unknown>,
+            fulfilled: ((value: unknown) => unknown) | null | undefined,
+            rejected: ((reason: unknown) => unknown) | null | undefined,
+          ) {
+            return Reflect.apply(originalThen, this, [(value: unknown) => {
+              observeMessages(value);
+              return typeof fulfilled === "function"
+                ? Reflect.apply(fulfilled, undefined, [value])
+                : value;
+            }, rejected]);
+          }) as typeof originalThen;
         } else {
           Object.defineProperty(Object.prototype, "metadata", {
             configurable: true,
@@ -131,6 +171,8 @@ describe("prepared executor private iteration", () => {
           }],
         }));
       } finally {
+        Array.prototype[Symbol.iterator] = originalArrayIterator;
+        Promise.prototype.then = originalThen;
         if (originalMetadata) Object.defineProperty(Object.prototype, "metadata", originalMetadata);
         else Reflect.deleteProperty(Object.prototype, "metadata");
         prototype.next = originalNext;

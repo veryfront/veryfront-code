@@ -1,4 +1,4 @@
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { concatPrivateArrays, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { isDeepStrictEqual } from "node:util";
 import type {
   AgentContext,
@@ -561,7 +561,8 @@ function extractAdjacentRuns(
     run = [];
   };
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role !== role) {
       if (role === "user" && message.role === "tool") continue;
       if (role === "user" && message.role === "system") continue;
@@ -1483,7 +1484,9 @@ export function securityMiddleware(
         const trusted = new Set(systemMessages);
         const callers = new Set(callerSystemMessages);
         const providerRuns: ProviderValidationRun[] = [];
-        for (const run of extractMergedSystemRuns([...systemMessages, ...callerMessages])) {
+        for (
+          const run of extractMergedSystemRuns(concatPrivateArrays(systemMessages, callerMessages))
+        ) {
           if (
             !run.some((message) => trusted.has(message)) ||
             !run.some((message) => callers.has(message))
@@ -1535,7 +1538,10 @@ export function securityMiddleware(
             ],
           }
           : { texts: [], assembled: [] };
-        const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
+        const runTexts = extractMergedRunTexts(
+          concatPrivateArrays(history, turnInput),
+          new Set(turnInput),
+        );
         // Merged runs are synthetic assemblies, so they are pattern-checked but
         // never length-checked (`InputValidationOptions.checkMaxLength`).
         await assertInputTextsValid(

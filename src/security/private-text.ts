@@ -1,4 +1,14 @@
 const apply = Reflect.apply;
+const startsWith = String.prototype.startsWith;
+const slice = String.prototype.slice;
+
+export function privateTextStartsWith(value: string, search: string): boolean {
+  return apply(startsWith, value, [search]) as boolean;
+}
+
+export function privateTextSlice(value: string, start: number, end?: number): string {
+  return apply(slice, value, [start, end]) as string;
+}
 const NativeTextEncoder = TextEncoder;
 const NativeTextDecoder = TextDecoder;
 const encode = NativeTextEncoder.prototype.encode;

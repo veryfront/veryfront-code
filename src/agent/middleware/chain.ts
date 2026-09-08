@@ -120,7 +120,9 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
     markContinuationObserved(this);
-    const derived = super.then(onFulfilled, onRejected);
+    const derived = ReflectApply(PromiseThen, this, [onFulfilled, onRejected]) as Promise<
+      TResult1 | TResult2
+    >;
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       if (!PROMISE_SPECIES_SUPPORTED || typeof observedDerived.isObserved !== "function") {

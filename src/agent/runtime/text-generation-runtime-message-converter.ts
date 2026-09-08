@@ -451,7 +451,8 @@ export function getProviderSendableAssistantMessages(
 ): ReadonlySet<Message> {
   const sendable = new Set<Message>();
   const providerExecutedToolCallIds = new Set<string>();
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
@@ -487,7 +488,8 @@ export function getProviderSendableToolMessages(
 ): ReadonlySet<Message> {
   const sendable = new Set<Message>();
   const providerExecutedToolCallIds = new Set<string>();
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
@@ -527,7 +529,8 @@ export function getAnthropicCompactedAssistantMessages(
   );
   const providerExecutedToolCallIds = new Set<string>();
 
-  for (const [index, message] of messages.entries()) {
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
@@ -723,7 +726,8 @@ export function convertToTextGenerationRuntimeMessages(
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
   const providerExecutedToolCallIds = new Set<string>();
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
