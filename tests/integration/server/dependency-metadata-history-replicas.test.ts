@@ -199,9 +199,7 @@ function createReplicaHarness(): ReplicaHarness {
         VF_DISABLE_LRU_INTERVAL: "1",
         SENTRY_ENABLED: "false",
         LOG_LEVEL: "error",
-        ...(Deno.env.get("DENO_DIR")
-          ? { DENO_DIR: Deno.env.get("DENO_DIR")! }
-          : {}),
+        ...(Deno.env.get("DENO_DIR") ? { DENO_DIR: Deno.env.get("DENO_DIR")! } : {}),
       },
       stdout: "piped",
       stderr: "piped",
@@ -308,8 +306,7 @@ async function verifyBrowserHydration(style: HydrationStyle): Promise<void> {
   );
 
   try {
-    const { originalKey, currentKey, cold } =
-      await prepareColdHistoricalReplica(harness);
+    const { originalKey, currentKey, cold } = await prepareColdHistoricalReplica(harness);
     assertEquals(currentKey === originalKey, false);
     assertEquals(harness.writebacks(), 1);
 
@@ -392,9 +389,7 @@ async function verifyBrowserHydration(style: HydrationStyle): Promise<void> {
       "the browser module graph must stay bound to the original document key",
     );
     assertEquals(
-      requestedModuleUrls.some((url) =>
-        url.includes(encodeURIComponent(currentKey))
-      ),
+      requestedModuleUrls.some((url) => url.includes(encodeURIComponent(currentKey))),
       false,
       "the current dependency key must not mix into the historical document graph",
     );

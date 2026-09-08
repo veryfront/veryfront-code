@@ -27,8 +27,7 @@ adapter.fs.stat = async () => {
     mtime: new Date(version),
   };
 };
-adapter.fs.readFile = async () =>
-  (await (await fetch(`${origin}/metadata`)).json()).content;
+adapter.fs.readFile = async () => (await (await fetch(`${origin}/metadata`)).json()).content;
 adapter.fs.readDependencyMetadataHistory = async () => {
   const response = await fetch(`${origin}/metadata-history`);
   if (!response.ok) throw new Error("Metadata history read failed");
