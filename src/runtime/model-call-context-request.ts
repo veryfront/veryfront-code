@@ -84,6 +84,8 @@ function managedOpenAITransport(
   // Custom direct runtime transport overrides are not represented by this metadata.
   if (model.provider !== "veryfront-cloud" || !model.modelId) return undefined;
   const catalogId = `${resolveModelCallProvider(model)}/${model.modelId}`;
+  // Without a fixed override, OpenAIProvider creates an adaptive runtime that
+  // selects Responses per call when hosted tools are present, including on gpt-4o.
   return resolveVeryfrontCloudOpenAITransport(catalogId) ??
     ((resolveModelCallProvider(model) === "openai" &&
         resolveVeryfrontCloudModelThinking(catalogId)?.enabled === true) ||

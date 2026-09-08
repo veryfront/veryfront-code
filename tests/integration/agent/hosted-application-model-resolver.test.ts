@@ -24,6 +24,8 @@ import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorModelRuntimeResolver } from "#veryfront/agent/hosted/executor-model-bridge.ts";
 import { createEphemeralHostedExecutorModelBroker } from "#veryfront/agent/hosted/executor-model-dispatch.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
+import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 
 const modelId = "veryfront-cloud/openai/gpt-4o";
 const binding = { allocationId: "allocation-test", generation: 1, invocationId: "invocation-test" };
@@ -72,6 +74,81 @@ async function drain(stream: ReadableStream<unknown>) {
 }
 
 describe("hosted ordinary application model resolver", () => {
+  it("audits adaptive Cloud transport for generation and streaming on the same model", async () => {
+    const resolver = createHostedApplicationModelResolver(resolverOptions());
+    try {
+      const model = resolver(modelId)!;
+      for (const useHostedTool of [false, true, false]) {
+        const options: ModelRuntimeCallOptions = {
+          prompt,
+          temperature: 0.4,
+          topP: 0.8,
+          seed: 7,
+          stopSequences: ["STOP"],
+          presencePenalty: 0.3,
+          frequencyPenalty: 0.1,
+          tools: useHostedTool
+            ? [{ type: "provider", id: "openai.web_search", name: "web_search", args: {} }]
+            : undefined,
+          providerOptions: {
+            "veryfront-cloud": { reasoning: { effort: "low" }, reasoning_effort: "high" },
+          },
+        };
+        const projected = buildModelCallContextRequest(model, options);
+        let requests = 0;
+        await withMockFetch(async (input, init) => {
+          requests++;
+          const request = new Request(input, init);
+          assertEquals(
+            new URL(request.url).pathname,
+            `/ai/gateway/openai/v1/${useHostedTool ? "responses" : "chat/completions"}`,
+          );
+          const body = await request.json();
+          for (
+            const [field, nativeField] of [
+              ["temperature", "temperature"],
+              ["topP", "top_p"],
+              ["seed", "seed"],
+              ["stopSequences", "stop"],
+              ["presencePenalty", "presence_penalty"],
+              ["frequencyPenalty", "frequency_penalty"],
+            ] as const
+          ) {
+            const omitted = useHostedTool && field !== "temperature" && field !== "topP";
+            assertEquals(body[nativeField], omitted ? undefined : options[field]);
+            assertEquals(projected?.[field], body[nativeField]);
+          }
+          const effort = useHostedTool ? body.reasoning?.effort : body.reasoning_effort;
+          assertEquals(effort, useHostedTool ? "low" : "high");
+          assertEquals(projected?.reasoning, { enabled: true, effort });
+          if (!useHostedTool) return response(body.stream === true);
+          const result = {
+            id: "response-test",
+            object: "response",
+            status: "completed",
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+          return body.stream === true
+            ? new Response(
+              `data: ${
+                JSON.stringify({ type: "response.completed", response: result })
+              }\n\ndata: [DONE]\n\n`,
+              { headers: { "content-type": "text/event-stream" } },
+            )
+            : Response.json(result);
+        }, async () => {
+          await model.doGenerate(options);
+          const streamed = await model.doStream(options);
+          await drain(streamed.stream);
+        });
+        assertEquals(requests, 2);
+      }
+    } finally {
+      revokeModelRuntimeResolver(resolver);
+    }
+  });
+
   it("rejects untrusted HTTP gateways before creating application model authority", async () => {
     await withEnv({
       [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "",
