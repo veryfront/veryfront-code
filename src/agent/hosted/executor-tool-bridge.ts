@@ -1,8 +1,14 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
-import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
-import { type ExecutorBinding, getExecutorBindingSchema } from "../executor/protocol.ts";
-import { createExecutorModelFailure } from "./executor-model-errors.ts";
+import type {
+  ExecutorOperation,
+  ExecutorOperationContext,
+} from "#veryfront/agent/executor/channel.ts";
+import {
+  type ExecutorBinding,
+  getExecutorBindingSchema,
+} from "#veryfront/agent/executor/protocol.ts";
+import { createExecutorModelFailure } from "#veryfront/agent/hosted/executor-model-errors.ts";
 import {
   executorToolBytes,
   type ExecutorToolCall,
@@ -18,7 +24,7 @@ import {
   getExecutorToolIdSchema,
   getExecutorToolListSchema,
   parseExecutorToolData,
-} from "./executor-tool-schema.ts";
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 /** Already-scoped capabilities. The source owns exact project, run, and skill policy. */
 export interface ExecutorToolCapability {
@@ -287,12 +293,8 @@ async function* callWithProgress(options: {
   signal.addEventListener("abort", notifyAbort, { once: true });
   const context: ToolExecutionContext = {
     ...options.context,
-    ...(options.correlation.toolCallId === undefined
-      ? {}
-      : { toolCallId: options.correlation.toolCallId }),
-    ...(options.correlation.progressToken === undefined
-      ? {}
-      : { progressToken: options.correlation.progressToken }),
+    toolCallId: options.correlation.toolCallId,
+    progressToken: options.correlation.progressToken,
     abortSignal: signal,
     publishDataEvent(event) {
       // Throw synchronously after closure or overflow: ignored calls cannot

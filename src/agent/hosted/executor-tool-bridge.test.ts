@@ -104,6 +104,73 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
+  it("clears omitted caller correlation for listing and execution without mutating broker context", async () => {
+    const observed: ToolExecutionContext[] = [];
+    const trusted: ToolExecutionContext = {
+      projectId: "project-test",
+      toolCallId: "stale-call",
+      progressToken: "stale-progress",
+    };
+    async function observe(context?: ToolExecutionContext) {
+      assert(context);
+      observed.push(context);
+      await context.publishDataEvent!({
+        type: "progress",
+        data: {
+          toolCallId: context.toolCallId ?? null,
+          progressToken: context.progressToken ?? null,
+        },
+      });
+    }
+    const f = fixture(
+      {
+        async listTools(context) {
+          await observe(context);
+          return [definition];
+        },
+        async executeTool(_name, _args, context) {
+          await observe(context);
+          return null;
+        },
+      },
+      {},
+      trusted,
+    );
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      for (const correlation of [{}, { toolCallId: "current-call" }, { progressToken: 0 }]) {
+        for (const mode of ["list", "execute"]) {
+          const progress: unknown[] = [];
+          const context = {
+            ...correlation,
+            publishDataEvent(event: unknown) {
+              progress.push(event);
+            },
+          };
+          if (mode === "list") await facade.listTools(context);
+          else await facade.executeTool("lookup", {}, context);
+          const actual = observed.at(-1)!;
+          assertEquals(actual.toolCallId, correlation.toolCallId);
+          assertEquals(actual.progressToken, correlation.progressToken);
+          assertEquals(actual.projectId, "project-test");
+          assertEquals(progress, [{
+            type: "progress",
+            data: {
+              toolCallId: correlation.toolCallId ?? null,
+              progressToken: correlation.progressToken ?? null,
+            },
+          }]);
+        }
+      }
+      assertEquals(trusted.toolCallId, "stale-call");
+      assertEquals(trusted.progressToken, "stale-progress");
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("forwards listing correlation and progress while retaining broker authority", async () => {
     const observed: ToolExecutionContext[] = [];
     const f = fixture(

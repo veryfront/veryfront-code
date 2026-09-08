@@ -4,8 +4,8 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool/types.ts";
-import type { ExecutorChannel } from "../executor/channel.ts";
-import { ExecutorAgentError } from "./executor-agent-schema.ts";
+import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import {
   executorToolBytes,
   executorToolDefinition,
@@ -20,7 +20,7 @@ import {
   getExecutorToolListSchema,
   parseExecutorToolData,
   throwExecutorToolFailure,
-} from "./executor-tool-schema.ts";
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 function callerCorrelation(context?: ToolExecutionContext) {
   return {

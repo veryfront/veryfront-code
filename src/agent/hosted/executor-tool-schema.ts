@@ -6,9 +6,12 @@ import { isToolAnnotations } from "#veryfront/tool/mcp-metadata.ts";
 import type { ToolDefinition, ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
-import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
-import { ExecutorAgentError, executorAgentFailureCode } from "./executor-agent-schema.ts";
-import { executorModelFailure } from "./executor-model-errors.ts";
+import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
+import {
+  ExecutorAgentError,
+  executorAgentFailureCode,
+} from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { executorModelFailure } from "#veryfront/agent/hosted/executor-model-errors.ts";
 
 // Reserve the channel envelope, including escaped binding strings and the prefix.
 export const EXECUTOR_TOOL_MAX_PAYLOAD_BYTES = EXECUTOR_MAX_FRAME_BYTES - 2048;
