@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
@@ -33,7 +38,9 @@ describe("dependency metadata history API", () => {
     let authorization = "";
     installMockFetch((_input, init) => {
       requestedUrl = String(_input);
-      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      authorization =
+        new Headers(init && "headers" in init ? init.headers : undefined).get("authorization") ??
+          "";
       return Promise.resolve(Response.json(response()));
     });
 
@@ -88,7 +95,9 @@ describe("dependency metadata history API", () => {
       PROJECT_ID,
       null,
     );
-    const dependencies = history.entries[0].dependencies;
+    const entry = history.entries[0];
+    assertExists(entry);
+    const dependencies = entry.dependencies;
 
     assertEquals(Object.keys(dependencies).sort(), ["__proto__", "constructor", "toJSON"]);
     assertEquals(

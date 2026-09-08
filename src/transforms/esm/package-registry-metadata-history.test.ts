@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import {
@@ -94,6 +95,31 @@ describe("package registry metadata history recovery", () => {
       1,
       "retain recovered data with its existing expiry, not a new publication",
     );
+  });
+
+  it("uses the preview request branch for both source identity and history matching", async () => {
+    const f = fixture();
+    f.history.branch = "feature/exact";
+    const source = createHandlerDependencyPinningSource({
+      projectDir: f.options.projectDir,
+      projectId,
+      adapter: f.adapter,
+      securityConfig: null,
+      isLocalProject: false,
+      requestContext: {
+        slug: "synthetic-project",
+        token: "",
+        branch: "feature/exact",
+        mode: "preview",
+      },
+    });
+    assertEquals(source.branch, "feature/exact");
+    assertEquals(source.dependencyWritebackTarget, { kind: "branch", branch: "feature/exact" });
+    assertEquals(
+      (await resolveRequestedDependencyPinningSnapshot(source, emptyKey))?.cacheKey,
+      emptyKey,
+    );
+    assertEquals(f.reads, 1);
   });
 
   it("does not read metadata when the current snapshot already matches", async () => {

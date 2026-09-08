@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
@@ -44,6 +44,24 @@ describe("VeryfrontFSAdapter dependency metadata history", () => {
     assertEquals(calls, ["feature/exact"]);
   });
 
+  it("reads a request-level branch override instead of the adapter main branch", async () => {
+    const adapter = createAdapter();
+    adapter.setContentContext({
+      sourceType: "branch",
+      projectSlug: "project-slug",
+      branch: "main",
+    });
+    adapter.setRequestBranch("feature/exact");
+    const calls: Array<string | null> = [];
+    adapter.getClient().readDependencyMetadataHistory = (branch) => {
+      calls.push(branch);
+      return Promise.resolve({ version: 1, projectId: PROJECT_ID, branch, entries: [] });
+    };
+    assertEquals((await adapter.readDependencyMetadataHistory()).branch, "feature/exact");
+    assertEquals(calls, ["feature/exact"]);
+    adapter.dispose();
+  });
+
   it("isolates concurrent multi-project and branch request contexts", async () => {
     const adapter = new MultiProjectFSAdapter({
       veryfront: {
@@ -56,6 +74,7 @@ describe("VeryfrontFSAdapter dependency metadata history", () => {
     installMockFetch(async (input, init) => {
       const url = new URL(String(input));
       const project = url.pathname.split("/")[2];
+      assertExists(project);
       const branch = url.searchParams.get("branch");
       const projectId = project === "project-a"
         ? "10000000-1000-4000-8000-100000000001"
@@ -72,7 +91,9 @@ describe("VeryfrontFSAdapter dependency metadata history", () => {
       requests.push({
         project,
         branch,
-        authorization: new Headers(init?.headers).get("authorization") ?? "",
+        authorization:
+          new Headers(init && "headers" in init ? init.headers : undefined).get("authorization") ??
+            "",
       });
       await new Promise((resolve) => setTimeout(resolve, project === "project-a" ? 10 : 0));
       return Response.json({

@@ -619,6 +619,9 @@ export async function resolveRequestedDependencyPinningSnapshot(
     projectId: source.projectId,
     branch: target.kind === "branch" ? target.branch : null,
   };
+  // The handler derives target and source identity from the same resolved
+  // request branch. An adapter bound to another branch must fail closed here;
+  // never adopt a response's scope to make an inconsistent source recover.
   return await snapshotRegistry(source).recoverHistorical(
     snapshotHistoryIdentity(source),
     requestedCacheKey,
