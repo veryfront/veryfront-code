@@ -104,6 +104,56 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
+  it("forwards listing correlation and progress while retaining broker authority", async () => {
+    const observed: ToolExecutionContext[] = [];
+    const f = fixture(
+      {
+        async listTools(context) {
+          observed.push(context!);
+          await context!.publishDataEvent!({
+            type: "progress",
+            data: { toolCallId: context!.toolCallId, progressToken: context!.progressToken },
+          });
+          return [definition];
+        },
+      },
+      {},
+      {
+        projectId: "project-test",
+        toolCallId: "stale-call",
+        progressToken: "stale-progress",
+      },
+    );
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      const progress: unknown[] = [];
+      assertEquals(
+        await facade.listTools({
+          projectId: "substituted",
+          authToken: "<TOKEN>",
+          toolCallId: "list-call",
+          progressToken: 0,
+          publishDataEvent(event) {
+            progress.push(event);
+          },
+        }),
+        [definition],
+      );
+      assertEquals(observed[0]!.toolCallId, "list-call");
+      assertEquals(observed[0]!.progressToken, 0);
+      assertEquals(observed[0]!.projectId, "project-test");
+      assertEquals(observed[0]!.authToken, undefined);
+      assertEquals(progress, [{
+        type: "progress",
+        data: { toolCallId: "list-call", progressToken: 0 },
+      }]);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("keeps source receivers and broker authority while forwarding local progress", async () => {
     const observed: ToolExecutionContext[] = [];
     const source: RemoteToolSource & { executions: number } = {

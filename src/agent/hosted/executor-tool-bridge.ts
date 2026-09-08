@@ -165,7 +165,7 @@ export function createExecutorToolBroker(options: {
         context: capability.context,
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
-        correlation: call ?? {},
+        correlation: request,
         signal: AbortSignal.any([
           lifetime,
           operation.signal,

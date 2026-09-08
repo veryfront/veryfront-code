@@ -1,4 +1,4 @@
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getEnumerableOwnStringDataEntries } from "#veryfront/tool/data-properties.ts";
@@ -48,16 +48,21 @@ export function executorToolLimits(
 
 export const getExecutorToolIdSchema = defineSchema((v) => v.string().min(1).max(256));
 export const getExecutorToolEmptySchema = defineSchema((v) => v.object({}).strict());
+function correlationShape(v: SchemaValidator) {
+  return {
+    toolCallId: v.string().min(1).max(256).optional(),
+    progressToken: v.union([v.string().min(1).max(256), v.number()]).optional(),
+  };
+}
 export const getExecutorToolListSchema = defineSchema((v) =>
-  v.object({ sourceId: getExecutorToolIdSchema() }).strict()
+  v.object({ sourceId: getExecutorToolIdSchema(), ...correlationShape(v) }).strict()
 );
 export const getExecutorToolCallSchema = defineSchema((v) =>
   v.object({
     sourceId: getExecutorToolIdSchema(),
     toolName: getExecutorToolIdSchema(),
     args: v.record(v.string(), getJsonValueSchema()),
-    toolCallId: v.string().min(1).max(256).optional(),
-    progressToken: v.union([v.string().min(1).max(256), v.number()]).optional(),
+    ...correlationShape(v),
   }).strict()
 );
 export type ExecutorToolCall = InferSchema<ReturnType<typeof getExecutorToolCallSchema>>;

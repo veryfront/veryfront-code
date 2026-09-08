@@ -17,9 +17,17 @@ import {
   executorToolProgress,
   getExecutorToolCallSchema,
   getExecutorToolFrameSchema,
+  getExecutorToolListSchema,
   parseExecutorToolData,
   throwExecutorToolFailure,
 } from "./executor-tool-schema.ts";
+
+function callerCorrelation(context?: ToolExecutionContext) {
+  return {
+    ...(context?.toolCallId === undefined ? {} : { toolCallId: context.toolCallId }),
+    ...(context?.progressToken === undefined ? {} : { progressToken: context.progressToken }),
+  };
+}
 
 /**
  * Executor-local RemoteToolSource facades. Discover bounded source IDs from the
@@ -121,7 +129,9 @@ export async function createExecutorRemoteToolSources(options: {
       async listTools(context?: ToolExecutionContext) {
         const definitions: ToolDefinition[] = [];
         const names = new Set<string>();
-        await consume("tool.list", { sourceId }, (frame) => {
+        const request = executorToolJson({ sourceId, ...callerCorrelation(context) });
+        parseExecutorToolData(getExecutorToolListSchema(), request);
+        await consume("tool.list", request, (frame) => {
           if (
             frame.type !== "tool" || definitions.length >= limits.maxToolsPerSource ||
             ++metadataTools > limits.maxTotalTools
@@ -145,8 +155,7 @@ export async function createExecutorRemoteToolSources(options: {
           sourceId,
           toolName,
           args: executorToolJson(args, limits.maxArgumentBytes),
-          ...(context?.toolCallId === undefined ? {} : { toolCallId: context.toolCallId }),
-          ...(context?.progressToken === undefined ? {} : { progressToken: context.progressToken }),
+          ...callerCorrelation(context),
         };
         parseExecutorToolData(getExecutorToolCallSchema(), request);
         return await consume("tool.execute", executorToolJson(request), () => {

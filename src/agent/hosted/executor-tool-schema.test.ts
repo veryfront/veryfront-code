@@ -7,6 +7,7 @@ import {
   executorToolLimits,
   executorToolProgress,
   getExecutorToolCallSchema,
+  getExecutorToolListSchema,
   parseExecutorToolData,
 } from "./executor-tool-schema.ts";
 
@@ -67,6 +68,23 @@ describe("executor tool schema", () => {
         { ...call, progressToken: {} },
       ]
     ) assertThrows(() => parseExecutorToolData(getExecutorToolCallSchema(), input));
+    assertEquals(
+      parseExecutorToolData(getExecutorToolListSchema(), {
+        sourceId: "source",
+        toolCallId: "list-call",
+        progressToken: 0,
+      }),
+      { sourceId: "source", toolCallId: "list-call", progressToken: 0 },
+    );
+    for (
+      const correlation of [{ toolCallId: "" }, { toolCallId: "x".repeat(257) }, {
+        progressToken: Infinity,
+      }, { progressToken: "x".repeat(257) }]
+    ) {
+      assertThrows(() =>
+        parseExecutorToolData(getExecutorToolListSchema(), { sourceId: "source", ...correlation })
+      );
+    }
     assertThrows(() => executorToolJson("é".repeat(20), 30));
     assertThrows(() =>
       executorToolDefinition({
