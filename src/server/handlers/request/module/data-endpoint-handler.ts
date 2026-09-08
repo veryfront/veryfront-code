@@ -10,6 +10,7 @@ import {
   readSnapshotHeader,
   resolveSnapshotForRequest,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
@@ -110,6 +111,13 @@ export function handleDataEndpoint(
             .json(data, 200),
         );
       } catch (e) {
+        const unavailable = snapshotStoreFailureResponse(
+          e,
+          createResponseBuilder(ctx),
+          req,
+          ctx.securityConfig,
+        );
+        if (unavailable) return respond(unavailable);
         const errorMessage = getErrorMessage(e);
         const isNotFound = resolveSSRControlOutcome(e)?.kind === "not-found";
         const status = isNotFound ? 404 : 500;

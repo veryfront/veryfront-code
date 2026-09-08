@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -9,7 +11,11 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  clearReactVersionCache,
+  createDependencyPinningSource,
+  withDependencyPinningSourceFileSystem,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import {
   BrowserModuleBundleError,
   bundleBrowserModule,
@@ -24,6 +30,39 @@ describe(
     afterEach(async () => {
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
+    });
+
+    it("does not expose the snapshot store while wrapping a tracked source", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/app/page.ts", "export const value = 1;");
+      const source = createDependencyPinningSource({
+        projectDir: "/project",
+        projectId: "test-project",
+        adapter,
+        isLocalProject: false,
+        snapshotStore: createDependencySnapshotStoreHandle({
+          publish: () => Promise.reject(new Error("unavailable")),
+          read: () => Promise.reject(new Error("unavailable")),
+        }),
+      });
+      const tracked = withDependencyPinningSourceFileSystem(source, "/project", adapter.fs);
+      assertEquals(Object.hasOwn(tracked, "snapshotStore"), false);
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        const error = await assertRejects(() =>
+          bundleBrowserModule("/project/app/page.ts", {
+            adapter,
+            projectDir: "/project",
+            dependencyPinningSource: tracked,
+            requestedDependencyPinningCacheKey: "on:54uvgwr2ih7p",
+          })
+        );
+        assertEquals(snapshotVeryfrontError(error)?.slug, "dependency-snapshot-store-unavailable");
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
     });
 
     it("does not expose the project path through dependency module identities", async () => {

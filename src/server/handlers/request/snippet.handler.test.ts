@@ -4,6 +4,30 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateLexicalPath } from "#veryfront/security";
 import { SnippetHandler } from "./snippet.handler.ts";
 import type { HandlerContext } from "../types.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE } from "#veryfront/errors/error-registry/server.ts";
+
+describe("SnippetHandler snapshot storage failures", () => {
+  it("preserves an uncached 503 instead of reporting a missing snippet", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/components/example.snippet.mdx", "Hello");
+    const handler = new SnippetHandler({
+      renderSnippet: () => Promise.reject(DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.create()),
+    });
+    const result = await handler.handle(
+      new Request("http://localhost/@components/example"),
+      {
+        projectDir: "/project",
+        adapter,
+        isLocalProject: true,
+        securityConfig: null,
+      } as HandlerContext,
+    );
+    assertEquals(result.response?.status, 503);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
+    assertEquals(await result.response?.text(), "Dependency snapshot storage is unavailable");
+  });
+});
 
 /**
  * Tests that lexical containment correctly blocks path traversal for paths

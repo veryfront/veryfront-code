@@ -19,6 +19,7 @@ import {
   readSnapshotQuery,
   resolveSnapshotForRequest,
   snapshotConflictResponse,
+  snapshotStoreFailureResponse,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 
@@ -131,10 +132,22 @@ export class LibModulesHandler extends BaseHandler {
 
     if (isDependencyPinningEnabled()) {
       const source = createHandlerDependencyPinningSource(ctx);
-      const resolution = await resolveSnapshotForRequest(
-        source,
-        readSnapshotQuery(requestUrl),
-      );
+      let resolution;
+      try {
+        resolution = await resolveSnapshotForRequest(
+          source,
+          readSnapshotQuery(requestUrl),
+        );
+      } catch (error) {
+        const unavailable = snapshotStoreFailureResponse(
+          error,
+          this.createResponseBuilder(ctx),
+          req,
+          ctx.securityConfig,
+        );
+        if (unavailable) return this.respond(unavailable);
+        throw error;
+      }
       if (resolution.kind === "conflict") {
         return this.respondDependencyConflict(req, ctx);
       }

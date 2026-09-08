@@ -134,6 +134,7 @@ export interface StartCliProductionServerOptions {
   defaultProjectSlug: string;
   defaultProjectId: string;
   adapter?: RuntimeAdapter;
+  onMemoryRecycle?: StartProductionServerOptions["onMemoryRecycle"];
 }
 
 export async function startCliProductionServer(
@@ -175,6 +176,7 @@ export async function startCliProductionServer(
     defaultProjectId: options.defaultProjectId,
     defaultReleaseId: localReleaseId,
     defaultEnvironment: "production",
+    onMemoryRecycle: options.onMemoryRecycle,
     // Do NOT register a `localProjects` mapping here. `vf serve` and the
     // compiled binary are production deployments, and `isLocalProject: true`
     // flips `isDev` on in security headers (suppressing CSP) and in the SSR

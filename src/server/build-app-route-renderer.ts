@@ -10,7 +10,10 @@ import {
   buildHeadElements,
   resolveCommittedHeadFromHTML,
 } from "#veryfront/rendering/orchestrator/html-head.ts";
-import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
+import {
+  loadComponentFromSource,
+  type LoadComponentOptions,
+} from "#veryfront/modules/react-loader/index.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
@@ -27,7 +30,6 @@ import {
 } from "#veryfront/rendering/layouts/utils/component-loader.ts";
 import {
   createDependencyPinningSource,
-  type DependencyPinningSnapshot,
   resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
@@ -57,29 +59,6 @@ async function fileExists(adapter: RuntimeAdapter, filePath: string): Promise<bo
     if (isNotFoundError(error)) return false;
     throw error;
   }
-}
-
-async function loadComponent(
-  adapter: RuntimeAdapter,
-  filePath: string,
-  projectDir: string,
-  contentSourceId: string,
-  dependencySnapshot: DependencyPinningSnapshot,
-  moduleServerOrigin?: string,
-  reactVersion?: string,
-  componentLoader: typeof loadComponentFromSource = loadComponentFromSource,
-): Promise<unknown> {
-  const src = await adapter.fs.readFile(filePath);
-  return componentLoader(src, filePath, projectDir, adapter, {
-    projectId: projectDir,
-    dev: false,
-    moduleServerUrl: "",
-    moduleServerOrigin,
-    contentSourceId,
-    reactVersion,
-    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
-    dependencyPinningDependencies: dependencySnapshot.dependencies,
-  });
 }
 
 function routePathToSlug(routePath: string): string {
@@ -165,20 +144,22 @@ async function renderAppRouteToHTMLWithInternals(
   // Capture the key and package map once. Every transform and browser module
   // identity in this render must use this exact immutable pair, even if
   // package.json changes while page/layout modules are loading.
+  const dependencyPinningSource = createDependencyPinningSource({
+    projectDir,
+    adapter,
+    isLocalProject: true,
+    contentSourceId,
+    config,
+  });
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
-    createDependencyPinningSource({
-      projectDir,
-      adapter,
-      isLocalProject: true,
-      contentSourceId,
-      config,
-    }),
+    dependencyPinningSource,
     dependencyPinningCacheKey,
     dependencyPinningDependencies,
   );
   const snapshotReactVersion = await resolveProjectReactVersion({
     projectDir,
     config,
+    dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
   });
@@ -198,17 +179,25 @@ async function renderAppRouteToHTMLWithInternals(
   // Use the resolved project version so component and renderer modules share one React instance.
   const React = await getProjectReact(reactVersion, adapter);
 
-  const pageSource = await adapter.fs.readFile(pageFile);
-  const Page = await internals.componentLoader(pageSource, pageFile, projectDir, adapter, {
+  const componentOptions: LoadComponentOptions = {
     projectId: projectDir,
     dev: false,
     moduleServerUrl: "",
     moduleServerOrigin,
     contentSourceId,
     reactVersion,
+    dependencyPinningSource,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
-  });
+  };
+  const pageSource = await adapter.fs.readFile(pageFile);
+  const Page = await internals.componentLoader(
+    pageSource,
+    pageFile,
+    projectDir,
+    adapter,
+    componentOptions,
+  );
   if (typeof Page !== "function") {
     throw COMPILATION_ERROR.create({
       detail: "Invalid page component",
@@ -238,15 +227,12 @@ async function renderAppRouteToHTMLWithInternals(
     const layoutPath = layouts[i];
     if (!layoutPath) continue;
 
-    const Layout = await loadComponent(
-      adapter,
+    const Layout = await internals.componentLoader(
+      await adapter.fs.readFile(layoutPath),
       layoutPath,
       projectDir,
-      contentSourceId,
-      dependencySnapshot,
-      moduleServerOrigin,
-      reactVersion,
-      internals.componentLoader,
+      adapter,
+      componentOptions,
     );
     if (typeof Layout !== "function") {
       throw COMPILATION_ERROR.create({
