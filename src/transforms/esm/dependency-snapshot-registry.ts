@@ -35,6 +35,7 @@ interface RegistryOptions {
 const nativeNow = Date.now;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
+const isSafeInteger = Number.isSafeInteger;
 const NativeMap = Map;
 const mapGet = NativeMap.prototype.get;
 const mapSet = NativeMap.prototype.set;
@@ -86,8 +87,10 @@ export class DependencySnapshotRegistry {
     this.maxEntries = option(options, "maxEntries") ?? 4096;
     this.maxBytes = option(options, "maxBytes") ?? 32 * 1024 * 1024;
     this.timeoutMs = option(options, "timeoutMs") ?? 5000;
-    for (const value of [this.retentionMs, this.maxEntries, this.maxBytes, this.timeoutMs]) {
-      if (!Number.isSafeInteger(value) || value <= 0) {
+    const limits = [this.retentionMs, this.maxEntries, this.maxBytes, this.timeoutMs];
+    for (let index = 0; index < limits.length; index++) {
+      const value = limits[index]!;
+      if (!isSafeInteger(value) || value <= 0) {
         throw new RangeError("Invalid snapshot registry limit");
       }
     }
@@ -137,7 +140,7 @@ export class DependencySnapshotRegistry {
     );
     if (record === null) return undefined;
     if (
-      !record || typeof record.value !== "string" || !Number.isSafeInteger(record.expiresAt) ||
+      !record || typeof record.value !== "string" || !isSafeInteger(record.expiresAt) ||
       record.expiresAt > this.now() + DEPENDENCY_SNAPSHOT_RETENTION_MS
     ) throw this.unavailable();
     if (record.expiresAt <= this.now()) return undefined;

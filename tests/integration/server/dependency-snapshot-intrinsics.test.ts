@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { captureDependencySnapshotStore } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import type {
@@ -29,6 +30,71 @@ function snapshot(dependencies: Record<string, string> = {}) {
   return createDependencyPinningSnapshot(`on:${hashDependencyPins(dependencies)}`, dependencies);
 }
 describe("dependency snapshot intrinsic capture", () => {
+  for (const accepts of [false, true]) {
+    it(`validates historical expiry when the integer hook returns ${accepts}`, async () => {
+      const namespace = await computeHash("integer-validation");
+      const original = snapshot();
+      const value = encodeDependencySnapshot(namespace, original);
+      const expiresAt = accepts ? NaN : Date.now() + 60_000;
+      const registry = new DependencySnapshotRegistry({
+        store: {
+          publish: () => Promise.resolve(),
+          read: () => Promise.resolve({ value, expiresAt }),
+        },
+      });
+      const validator = Number.isSafeInteger;
+      let touches = 0, rejected = false;
+      let restored: unknown;
+      try {
+        Number.isSafeInteger = () => {
+          touches++;
+          return accepts;
+        };
+        try {
+          restored = await registry.find("integer-validation", original.cacheKey);
+        } catch {
+          rejected = true;
+        }
+      } finally {
+        Number.isSafeInteger = validator;
+      }
+      assertEquals(touches, 0, "history validation must not invoke the replacement");
+      assertEquals(
+        rejected,
+        accepts,
+        "invalid expiry must reject while valid history remains readable",
+      );
+      assertEquals(restored, accepts ? undefined : original);
+      assertEquals(
+        registry.peek("integer-validation", original.cacheKey),
+        accepts ? undefined : original,
+      );
+    });
+  }
+
+  it("validates every registry limit without consulting an ambient array iterator", () => {
+    const iterator = Array.prototype[Symbol.iterator];
+    const limits = ["retentionMs", "maxEntries", "maxBytes", "timeoutMs"] as const;
+    let rejected = 0, touches = 0;
+    try {
+      Array.prototype[Symbol.iterator] = function () {
+        touches++;
+        return iterator.call([]);
+      };
+      for (let index = 0; index < limits.length; index++) {
+        try {
+          new DependencySnapshotRegistry({ [limits[index]!]: NaN });
+        } catch {
+          rejected++;
+        }
+      }
+    } finally {
+      Array.prototype[Symbol.iterator] = iterator;
+    }
+    assertEquals(rejected, limits.length, "all invalid limits must reject");
+    assertEquals(touches, 0, "constructor validation must not invoke the replacement iterator");
+  });
+
   const codecPrimitives: Array<[string, object, PropertyKey]> = [
     ["JSON.parse", JSON, "parse"],
     ["JSON.stringify", JSON, "stringify"],
