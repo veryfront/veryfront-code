@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { createDependencySnapshotStoreHandle } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
@@ -13,6 +15,7 @@ import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.
 import { SSRHandler } from "./ssr.handler.ts";
 
 const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
+const fileSystem = createFileSystem();
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -23,6 +26,46 @@ function restoreEnv(name: string, value: string | undefined): void {
 }
 
 describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
+  it("does not render a document when shared publication is unavailable", async () => {
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-snapshot-publication-" });
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let renders = 0;
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await fileSystem.writeTextFile(`${projectDir}/package.json`, '{"dependencies":{}}');
+      const adapter = {
+        ...createMockAdapter(),
+        dependencySnapshotStore: createDependencySnapshotStoreHandle({
+          publish: () => Promise.reject(new Error("storage unavailable")),
+          read: () => Promise.resolve(null),
+        }),
+      };
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renders++;
+          throw new Error("Rendering must not start before publication");
+        },
+      }));
+      for (const method of ["GET", "HEAD"]) {
+        const result = await handler.handle(
+          new Request("http://localhost/preview", { method }),
+          makeCtx({ projectDir, adapter, isLocalProject: true }),
+        );
+        assertEquals(result.response?.status, 503);
+        assertEquals(result.response?.headers.get("cache-control"), "no-store");
+        assertEquals(result.response?.headers.get(DEPENDENCY_PINNING_RESPONSE_HEADER), null);
+        const body = await result.response!.text();
+        if (method === "HEAD") assertEquals(body, "");
+        else assertStringIncludes(body, "Dependency snapshot storage is unavailable");
+      }
+      assertEquals(renders, 0);
+    } finally {
+      restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      clearReactVersionCache();
+      await fileSystem.remove(projectDir, { recursive: true });
+    }
+  });
   it("sheds preview requests without refreshing source and retains dependency pinning", async () => {
     // This fails if strict whole-tree snapshot freshness moves ahead of the
     // memory-pressure decision: the rejected response must not do refresh work.
@@ -33,7 +76,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       clearReactVersionCache();
-      await Deno.writeTextFile(
+      await fileSystem.writeTextFile(
         `${projectDir}/package.json`,
         JSON.stringify({ dependencies: { react: "19.2.4" } }),
       );
@@ -76,7 +119,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
 
@@ -89,18 +132,19 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       clearReactVersionCache();
-      await Deno.writeTextFile(
+      await fileSystem.writeTextFile(
         packageJsonPath,
         JSON.stringify({ dependencies: { react: "18.3.1" } }),
       );
       const snapshotA = await getDependencyPinningSnapshot(projectDir);
 
-      await Deno.writeTextFile(
+      await fileSystem.writeTextFile(
         packageJsonPath,
         JSON.stringify({ dependencies: { react: "19.2.4" } }),
       );
       const future = new Date(Date.now() + 2_000);
-      await Deno.utime(packageJsonPath, future, future);
+      assertExists(fileSystem.utime, "the native filesystem must support timestamp updates");
+      await fileSystem.utime(packageJsonPath, future, future);
       const snapshotB = await getDependencyPinningSnapshot(projectDir);
       assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
 
@@ -216,7 +260,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
 
@@ -270,7 +314,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();
-      await Deno.remove(projectDir, { recursive: true });
+      await fileSystem.remove(projectDir, { recursive: true });
     }
   });
 });

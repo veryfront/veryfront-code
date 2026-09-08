@@ -7,6 +7,8 @@ const MAX_INLINE_ORIGIN_IDENTITY_LENGTH = 192;
 const UINT64_BASE36_MAX = "3w5e11264sgsf";
 const PIN_HASH_RE = /^on:(0|[1-9a-z][0-9a-z]{0,12})$/;
 const TERMINAL_THEME_RE = /:theme-(light|dark)$/;
+const apply = Reflect.apply;
+const regexpExec = RegExp.prototype.exec;
 
 export interface RenderCacheKeyComposition {
   /** Prefix added by the distributed backend. Defaults to the API render namespace. */
@@ -23,7 +25,7 @@ export function isCanonicalDependencyPinningCacheKey(cacheKey: string): boolean 
   if (cacheKey === "on:unknown" || cacheKey === "on:no-project") {
     return false;
   }
-  const hash = PIN_HASH_RE.exec(cacheKey)?.[1];
+  const hash = (apply(regexpExec, PIN_HASH_RE, [cacheKey]) as RegExpExecArray | null)?.[1];
   if (!hash) return false;
 
   // hashString() emits an unsigned 64-bit integer in lowercase base36.

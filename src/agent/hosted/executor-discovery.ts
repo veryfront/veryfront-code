@@ -159,6 +159,9 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   async function describeAgent(discovery: ProjectAgentRuntimeDiscovery, agentId: string) {
     const cached = definitions.get(agentId);
     if (cached) return cached;
+    if (definitions.size >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
+      throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_BUSY");
+    }
     const module = await helpers();
     const found = discovery.agents.get(agentId);
     let definition: RuntimeAgentMarkdownDefinition;
@@ -201,7 +204,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     }
     assertActive();
     const parsed = parseDiscoveryData(getExecutorAgentDefinitionSchema(), definition, true);
-    if (parsed.id !== agentId || definitions.size >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
+    if (parsed.id !== agentId) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
     }
     definitions.set(agentId, parsed);

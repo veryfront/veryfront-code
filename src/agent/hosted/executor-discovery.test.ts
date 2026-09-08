@@ -1,14 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { CONFIG_INVALID } from "#veryfront/errors";
+import { CONFIG_INVALID, CONFIG_PARSE_ERROR, CONFIG_VALIDATION_FAILED } from "#veryfront/errors";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
 import type { ProjectAgentRuntimeDiscovery } from "../project/agent-runtime.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "../runtime/agent-markdown-adapter.ts";
 import { createExecutorDiscovery, type ExecutorDiscoveryBackend } from "./executor-discovery.ts";
-import { ExecutorDiscoveryError } from "./executor-discovery-schema.ts";
+import {
+  EXECUTOR_DISCOVERY_MAX_AGENTS,
+  ExecutorDiscoveryError,
+  getExecutorAgentDescribeResultSchema,
+  getExecutorDiscoveryResultSchema,
+} from "./executor-discovery-schema.ts";
 
 const binding = { allocationId: "allocation", invocationId: "invocation", generation: 1 };
 const source = { type: "release", releaseId: "synthetic-release" } as const;
@@ -98,6 +103,7 @@ describe("executor discovery operations", () => {
       assertEquals([...f.owner.operations.keys()], ["discovery.describe", "agent.describe"]);
       assertThrows(() => f.owner.getRuntime(), ExecutorDiscoveryError);
       const result = await call(f.owner, "discovery.describe");
+      assert(getExecutorDiscoveryResultSchema().parse(result).ok);
       assertEquals(result, {
         ok: true,
         value: {
@@ -380,22 +386,82 @@ describe("executor discovery operations", () => {
     assertThrows(() => f.owner.retainRuntimeTask(Promise.resolve()), ExecutorDiscoveryError);
   });
 
-  it("cleans partial discovery even when the loader throws a registered configuration error", async () => {
-    let cleaned = 0;
-    const f = fixture({
-      backend: {
-        load: () =>
-          Promise.reject(CONFIG_INVALID.create({ detail: "synthetic-private-diagnostic" })),
-        cleanup: () => {
-          cleaned++;
-          return Promise.resolve();
+  for (const failure of [CONFIG_INVALID, CONFIG_VALIDATION_FAILED, CONFIG_PARSE_ERROR]) {
+    it(`cleans partial discovery when the loader throws ${failure.slug}`, async () => {
+      let cleaned = 0;
+      const f = fixture({
+        backend: {
+          load: () => Promise.reject(failure.create({ detail: "synthetic-private-diagnostic" })),
+          cleanup: (state) => {
+            assertEquals(state, undefined);
+            cleaned++;
+            return Promise.resolve();
+          },
         },
-      },
+      });
+      assertEquals(
+        getExecutorDiscoveryResultSchema().parse(await call(f.owner, "discovery.describe")),
+        { ok: false, code: "CONFIG_INVALID" },
+      );
+      await f.owner.settled;
+      assertEquals(cleaned, 1);
+      assertEquals(f.owner.signal.aborted, true);
+      await f.owner.close();
+      assertEquals(cleaned, 1);
     });
-    assertEquals(await call(f.owner, "discovery.describe"), { ok: false, code: "CONFIG_INVALID" });
-    assertEquals(cleaned, 1);
-    assertEquals(f.owner.signal.aborted, true);
-    await f.owner.close();
+  }
+
+  it("rejects uncached agents before projection at capacity and retains cached descriptions", async () => {
+    let projections = 0;
+    const f = fixture({
+      agentSource: "code",
+      agents: Array.from({ length: EXECUTOR_DISCOVERY_MAX_AGENTS }, (_, index) =>
+        agent({
+          id: `agent-${index}`,
+          system: () => {
+            projections++;
+            return `Synthetic instructions ${index}`;
+          },
+        })),
+    });
+    try {
+      for (let index = 0; index < EXECUTOR_DISCOVERY_MAX_AGENTS; index++) {
+        const result = getExecutorAgentDescribeResultSchema().parse(
+          await call(f.owner, "agent.describe", { agentId: `agent-${index}` }),
+        );
+        assert(result.ok);
+        assertEquals(result.value.definition.instructions, `Synthetic instructions ${index}`);
+      }
+      f.state.agents.set(
+        "uncached",
+        agent({
+          id: "uncached",
+          system: () => {
+            projections++;
+            return "Uncached instructions";
+          },
+        }),
+      );
+      assertEquals(
+        getExecutorAgentDescribeResultSchema().parse(
+          await call(f.owner, "agent.describe", { agentId: "uncached" }),
+        ),
+        { ok: false, code: "EXECUTOR_DISCOVERY_BUSY" },
+      );
+      const cached = getExecutorAgentDescribeResultSchema().parse(
+        await call(f.owner, "agent.describe", { agentId: "agent-0" }),
+      );
+      assert(cached.ok);
+      assertEquals(cached.value.definition.instructions, "Synthetic instructions 0");
+      assertEquals(projections, EXECUTOR_DISCOVERY_MAX_AGENTS);
+      assertEquals(f.owner.getRuntime(), f.state);
+      assertEquals(f.owner.signal.aborted, false);
+      assertEquals(f.loads, 1);
+      assertEquals(f.cleanups, 0);
+    } finally {
+      await f.owner.close();
+    }
+    assertEquals(f.cleanups, 1);
   });
 
   it("reports cleanup failure without exposing its diagnostic", async () => {
@@ -476,6 +542,8 @@ describe("executor discovery operations", () => {
           ok: false,
           code: "EXECUTOR_DISCOVERY_INVALID_OUTPUT",
         });
+        assertEquals(f.owner.signal.aborted, true);
+        assertEquals(f.cleanups, 1);
       } finally {
         await f.owner.close();
       }

@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import {
+  EXECUTOR_DISCOVERY_MAX_AGENTS,
   ExecutorDiscoveryError,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoveryResultSchema,
@@ -79,6 +80,59 @@ async function request(discovery: ReturnType<typeof owner>, name: string, value:
 }
 
 describe("isolated executor local project discovery", () => {
+  for (const root of ["agents", "crew", "tools"]) {
+    it(`rejects an outside symlink used as the ${root} discovery root before loading modules`, async () => {
+      const p = await project();
+      const outside = await mkdtemp(join(tmpdir(), "vf-executor-outside-root-"));
+      const marker = join(outside, "loaded");
+      const discovery = owner(p.dir, "writer");
+      try {
+        if (root === "agents") {
+          await writeFile(join(p.dir, "veryfront.config.ts"), "export default {};");
+        }
+        if (root === "crew") await rm(join(p.dir, "crew"), { recursive: true });
+        await writeFile(
+          join(outside, "writer.md"),
+          "---\nname: Outside\n---\n\nOutside metadata.\n",
+        );
+        await writeFile(
+          join(outside, "load.ts"),
+          `import { writeFileSync } from "node:fs"; writeFileSync(${
+            JSON.stringify(marker)
+          }, "loaded"); export default {};`,
+        );
+        await symlink(outside, join(p.dir, root));
+        assertEquals(await request(discovery, "discovery.describe"), {
+          ok: false,
+          code: "CONFIG_INVALID",
+        });
+        assertEquals(existsSync(marker), false);
+        await discovery.settled;
+      } finally {
+        await discovery.close();
+        await p.cleanup();
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("retains discovery roots whose symlinks resolve inside the bound project", async () => {
+    const p = await project();
+    const discovery = owner(p.dir, "writer");
+    try {
+      await rename(join(p.dir, "crew"), join(p.dir, "definitions"));
+      await symlink(join(p.dir, "definitions"), join(p.dir, "crew"));
+      const result = getExecutorDiscoveryResultSchema().parse(
+        await request(discovery, "discovery.describe"),
+      );
+      assert(result.ok);
+      assertEquals(result.value.definition.id, "writer");
+    } finally {
+      await discovery.close();
+      await p.cleanup();
+    }
+  });
+
   it("loads configured code and markdown only after an operation and retains executable state locally", async () => {
     const p = await project();
     const discovery = owner(p.dir, "writer");
@@ -140,6 +194,43 @@ describe("isolated executor local project discovery", () => {
       await p.cleanup();
     }
   });
+
+  for (
+    const [failure, config] of [
+      ["invalid setting", 'export default { dev: { port: "synthetic-invalid-port" } };'],
+      ["invalid syntax", "export default {"],
+    ] as const
+  ) {
+    it(`reports CONFIG_INVALID and releases discovery after config ${failure}`, async () => {
+      const p = await project();
+      const healthy = await project();
+      const discovery = owner(p.dir, "writer");
+      const next = owner(healthy.dir, "writer");
+      try {
+        await writeFile(join(p.dir, "veryfront.config.ts"), config);
+        assertEquals(await request(discovery, "discovery.describe"), {
+          ok: false,
+          code: "CONFIG_INVALID",
+        });
+        assertEquals(discovery.signal.aborted, true);
+        await discovery.settled;
+        assertThrows(() => discovery.getRuntime(), ExecutorDiscoveryError);
+        assertEquals(existsSync(p.projected), false);
+        assertEquals(agentRegistry.get("writer"), undefined);
+
+        const recovered = getExecutorDiscoveryResultSchema().parse(
+          await request(next, "discovery.describe"),
+        );
+        assert(recovered.ok);
+        assertEquals(recovered.value.defaultAgentId, "writer");
+      } finally {
+        await discovery.close();
+        await next.close();
+        await p.cleanup();
+        await healthy.cleanup();
+      }
+    });
+  }
 
   it("preserves valid metadata while keeping collected import errors local", async () => {
     const p = await project();
@@ -219,6 +310,49 @@ describe("isolated executor local project discovery", () => {
     });
   }
 
+  it("keeps cached agents available when markdown descriptions reach capacity", async () => {
+    const p = await project();
+    const discovery = owner(p.dir, "agent-0");
+    try {
+      await writeFile(
+        join(p.dir, "veryfront.config.ts"),
+        "export default { ai: { agents: { discovery: { enabled: false } } } };",
+      );
+      await mkdir(join(p.dir, "agents"));
+      for (let index = 0; index <= EXECUTOR_DISCOVERY_MAX_AGENTS; index++) {
+        await writeFile(
+          join(p.dir, "agents", `agent-${index}.md`),
+          `---\nname: Agent ${index}\n---\n\nSynthetic instructions ${index}.\n`,
+        );
+      }
+      for (let index = 0; index < EXECUTOR_DISCOVERY_MAX_AGENTS; index++) {
+        const result = getExecutorAgentDescribeResultSchema().parse(
+          await request(discovery, "agent.describe", { agentId: `agent-${index}` }),
+        );
+        assert(result.ok);
+        assertEquals(result.value.definition.id, `agent-${index}`);
+      }
+      assertEquals(
+        await request(discovery, "agent.describe", {
+          agentId: `agent-${EXECUTOR_DISCOVERY_MAX_AGENTS}`,
+        }),
+        { ok: false, code: "EXECUTOR_DISCOVERY_BUSY" },
+      );
+      assertEquals(discovery.signal.aborted, false);
+      const cached = getExecutorDiscoveryResultSchema().parse(
+        await request(discovery, "discovery.describe"),
+      );
+      assert(cached.ok);
+      assertEquals(cached.value.definition.id, "agent-0");
+      assertEquals(cached.value.definition.instructions.trim(), "Synthetic instructions 0.");
+      assertEquals(cached.value.candidates, { codeAgentIds: [], markdownAgentIds: [] });
+      assertEquals(discovery.getRuntime().agents.size, 0);
+    } finally {
+      await discovery.close();
+      await p.cleanup();
+    }
+  });
+
   it("keeps markdown fallback inside the bound source, including symlink targets", async () => {
     const p = await project();
     const bound = join(p.dir, "nested", "project");
@@ -262,5 +396,62 @@ describe("isolated executor local project discovery", () => {
       await discovery.close();
       await p.cleanup();
     }
+  });
+
+  it("keeps cached definitions usable when markdown fallback reaches the cache limit", async () => {
+    const p = await project();
+    const discovery = owner(p.dir, "writer");
+    try {
+      await mkdir(join(p.dir, "agents"));
+      const summary = getExecutorDiscoveryResultSchema().parse(
+        await request(discovery, "discovery.describe"),
+      );
+      assert(summary.ok);
+      for (let i = 0; i < 256; i++) {
+        const agentId = `fallback-${i}`;
+        await writeFile(
+          join(p.dir, "agents", `${agentId}.md`),
+          "---\nname: Fallback\n---\n\nSynthetic fallback instructions.\n",
+        );
+        // The default definition and 255 fallback definitions fill the cache.
+        if (i < 255) {
+          const result = getExecutorAgentDescribeResultSchema().parse(
+            await request(discovery, "agent.describe", { agentId }),
+          );
+          assert(result.ok);
+          assertEquals(result.value.definition.id, agentId);
+        }
+      }
+      const cached = await request(discovery, "agent.describe", { agentId: "fallback-0" });
+      await writeFile(
+        join(p.dir, "agents", "fallback-0.md"),
+        "---\nname: Changed\n---\n\nChanged fallback instructions.\n",
+      );
+
+      assertEquals(await request(discovery, "agent.describe", { agentId: "fallback-255" }), {
+        ok: false,
+        code: "EXECUTOR_DISCOVERY_BUSY",
+      });
+      assertEquals(await request(discovery, "agent.describe", { agentId: "coder" }), {
+        ok: false,
+        code: "EXECUTOR_DISCOVERY_BUSY",
+      });
+      assertEquals(existsSync(p.projected), false);
+      assertEquals(discovery.signal.aborted, false);
+      assertEquals(agentRegistry.get("writer")?.id, "writer");
+      assertEquals(discovery.getRuntime().agents.has("writer"), true);
+      assertEquals(
+        await request(discovery, "agent.describe", { agentId: "fallback-0" }),
+        cached,
+      );
+      assertEquals(
+        getExecutorDiscoveryResultSchema().parse(await request(discovery, "discovery.describe")),
+        summary,
+      );
+    } finally {
+      await discovery.close();
+      await p.cleanup();
+    }
+    assertEquals(agentRegistry.get("writer"), undefined);
   });
 });

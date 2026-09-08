@@ -20,6 +20,8 @@ import {
   parseExecutorAgentData,
 } from "./executor-agent-schema.ts";
 
+const textEncoder = new TextEncoder();
+
 async function startExecutorRuntimeStream(
   start: () => Promise<ReadableStream<Uint8Array>>,
   signal: AbortSignal,
@@ -167,11 +169,11 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                 if (next.done) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
                 const frame = parseFrame(next.value);
                 if (frame.type === "event") {
+                  if (terminal) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
                   const event = parseExecutorDataEvent(frame.event);
-                  terminal ||= event.type === "message-finish" || event.type === "finish" ||
-                    event.type === "error";
+                  terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
-                    new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
+                    textEncoder.encode(`data: ${JSON.stringify(event)}\n\n`),
                   );
                 } else if (frame.type === "complete") {
                   if (!terminal || !(await iterator.next()).done) {
