@@ -83,7 +83,7 @@ describe("agent service credential header boundary", () => {
     Object.defineProperty(prototype, "next", {
       ...original,
       value: function (this: unknown) {
-        const result = apply(original.value, this, []);
+        const result = apply(original.value, this, []) as IteratorResult<[string, string]>;
         if (result.value?.[1] === canary) observations++;
         return result;
       },
@@ -249,7 +249,7 @@ describe("agent service credential header boundary", () => {
     Object.defineProperty(prototype, "next", {
       ...original,
       value: function (this: unknown) {
-        const result = apply(original.value, this, []);
+        const result = apply(original.value, this, []) as IteratorResult<[string, string]>;
         if (result.value?.[1] === canary) observations++;
         return result;
       },

@@ -4,24 +4,26 @@ const NativeTypeError = TypeError;
 const NativeObjectPrototype = Object.prototype;
 const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
-export const RequestInitFields = [
-  "body",
-  "cache",
-  "client",
-  "credentials",
-  "duplex",
-  "headers",
-  "integrity",
-  "keepalive",
-  "method",
-  "mode",
-  "priority",
-  "redirect",
-  "referrer",
-  "referrerPolicy",
-  "signal",
-  "window",
-] as const;
+export const RequestInitFields = Object.freeze(
+  [
+    "body",
+    "cache",
+    "client",
+    "credentials",
+    "duplex",
+    "headers",
+    "integrity",
+    "keepalive",
+    "method",
+    "mode",
+    "priority",
+    "redirect",
+    "referrer",
+    "referrerPolicy",
+    "signal",
+    "window",
+  ] as const,
+);
 
 /** Reject ambient Node RequestInit values before native dictionary conversion. */
 export function assertNativeRequestDefaults(): void {

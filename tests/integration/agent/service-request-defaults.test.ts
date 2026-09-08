@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { RequestInitFields } from "#veryfront/security/http/native-request-processing.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { defineAgentService } from "#veryfront/agent/service/definition.ts";
 
@@ -122,6 +123,28 @@ describe("agent service RequestInit defaults", () => {
         assertEquals(handled, before + 1);
       }
     }
+  });
+
+  it("preserves explicit headers after attempts to alter the exposed field policy", async () => {
+    // The policy is importable by project modules; attempt the review's bypass.
+    try {
+      Reflect.set(RequestInitFields, "length", 0);
+    } catch { /* Frozen policy. */ }
+    const runtime = defineAgentService({
+      serviceName: "immutable-field-policy",
+      agents: {},
+      defaultAgentId: "test",
+    }).createRuntime({
+      routes: [{
+        method: "GET",
+        path: "/check",
+        handler: (request) => new Response(request.headers.get("X-Test")),
+      }],
+    });
+    const response = await runtime.request("/check", {
+      headers: { "X-Test": "synthetic-preserved" },
+    });
+    assertEquals(await response.text(), "synthetic-preserved");
   });
 
   it("preserves clean RequestInit values inherited from a custom prototype", async () => {
