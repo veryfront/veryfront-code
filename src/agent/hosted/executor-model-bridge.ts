@@ -1,4 +1,5 @@
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
+import { createPrivateReadableStream } from "#veryfront/security/private-stream.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { executorModelFailure, throwExecutorModelFailure } from "./executor-model-errors.ts";
 import type {
@@ -429,7 +430,7 @@ function createExecutorModelRuntime(
         const start = parseExecutorModelData(getExecutorModelStreamFrameSchema(), first.value);
         throwExecutorModelFailure(start);
         if (start.type !== "start") throw new TypeError("Invalid managed model stream start");
-        const stream = new ReadableStream<unknown>({
+        const stream = createPrivateReadableStream<unknown>({
           async pull(controller) {
             try {
               const next = await iterator.next();

@@ -636,15 +636,19 @@ function cloneMessageForCommit(message: Message): Message {
     const part = message.parts[index];
     if (part !== undefined) parts[parts.length] = cloneMessagePartForCommit(part);
   }
-  return {
+  const timestamp = ObjectHasOwn(message, "timestamp") ? message.timestamp : undefined;
+  const metadata = ObjectHasOwn(message, "metadata") ? message.metadata : undefined;
+  const snapshot = {
+    __proto__: null,
     id: message.id,
     role: message.role,
     parts,
-    ...(message.timestamp === undefined ? {} : { timestamp: message.timestamp }),
-    ...(message.metadata === undefined
+    ...(timestamp === undefined ? {} : { timestamp }),
+    ...(metadata === undefined
       ? {}
-      : { metadata: cloneStructuredValuePreservingOpaque(message.metadata, true) }),
+      : { metadata: cloneStructuredValuePreservingOpaque(metadata, true) }),
   };
+  return snapshot;
 }
 
 function providerValuesEqual(
