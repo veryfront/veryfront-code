@@ -1,6 +1,60 @@
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
+
+/** Filter private arrays through own elements without consulting array species. */
+export function filterPrivateArray<T, S extends T>(
+  values: readonly T[],
+  predicate: (value: T, index: number, values: readonly T[]) => value is S,
+): S[];
+export function filterPrivateArray<T>(
+  values: readonly T[],
+  predicate: (value: T, index: number, values: readonly T[]) => unknown,
+): T[];
+export function filterPrivateArray<T>(
+  values: readonly T[],
+  predicate: (value: T, index: number, values: readonly T[]) => unknown,
+): T[] {
+  const output: T[] = [];
+  const length = values.length;
+  for (let index = 0; index < length; index++) {
+    if (!hasOwn(values, index)) continue;
+    const value = values[index]!;
+    if (predicate(value, index, values)) pushPrivateArray(output, value);
+  }
+  return output;
+}
+
+/** Map and flatten one level of private array elements without observable methods. */
+export function flatMapPrivateArray<T, U>(
+  values: readonly T[],
+  mapper: (value: T, index: number, values: readonly T[]) => U | readonly U[],
+): U[] {
+  const output: U[] = [];
+  const length = values.length;
+  for (let index = 0; index < length; index++) {
+    if (!hasOwn(values, index)) continue;
+    const mapped = mapper(values[index]!, index, values);
+    if (isArray(mapped)) {
+      for (let inner = 0; inner < mapped.length; inner++) {
+        if (hasOwn(mapped, inner)) pushPrivateArray(output, mapped[inner]!);
+      }
+    } else pushPrivateArray(output, mapped as U);
+  }
+  return output;
+}
+
+/** Join private strings without dispatching through a writable array method. */
+export function joinPrivateArray(values: readonly (string | undefined)[], separator = ","): string {
+  let output = "";
+  const length = values.length;
+  for (let index = 0; index < length; index++) {
+    if (index > 0) output += separator;
+    if (hasOwn(values, index)) output += values[index] ?? "";
+  }
+  return output;
+}
 
 /** Append one private value without looking up push or invoking inherited setters. */
 export function pushPrivateArray<T>(values: T[], value: T): number {

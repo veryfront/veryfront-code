@@ -16,6 +16,10 @@ describe("prepared executor private iteration", () => {
       "array iteration",
       "array append",
       "text extraction",
+      "array filtering",
+      "array mapping",
+      "array flattening",
+      "array joining",
       "promise chaining",
     ]
   ) {
@@ -100,6 +104,9 @@ describe("prepared executor private iteration", () => {
       const originalArrayIterator = Array.prototype[Symbol.iterator];
       const originalPush = Array.prototype.push;
       const originalFilter = Array.prototype.filter;
+      const originalMap = Array.prototype.map;
+      const originalFlatMap = Array.prototype.flatMap;
+      const originalJoin = Array.prototype.join;
       const originalThen = Promise.prototype.then;
       const originalMetadata = Object.getOwnPropertyDescriptor(Object.prototype, "metadata");
       const originalNext = prototype.next;
@@ -121,6 +128,20 @@ describe("prepared executor private iteration", () => {
               observations++;
               return;
             }
+          }
+        }
+      };
+      const observeTextArray = (values: unknown[]) => {
+        observeMessages(values);
+        for (let index = 0; index < values.length; index++) {
+          const value = values[index];
+          if (
+            value === marker ||
+            (value !== null && typeof value === "object" &&
+              Object.getOwnPropertyDescriptor(value, "text")?.value === marker)
+          ) {
+            observations++;
+            return;
           }
         }
       };
@@ -170,6 +191,26 @@ describe("prepared executor private iteration", () => {
                 : value;
             }, rejected]);
           }) as typeof originalThen;
+        } else if (probe === "array filtering") {
+          Array.prototype.filter = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalFilter, this, args);
+          }) as typeof originalFilter;
+        } else if (probe === "array mapping") {
+          Array.prototype.map = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalMap, this, args);
+          }) as typeof originalMap;
+        } else if (probe === "array joining") {
+          Array.prototype.join = function (separator) {
+            observeTextArray(this);
+            return Reflect.apply(originalJoin, this, [separator]);
+          };
+        } else if (probe === "array flattening") {
+          Array.prototype.flatMap = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalFlatMap, this, args);
+          }) as typeof originalFlatMap;
         } else {
           Object.defineProperty(Object.prototype, "metadata", {
             configurable: true,
@@ -200,6 +241,9 @@ describe("prepared executor private iteration", () => {
         Array.prototype[Symbol.iterator] = originalArrayIterator;
         Array.prototype.push = originalPush;
         Array.prototype.filter = originalFilter;
+        Array.prototype.map = originalMap;
+        Array.prototype.flatMap = originalFlatMap;
+        Array.prototype.join = originalJoin;
         Promise.prototype.then = originalThen;
         if (originalMetadata) Object.defineProperty(Object.prototype, "metadata", originalMetadata);
         else Reflect.deleteProperty(Object.prototype, "metadata");

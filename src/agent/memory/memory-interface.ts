@@ -12,6 +12,7 @@
 const hasOwn = Object.hasOwn;
 const ceil = Math.ceil;
 
+/** Memory retention settings shared by agent memory backends. */
 export interface MemoryConfigBase {
   type: string;
   maxTokens?: number;

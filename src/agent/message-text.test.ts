@@ -8,6 +8,24 @@ import {
 } from "#veryfront/agent/memory/memory-interface.ts";
 
 describe("private message text extraction", () => {
+  it("concatenates text in order and skips non-text parts and sparse positions", () => {
+    const parts: MessagePart[] = [
+      { type: "text", text: "First" },
+      {
+        type: "file",
+        filename: "example.txt",
+        mediaType: "text/plain",
+        url: "https://example.com/file",
+      },
+      { type: "text", text: "" },
+      { type: "text", text: " second" },
+    ];
+    parts.length = 6;
+    parts[5] = { type: "text", text: "." };
+    assertEquals(getTextFromParts(parts), "First second.");
+    assertEquals(getTextFromParts([]), "");
+  });
+
   it("concatenates only text parts without consulting array methods", () => {
     const parts: MessagePart[] = [
       { type: "text", text: "Synthetic " },

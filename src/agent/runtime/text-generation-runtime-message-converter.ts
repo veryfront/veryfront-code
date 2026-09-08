@@ -1,4 +1,8 @@
-import { appendPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  appendPrivateArray,
+  flatMapPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
 /**
  * Text-Generation Runtime Message Converter
  *
@@ -192,7 +196,7 @@ function getTextGenerationToolResultPart(
 /** @internal Provider-visible text annotation shared with input validation. */
 export function buildAttachmentContextFromParts(parts: Message["parts"]): string {
   if (getTextFromParts(parts).includes("<uploaded_files>")) return "";
-  const refs = parts.flatMap((part) => {
+  const refs = flatMapPrivateArray(parts, (part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
 
@@ -252,7 +256,7 @@ function getUserFileParts(
   parts: Message["parts"],
   requireInternetReachableAttachments: boolean,
 ): TextGenerationRuntimeFilePart[] {
-  return parts.flatMap((part) => {
+  return flatMapPrivateArray(parts, (part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
 

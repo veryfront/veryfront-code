@@ -1,8 +1,43 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { appendPrivateArray, concatPrivateArrays, pushPrivateArray } from "./private-array.ts";
+import {
+  appendPrivateArray,
+  concatPrivateArrays,
+  filterPrivateArray,
+  flatMapPrivateArray,
+  joinPrivateArray,
+  pushPrivateArray,
+} from "./private-array.ts";
 
 describe("private array concatenation", () => {
+  it("filters and flattens own entries while preserving identity and callback indexes", () => {
+    const kept = { value: "kept" };
+    const values = [kept, , { value: "removed" }];
+    const indexes: number[] = [];
+    const filtered = filterPrivateArray(values, (value, index, source) => {
+      assertStrictEquals(source, values);
+      indexes.push(index);
+      return value === kept;
+    });
+    assertEquals(indexes, [0, 2]);
+    assertStrictEquals(filtered[0], kept);
+    assertEquals(filtered.length, 1);
+    const flattened = flatMapPrivateArray(
+      values,
+      (value, index) => index === 0 ? [value, , value] : value,
+    );
+    assertEquals(flattened.length, 3);
+    assertStrictEquals(flattened[0], kept);
+    assertStrictEquals(flattened[1], kept);
+    assertStrictEquals(flattened[2], values[2]);
+  });
+
+  it("joins text in order, including separators for sparse and empty entries", () => {
+    assertEquals(joinPrivateArray(["first", , "", "last"], "|"), "first|||last");
+    assertEquals(joinPrivateArray(["first", "last"]), "first,last");
+    assertEquals(joinPrivateArray([], "|"), "");
+  });
+
   it("appends arrays without consulting an overridden iterator", () => {
     const value = { text: "Synthetic output" };
     const source = [value];
