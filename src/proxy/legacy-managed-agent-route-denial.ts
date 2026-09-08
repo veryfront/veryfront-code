@@ -24,10 +24,11 @@ export function parseLegacyManagedAgentRouteDeny(raw: string | undefined): boole
 /** True only for legacy managed agent routes currently served by project runtimes. */
 export function isLegacyManagedAgentRoute(method: string, pathname: string): boolean {
   const normalizedMethod = method.toUpperCase();
-  if (isControlPlaneSurfaceRoute(normalizedMethod, pathname)) return true;
+  const normalizedPathname = pathname.replace(/^\/\/+/, "/");
+  if (isControlPlaneSurfaceRoute(normalizedMethod, normalizedPathname)) return true;
   if (normalizedMethod === "POST") {
-    return pathname === "/api/ag-ui" || pathname === "/api/runs" ||
-      DURABLE_RUN_RESUME_PATH.test(pathname);
+    return normalizedPathname === "/api/ag-ui" || normalizedPathname === "/api/runs" ||
+      DURABLE_RUN_RESUME_PATH.test(normalizedPathname);
   }
-  return normalizedMethod === "DELETE" && DURABLE_RUN_PATH.test(pathname);
+  return normalizedMethod === "DELETE" && DURABLE_RUN_PATH.test(normalizedPathname);
 }

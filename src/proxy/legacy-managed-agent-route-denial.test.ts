@@ -27,6 +27,10 @@ Deno.test("legacy managed agent route denial matches only registered managed rou
     ["POST", "/api/control-plane/runs/run_1/stream"],
     ["POST", "/api/control-plane/runs/run_1/resume"],
     ["DELETE", "/api/control-plane/runs/run_1"],
+    ["POST", "//api/ag-ui"],
+    ["POST", "///api/runs"],
+    ["POST", "//api/runs/run_1/resume"],
+    ["DELETE", "//api/control-plane/runs/run_1"],
   ] as const;
 
   for (const [method, pathname] of managedRoutes) {

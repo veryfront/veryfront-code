@@ -28,6 +28,8 @@ Deno.test("enabled legacy managed agent denial returns before lookup and leaves 
     ["POST", "/api/control-plane/runs/run_1/stream"],
     ["POST", "/api/control-plane/runs/run_1/resume"],
     ["DELETE", "/api/control-plane/runs/run_1"],
+    ["POST", "//api/ag-ui"],
+    ["POST", "///api/runs"],
   ] as const;
   const hosts = [
     "project.preview.veryfront.com",
