@@ -15,6 +15,44 @@ function restoreSetPrimordials(): void {
 }
 
 describe("security/http/application-request", () => {
+  it("does not expose infrastructure headers through replaced native callbacks", () => {
+    const canary = "synthetic-sanitizer-canary";
+    const host = new Request("https://tenant.example/api/private", {
+      headers: { "X-Veryfront-Inference-Token": canary, "X-Application": "keep" },
+    });
+    const headers = host.headers;
+    const original = Function.prototype.call;
+    const apply = Reflect.apply;
+    let observations = 0;
+    const failures: unknown[] = [];
+    Function.prototype.call = new Proxy(original, {
+      apply(target, receiver, args) {
+        if (args[1] === canary) observations++;
+        return apply(target, receiver, args);
+      },
+    });
+    try {
+      for (
+        const sanitize of [
+          () => createApplicationRequestHeaders(headers),
+          () => createApplicationRequest(host),
+        ]
+      ) {
+        try {
+          sanitize();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    } finally {
+      Function.prototype.call = original;
+    }
+    assertEquals(observations, 0);
+    for (const failure of failures) assertEquals(failure instanceof TypeError, true);
+    assertEquals(host.headers.get("X-Veryfront-Inference-Token"), canary);
+    assertEquals(createApplicationRequest(host).headers.get("X-Application"), "keep");
+  });
+
   it("retains application credentials and withholds infrastructure metadata", () => {
     const application = createApplicationRequest(
       new Request("https://tenant.example/api/private", {

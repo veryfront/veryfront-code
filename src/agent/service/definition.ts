@@ -1,5 +1,10 @@
+import {
+  assertNativeRequestDefaults,
+  RequestInitFields,
+} from "#veryfront/security/http/native-request-processing.ts";
 import type { Agent } from "../types.ts";
 import { buildResponseInit } from "./response-init.ts";
+import { assertNativeHeaderProcessing } from "#veryfront/security/http/native-header-processing.ts";
 
 // Capture before project modules load: ingress requests still carry host
 // credentials while the service selects a route and applies CORS policy.
@@ -51,24 +56,6 @@ const NativeDecodeURIComponent = decodeURIComponent;
 const StringToUpperCase = String.prototype.toUpperCase;
 const ObjectHasOwn = Object.hasOwn;
 const EmptyHeadersInit: Record<string, string> = ObjectCreate(null);
-const RequestInitFields = [
-  "body",
-  "cache",
-  "client",
-  "credentials",
-  "duplex",
-  "headers",
-  "integrity",
-  "keepalive",
-  "method",
-  "mode",
-  "priority",
-  "redirect",
-  "referrer",
-  "referrerPolicy",
-  "signal",
-  "window",
-] as const;
 const RequestInitGetters: Record<string, (() => unknown) | undefined> = ObjectCreate(null);
 for (let index = 0; index < RequestInitFields.length; index++) {
   const field = RequestInitFields[index]!;
@@ -162,6 +149,7 @@ function readDescriptorValue(
 }
 
 function copyHeaders(source: HeadersInit, target: Headers): void {
+  assertNativeHeaderProcessing();
   if (hasNativeInstance(NativeHeaders, source)) {
     IntrinsicReflectApply(HeadersForEach, source, [
       (value: string, name: string) => appendHeader(target, name, value),
@@ -216,6 +204,7 @@ function replaceHeaders(source: HeadersInit, target: Headers): void {
   const normalized = new NativeHeaders();
   copyHeaders(source, normalized);
   const replaced: Record<string, true> = ObjectCreate(null);
+  assertNativeHeaderProcessing();
   IntrinsicReflectApply(HeadersForEach, normalized, [
     (value: string, name: string) => {
       if (!ObjectHasOwn(replaced, name)) {
@@ -662,9 +651,13 @@ function withCorsHeaders(
 
 function toRuntimeRequest(input: string | URL | Request, init?: RequestInit): Request {
   const createRequest = (requestInput: string | Request): Request => {
+    assertNativeRequestDefaults();
+    assertNativeHeaderProcessing();
     if (init === undefined) return new NativeRequest(requestInput);
 
     const requestInit = copyRequestInit(init);
+    assertNativeRequestDefaults();
+    assertNativeHeaderProcessing();
     if (!ObjectHasOwn(requestInit, "headers") || requestInit.headers === undefined) {
       return new NativeRequest(requestInput, requestInit);
     }
