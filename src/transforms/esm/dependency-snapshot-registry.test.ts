@@ -161,6 +161,155 @@ describe("dependency snapshot registry", () => {
     assertExists(await registry.find("source", a.cacheKey));
     assertEquals(registry.peek("source", b.cacheKey), undefined);
   });
+  it("coalesces concurrent metadata history reads by source before selecting a key", async () => {
+    const registry = new DependencySnapshotRegistry();
+    const first = snapshot({ react: "18.3.1" });
+    const second = snapshot({ react: "19.2.4" });
+    const healthy = snapshot({ zod: "4.0.0" });
+    const expiresAt = Date.now() + 60_000;
+    let reads = 0;
+    let resolveHistory!: (
+      history: ReadonlyArray<{ snapshot: ReturnType<typeof snapshot>; expiresAt: number }>,
+    ) => void;
+    const history = new Promise<
+      ReadonlyArray<{ snapshot: ReturnType<typeof snapshot>; expiresAt: number }>
+    >((resolve) => resolveHistory = resolve);
+    const load = () => {
+      reads++;
+      return history.then((value) => ({ value, bytes: 100 }));
+    };
+    const select = (
+      records: ReadonlyArray<{ snapshot: ReturnType<typeof snapshot>; expiresAt: number }>,
+      key: string,
+    ) => records.find((record) => record.snapshot.cacheKey === key);
+
+    const requestedKeys = [
+      first.cacheKey,
+      second.cacheKey,
+      ...Array.from({ length: 62 }, (_, index) => `on:forged-${index}`),
+    ];
+    const sourceReads = requestedKeys.map((key) =>
+      registry.recoverHistorical(
+        "source",
+        key,
+        load,
+        (records) => select(records, key),
+      )
+    );
+    await Promise.resolve();
+    assertEquals(reads, 1);
+    assertEquals(
+      await registry.recoverHistorical(
+        "healthy-source",
+        healthy.cacheKey,
+        () => Promise.resolve({ value: { snapshot: healthy, expiresAt }, bytes: 100 }),
+        (record) => record,
+      ),
+      healthy,
+    );
+    resolveHistory([{ snapshot: first, expiresAt }, { snapshot: second, expiresAt }]);
+
+    const recovered = await Promise.all(sourceReads);
+    assertEquals(recovered[0], first);
+    assertEquals(recovered[1], second);
+    assertEquals(recovered.slice(2), Array(62).fill(undefined));
+  });
+  it("caches settled source history across distinct misses and retains valid keys", async () => {
+    const registry = new DependencySnapshotRegistry();
+    const original = snapshot();
+    const record = { snapshot: original, expiresAt: Date.now() + 60_000 };
+    let reads = 0;
+    const load = () => {
+      reads++;
+      return Promise.resolve({ value: record, bytes: 100 });
+    };
+    for (let index = 0; index < 64; index++) {
+      assertEquals(
+        await registry.recoverHistorical("source", `on:missing-${index}`, load, () => undefined),
+        undefined,
+      );
+    }
+    assertEquals(
+      await registry.recoverHistorical("source", original.cacheKey, load, (loaded) => loaded),
+      original,
+    );
+    assertEquals(reads, 1);
+  });
+
+  it("refreshes cached history after revision changes, expiry, and clear", async () => {
+    let now = 1000;
+    const registry = new DependencySnapshotRegistry({ now: () => now });
+    let reads = 0;
+    const load = () => {
+      reads++;
+      return Promise.resolve({ value: null, bytes: 100 });
+    };
+    const read = (revision = "before") =>
+      registry.recoverHistorical("source", "on:missing", load, () => undefined, revision);
+    await read();
+    await read();
+    assertEquals(reads, 1);
+    await read("after");
+    assertEquals(reads, 2);
+    now += 999;
+    await read("after");
+    assertEquals(reads, 2);
+    now++;
+    await read("after");
+    assertEquals(reads, 3);
+    registry.clear();
+    await read("after");
+    assertEquals(reads, 4);
+  });
+
+  it("never extends a snapshot expiry through cached metadata", async () => {
+    let now = 1000;
+    const registry = new DependencySnapshotRegistry({ now: () => now });
+    const original = snapshot();
+    let reads = 0;
+    const load = () => {
+      reads++;
+      return Promise.resolve({ value: { snapshot: original, expiresAt: 1500 }, bytes: 100 });
+    };
+    const read = () =>
+      registry.recoverHistorical("source", original.cacheKey, load, (value) => value);
+    assertEquals(await read(), original);
+    now = 1500;
+    assertEquals(await read(), undefined);
+    assertEquals(reads, 1);
+  });
+
+  for (const limits of [{ maxEntries: 1 }, { maxBytes: 150 }]) {
+    it("bounds settled metadata retention by source count and byte budget", async () => {
+      const registry = new DependencySnapshotRegistry(limits);
+      let reads = 0;
+      const load = () => {
+        reads++;
+        return Promise.resolve({ value: null, bytes: 100 });
+      };
+      const read = (source: string) =>
+        registry.recoverHistorical(source, "on:missing", load, () => undefined);
+      await read("first");
+      await read("second");
+      await read("first");
+      assertEquals(reads, 3);
+    });
+  }
+
+  it("rejects unbounded metadata before retaining it", async () => {
+    const registry = new DependencySnapshotRegistry();
+    for (const bytes of [0, -1, 1.5, Number.NaN, 1024 * 1024 + 1]) {
+      await assertRejects(() =>
+        registry.recoverHistorical(
+          "source",
+          "on:missing",
+          () => Promise.resolve({ value: null, bytes }),
+          () => undefined,
+        )
+      );
+    }
+  });
+
   it("supports store-less standalone operation", async () => {
     const registry = new DependencySnapshotRegistry();
     const original = snapshot();
@@ -177,6 +326,46 @@ describe("dependency snapshot registry", () => {
     assertEquals(registry.peek("source", a.cacheKey), undefined);
     assertExists(registry.peek("source", b.cacheKey));
   });
+  it("aborts cooperative metadata reads and releases every admission slot", async () => {
+    const registry = new DependencySnapshotRegistry({ timeoutMs: 20 });
+    const original = snapshot();
+    let aborted = 0;
+    await Promise.all(
+      Array.from(
+        { length: 64 },
+        (_, index) =>
+          assertRejects(() =>
+            registry.recoverHistorical(
+              `source-${index}`,
+              original.cacheKey,
+              (signal) =>
+                new Promise((_resolve, reject) => {
+                  signal.addEventListener("abort", () => {
+                    aborted++;
+                    reject(signal.reason);
+                  }, { once: true });
+                }),
+              () => undefined,
+            )
+          ),
+      ),
+    );
+    assertEquals(aborted, 64);
+    assertEquals(
+      await registry.recoverHistorical(
+        "healthy",
+        original.cacheKey,
+        () =>
+          Promise.resolve({
+            value: { snapshot: original, expiresAt: Date.now() + 10_000 },
+            bytes: 100,
+          }),
+        (record) => record,
+      ),
+      original,
+    );
+  });
+
   it("keeps timed-out producers counted until settlement and never publishes late local success", async () => {
     const release = deferred();
     let producers = 0;

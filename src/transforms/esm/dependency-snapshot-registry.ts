@@ -23,6 +23,18 @@ interface PendingOperation {
   promise: Promise<unknown>;
 }
 
+interface MetadataHistoryEntry {
+  value: unknown;
+  bytes: number;
+  revision: string;
+  expiresAt: number;
+}
+
+const METADATA_HISTORY_CACHE_MS = 1000;
+const METADATA_HISTORY_CACHE_SOURCES = 32;
+const METADATA_HISTORY_CACHE_BYTES = 8 * 1024 * 1024;
+const METADATA_HISTORY_RESPONSE_BYTES = 1024 * 1024;
+
 interface RegistryOptions {
   store?: DependencySnapshotStore;
   now?: () => number;
@@ -70,6 +82,8 @@ export class DependencySnapshotRegistry {
   private readonly entries = new NativeMap<string, Entry>();
   private readonly pending = new NativeMap<string, PendingOperation>();
   private bytes = 0;
+  private readonly metadataHistory = new NativeMap<string, MetadataHistoryEntry>();
+  private metadataBytes = 0;
   private generation = 0;
   readonly #store?: DependencySnapshotStore;
   private readonly now: () => number;
@@ -161,10 +175,71 @@ export class DependencySnapshotRegistry {
     return snapshot;
   }
 
+  /**
+   * Retain an exact match reconstructed from API-owned prior metadata, using
+   * its acknowledged expiry. This read-only path never substitutes for an
+   * explicitly configured shared store and never publishes renderer state.
+   * The loader supplies an immutable validated copy and its serialized byte size;
+   * revision tracks the observed package state, including after flag rollback.
+   */
+  async recoverHistorical<T>(
+    identity: string,
+    key: string,
+    load: (signal: AbortSignal) => Promise<{ value: T; bytes: number }>,
+    select: (
+      loaded: T,
+    ) => { snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined,
+    revision = "",
+  ): Promise<DependencyPinningSnapshot | undefined> {
+    if (this.#store) return undefined;
+    const generation = this.generation;
+    let cached = this.metadataEntry(identity, revision);
+    if (!cached) {
+      const loaded = await this.operation(`metadata:${identity}\0${revision}`, undefined, load);
+      if (
+        !isSafeInteger(loaded.bytes) || loaded.bytes <= 0 ||
+        loaded.bytes > METADATA_HISTORY_RESPONSE_BYTES
+      ) throw this.unavailable();
+      cached = { ...loaded, revision, expiresAt: this.now() + METADATA_HISTORY_CACHE_MS };
+      if (generation === this.generation) this.insertMetadata(identity, cached);
+    }
+    let record: { snapshot: DependencyPinningSnapshot; expiresAt: number } | undefined;
+    try {
+      record = select(cached.value as T);
+    } catch {
+      throw this.unavailable();
+    }
+    if (!record || record.expiresAt <= this.now()) return undefined;
+    if (
+      record.snapshot.cacheKey !== key || !isSafeInteger(record.expiresAt) ||
+      record.expiresAt > this.now() + DEPENDENCY_SNAPSHOT_RETENTION_MS
+    ) throw this.unavailable();
+    const namespace = await computeHash(identity);
+    let value: string;
+    try {
+      value = encodeDependencySnapshot(namespace, record.snapshot);
+    } catch {
+      throw this.unavailable();
+    }
+    const existing = this.entry(`${identity}\0${key}`);
+    if (existing && existing.value !== value) throw this.unavailable();
+    if (generation === this.generation) {
+      this.insert(`${identity}\0${key}`, {
+        snapshot: record.snapshot,
+        value,
+        expiresAt: record.expiresAt,
+        bytes: utf8ByteLength(value),
+      });
+    }
+    return record.snapshot;
+  }
+
   clear(): void {
     this.generation++;
     apply(mapClear, this.entries, []);
     this.bytes = 0;
+    apply(mapClear, this.metadataHistory, []);
+    this.metadataBytes = 0;
   }
 
   private entry(key: string): Entry | undefined {
@@ -190,6 +265,41 @@ export class DependencySnapshotRegistry {
       const oldest = apply(mapIteratorNext, iterator, []).value as string;
       this.bytes -= (apply(mapGet, this.entries, [oldest]) as Entry).bytes;
       apply(mapDelete, this.entries, [oldest]);
+    }
+  }
+
+  private metadataEntry(identity: string, revision: string): MetadataHistoryEntry | undefined {
+    const entry = apply(mapGet, this.metadataHistory, [identity]) as
+      | MetadataHistoryEntry
+      | undefined;
+    if (!entry) return undefined;
+    apply(mapDelete, this.metadataHistory, [identity]);
+    if (entry.expiresAt <= this.now() || entry.revision !== revision) {
+      this.metadataBytes -= entry.bytes;
+      return undefined;
+    }
+    apply(mapSet, this.metadataHistory, [identity, entry]);
+    return entry;
+  }
+
+  private insertMetadata(identity: string, entry: MetadataHistoryEntry): void {
+    const prior = apply(mapGet, this.metadataHistory, [identity]) as
+      | MetadataHistoryEntry
+      | undefined;
+    if (prior) this.metadataBytes -= prior.bytes;
+    apply(mapDelete, this.metadataHistory, [identity]);
+    apply(mapSet, this.metadataHistory, [identity, entry]);
+    this.metadataBytes += entry.bytes;
+    while (
+      apply(mapSize, this.metadataHistory, []) >
+        Math.min(this.maxEntries, METADATA_HISTORY_CACHE_SOURCES) ||
+      this.metadataBytes > Math.min(this.maxBytes, METADATA_HISTORY_CACHE_BYTES)
+    ) {
+      const iterator = apply(mapKeys, this.metadataHistory, []);
+      const oldest = apply(mapIteratorNext, iterator, []).value as string;
+      this.metadataBytes -=
+        (apply(mapGet, this.metadataHistory, [oldest]) as MetadataHistoryEntry).bytes;
+      apply(mapDelete, this.metadataHistory, [oldest]);
     }
   }
 

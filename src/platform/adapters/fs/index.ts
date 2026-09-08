@@ -31,3 +31,7 @@ export {
   wrapFSAdapter,
 } from "./wrapper.ts";
 export type { ExtendedFileSystemAdapter } from "./wrapper.ts";
+export type {
+  DependencyMetadataHistory,
+  DependencyMetadataHistoryEntry,
+} from "../dependency-metadata-history.ts";
