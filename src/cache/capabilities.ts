@@ -18,6 +18,10 @@ type UncheckedCallable = (...args: never[]) => unknown;
 
 // Captured before project code runs: capability inspection receives private
 // backend objects, and a replaced reflection global must never observe them.
+const reflectApply = Reflect.apply;
+const NativeSet = Set;
+const setHas = NativeSet.prototype.has;
+const setAdd = NativeSet.prototype.add;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 const reflectOwnKeys = Reflect.ownKeys;
@@ -30,14 +34,14 @@ function findCallableDataProperty(
   key: "getWithRevision" | "compareExchange",
 ): UncheckedCallable | null {
   let current: object | null = value;
-  const visited = new Set<object>();
+  const visited = new NativeSet<object>();
   let inspectedDepth = 0;
 
   while (current !== null) {
     if (inspectedDepth >= MAX_CACHE_CAPABILITY_PROTOTYPE_DEPTH) return null;
     inspectedDepth += 1;
-    if (visited.has(current)) return null;
-    visited.add(current);
+    if (reflectApply(setHas, visited, [current])) return null;
+    reflectApply(setAdd, visited, [current]);
 
     const descriptor = reflectGetOwnPropertyDescriptor(current, key);
     if (descriptor !== undefined) {

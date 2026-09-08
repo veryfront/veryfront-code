@@ -2,6 +2,9 @@ import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import type { CacheBackend } from "./types.ts";
 
 const apply = Reflect.apply;
+const NativeSet = Set;
+const setHas = NativeSet.prototype.has;
+const setAdd = NativeSet.prototype.add;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
@@ -64,14 +67,14 @@ export function captureBoundedCacheRead(
   }
 
   let owner: object | null = backend;
-  const seen = new Set<object>();
+  const seen = new NativeSet<object>();
   try {
     for (let depth = 0; owner !== null && depth < MAX_CACHE_CAPABILITY_PROTOTYPE_DEPTH; depth++) {
       if (owner === universalObjectPrototype || owner === universalFunctionPrototype) {
         return null;
       }
-      if (seen.has(owner)) return null;
-      seen.add(owner);
+      if (apply(setHas, seen, [owner])) return null;
+      apply(setAdd, seen, [owner]);
       const parent = getPrototypeOf(owner);
       if (owner !== backend && parent === null) return null;
       const descriptor = getOwnPropertyDescriptor(owner, "getWithinLimit");

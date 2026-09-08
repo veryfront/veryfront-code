@@ -175,6 +175,8 @@ describe("host-configured dependency snapshot store", () => {
       getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor,
       getPrototypeOf: Reflect.getPrototypeOf,
       ownKeys: Reflect.ownKeys,
+      setAdd: Set.prototype.add,
+      setHas: Set.prototype.has,
     };
     Reflect.apply = ((target: never, thisArg: unknown, argumentsList: readonly unknown[]) => {
       inspect("Reflect.apply", [thisArg, ...argumentsList]);
@@ -209,6 +211,14 @@ describe("host-configured dependency snapshot store", () => {
       inspect("Object.prototype.toJSON", [this]);
       return this;
     };
+    Set.prototype.add = function <T>(this: Set<T>, item: T) {
+      inspect("Set.prototype.add", [item]);
+      return originals.setAdd.call(this, item);
+    } as typeof Set.prototype.add;
+    Set.prototype.has = function <T>(this: Set<T>, item: T) {
+      inspect("Set.prototype.has", [item]);
+      return originals.setHas.call(this, item);
+    } as typeof Set.prototype.has;
 
     try {
       await store.publish(namespace, "on:54uvgwr2ih7p", value, expiresAt);
@@ -223,6 +233,8 @@ describe("host-configured dependency snapshot store", () => {
       Reflect.ownKeys = originals.ownKeys;
       // deno-lint-ignore no-explicit-any
       delete (Object.prototype as any).toJSON;
+      Set.prototype.add = originals.setAdd;
+      Set.prototype.has = originals.setHas;
     }
 
     assertEquals(observedLeaks, []);
