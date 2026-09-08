@@ -49,7 +49,6 @@ import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const apply = Reflect.apply;
-const arrayFilter = Array.prototype.filter;
 const arrayIncludes = Array.prototype.includes;
 const arraySort = Array.prototype.sort;
 const objectDefineProperty = Object.defineProperty;
@@ -74,7 +73,19 @@ function filterValues<T>(
   values: readonly T[],
   predicate: (value: T, index: number, array: readonly T[]) => unknown,
 ): T[] {
-  return apply(arrayFilter, values, [predicate]) as T[];
+  const filtered: T[] = [];
+  for (let index = 0; index < values.length; index++) {
+    if (!objectHasOwn(values, index)) continue;
+    const value = values[index]!;
+    if (!predicate(value, index, values)) continue;
+    objectDefineProperty(filtered, filtered.length, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return filtered;
 }
 
 function mapValues<T, U>(

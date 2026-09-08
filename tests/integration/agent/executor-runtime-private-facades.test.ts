@@ -32,6 +32,7 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
   )!;
   let hiddenExecutions = 0;
   let remoteExecutions = 0;
+  let exposedFacadeValues = 0;
   const visible = {
     description: "Synthetic tool",
     inputSchema: defineSchema((v) => v.object({}))(),
@@ -92,6 +93,10 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
           get() {
             const values = this as unknown[];
             if (values[0] === remote) void remote.executeTool();
+            for (let index = 0; index < values.length; index++) {
+              const entry = values[index] as readonly unknown[] | undefined;
+              if (Array.isArray(entry) && entry[1] === visible) exposedFacadeValues++;
+            }
             return Array;
           },
         });
@@ -179,6 +184,7 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
     assertEquals((result as { ok?: boolean }).ok, true, JSON.stringify(result));
     assertEquals(hiddenExecutions, 0);
     assertEquals(remoteExecutions, 0);
+    assertEquals(exposedFacadeValues, 0);
   } finally {
     Object.entries = originalEntries;
     Set.prototype.has = originalSetHas;
