@@ -592,6 +592,38 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  it("preserves a granted provider-selected local web fetch fallback", async () => {
+    let visible: string[] = [];
+    const f = fixture({
+      config: { tools: {}, providerTools: ["web_fetch"] },
+      grant: {
+        ...grant,
+        allowedToolNames: ["web_fetch"],
+        hostToolFacadeIds: ["local"],
+        models: new Map([[
+          modelId,
+          { maxOutputTokens: 200, providerToolNames: ["web_fetch"] },
+        ]]),
+      },
+      facades: {
+        hostTools: new Map([["local", { web_fetch: syntheticHostTool() }]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(visible, ["web_fetch"]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   for (
     const selection of [
       {

@@ -273,15 +273,22 @@ export function createExecutorRuntimePreparation(input: Options) {
     if (
       typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
-    for (const id of effective.hostToolFacadeIds) {
+    for (let index = 0; index < effective.hostToolFacadeIds.length; index++) {
+      const id = effective.hostToolFacadeIds[index];
+      if (id === undefined) continue;
       if (!privateMapHas(facades.hostTools, id)) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     }
-    for (const id of effective.remoteToolSourceIds) {
+    for (let index = 0; index < effective.remoteToolSourceIds.length; index++) {
+      const id = effective.remoteToolSourceIds[index];
+      if (id === undefined) continue;
       if (!privateMapHas(facades.remoteToolSources, id)) {
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       }
     }
-    for (const server of definition.mcpServers ?? []) {
+    const configuredServers = definition.mcpServers ?? [];
+    for (let index = 0; index < configuredServers.length; index++) {
+      const server = configuredServers[index];
+      if (server === undefined) continue;
       if (!includes(effective.remoteToolSourceIds, server.id ?? server.kind)) {
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       }
@@ -348,7 +355,9 @@ export function createExecutorRuntimePreparation(input: Options) {
             !isSkillInfrastructureToolId(id) && isToolVisibleTo(value, { agentId: definition.id }),
         ),
       );
-      for (const id of grant.hostToolFacadeIds) {
+      for (let index = 0; index < grant.hostToolFacadeIds.length; index++) {
+        const id = grant.hostToolFacadeIds[index];
+        if (id === undefined) continue;
         // Object spread creates own data properties without invoking mutable
         // Object.assign or inherited setters with private facade values.
         localTools = { ...localTools, ...privateMapGet(facades.hostTools, id) };
@@ -528,13 +537,16 @@ export function createExecutorRuntimePreparation(input: Options) {
         }
         remoteToolSources[remoteToolSources.length] = remoteToolSource;
       }
+      const facadeAllowedToolNames = [
+        ...createPrivateSet([...allowedToolNames, ...providerToolNames]),
+      ];
       const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
         signal: context.signal,
         taskContext,
         instructions: options.instructions,
-        localTools: selectAllowedHostTools(localTools, allowedToolNames),
+        localTools: selectAllowedHostTools(localTools, facadeAllowedToolNames),
         sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
-        hostToolPolicy: { allow: allowedToolNames },
+        hostToolPolicy: { allow: facadeAllowedToolNames },
         allowedToolNames,
         deniedToolNames,
         allowedProviderToolNames: providerToolNames,

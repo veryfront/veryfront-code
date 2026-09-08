@@ -6,6 +6,7 @@ import { agent } from "#veryfront/agent/factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
 import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
+import type { HostToolSet } from "#veryfront/tool";
 
 const binding = {
   allocationId: "reflection-allocation",
@@ -78,6 +79,9 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
         };
         Array.prototype[Symbol.iterator] = function () {
           const entry = this as unknown[];
+          if (entry.length === 1 && entry[0] === "local") {
+            return Reflect.apply(originalArrayIterator, ["ungranted"], []);
+          }
           const candidate = entry[1] as { execute?: () => unknown } | undefined;
           if (entry[0] === "hidden" && candidate?.execute) candidate.execute();
           return Reflect.apply(originalArrayIterator, this, []);
@@ -126,7 +130,10 @@ it("keeps ungranted private facades out of project-controlled reflection hooks",
       execution: { kind: "ephemeral", projectId: null },
     },
     facades: {
-      hostTools: new Map([["local", { visible, hidden }]]),
+      hostTools: new Map<string, HostToolSet>([
+        ["local", { visible, hidden }],
+        ["ungranted", { visible: hidden }],
+      ]),
       remoteToolSources: new Map([["api", remote]]),
       resolveModelRuntime: () => ({
         modelId: "gpt-5.4",
