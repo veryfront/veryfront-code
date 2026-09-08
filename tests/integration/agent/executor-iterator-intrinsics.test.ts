@@ -15,6 +15,7 @@ describe("prepared executor private iteration", () => {
       "inherited metadata",
       "array iteration",
       "array append",
+      "text extraction",
       "promise chaining",
     ]
   ) {
@@ -98,6 +99,7 @@ describe("prepared executor private iteration", () => {
       const prototype = Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})()));
       const originalArrayIterator = Array.prototype[Symbol.iterator];
       const originalPush = Array.prototype.push;
+      const originalFilter = Array.prototype.filter;
       const originalThen = Promise.prototype.then;
       const originalMetadata = Object.getOwnPropertyDescriptor(Object.prototype, "metadata");
       const originalNext = prototype.next;
@@ -143,6 +145,18 @@ describe("prepared executor private iteration", () => {
             observeMessages(this);
             return Reflect.apply(originalPush, this, items);
           };
+        } else if (probe === "text extraction") {
+          Array.prototype.filter = function (
+            this: unknown[],
+            callback: (value: unknown, index: number, array: unknown[]) => unknown,
+            thisArg?: unknown,
+          ) {
+            for (let index = 0; index < this.length; index++) {
+              const part = this[index] as { type?: unknown; text?: unknown } | null;
+              if (part?.type === "text" && part?.text === marker) observations++;
+            }
+            return Reflect.apply(originalFilter, this, [callback, thisArg]);
+          } as typeof originalFilter;
         } else if (probe === "promise chaining") {
           Promise.prototype.then = (function (
             this: Promise<unknown>,
@@ -185,6 +199,7 @@ describe("prepared executor private iteration", () => {
       } finally {
         Array.prototype[Symbol.iterator] = originalArrayIterator;
         Array.prototype.push = originalPush;
+        Array.prototype.filter = originalFilter;
         Promise.prototype.then = originalThen;
         if (originalMetadata) Object.defineProperty(Object.prototype, "metadata", originalMetadata);
         else Reflect.deleteProperty(Object.prototype, "metadata");

@@ -682,7 +682,11 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   flushAssistantMessage(deferredAssistantContent);
 
   const providerMetadata = readAttachedProviderMetadata(message);
-  const assistantMessages = messages.filter((entry) => entry.role === "assistant");
+  const assistantMessages: Extract<TextGenerationRuntimeMessage, { role: "assistant" }>[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    const entry = messages[index];
+    if (entry?.role === "assistant") pushPrivateArray(assistantMessages, entry);
+  }
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
     if (isProviderReplayDelivered(message)) {
@@ -706,7 +710,8 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     if (splitMetadata === undefined) {
       throw new TypeError("Provider replay metadata cannot follow a split assistant turn");
     }
-    for (const [index, assistantMessage] of assistantMessages.entries()) {
+    for (let index = 0; index < assistantMessages.length; index++) {
+      const assistantMessage = assistantMessages[index]!;
       assistantMessage.providerMetadata = splitMetadata[index];
       if (isProviderReplayDelivered(message)) {
         markProviderReplayDelivered(assistantMessage);
