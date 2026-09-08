@@ -4,6 +4,7 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineAgentService } from "#veryfront/agent/service/definition.ts";
 
@@ -100,6 +101,132 @@ describe("agent service credential header boundary", () => {
       assertEquals(handled, false);
     } else {
       assertEquals(handled, true);
+    }
+  });
+
+  it("does not invoke accessors on the checked native callback and iterator protocol", async () => {
+    const headers = new Headers({ "X-Veryfront-Inference-Token": "synthetic-accessor-canary" });
+    const response = new Response(null);
+    let handled = 0;
+    const runtime = defineAgentService({
+      serviceName: "native-accessors",
+      agents: {},
+      defaultAgentId: "test",
+    }).createRuntime({
+      routes: [{
+        method: "GET",
+        path: "/check",
+        handler: () => {
+          handled++;
+          return response;
+        },
+      }],
+    });
+    const iteratorPrototype = Object.getPrototypeOf(headers.entries());
+    const targets: [object, PropertyKey][] = [
+      [Function.prototype, "call"],
+      [Headers.prototype, Symbol.iterator],
+      [iteratorPrototype, "next"],
+      [iteratorPrototype, Symbol.iterator],
+      [Object.getPrototypeOf(iteratorPrototype), Symbol.iterator],
+    ];
+    for (const [target, property] of targets) {
+      const original = Object.getOwnPropertyDescriptor(target, property);
+      const before = handled;
+      let reads = 0;
+      let failure: unknown;
+      Object.defineProperty(target, property, {
+        configurable: true,
+        get() {
+          reads++;
+          return original?.value;
+        },
+      });
+      try {
+        await runtime.request("/check", { headers });
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (original) Object.defineProperty(target, property, original);
+        else Reflect.deleteProperty(target, property);
+      }
+      if (isNode) {
+        assertEquals(reads, 0);
+        assertEquals(failure instanceof TypeError, true);
+        assertEquals(handled, before);
+      }
+    }
+  });
+
+  it("rechecks native processing after framework option and header getters", async () => {
+    const canary = "synthetic-option-canary";
+    const headers = new Headers({ "X-Veryfront-Inference-Token": canary });
+    const response = new Response(null);
+    let handled = 0;
+    const runtime = defineAgentService({
+      serviceName: "reentrant-options",
+      agents: {},
+      defaultAgentId: "test",
+    }).createRuntime({
+      routes: [{
+        method: "GET",
+        path: "/check",
+        handler: () => {
+          handled++;
+          return response;
+        },
+      }],
+    });
+    const original = Function.prototype.call;
+    const apply = Reflect.apply;
+    let observations = 0;
+    const replace = () => {
+      Function.prototype.call = new Proxy(original, {
+        apply(target, receiver, args) {
+          if (args[1] === canary) observations++;
+          return apply(target, receiver, args);
+        },
+      });
+    };
+    for (
+      const init of [
+        {
+          get headers() {
+            replace();
+            return headers;
+          },
+        },
+        {
+          headers: {
+            get "X-Veryfront-Inference-Token"() {
+              replace();
+              return canary;
+            },
+          },
+        },
+      ]
+    ) {
+      const before = handled;
+      let failure: unknown;
+      try {
+        await runtime.request("/check", init);
+      } catch (error) {
+        failure = error;
+      } finally {
+        Function.prototype.call = original;
+      }
+      assertEquals(observations, 0);
+      if (isNode) {
+        assertEquals(failure instanceof TypeError, true);
+        assertEquals(
+          (failure as Error).message,
+          "Cannot process headers with modified native callback dispatch",
+        );
+        assertEquals(handled, before);
+      } else {
+        assertEquals(failure, undefined);
+        assertEquals(handled, before + 1);
+      }
     }
   });
 
