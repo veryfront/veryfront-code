@@ -71,6 +71,7 @@ import {
 const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
+const hasOwn = Object.hasOwn;
 
 function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
   return apply(mapGet, map, [key]) as V | undefined;
@@ -386,7 +387,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
           allowedToolNames: normalizeToolNames(sourceToolNames),
           localToolNames: normalizeToolNames(grant.allowedToolNames).filter((name) =>
-            Object.hasOwn(localTools, name)
+            hasOwn(localTools, name)
           ),
           availableSkillIds: skills.allowedSkillIds,
           configDerivedSelector: request.allowedToolNames === undefined &&
