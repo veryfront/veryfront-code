@@ -1,5 +1,4 @@
 import type { HostedChatRuntimeStreamInput } from "../hosted/chat-runtime-contract.ts";
-import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
 import {
   ExecutorAgentError,
   getExecutorAgentFailureCodeSchema,
@@ -15,6 +14,7 @@ import type {
   ManagedExecutorRuntime,
   ManagedExecutorStartInput,
 } from "../hosted/managed-executor-broker.ts";
+import type { ManagedBrokerOutput } from "../hosted/managed-broker-persistence.ts";
 import {
   BrokerIngressError,
   type BrokerRuntimeAgentIngress,
@@ -30,13 +30,6 @@ export interface ManagedExecutorStarter {
     input: ManagedExecutorStartInput,
     lifecycle?: { onAdmitted?(settled: Promise<void>): void },
   ): Promise<ManagedExecutorRuntime>;
-}
-
-/** Broker-owned output persistence for a detached run. */
-export interface ManagedBrokerOutput {
-  write(chunk: ChatUiMessageChunk): Promise<void>;
-  /** Acknowledge all original queued writes, including cancellation/failure finalization. */
-  finish(outcome: { completed: boolean; error?: unknown }): Promise<void>;
 }
 
 /** Handle signed run invocations with configured detached or request-owned SSE responses. */

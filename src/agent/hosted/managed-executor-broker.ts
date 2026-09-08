@@ -12,6 +12,7 @@ import {
   type HostedExecutorSessionPoolOptions,
 } from "./executor-session-pool.ts";
 import type {
+  HostedExecutorOwnedWork,
   HostedExecutorSessionCloseResult,
   HostedExecutorSessionOptions,
 } from "./executor-session.ts";
@@ -76,6 +77,8 @@ export interface ManagedExecutorRuntime {
 
 /** Trusted per-invocation source, model, tool, persistence, and state authority. */
 export interface ManagedExecutorStartInput {
+  /** Bind canonical persistence to the admitted session before readiness work starts. */
+  bindSessionOwnedWork?: (owner: HostedExecutorOwnedWork) => void;
   session: SessionInput;
   installation: InstallInput;
   prepare: ExecutorRuntimePrepareRequest;
@@ -135,11 +138,21 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     ) throw new TypeError("Managed executor installation does not match its session");
     const allowedModelIds = new Set(installation.grant.models.map((model) => model.id));
     const operationInput = snapshotOperationInput(input);
+    const bindSessionOwnedWork = input.bindSessionOwnedWork;
     if (
       installation.grant.execution.kind === "ephemeral" &&
       operationInput.model.runEventSink !== undefined
     ) {
       throw new TypeError("Ephemeral executor model dispatch cannot receive a run event sink");
+    }
+    if (
+      installation.grant.execution.kind === "canonical" &&
+      typeof bindSessionOwnedWork !== "function"
+    ) {
+      throw new TypeError("Canonical executor persistence requires session-owned work binding");
+    }
+    if (bindSessionOwnedWork !== undefined && typeof bindSessionOwnedWork !== "function") {
+      throw new TypeError("Invalid executor session-owned work binder");
     }
     // Validate every trusted capability before reserving pool admission.
     buildBrokerOperations(
@@ -175,6 +188,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
       },
     });
     try {
+      bindSessionOwnedWork?.(session.runOwned.bind(session));
       lifecycle.onAdmitted?.(session.settled);
       const channel = await session.ready;
       const binding = session.binding;

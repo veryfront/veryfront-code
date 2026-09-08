@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createManagedBrokerPersistence } from "#veryfront/agent/hosted/managed-broker-persistence.ts";
@@ -42,21 +42,88 @@ function successfulFetch(calls: Record<string, unknown>[]) {
   };
 }
 
+function bindForTest(
+  persistence: ReturnType<typeof createManagedBrokerPersistence>,
+): ReturnType<typeof createManagedBrokerPersistence> {
+  persistence.bindSessionOwnedWork(async (operation) => await operation());
+  return persistence;
+}
+
 describe("managed broker persistence", () => {
+  it("requires one active session owner before persistence can enqueue or fetch", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const persistence = createManagedBrokerPersistence({
+      apiUrl: "https://api.example.test",
+      runEventToken: "run-event-token",
+      run,
+      modelId: "model",
+      resolveProvider: () => "provider",
+      fetch: successfulFetch(calls),
+    });
+
+    await assertRejects(async () =>
+      await persistence.modelRunEventSink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        messages: [],
+        tools: [],
+      })
+    );
+    await assertRejects(() => persistence.publishParentRunEvents([{ type: "STEP_STARTED" }]));
+    await assertRejects(() =>
+      persistence.persistToolExposureCheckpoint({
+        version: 2,
+        loadedToolNames: ["search"],
+      })
+    );
+    await assertRejects(() =>
+      persistence.persistProviderReplayCheckpoint({
+        version: 1,
+        messageId,
+        provider: "anthropic",
+        providerBlocks: [],
+        providerBlockPositions: [],
+        providerMessageBlockCounts: [],
+        totalPartCount: 0,
+      })
+    );
+    await assertRejects(() =>
+      persistence.output.write({ type: "text-delta", id: "message", delta: "blocked" })
+    );
+    await assertRejects(() => persistence.output.finish({ completed: false }));
+    assertEquals(calls, []);
+
+    const owner = async <T>(operation: () => Promise<T>): Promise<T> => await operation();
+    assertThrows(() => persistence.bindSessionOwnedWork(undefined as never));
+    persistence.bindSessionOwnedWork(owner);
+    assertThrows(() => persistence.bindSessionOwnedWork(owner));
+    await persistence.cleanup();
+
+    const cleaned = createManagedBrokerPersistence({
+      apiUrl: "https://api.example.test",
+      runEventToken: "run-event-token",
+      run,
+      modelId: "model",
+      resolveProvider: () => "provider",
+      fetch: successfulFetch([]),
+    });
+    await cleaned.cleanup();
+    assertThrows(() => cleaned.bindSessionOwnedWork(owner));
+  });
+
   it("persists output, audit, parent events, checkpoints, and terminal completion", async () => {
     const calls: Record<string, unknown>[] = [];
     const fetch = successfulFetch(calls);
     await withMockFetch(
       () => Promise.reject(new Error("external fetch must not be used")),
       async () => {
-        const persistence = createManagedBrokerPersistence({
+        const persistence = bindForTest(createManagedBrokerPersistence({
           apiUrl: "https://api.example.test",
           runEventToken: "run-event-token",
           run,
           modelId: "veryfront-cloud/openai/synthetic",
           resolveProvider: () => "openai",
           fetch,
-        });
+        }));
         await persistence.output.write({ type: "text-delta", id: "message", delta: "hello" });
         await persistence.modelRunEventSink({
           type: "AGENT_RUN_MODEL_CALL_CONTEXT",
@@ -128,14 +195,14 @@ describe("managed broker persistence", () => {
       return await fallback(input, init);
     };
     await withMockFetch(fetch, async () => {
-      const persistence = createManagedBrokerPersistence({
+      const persistence = bindForTest(createManagedBrokerPersistence({
         apiUrl: "https://api.example.test",
         runEventToken: "run-event-token",
         run,
         modelId: "model",
         resolveProvider: () => "provider",
         fetch,
-      });
+      }));
       const write = persistence.output.write({
         type: "text-delta",
         id: "message",
@@ -178,14 +245,14 @@ describe("managed broker persistence", () => {
       return await fallback(input, init);
     };
     await withMockFetch(fetch, async () => {
-      const persistence = createManagedBrokerPersistence({
+      const persistence = bindForTest(createManagedBrokerPersistence({
         apiUrl: "https://api.example.test",
         runEventToken: "run-event-token",
         run,
         modelId: "model",
         resolveProvider: () => "provider",
         fetch,
-      });
+      }));
       const write = persistence.output.write({
         type: "text-delta",
         id: "message",
@@ -226,6 +293,13 @@ describe("managed broker persistence", () => {
       resolveProvider: () => "provider",
       fetch,
     });
+    let ownedWorkTail = Promise.resolve();
+    persistence.bindSessionOwnedWork((operation) => {
+      const result = operation();
+      const settled = result.then(() => undefined, () => undefined);
+      ownedWorkTail = Promise.all([ownedWorkTail, settled]).then(() => undefined);
+      return result;
+    });
     const audit = persistence.modelRunEventSink({
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
       messages: [],
@@ -249,9 +323,12 @@ describe("managed broker persistence", () => {
     );
     assertEquals(calls.at(-1)?.status, "failed");
 
+    let ownedWorkSettled = false;
+    void ownedWorkTail.then(() => ownedWorkSettled = true);
     let cleanupSettled = false;
     const cleanup = persistence.cleanup().then(() => cleanupSettled = true);
     for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    assertEquals(ownedWorkSettled, false);
     assertEquals(cleanupSettled, false);
 
     appendRelease.resolve(Response.json({
@@ -265,6 +342,8 @@ describe("managed broker persistence", () => {
         latest_external_event_sequence: 1,
       },
     }));
+    await ownedWorkTail;
+    assertEquals(ownedWorkSettled, true);
     await cleanup;
     assertEquals(cleanupSettled, true);
   });
@@ -273,14 +352,14 @@ describe("managed broker persistence", () => {
     const calls: Record<string, unknown>[] = [];
     const fetch = successfulFetch(calls);
     await withMockFetch(fetch, async () => {
-      const persistence = createManagedBrokerPersistence({
+      const persistence = bindForTest(createManagedBrokerPersistence({
         apiUrl: "https://api.example.test",
         runEventToken: "run-event-token",
         run,
         modelId: "model",
         resolveProvider: () => "provider",
         fetch,
-      });
+      }));
       await persistence.output.finish({
         completed: false,
         error: new Error("synthetic execution failure"),

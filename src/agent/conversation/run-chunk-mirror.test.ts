@@ -434,6 +434,42 @@ describe("agent/conversation-run-chunk-mirror", () => {
     }
   });
 
+  it("forwards hosted queue flush ownership before an automatic append request", async () => {
+    const calls: string[] = [];
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run-1",
+      latestEventId: 0,
+      batchSize: 1,
+      runQueueFlush: async (operation) => {
+        calls.push("owner");
+        return await operation();
+      },
+      fetch: () => {
+        calls.push("fetch");
+        return Promise.resolve(Response.json({
+          latest_event_id: 1,
+          latest_external_event_sequence: 1,
+          appended_count: 1,
+          run: {
+            run_id: "run-1",
+            conversation_id: "11111111-1111-4111-8111-111111111111",
+            latest_event_id: 1,
+            latest_external_event_sequence: 1,
+          },
+        }));
+      },
+    });
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "owned" }]);
+    await mirror.flush();
+
+    assertEquals(calls, ["owner", "fetch"]);
+    mirror.dispose();
+  });
+
   // VERYFRONT-AGENT-3: every retry_scheduled flush logged at error level, so a
   // degraded append endpoint emitted a Sentry error per ~5s retry per run. The
   // per-attempt log must stay at warn and escalate to error only once the

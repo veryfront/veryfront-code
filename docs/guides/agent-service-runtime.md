@@ -448,6 +448,12 @@ model and tool execution unavailable during preparation. Configure detached
 Detached runs require output persistence callbacks; their finalization remains
 part of the session's owned work until all writes settle.
 
+Canonical runs must pass the persistence adapter's `bindSessionOwnedWork`
+callback in `ManagedExecutorStartInput`. The broker binds it after reserving a
+session and before installation or preparation. Scheduled, retry, and explicit
+event-queue writes use that session owner. A persistence timeout can return
+promptly while pool capacity stays reserved until the original write settles.
+
 `startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
 and cancel/resume handlers to a Node server. Supply every handler, the broker
 pool, and a readiness check explicitly. It preserves `/liveness` and

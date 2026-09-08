@@ -57,6 +57,9 @@ export interface ConversationRunMirrorHighBacklogState {
   threshold: number;
 }
 
+/** Own one underlying queue flush for its complete asynchronous lifetime. */
+export type ConversationRunQueueFlush = <T>(operation: () => Promise<T>) => Promise<T>;
+
 /** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
   enqueue(events: unknown[]): void;
@@ -101,6 +104,7 @@ export function createConversationRunMirror(input: {
   onHighBacklog?: (state: ConversationRunMirrorHighBacklogState) => Promise<void> | void;
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
+  runQueueFlush?: ConversationRunQueueFlush;
 }): ConversationRunMirror {
   const flushDelayMs = input.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS;
   const getRetryDelayMs = input.getRetryDelayMs ?? getDefaultRetryDelayMs;
@@ -209,9 +213,11 @@ export function createConversationRunMirror(input: {
 
   async function runFlushLoop(abortSignal?: AbortSignal): Promise<void> {
     emitHighBacklogIfNeeded();
-    const flushed = await input.queueController.flush({
-      abortSignal: abortSignal ?? lifecycleAbortController.signal,
-    });
+    const flush = () =>
+      input.queueController.flush({
+        abortSignal: abortSignal ?? lifecycleAbortController.signal,
+      });
+    const flushed = await (input.runQueueFlush ? input.runQueueFlush(flush) : flush());
     escapedFlushFailures = 0;
     escapedFlushError = null;
 

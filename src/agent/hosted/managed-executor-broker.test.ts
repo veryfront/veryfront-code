@@ -14,6 +14,8 @@ import {
 import { getExecutorRuntimePrepareResultSchema } from "./executor-runtime-prepare-schema.ts";
 import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
 import { executorStateOperations } from "./executor-state-schema.ts";
+import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
+import { FakeTime } from "#std/testing/time";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "project-test" };
@@ -44,6 +46,8 @@ function fixture(
     prepareModelId?: string;
     brokerReadWait?: boolean;
     initialCheckpoint?: boolean;
+    allocationLifetimeMs?: number;
+    hardDeadlineMs?: number;
   } = {},
 ) {
   const now = Date.now();
@@ -54,7 +58,7 @@ function fixture(
     source,
     requestedAt: now,
     prepareDeadlineAt: now + 10_000,
-    hardDeadlineAt: now + 60_000,
+    hardDeadlineAt: now + (options.hardDeadlineMs ?? 60_000),
   };
   const calls: string[] = [];
   let peer: ReturnType<typeof createExecutorChannel> | undefined;
@@ -98,7 +102,7 @@ function fixture(
         brokerInstanceId: "broker-test",
       },
       phase,
-      expiresAt: now + 30_000,
+      expiresAt: now + (options.allocationLifetimeMs ?? 30_000),
       ...(reason ? { reason } : {}),
       ...(phase === "ready"
         ? {
@@ -287,6 +291,31 @@ function fixture(
   };
 }
 
+function configureCanonical(
+  input: ManagedExecutorStartInput,
+  runEventSink: NonNullable<ManagedExecutorStartInput["model"]["runEventSink"]>,
+  bindSessionOwnedWork?: ManagedExecutorStartInput["bindSessionOwnedWork"],
+): void {
+  input.installation.grant.execution = {
+    kind: "canonical",
+    projectId: null,
+    conversationId: "conversation-1",
+    runId: "run-1",
+    messageId: "message-1",
+    providerReplay: "disabled",
+  };
+  input.installation.capabilities.persistence = {
+    publishParentRunEvents: "parent-events",
+    toolExposureCheckpoint: "tool-checkpoint",
+  };
+  input.persistence = {
+    publishParentRunEvents: () => Promise.resolve(),
+    persistToolExposureCheckpoint: () => Promise.resolve(),
+  };
+  input.model.runEventSink = runEventSink;
+  if (bindSessionOwnedWork) input.bindSessionOwnedWork = bindSessionOwnedWork;
+}
+
 describe("managed executor broker", () => {
   it("installs, discovers, prepares, accepts, and begins execution in exact order", async () => {
     const f = fixture({ initialCheckpoint: true });
@@ -350,6 +379,32 @@ describe("managed executor broker", () => {
     await assertRejects(() => ephemeralBroker.start(ephemeral.input));
     assertEquals(ephemeral.calls, []);
     await ephemeralBroker.shutdown();
+  });
+
+  it("requires canonical session-work binding before allocation", async () => {
+    const f = fixture();
+    configureCanonical(f.input, () => Promise.resolve());
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+
+    await assertRejects(() => broker.start(f.input));
+    assertEquals(f.calls, []);
+    assertEquals(broker.active, 0);
+    await broker.shutdown();
+  });
+
+  it("binds canonical persistence ownership immediately after pool admission", async () => {
+    const f = fixture();
+    configureCanonical(f.input, () => Promise.resolve(), (owner) => {
+      f.calls.push("bind-owned-work");
+      assertEquals(typeof owner, "function");
+    });
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    const runtime = await broker.start(f.input);
+
+    assertEquals(f.calls.slice(0, 3), ["allocate", "bind-owned-work", "connect"]);
+    await runtime.close();
+    await runtime.settled;
+    await broker.shutdown();
   });
 
   it("closes and releases a session when remote preparation fails", async () => {
@@ -435,6 +490,7 @@ describe("managed executor broker", () => {
       entered.resolve();
       await release.promise;
     };
+    f.input.bindSessionOwnedWork = () => {};
     const broker = createManagedExecutorBroker({ maxActive: 1 });
     const runtime = await broker.start(f.input);
     runtime.accept({ kind: "execution" });
@@ -455,6 +511,124 @@ describe("managed executor broker", () => {
     await runtime.settled;
     assertEquals(broker.active, 0);
     await f.peer?.closed;
+    await broker.shutdown();
+  });
+
+  it("retains max-active admission for the original canonical append after its deadline", async () => {
+    using time = new FakeTime();
+    const f = fixture({ allocationLifetimeMs: 90_000, hardDeadlineMs: 120_000 });
+    const conversationId = "00000000-0000-4000-8000-000000000001";
+    const messageId = "00000000-0000-4000-8000-000000000002";
+    const appendEntered = Promise.withResolvers<void>();
+    const appendRelease = Promise.withResolvers<Response>();
+    const terminalCalls: Record<string, unknown>[] = [];
+    let delayAuditAppend = true;
+    const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      if (delayAuditAppend && Array.isArray(body.events)) {
+        delayAuditAppend = false;
+        appendEntered.resolve();
+        return await appendRelease.promise;
+      }
+      terminalCalls.push(body);
+      return Response.json({
+        completed: true,
+        run: { runId: "run-1", status: body.status },
+      });
+    };
+    const persistence = createManagedBrokerPersistence({
+      apiUrl: "https://api.example.test",
+      runEventToken: "run-event-token",
+      run: {
+        runId: "run-1",
+        conversationId,
+        messageId,
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+        waitingToolCallId: null,
+        waitingToolName: null,
+        status: "running",
+        streamProtocolVersion: 2,
+      },
+      modelId,
+      resolveProvider: () => "provider",
+      fetch,
+    });
+    configureCanonical(
+      f.input,
+      persistence.modelRunEventSink,
+      persistence.bindSessionOwnedWork,
+    );
+    f.input.installation.grant.execution = {
+      kind: "canonical",
+      projectId: null,
+      conversationId,
+      runId: "run-1",
+      messageId,
+      providerReplay: "disabled",
+    };
+    f.input.persistence = {
+      publishParentRunEvents: persistence.publishParentRunEvents,
+      persistToolExposureCheckpoint: persistence.persistToolExposureCheckpoint,
+    };
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    const runtime = await broker.start(f.input);
+    runtime.accept({ kind: "execution" });
+    const opening = runtime.agent.stream({
+      messages: [],
+      abortSignal: new AbortController().signal,
+    });
+    await appendEntered.promise;
+
+    await time.tickAsync(30_000);
+    const openingResult = await Promise.allSettled([opening]);
+    const streamError = openingResult[0]?.status === "rejected"
+      ? openingResult[0].reason
+      : undefined;
+    assert(streamError instanceof Error);
+
+    const finishResult = await Promise.allSettled([
+      runtime.runOwned(() => persistence.output.finish({ completed: false, error: streamError })),
+    ]);
+    assertEquals(finishResult[0]?.status, "rejected");
+    assertEquals(
+      finishResult[0]?.status === "rejected" && finishResult[0].reason instanceof Error
+        ? finishResult[0].reason.message
+        : undefined,
+      "Durable run event persistence timed out",
+    );
+    assertEquals(terminalCalls.length, 1);
+    assertEquals(terminalCalls.at(-1)?.status, "failed");
+
+    const closing = runtime.close();
+    await time.tickAsync(50);
+    await closing;
+    let settled = false;
+    void runtime.settled.then(() => settled = true);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    assertEquals(settled, false);
+    assertEquals(broker.active, 1);
+
+    const second = fixture();
+    await assertRejects(() => broker.start(second.input));
+    appendRelease.resolve(Response.json({
+      latest_event_id: 1,
+      latest_external_event_sequence: 1,
+      appended_count: 1,
+      run: {
+        run_id: "run-1",
+        conversation_id: conversationId,
+        latest_event_id: 1,
+        latest_external_event_sequence: 1,
+      },
+    }));
+    await runtime.settled;
+    await persistence.cleanup();
+    assertEquals(broker.active, 0);
+
+    const nextRuntime = await broker.start(second.input);
+    await nextRuntime.close();
+    await nextRuntime.settled;
     await broker.shutdown();
   });
 

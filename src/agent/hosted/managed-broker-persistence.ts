@@ -23,7 +23,7 @@ import {
 } from "../runtime/provider-replay.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
-import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { HostedExecutorOwnedWork } from "./executor-session.ts";
 
 /** Acknowledging output writes and terminal finalization for a canonical run. */
 export interface ManagedBrokerOutput {
@@ -48,6 +48,19 @@ export function createManagedBrokerPersistence(input: {
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
     throw new TypeError("Managed broker persistence requires an active run");
   }
+  let sessionOwnedWork: HostedExecutorOwnedWork | undefined;
+  let retainedPersistenceTail = Promise.resolve();
+  let cleaned = false;
+  const runQueueFlush = <T>(operation: () => Promise<T>): Promise<T> => {
+    const owner = sessionOwnedWork;
+    if (!owner) {
+      return Promise.reject(new TypeError("Managed broker persistence is not session-bound"));
+    }
+    const owned = owner(operation);
+    const settled = owned.then(() => undefined, () => undefined);
+    retainedPersistenceTail = Promise.all([retainedPersistenceTail, settled]).then(() => undefined);
+    return owned;
+  };
   const capability = createHostedRunEventWriterCapability({
     apiUrl: input.apiUrl,
     runId: run.runId,
@@ -59,6 +72,7 @@ export function createManagedBrokerPersistence(input: {
     conversationId: run.conversationId,
     latestEventId: run.latestEventId,
     latestExternalEventSequence: run.latestExternalEventSequence,
+    runQueueFlush,
   });
   if (!mirror) throw new TypeError("Managed broker run-event capability is not bound");
   const durableMirror = mirror;
@@ -70,32 +84,20 @@ export function createManagedBrokerPersistence(input: {
     resolveProvider: input.resolveProvider,
     fetch: input.fetch,
   });
-  let retainedPersistenceTail = Promise.resolve();
-  const retainOriginalPersistence = <T>(operation: Promise<T>): Promise<T> => {
-    const settled = operation.then(() => undefined, () => undefined);
-    retainedPersistenceTail = Promise.all([retainedPersistenceTail, settled]).then(() => undefined);
-    return operation;
-  };
-  const durableSinkMirror: ConversationRunChunkMirror = {
-    ...(durableMirror.timing ? { timing: durableMirror.timing } : {}),
-    handleChunk: (chunk) => durableMirror.handleChunk(chunk),
-    appendEvents: (events) => durableMirror.appendEvents(events),
-    flush: (options) => retainOriginalPersistence(durableMirror.flush(options)),
-    getSnapshot: () => durableMirror.getSnapshot(),
-    dispose: () => durableMirror.dispose(),
-  };
-  const durableSink = createDurableRunEventSink({ mirror: durableSinkMirror });
+  const durableSink = createDurableRunEventSink({ mirror: durableMirror });
   let tail = Promise.resolve();
   let failure: unknown;
   let failed = false;
   let finished = false;
-  let cleaned = false;
 
   const queue = <T>(
     operation: (priorFailure: { failed: boolean; error: unknown }) => Promise<T>,
     terminal = false,
   ): Promise<T> => {
     if (cleaned) return Promise.reject(new TypeError("Managed broker persistence is closed"));
+    if (!sessionOwnedWork) {
+      return Promise.reject(new TypeError("Managed broker persistence is not session-bound"));
+    }
     if (finished && !terminal) {
       return Promise.reject(new TypeError("Managed broker persistence is finished"));
     }
@@ -139,6 +141,9 @@ export function createManagedBrokerPersistence(input: {
     },
     finish(result) {
       if (finished) return Promise.reject(new TypeError("Managed broker output is finished"));
+      if (!sessionOwnedWork) {
+        return Promise.reject(new TypeError("Managed broker persistence is not session-bound"));
+      }
       if (result.completed && result.error !== undefined) {
         return Promise.reject(new TypeError("Completed managed output cannot carry an error"));
       }
@@ -193,7 +198,18 @@ export function createManagedBrokerPersistence(input: {
     await retainedPersistenceTail;
     durableMirror.dispose();
   }
+  function bindSessionOwnedWork(owner: HostedExecutorOwnedWork): void {
+    if (typeof owner !== "function") {
+      throw new TypeError("Managed broker persistence owner must be a function");
+    }
+    if (cleaned) throw new TypeError("Managed broker persistence is closed");
+    if (sessionOwnedWork) {
+      throw new TypeError("Managed broker persistence is already session-bound");
+    }
+    sessionOwnedWork = owner;
+  }
   return {
+    bindSessionOwnedWork,
     modelRunEventSink,
     publishParentRunEvents: persistEvents,
     persistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) =>

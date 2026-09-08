@@ -200,6 +200,100 @@ describe("agent/conversation-run-mirror", () => {
     assertEquals(mirror.getSnapshot().pendingEventCount, 0);
   });
 
+  it("runs immediate, retry, and explicit queue flushes inside the owner hook", async () => {
+    using time = new FakeTime();
+    const calls: string[] = [];
+    let flushCalls = 0;
+    const controller = createMockQueueController({
+      flushImpl: async () => {
+        calls.push("controller");
+        flushCalls += 1;
+        if (flushCalls === 1) {
+          return {
+            outcome: "retry_scheduled" as const,
+            latestEventId: 0,
+            latestExternalEventSequence: 0,
+            pendingEventCount: 1,
+            consecutiveFailures: 1,
+            disabled: false,
+            errorMessage: "retry",
+          };
+        }
+        return {
+          outcome: "flushed" as const,
+          latestEventId: flushCalls,
+          latestExternalEventSequence: flushCalls,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+    });
+    const mirror = createConversationRunMirror({
+      queueController: controller,
+      immediateFlushEventCount: 1,
+      getRetryDelayMs: () => 25,
+      runQueueFlush: async (operation) => {
+        calls.push("owner");
+        return await operation();
+      },
+    });
+
+    mirror.enqueue([{ id: "immediate" }]);
+    await time.tickAsync(0);
+    await time.tickAsync(25);
+    mirror.enqueue([{ id: "explicit" }]);
+    await mirror.flush();
+
+    assertEquals(calls, [
+      "owner",
+      "controller",
+      "owner",
+      "controller",
+      "owner",
+      "controller",
+    ]);
+    mirror.dispose();
+  });
+
+  it("does not enter a delayed queue flush after its owner closes", async () => {
+    using time = new FakeTime();
+    let active = true;
+    let ownerCalls = 0;
+    let controllerCalls = 0;
+    const controller = createMockQueueController({
+      flushImpl: async () => {
+        controllerCalls += 1;
+        return {
+          outcome: "flushed" as const,
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+    });
+    const mirror = createConversationRunMirror({
+      queueController: controller,
+      immediateFlushEventCount: 2,
+      flushDelayMs: 50,
+      runQueueFlush: async (operation) => {
+        ownerCalls += 1;
+        if (!active) throw new Error("owner closed");
+        return await operation();
+      },
+    });
+
+    mirror.enqueue([{ id: "delayed" }]);
+    active = false;
+    await time.tickAsync(50);
+
+    assertEquals(ownerCalls, 1);
+    assertEquals(controllerCalls, 0);
+    mirror.dispose();
+  });
+
   it("rejects an explicit flush when a controller failure escaped the queue", async () => {
     const controller = createMockQueueController({
       pendingEvents: [],

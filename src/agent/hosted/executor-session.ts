@@ -82,6 +82,9 @@ export interface HostedExecutorSessionCloseResult {
   release: "not-allocated" | "released" | "reaper-required";
 }
 
+/** Retain broker-local asynchronous work through complete session settlement. */
+export type HostedExecutorOwnedWork = <T>(operation: () => Promise<T>) => Promise<T>;
+
 export interface HostedExecutorSession {
   /** TLS and invocation-channel readiness, before remote runtime preparation/acceptance. */
   readonly ready: Promise<ExecutorChannel>;
