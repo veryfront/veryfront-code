@@ -21,7 +21,7 @@ import {
   prepareConfigDerivedHostedChatRuntimeToolAssembly,
   prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
-} from "./chat-runtime-tool-assembly.ts";
+} from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 
 it("facaded assembly preserves project tool normalization and mutation callbacks without private transport config", async () => {
   const calls: Array<Record<string, unknown>> = [];

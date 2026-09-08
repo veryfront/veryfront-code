@@ -26,7 +26,7 @@ import {
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
   type HostedProjectRemoteToolSourceRetryPolicy,
-} from "./project-remote-tool-source.ts";
+} from "#veryfront/agent/hosted/project-remote-tool-source.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
