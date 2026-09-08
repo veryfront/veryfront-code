@@ -61,6 +61,7 @@ const logger = baseLogger.component("api");
 const DEFAULT_PAGE_LIMIT = 100;
 const MAX_DEPENDENCY_METADATA_HISTORY_RESPONSE_BYTES = 1024 * 1024;
 const IntrinsicArrayIsArray = Array.isArray;
+const IntrinsicJSONParse = JSON.parse;
 const IntrinsicObjectCreate = Object.create;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectFreeze = Object.freeze;
@@ -85,7 +86,10 @@ function parseDependencyMetadataMap(raw: unknown): Readonly<Record<string, strin
   }
 
   const result = IntrinsicObjectCreate(null) as Record<string, string>;
-  for (const key of IntrinsicReflectOwnKeys(raw)) {
+  const keys = IntrinsicReflectOwnKeys(raw);
+  let index = 0;
+  while (index < keys.length) {
+    const key = keys[index++];
     if (typeof key !== "string") {
       throw API_CLIENT_ERROR.create({
         detail: "Veryfront API dependency metadata history contains an invalid dependency name",
@@ -380,27 +384,48 @@ export class VeryfrontAPIOperations {
       query ? `?${query}` : ""
     }`;
     const raw = await this.request(endpoint, {
+      returnText: true,
       maxResponseBytes: MAX_DEPENDENCY_METADATA_HISTORY_RESPONSE_BYTES,
       includeErrorBodyInDiagnostics: false,
       signal,
     });
-    const response = getDependencyMetadataHistoryResponseSchema().parse(raw);
+    let decoded: unknown;
+    try {
+      if (typeof raw !== "string") throw new TypeError("Expected JSON text");
+      decoded = IntrinsicJSONParse(raw);
+    } catch {
+      throw API_CLIENT_ERROR.create({
+        detail: "Veryfront API dependency metadata history contains invalid JSON",
+        status: 502,
+      });
+    }
+    const response = getDependencyMetadataHistoryResponseSchema().parse(decoded);
     if (response.project_id !== expectedProjectId || response.branch !== branch) {
       throw API_CLIENT_ERROR.create({
         detail: "Veryfront API dependency metadata history identity mismatch",
         status: 502,
       });
     }
+    // Authenticated entries must not cross mutable Array map/iterator hooks.
+    // Defining indexes also avoids inherited numeric setters on the output.
+    const entries: Array<DependencyMetadataHistory["entries"][number]> = [];
+    for (let index = 0; index < response.entries.length; index++) {
+      const entry = response.entries[index]!;
+      IntrinsicObjectDefineProperty(entries, `${index}`, {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: IntrinsicObjectFreeze({
+          dependencies: parseDependencyMetadataMap(entry.dependencies),
+          expiresAt: entry.expires_at,
+        }),
+      });
+    }
     return IntrinsicObjectFreeze({
       version: 1,
       projectId: response.project_id,
       branch: response.branch,
-      entries: IntrinsicObjectFreeze(response.entries.map((entry) =>
-        IntrinsicObjectFreeze({
-          dependencies: parseDependencyMetadataMap(entry.dependencies),
-          expiresAt: entry.expires_at,
-        })
-      )),
+      entries: IntrinsicObjectFreeze(entries),
     });
   }
 

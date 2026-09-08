@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -112,6 +113,89 @@ describe("dependency metadata history API", () => {
       "constructor-version",
     );
     assertEquals(Object.getOwnPropertyDescriptor(dependencies, "toJSON")?.value, "json-version");
+  });
+
+  for (const method of ["map", Symbol.iterator] as const) {
+    it(`does not expose authenticated metadata to a replaced Array ${String(method)}`, async () => {
+      const marker = "private-history-package";
+      const prepared = Response.json({
+        ...response(),
+        entries: [{ dependencies: { [marker]: "1.0.0" }, expires_at: 1_800_000_000_000 }],
+      });
+      installMockFetch(() => Promise.resolve(prepared));
+      const ops = createOps();
+      const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, method);
+      assertExists(descriptor);
+      const apply = Reflect.apply;
+      const some = Array.prototype.some;
+      const getOwn = Object.getOwnPropertyDescriptor;
+      const define = Object.defineProperty;
+      let exposed = false;
+      const hasMarker = (value: unknown): boolean => {
+        if (value === marker) return true;
+        if (value === null || typeof value !== "object") return false;
+        const dependencies = getOwn(value, "dependencies")?.value;
+        return dependencies !== null && typeof dependencies === "object" &&
+          getOwn(dependencies, marker)?.value === "1.0.0";
+      };
+      define(Array.prototype, method, {
+        ...descriptor,
+        value: function (this: readonly unknown[], ...args: unknown[]) {
+          if (apply(some, this, [hasMarker])) exposed = true;
+          return apply(descriptor.value, this, args);
+        },
+      });
+      let history: Awaited<ReturnType<typeof ops.readDependencyMetadataHistory>>;
+      try {
+        history = await ops.readDependencyMetadataHistory("project-slug", PROJECT_ID, null);
+      } finally {
+        define(Array.prototype, method, descriptor);
+      }
+      assertEquals(exposed, false);
+      assertEquals(history.entries[0]?.dependencies[marker], "1.0.0");
+    });
+  }
+
+  it("parses authenticated history without calling a replaced JSON parser", async () => {
+    const marker = "private-history-package";
+    const prepared = Response.json({
+      ...response(),
+      entries: [{ dependencies: { [marker]: "1.0.0" }, expires_at: 1_800_000_000_000 }],
+    });
+    installMockFetch(() => Promise.resolve(prepared));
+    const ops = createOps();
+    const descriptor = Object.getOwnPropertyDescriptor(JSON, "parse");
+    assertExists(descriptor);
+    const apply = Reflect.apply;
+    const define = Object.defineProperty;
+    let exposed = false;
+    define(JSON, "parse", {
+      ...descriptor,
+      value: function (...args: unknown[]) {
+        if (typeof args[0] === "string" && args[0].includes(marker)) exposed = true;
+        return apply(descriptor.value, JSON, args);
+      },
+    });
+    let history: Awaited<ReturnType<typeof ops.readDependencyMetadataHistory>>;
+    try {
+      history = await ops.readDependencyMetadataHistory("project-slug", PROJECT_ID, null);
+    } finally {
+      define(JSON, "parse", descriptor);
+    }
+    assertEquals(exposed, false);
+    assertEquals(history.entries[0]?.dependencies[marker], "1.0.0");
+  });
+
+  it("does not attach malformed successful JSON content to diagnostics", async () => {
+    const marker = "private-history-content";
+    installMockFetch(() => Promise.resolve(new Response(marker)));
+    const error = await assertRejects(
+      () => createOps().readDependencyMetadataHistory("project-slug", PROJECT_ID, null),
+      Error,
+    );
+    assertInstanceOf(error, Error);
+    assertEquals(error.message.includes(marker), false);
+    assertEquals(error.cause, undefined);
   });
 
   it("cancels a stalled response body through the caller signal", async () => {
@@ -236,8 +320,9 @@ describe("dependency metadata history API", () => {
     const oversized = JSON.stringify({ ...response(), padding: "x".repeat(1024 * 1024) });
     installMockFetch(() => Promise.resolve(new Response(oversized)));
 
-    const error = await assertRejects(() =>
-      createOps().readDependencyMetadataHistory("project-slug", PROJECT_ID, null)
+    const error = await assertRejects(
+      () => createOps().readDependencyMetadataHistory("project-slug", PROJECT_ID, null),
+      Error,
     );
     assertStringIncludes(String(error), "exceeded");
   });
@@ -252,8 +337,9 @@ describe("dependency metadata history API", () => {
       )
     );
 
-    const error = await assertRejects(() =>
-      createOps().readDependencyMetadataHistory("project-slug", PROJECT_ID, null)
+    const error = await assertRejects(
+      () => createOps().readDependencyMetadataHistory("project-slug", PROJECT_ID, null),
+      Error,
     );
     assertStringIncludes(String(error), "403 Forbidden");
     assertEquals(String(error).includes("must-not-escape"), false);

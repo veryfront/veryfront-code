@@ -103,7 +103,7 @@ Before a dependency-resolution write changes `package.json`, the API acknowledge
 storage of its own observed prior dependency map, including an absent file as an
 empty map. Publication atomically bounds unexpired history to 16 maps and 960 KiB
 per project/branch. A full budget defers automatic writeback instead of dropping a
-retained map. The read endpoint returns that history within a 1 MiB response limit.
+retained map. The read endpoint returns that history with a response limit of 1 MiB.
 The project and canonical branch scope are derived by the API, with the requested
 branch retained in the response for matching.
 
