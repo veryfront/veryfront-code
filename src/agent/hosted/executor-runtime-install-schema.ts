@@ -7,11 +7,7 @@ import {
   getHostedExecutorSourceSchema,
 } from "./executor-session-schema.ts";
 import { getExecutorRuntimeGrantDataSchema } from "./executor-runtime-prepare-schema.ts";
-import {
-  getExecutorPersistenceCapabilityIdsSchema,
-  getExecutorProviderReplayCheckpointSchema,
-  getExecutorToolExposureCheckpointSchema,
-} from "./executor-persistence-schema.ts";
+import { getExecutorPersistenceCapabilityIdsSchema } from "./executor-persistence-schema.ts";
 import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
 
 function artifactShape(v: SchemaValidator) {
@@ -38,17 +34,7 @@ export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
       projectSteering: getExecutorDiscoveryIdSchema().optional(),
       conversationUserText: getExecutorDiscoveryIdSchema().optional(),
     }).strict(),
-    checkpointState: v.object({
-      toolExposure: getExecutorToolExposureCheckpointSchema().optional(),
-      providerReplay: v.array(getExecutorProviderReplayCheckpointSchema()).max(100).optional(),
-    }).strict().optional(),
-  }).strict().refine(({ grant, capabilities, checkpointState }) => {
-    if (checkpointState?.toolExposure && !capabilities.persistence.toolExposureCheckpoint) {
-      return false;
-    }
-    if (checkpointState?.providerReplay && !capabilities.persistence.providerReplayCheckpoint) {
-      return false;
-    }
+  }).strict().refine(({ grant, capabilities }) => {
     const execution = grant.execution;
     if (
       (execution.projectId !== null || grant.requiredCapabilities?.includes("project-steering")) &&

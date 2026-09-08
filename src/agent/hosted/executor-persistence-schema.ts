@@ -88,7 +88,7 @@ export const getExecutorProviderReplayCheckpointSchema = defineSchema((v) => {
     providerMessageBlockCounts: v.array(v.number().int().positive().max(MAX_PROVIDER_BLOCKS))
       .min(1).max(MAX_PROVIDER_BLOCKS).optional(),
     totalPartCount: v.number().int().positive().max(MAX_PROVIDER_PARTS),
-    elapsedMs: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    elapsedMs: v.number().nonnegative().refine(Number.isFinite).optional(),
     emittedAt: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict();
 });

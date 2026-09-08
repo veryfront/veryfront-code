@@ -1,11 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { createExecutorChannel } from "../executor/channel.ts";
 import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.ts";
 import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
+import { createExecutorPersistenceBroker } from "./executor-persistence-bridge.ts";
+import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 
 const binding = {
   allocationId: "facade-allocation",
@@ -33,12 +35,21 @@ function installation(): ExecutorRuntimeInstall {
     capabilities: { persistence: {} },
   };
 }
-function channels(sources = ["host", "remote"]) {
+function channels(
+  sources = ["host", "remote"],
+  persistenceOperations: ReadonlyMap<string, ExecutorOperation> = new Map(),
+) {
   const toBroker = new TransformStream<Uint8Array, Uint8Array>();
   const toExecutor = new TransformStream<Uint8Array, Uint8Array>();
   let executions = 0;
   let writes = 0;
   const operations = new Map<string, ExecutorOperation>([
+    ["persistence.initial-checkpoints", {
+      mode: "stream",
+      async *handle() {
+        yield { type: "complete" };
+      },
+    }],
     ["persistence.tool-exposure-checkpoint", {
       mode: "unary",
       handle(input) {
@@ -87,6 +98,7 @@ function channels(sources = ["host", "remote"]) {
       },
     }],
   ]);
+  for (const [name, operation] of persistenceOperations) operations.set(name, operation);
   const broker = createExecutorChannel({
     binding,
     operations,
@@ -173,6 +185,47 @@ it("revokes persistence facades on runtime cleanup without closing the shared ch
     });
     assertEquals(pair.writes, 1);
     assertEquals(pair.executor.signal.aborted, false);
+  } finally {
+    await pair.close();
+  }
+});
+
+it("restores a durable replay checkpoint larger than the installation envelope", async () => {
+  const checkpoint: ProviderReplayCheckpoint = {
+    version: 1,
+    messageId: "message-large",
+    provider: "anthropic",
+    providerBlocks: [{
+      type: "provider-block",
+      provider: "anthropic",
+      block: { type: "redacted_thinking", data: "x".repeat(70_000) },
+    }],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+    elapsedMs: 12.5,
+  };
+  const input = installation();
+  input.capabilities.persistence.providerReplayCheckpoint = "replay";
+  const pair = channels(
+    ["host", "remote"],
+    createExecutorPersistenceBroker({
+      expectedBinding: binding,
+      capabilityIds: input.capabilities.persistence,
+      persistProviderReplayCheckpoint: () => Promise.resolve(),
+      initialProviderReplayCheckpoints: [checkpoint],
+    }),
+  );
+  try {
+    const facades = await createExecutorRuntimeFacades({
+      input,
+      channel: pair.executor,
+      signal: pair.executor.signal,
+    });
+    assertEquals(facades.providerReplayCheckpoint?.initial?.[0]?.messageId, "message-large");
+    const data = facades.providerReplayCheckpoint?.initial?.[0]?.providerBlocks[0]?.block.data;
+    assert(typeof data === "string");
+    assertEquals(data.length, 70_000);
+    await facades.cleanup();
   } finally {
     await pair.close();
   }

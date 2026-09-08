@@ -7,6 +7,7 @@ import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.t
 import { createExecutorModelRuntimeResolver } from "./executor-model-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { createExecutorPersistenceFacades } from "./executor-persistence-bridge.ts";
+import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
 
 /** Executor-local capability views; cleanup revokes these views, never their shared channel. */
 export async function createExecutorRuntimeFacades(options: {
@@ -70,11 +71,14 @@ export async function createExecutorRuntimeFacades(options: {
       hostTools.set(source.id, tools);
     }
     const persistence = createExecutorPersistenceFacades({
+      ...await readExecutorInitialCheckpoints({
+        channel,
+        signal,
+        capabilityIds: input.capabilities.persistence,
+      }),
       channel,
       signal,
       capabilityIds: input.capabilities.persistence,
-      initialToolExposureCheckpoint: input.checkpointState?.toolExposure,
-      initialProviderReplayCheckpoints: input.checkpointState?.providerReplay,
     });
     const state = input.capabilities.projectSteering || input.capabilities.conversationUserText
       ? (await import("./executor-state-bridge.ts")).createExecutorStateFacades({

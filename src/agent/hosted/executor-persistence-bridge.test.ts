@@ -24,11 +24,12 @@ const capabilityIds = {
 };
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
+function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentCalls?: number) {
   const forward = new TransformStream<Uint8Array, Uint8Array>();
   const backward = new TransformStream<Uint8Array, Uint8Array>();
   const executor = createExecutorChannel({
     binding,
+    maxConcurrentCalls,
     transport: { readable: backward.readable, writable: forward.writable },
   });
   const broker = createExecutorChannel({
@@ -48,6 +49,76 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
 }
 
 describe("executor persistence bridge", () => {
+  it("keeps later writes usable after an unsent request hits channel admission", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const written: string[] = [];
+    const channels = pair(
+      createExecutorPersistenceBroker({
+        expectedBinding: binding,
+        capabilityIds: { publishParentRunEvents: "events" },
+        publishParentRunEvents: async (events) => {
+          written.push(events[0]!.type);
+          if (written.length === 1) {
+            entered.resolve();
+            await release.promise;
+          }
+        },
+      }),
+      1,
+    );
+    const facade = createExecutorPersistenceFacades({
+      channel: channels.executor,
+      capabilityIds: { publishParentRunEvents: "events" },
+    });
+    try {
+      const first = facade.publishParentRunEvents!([{ type: "FIRST" }]);
+      await entered.promise;
+      await assertRejects(() => facade.publishParentRunEvents!([{ type: "UNSENT" }]));
+      release.resolve();
+      await first;
+      await facade.publishParentRunEvents!([{ type: "THIRD" }]);
+      assertEquals(written, ["FIRST", "THIRD"]);
+    } finally {
+      release.resolve();
+      await channels.close();
+    }
+  });
+
+  it("persists canonical fractional checkpoint elapsed time", async () => {
+    let elapsed: number | undefined;
+    const channels = pair(
+      createExecutorPersistenceBroker({
+        expectedBinding: binding,
+        capabilityIds: { providerReplayCheckpoint: "replay" },
+        persistProviderReplayCheckpoint: async (checkpoint) => {
+          elapsed = checkpoint.elapsedMs;
+        },
+      }),
+    );
+    const facade = createExecutorPersistenceFacades({
+      channel: channels.executor,
+      capabilityIds: { providerReplayCheckpoint: "replay" },
+    });
+    try {
+      await facade.providerReplayCheckpoint!.persist({
+        version: 1,
+        messageId: "message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "redacted_thinking", data: "synthetic" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+        elapsedMs: 12.5,
+      });
+      assertEquals(elapsed, 12.5);
+    } finally {
+      await channels.close();
+    }
+  });
   it("acknowledges actual persistence in one invocation order", async () => {
     const persisted: string[] = [];
     const channels = pair(createExecutorPersistenceBroker({

@@ -50,12 +50,11 @@ trace hooks, or application-error reporters. The framework-owned
 `veryfront serve` runtime owns this setup on shared and managed dedicated
 servers.
 
-The service captures request accessors and routing primitives before project
-modules load. Routing and CORS checks use those captured operations so later
-changes to shared web prototypes cannot inspect the run-event or inference
-credentials on an incoming request. Import the framework service runtime before
-loading project modules. Custom host route handlers still receive the original
-request and remain responsible for authentication and credential handling.
+The standalone service shares a process with the Agent code it loads. Use it
+for trusted code. Captured request accessors protect specific ingress operations;
+they do not provide process isolation for request bodies or credentials.
+Custom host route handlers receive the original request and remain responsible
+for authentication and credential handling.
 Dispatch visits the host route table and matched path segments by index so a
 replaced array iterator cannot inject a handler before host authentication.
 CORS allowlist membership, response header writes, and route path parsing also
@@ -417,6 +416,28 @@ lists the complete properties for these contracts.
 A durable execution without authority bound to the expected run fails before
 provider dispatch. Token exchange failures are bounded, sanitized, and fail
 closed; callers must not retry by falling back to a user API token.
+
+## Managed executor startup
+
+`startExecutorRuntimeEntrypoint` is available from
+`veryfront/agent/executor-runtime`. It starts the executor side of a managed
+broker/executor deployment on Node.js 22 or newer. Your trusted image launcher
+registers the first-party schema validator, bundler, module lexer, and Skill
+document parser, then supplies the Operator allocation environment and image
+manifest. Missing runtime contracts fail startup.
+
+The executor accepts one authenticated `runtime.install` message bound to its
+allocation, invocation, generation, owner, and immutable source. Discovery and
+runtime preparation remain unavailable until installation succeeds. The
+installation carries runtime grants and capability IDs. Initial checkpoint
+state uses a separate bounded stream so durable replay state can exceed the
+installation message limit.
+
+The broker owns HTTP authentication, credentials, model and tool authorization,
+and durable persistence. Executor facades call these capabilities through the
+authenticated channel. Closing a runtime revokes its facades; admission remains
+held until the original work and cleanup settle. This entrypoint requires the
+broker and isolation infrastructure to be configured separately.
 
 ## Verify it worked
 

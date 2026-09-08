@@ -2,9 +2,11 @@ import type { ConversationRunEvent } from "#veryfront/agent/conversation/run-eve
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import {
-  parseProviderReplayCheckpoint,
-  parseServerResolvedProviderReplayCheckpoints,
-} from "#veryfront/agent/runtime/provider-replay.ts";
+  copyExecutorReplayCheckpoints,
+  createExecutorCheckpointStateOperations,
+  type ExecutorInitialCheckpointState,
+} from "./executor-checkpoint-state.ts";
+import { parseProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import type { ToolExposureCheckpoint } from "#veryfront/agent/runtime/tool-exposure.ts";
 import type { ExecutorBinding } from "../executor/protocol.ts";
 import { getExecutorBindingSchema } from "../executor/protocol.ts";
@@ -73,17 +75,19 @@ async function awaitPersistence(
  * Install trusted persistence handlers. Run identity and credentials remain in
  * the supplied closures and are absent from every strict channel DTO.
  */
-export function createExecutorPersistenceBroker(options: {
-  expectedBinding: ExecutorBinding;
-  capabilityIds: ExecutorPersistenceCapabilityIds;
-  publishParentRunEvents?: NonNullable<ExecutorPersistenceFacades["publishParentRunEvents"]>;
-  persistToolExposureCheckpoint?: NonNullable<
-    NonNullable<ExecutorPersistenceFacades["toolExposureCheckpoint"]>["persist"]
-  >;
-  persistProviderReplayCheckpoint?: NonNullable<
-    NonNullable<ExecutorPersistenceFacades["providerReplayCheckpoint"]>["persist"]
-  >;
-}): ReadonlyMap<string, ExecutorOperation> {
+export function createExecutorPersistenceBroker(
+  options: ExecutorInitialCheckpointState & {
+    expectedBinding: ExecutorBinding;
+    capabilityIds: ExecutorPersistenceCapabilityIds;
+    publishParentRunEvents?: NonNullable<ExecutorPersistenceFacades["publishParentRunEvents"]>;
+    persistToolExposureCheckpoint?: NonNullable<
+      NonNullable<ExecutorPersistenceFacades["toolExposureCheckpoint"]>["persist"]
+    >;
+    persistProviderReplayCheckpoint?: NonNullable<
+      NonNullable<ExecutorPersistenceFacades["providerReplayCheckpoint"]>["persist"]
+    >;
+  },
+): ReadonlyMap<string, ExecutorOperation> {
   const expectedBinding = Object.freeze(getExecutorBindingSchema().parse(options.expectedBinding));
   const capabilityIds = snapshotCapabilityIds(options.capabilityIds);
   const definitions = [
@@ -97,7 +101,7 @@ export function createExecutorPersistenceBroker(options: {
     }
   }
 
-  let expectedSequence = 1;
+  let lastAcceptedSequence = 0;
   let persistenceTail = Promise.resolve();
   const authorize = (
     capabilityId: string,
@@ -107,9 +111,11 @@ export function createExecutorPersistenceBroker(options: {
   ) => {
     if (
       !sameBinding(expectedBinding, context.binding) || capabilityId !== expectedCapabilityId ||
-      sequence !== expectedSequence
+      sequence <= lastAcceptedSequence
     ) throw new TypeError("Managed persistence operation is not authorized");
-    expectedSequence++;
+    // Unsent calls can consume a client sequence before channel admission.
+    // Gaps are safe; replays and out-of-order accepted writes are forbidden.
+    lastAcceptedSequence = sequence;
   };
   const persist = async (
     sequence: number,
@@ -121,7 +127,9 @@ export function createExecutorPersistenceBroker(options: {
     await awaitPersistence(persistence, context.signal);
     return executorPersistenceJson({ acknowledged: true, sequence });
   };
-  const operations = new Map<string, ExecutorOperation>();
+  const operations = new Map<string, ExecutorOperation>(
+    createExecutorCheckpointStateOperations({ ...options, expectedBinding, capabilityIds }),
+  );
   if (capabilityIds.publishParentRunEvents && options.publishParentRunEvents) {
     const capabilityId = capabilityIds.publishParentRunEvents;
     const publish = options.publishParentRunEvents;
@@ -199,9 +207,7 @@ export function createExecutorPersistenceFacades(options: {
     );
   const initialProviderReplayCheckpoints = options.initialProviderReplayCheckpoints === undefined
     ? undefined
-    : parseServerResolvedProviderReplayCheckpoints(
-      executorPersistenceJson(options.initialProviderReplayCheckpoints),
-    );
+    : copyExecutorReplayCheckpoints(options.initialProviderReplayCheckpoints);
   let sequence = 0;
   const request = async (
     operation: string,
