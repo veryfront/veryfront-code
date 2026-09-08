@@ -457,6 +457,7 @@ export async function load(url, context, nextLoad) {
       loader,
       format: "esm",
       sourcefile: filePath,
+      sourcemap: process.sourceMapsEnabled ? "inline" : false,
       jsx: "automatic",
       jsxImportSource: "react",
       target: "node20",

@@ -37,8 +37,10 @@ import type { RSCEndpointParams } from "./types.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   createErrorResponseFromDefinition,
+  DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { classifyBrowserModuleAbsoluteSourcePath } from "#veryfront/modules/server/browser-module-admission.ts";
 import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
@@ -160,20 +162,20 @@ export async function handleRSCEndpoint(
   }
 
   const url = new URL(req.url);
-  const dependencyPinningSource = providedDependencyPinningSource ??
-    createDependencyPinningSource({
-      projectDir,
-      adapter,
-      isLocalProject,
-      projectId,
-      projectSlug,
-      contentSourceId,
-      releaseId,
-      branch,
-      config,
-    });
-
   try {
+    const dependencyPinningSource = providedDependencyPinningSource ??
+      createDependencyPinningSource({
+        projectDir,
+        adapter,
+        isLocalProject,
+        projectId,
+        projectSlug,
+        contentSourceId,
+        releaseId,
+        branch,
+        config,
+      });
+
     // App-router client-page hydration imports browser-safe page modules from
     // this endpoint even when the broader RSC transport is not enabled.
     if (sub === "module") {
@@ -224,18 +226,18 @@ export async function handleRSCEndpoint(
     });
 
     if (sub.startsWith("render/")) {
-      return handler.handleRender(sub.replace("render/", ""), url.searchParams, req);
+      return await handler.handleRender(sub.replace("render/", ""), url.searchParams, req);
     }
     if (sub === "render") {
-      return handler.handleRender("/", url.searchParams, req);
+      return await handler.handleRender("/", url.searchParams, req);
     }
     if (sub.startsWith("page/")) {
       metrics.recordRSC("page");
-      return handler.handlePage(sub.replace("page/", ""), url.searchParams, nonce);
+      return await handler.handlePage(sub.replace("page/", ""), url.searchParams, nonce);
     }
     if (sub.startsWith("stream/")) {
       metrics.recordRSC("stream");
-      return handler.handleStream(sub.replace("stream/", ""), url.searchParams, req);
+      return await handler.handleStream(sub.replace("stream/", ""), url.searchParams, req);
     }
 
     if (sub === "probe") {
@@ -273,6 +275,9 @@ export async function handleRSCEndpoint(
           applicationIdentity,
         });
       } catch (e) {
+        if (snapshotVeryfrontError(e)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+          throw e;
+        }
         metrics.recordRSC("error");
         rscEndpointRouterLog.error("action request failed", {
           errorName: e instanceof Error ? e.name : "UnknownError",
@@ -288,28 +293,37 @@ export async function handleRSCEndpoint(
 
     if (sub === "manifest") {
       metrics.recordRSC("manifest");
-      return handler.handleManifest(
+      return await handler.handleManifest(
         req.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined,
       );
     }
 
     if (sub === "payload") {
       metrics.recordRSC("page");
-      return handlePayloadEndpoint({ handler, searchParams: url.searchParams, request: req });
+      return await handlePayloadEndpoint({ handler, searchParams: url.searchParams, request: req });
     }
 
     if (sub === "page") {
       metrics.recordRSC("page");
-      return handler.handlePage("/", url.searchParams, nonce);
+      return await handler.handlePage("/", url.searchParams, nonce);
     }
 
     if (sub === "stream") {
       metrics.recordRSC("stream");
-      return handleStreamEndpoint(url.searchParams, req);
+      return await handleStreamEndpoint(url.searchParams, req);
     }
 
     return null;
   } catch (e) {
+    if (snapshotVeryfrontError(e)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+      return new Response(
+        req.method === "HEAD" ? null : "Dependency snapshot storage is unavailable",
+        {
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+          headers: { "cache-control": "no-store", vary: RSC_DEPENDENCY_PINNING_HEADER },
+        },
+      );
+    }
     if (e instanceof Error && e.message === "Component not found") {
       serverLogger.debug(
         "[RSCEndpointRouter] component not found, deferring to legacy handler",
@@ -546,6 +560,9 @@ async function handleModuleEndpoint({
       },
     });
   } catch (error) {
+    if (snapshotVeryfrontError(error)?.slug === DEPENDENCY_SNAPSHOT_STORE_UNAVAILABLE.slug) {
+      throw error;
+    }
     if (error instanceof BrowserModuleDependencySnapshotError) {
       return new Response("Unknown dependency snapshot", {
         status: HttpStatus.CONFLICT,
