@@ -25,7 +25,7 @@ describe("agent service RequestInit defaults", () => {
       }],
     });
 
-    for (const field of ["method", "body", "headers"] as const) {
+    for (const field of ["method", "body", "headers", "dispatcher"] as const) {
       const original = Object.getOwnPropertyDescriptor(Object.prototype, field);
       let reads = 0;
       let writes = 0;

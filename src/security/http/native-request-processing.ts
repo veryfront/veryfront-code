@@ -10,6 +10,7 @@ export const RequestInitFields = Object.freeze(
     "cache",
     "client",
     "credentials",
+    "dispatcher",
     "duplex",
     "headers",
     "integrity",

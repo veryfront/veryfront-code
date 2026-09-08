@@ -43,72 +43,90 @@ function createRuntimeInvocationRequest(canary: string): Request {
   });
 }
 
-it("rejects changed native header iteration before copying runtime invocation credentials", async () => {
-  if (!isNode) return;
+for (const mutation of ["iterator", "dispatcher"] as const) {
+  it(`rejects changed native ${mutation} before copying runtime invocation credentials`, async () => {
+    if (!isNode) return;
 
-  const canary = "synthetic-runtime-invocation-canary";
-  const iteratorDescriptor = Object.getOwnPropertyDescriptor(
-    Headers.prototype,
-    Symbol.iterator,
-  )!;
-  const nativeIterator = iteratorDescriptor.value as (this: Headers) => Iterator<
-    [string, string]
-  >;
-  const apply = Reflect.apply;
-  let observations = 0;
-  let verificationCompleted = false;
-  let detachedDispatches = 0;
-  let response: Response | undefined;
-  let failure: unknown;
-  const routeSet = createHostedAgentServiceRouteSet({
-    runtimeSource,
-    tracker: createDetachedRunTracker<AgUiResumeValue>(),
-    authenticateRequest: async (): Promise<HostedServiceAuthenticatedRequest> => ({
-      authToken: "authenticated-user-token",
-      userId: "user-1",
-    }),
-    verifyProjectAccess: async () => ({ success: true }),
-    verifyRunEventAppendToken: async () => {
-      verificationCompleted = true;
-      Object.defineProperty(Headers.prototype, Symbol.iterator, {
-        ...iteratorDescriptor,
-        value: function (this: Headers) {
-          const iterator = apply(nativeIterator, this, []) as Iterator<[string, string]>;
-          return {
-            next() {
-              const result = iterator.next();
-              if (result.value?.[1] === canary) observations++;
-              return result;
+    const canary = "synthetic-runtime-invocation-canary";
+    const iteratorDescriptor = Object.getOwnPropertyDescriptor(
+      Headers.prototype,
+      Symbol.iterator,
+    )!;
+    const nativeIterator = iteratorDescriptor.value as (this: Headers) => Iterator<
+      [string, string]
+    >;
+    const apply = Reflect.apply;
+    const getHeader = Headers.prototype.get;
+    const dispatcherDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "dispatcher");
+    let observations = 0;
+    let verificationCompleted = false;
+    let detachedDispatches = 0;
+    let response: Response | undefined;
+    let failure: unknown;
+    const routeSet = createHostedAgentServiceRouteSet({
+      runtimeSource,
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      authenticateRequest: async (): Promise<HostedServiceAuthenticatedRequest> => ({
+        authToken: "authenticated-user-token",
+        userId: "user-1",
+      }),
+      verifyProjectAccess: async () => ({ success: true }),
+      verifyRunEventAppendToken: async () => {
+        verificationCompleted = true;
+        if (mutation === "dispatcher") {
+          Object.defineProperty(Object.prototype, "dispatcher", {
+            configurable: true,
+            get(this: RequestInit) {
+              if (
+                this.headers instanceof Headers &&
+                apply(getHeader, this.headers, ["X-Veryfront-Inference-Token"]) === canary
+              ) observations++;
+              return undefined;
             },
-            [Symbol.iterator]() {
-              return this;
+          });
+        } else {Object.defineProperty(Headers.prototype, Symbol.iterator, {
+            ...iteratorDescriptor,
+            value: function (this: Headers) {
+              const iterator = apply(nativeIterator, this, []) as Iterator<[string, string]>;
+              return {
+                next() {
+                  const result = iterator.next();
+                  if (result.value?.[1] === canary) observations++;
+                  return result;
+                },
+                [Symbol.iterator]() {
+                  return this;
+                },
+              };
             },
-          };
-        },
-      });
-      return true;
-    },
-    prepareExecution: async () => ({ executionId: "exec-1" }),
-    streamExecutionToAgUiResponse: () => new Response("streamed"),
-    startDetachedExecution: async () => {
-      detachedDispatches++;
-    },
-  });
-
-  try {
-    response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
-      request: createRuntimeInvocationRequest(canary),
-      runId: "run-1",
+          });}
+        return true;
+      },
+      prepareExecution: async () => ({ executionId: "exec-1" }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {
+        detachedDispatches++;
+      },
     });
-  } catch (error) {
-    failure = error;
-  } finally {
-    Object.defineProperty(Headers.prototype, Symbol.iterator, iteratorDescriptor);
-  }
 
-  assertEquals(verificationCompleted, true, "the mutation occurs after verification");
-  assertEquals(observations, 0, "the replaced iterator never observes the credential");
-  assertEquals(failure instanceof TypeError, true, "the compromised operation fails explicitly");
-  assertEquals(response, undefined, "the route never substitutes a success response");
-  assertEquals(detachedDispatches, 0, "the route never starts detached execution");
-});
+    try {
+      response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+        request: createRuntimeInvocationRequest(canary),
+        runId: "run-1",
+      });
+    } catch (error) {
+      failure = error;
+    } finally {
+      Object.defineProperty(Headers.prototype, Symbol.iterator, iteratorDescriptor);
+      if (dispatcherDescriptor) {
+        Object.defineProperty(Object.prototype, "dispatcher", dispatcherDescriptor);
+      } else Reflect.deleteProperty(Object.prototype, "dispatcher");
+    }
+
+    assertEquals(verificationCompleted, true, "the mutation occurs after verification");
+    assertEquals(observations, 0, "the modified native operation never observes the credential");
+    assertEquals(failure instanceof TypeError, true, "the compromised operation fails explicitly");
+    assertEquals(response, undefined, "the route never substitutes a success response");
+    assertEquals(detachedDispatches, 0, "the route never starts detached execution");
+  });
+}
