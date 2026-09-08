@@ -12,7 +12,6 @@ import { computeContentDigest, writeSyncTarget } from "../../sync/state.ts";
 import { deployCommand } from "./command.ts";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import type { DeploymentRoutingConvergence } from "../../shared/deployment/control-plane.ts";
-import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setVerboseMode } from "../../utils/index.ts";
 import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "veryfront/release-assets";
@@ -1229,8 +1228,6 @@ it("uses canonical production read-back in human and JSON modes", async () => {
 
     let releaseSourceContents: string[] | null = null;
     let releaseSourceReads = 0;
-    let releaseSourceReadGate: Promise<void> | null = null;
-    let notifyReleaseSourceRead: (() => void) | null = null;
     let routingConvergence: DeploymentRoutingConvergence = {
       status: "converged",
       acknowledged: 2,
@@ -1340,9 +1337,6 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
       ) {
         releaseSourceReads++;
-        notifyReleaseSourceRead?.();
-        notifyReleaseSourceRead = null;
-        if (releaseSourceReadGate) await releaseSourceReadGate;
         return Response.json({
           data: [{
             path: "pages/dashboard.tsx",
@@ -1522,47 +1516,13 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     environmentReads = 0;
     releaseSourceReads = 0;
 
-    const firstReleaseSourceRead = new Promise<void>((resolve) => {
-      notifyReleaseSourceRead = resolve;
-    });
-    let resumeReleaseSourceRead!: () => void;
-    releaseSourceReadGate = new Promise<void>((resolve) => {
-      resumeReleaseSourceRead = resolve;
-    });
-    const deployment = withMockFetch(handleRequest, runDeploy);
-    await firstReleaseSourceRead;
-    {
-      using time = new FakeTime();
-      const deploymentError = deployment.then(
-        () => undefined,
-        (error: unknown) => error,
-      );
-
-      resumeReleaseSourceRead();
-      await time.tickAsync(0);
-      for (
-        let tick = 0;
-        // The deploy flow now does more pre-mutation verification before this
-        // poll starts. Keep the read budget fixed at 20, but allow enough fake
-        // clock ticks for the async chain to issue all reads under load.
-        releaseSourceReads < 20 && tick < 60;
-        tick++
-      ) {
-        await time.tickAsync(500);
-      }
-      assertEquals(
-        releaseSourceReads,
-        20,
-        "release-source polling did not reach its fixed read budget",
-      );
-      const error = await deploymentError;
-      assertEquals(error instanceof Error, true);
-      assertEquals(
-        String(error).includes("does not match pushed commit"),
-        true,
-      );
-    }
-    releaseSourceReadGate = null;
+    // Await real polling so asynchronous source reads finish before cleanup.
+    // A fixed fake-clock tick budget can expire before all 20 reads complete.
+    await assertRejects(
+      () => withMockFetch(handleRequest, runDeploy),
+      Error,
+      "does not match pushed commit",
+    );
     assertEquals(environmentReads, 1);
     assertEquals(releaseSourceReads, 20);
     assertEquals(requests.slice(0, 5), [
