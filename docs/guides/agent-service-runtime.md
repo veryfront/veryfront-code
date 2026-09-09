@@ -484,3 +484,7 @@ A working service streams AG-UI events back. If Veryfront Cloud registration
 is enabled, the service should also appear in the cloud dashboard's agent
 service list after the first heartbeat
 (`VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS`).
+
+Broker model output limits and provider-tool descriptors must stay within the installed model grant.
+Each broker tool capability must also stay within the installed tool allowlist. Startup rejects broader
+broker authority before allocating an executor. Narrower broker limits remain valid.

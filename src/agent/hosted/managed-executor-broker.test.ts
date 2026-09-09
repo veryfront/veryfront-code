@@ -317,6 +317,83 @@ function configureCanonical(
 }
 
 describe("managed executor broker", () => {
+  for (const mismatch of ["output tokens", "provider tools", "tool allowlist"]) {
+    it(`rejects a broker ${mismatch} grant broader than its installation before allocation`, async () => {
+      const f = fixture();
+      if (mismatch === "output tokens") {
+        f.input.model.grant.models.get(modelId)!.maxOutputTokens = 101;
+      } else if (mismatch === "provider tools") {
+        f.input.model.grant.models.get(modelId)!.providerTools = [{
+          type: "provider",
+          name: "web_search",
+          id: "openai.web_search",
+          args: {},
+        }];
+      } else {
+        f.input.tools.sources = new Map([["synthetic", {
+          source: {
+            id: "synthetic",
+            listTools: () => Promise.resolve([]),
+            executeTool: () => Promise.resolve({ result: "unexpected" }),
+          },
+          allowedToolNames: new Set(["ungranted"]),
+          context: {},
+        }]]);
+      }
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        await assertRejects(
+          async () => {
+            runtime = await broker.start(f.input);
+          },
+          TypeError,
+          "exceeds the installed",
+        );
+        assertEquals(f.calls, []);
+        assertEquals(broker.active, 0);
+      } finally {
+        await runtime?.close();
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
+
+  it("accepts narrower model limits and matching provider and tool grants", async () => {
+    const f = fixture();
+    f.input.installation.grant.models[0]!.maxOutputTokens = 200;
+    f.input.installation.grant.models[0]!.providerToolNames = ["web_search"];
+    f.input.model.grant.models.get(modelId)!.providerTools = [{
+      type: "provider",
+      name: "web_search",
+      id: "openai.web_search",
+      args: {},
+    }];
+    f.input.installation.grant.allowedToolNames = ["inspect"];
+    f.input.tools.sources = new Map([["synthetic", {
+      source: {
+        id: "synthetic",
+        listTools: () => Promise.resolve([]),
+        executeTool: () => Promise.resolve({ result: "done" }),
+      },
+      allowedToolNames: new Set(["inspect"]),
+      context: {},
+    }]]);
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+    try {
+      runtime = await broker.start(f.input);
+      runtime.accept({ kind: "execution" });
+      await runtime.agent.stream({ messages: [], abortSignal: new AbortController().signal });
+      assertEquals(f.executionAllowed, true);
+    } finally {
+      await runtime?.close();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("installs, discovers, prepares, accepts, and begins execution in exact order", async () => {
     const f = fixture({ initialCheckpoint: true });
     const broker = createManagedExecutorBroker({ maxActive: 1 });

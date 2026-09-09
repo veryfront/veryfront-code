@@ -75,7 +75,11 @@ export interface ManagedExecutorRuntime {
   close(reason?: "completed" | "canceled"): Promise<HostedExecutorSessionCloseResult>;
 }
 
-/** Trusted per-invocation source, model, tool, persistence, and state authority. */
+/**
+ * Trusted per-invocation source, model, tool, persistence, and state authority.
+ * Broker model limits, provider tools, and tool capabilities must not exceed
+ * the corresponding installed grant. Startup rejects mismatches before allocation.
+ */
 export interface ManagedExecutorStartInput {
   /** Bind canonical persistence to the admitted session before readiness work starts. */
   bindSessionOwnedWork?: (owner: HostedExecutorOwnedWork) => void;
@@ -138,6 +142,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     ) throw new TypeError("Managed executor installation does not match its session");
     const allowedModelIds = new Set(installation.grant.models.map((model) => model.id));
     const operationInput = snapshotOperationInput(input);
+    assertInstalledOperationGrants(operationInput, installation);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
     if (
       installation.grant.execution.kind === "ephemeral" &&
@@ -283,6 +288,32 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     start,
     shutdown: pool.shutdown.bind(pool),
   };
+}
+
+function assertInstalledOperationGrants(
+  input: ManagedExecutorOperationInput,
+  installation: ExecutorRuntimeInstall,
+): void {
+  for (const installed of installation.grant.models) {
+    const policy = input.model.grant.models.get(installed.id);
+    // The model broker validates missing policies, IDs, and malformed limits.
+    if (!policy) continue;
+    if (policy.maxOutputTokens > installed.maxOutputTokens) {
+      throw new TypeError("Broker model output allowance exceeds the installed model grant");
+    }
+    const allowedProviderTools = new Set(installed.providerToolNames);
+    if (policy.providerTools.some((tool) => !allowedProviderTools.has(tool.name))) {
+      throw new TypeError("Broker provider tool policy exceeds the installed model grant");
+    }
+  }
+  const allowedTools = new Set(installation.grant.allowedToolNames);
+  for (const capability of input.tools.sources.values()) {
+    for (const name of capability.allowedToolNames) {
+      if (!allowedTools.has(name)) {
+        throw new TypeError("Broker tool capability exceeds the installed tool grant");
+      }
+    }
+  }
 }
 
 function buildBrokerOperations(
