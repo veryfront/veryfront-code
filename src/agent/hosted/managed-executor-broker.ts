@@ -143,7 +143,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     ) throw new TypeError("Managed executor installation does not match its session");
     const allowedModelIds = new Set(installation.grant.models.map((model) => model.id));
     const operationInput = snapshotOperationInput(input);
-    assertInstalledOperationGrants(operationInput, installation);
+    constrainInstalledOperationGrants(operationInput, installation);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
     if (
       installation.grant.execution.kind === "ephemeral" &&
@@ -291,7 +291,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
   };
 }
 
-function assertInstalledOperationGrants(
+function constrainInstalledOperationGrants(
   input: ManagedExecutorOperationInput,
   installation: ExecutorRuntimeInstall,
 ): void {
@@ -306,6 +306,9 @@ function assertInstalledOperationGrants(
     if (policy.providerTools.some((tool) => !allowedProviderTools.has(tool.name))) {
       throw new TypeError("Broker provider tool policy exceeds the installed model grant");
     }
+    // Preparation must produce requests that fit the broker's effective policy.
+    installed.maxOutputTokens = policy.maxOutputTokens;
+    installed.providerToolNames = policy.providerTools.map((tool) => tool.name);
   }
   const allowedTools = installedToolNames(installation);
   const allowedSources = new Set([

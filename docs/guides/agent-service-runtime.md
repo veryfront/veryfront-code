@@ -487,4 +487,7 @@ service list after the first heartbeat
 
 Broker model output limits and provider-tool descriptors must stay within the installed model grant.
 Each broker tool capability must also stay within the installed tool allowlist. Startup rejects broader
-broker authority before allocating an executor. Narrower broker limits remain valid.
+broker authority before allocating an executor. Preparation uses the narrower broker model output
+limits and provider-tool list, so its default model requests fit the broker policy. Source IDs must
+belong to the installed host-facade or remote-source grants. Owner-scoped tool selectors use the same
+canonical names for capability checks and steering refreshes.

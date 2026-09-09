@@ -1,3 +1,8 @@
+import {
+  type ExecutorRuntimeInstall,
+  getExecutorRuntimeInstallSchema,
+  parseExecutorInstallation,
+} from "./executor-runtime-install-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -42,6 +47,7 @@ function runtimeModel(): ModelRuntime {
 
 function fixture(
   options: {
+    completeStream?: boolean;
     agentId?: string;
     prepareFailure?: boolean;
     prepareModelId?: string;
@@ -66,6 +72,7 @@ function fixture(
   let generation = 0;
   let preparationDenied = false;
   let executionAllowed = false;
+  let installed: ExecutorRuntimeInstall | undefined;
   let initialCheckpointRead = false;
   const preparation = new AbortController();
   const prepareEntered = Promise.withResolvers<void>();
@@ -135,7 +142,8 @@ function fixture(
       const operations = new Map<string, ExecutorOperation>([
         ["runtime.install", {
           mode: "unary",
-          async handle() {
+          async handle(value) {
+            installed = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), value);
             calls.push("install");
             try {
               await peer!.request("model.generate", { modelId, options: { prompt: [] } });
@@ -195,14 +203,19 @@ function fixture(
         }],
         ["agent.stream", {
           mode: "stream",
-          async *handle() {
+          async *handle(): AsyncGenerator<JsonValue> {
             calls.push("stream");
             await peer!.request("model.generate", {
               modelId,
-              options: { prompt: [], maxOutputTokens: 100 },
+              options: { prompt: [], maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens },
             });
             executionAllowed = true;
             yield { type: "ready" };
+            if (options.completeStream) {
+              yield { type: "event", event: { type: "message-finish" } };
+              yield { type: "complete" };
+              return;
+            }
             await new Promise(() => {});
           },
         }],
@@ -277,6 +290,9 @@ function fixture(
     preparation,
     prepareEntered: prepareEntered.promise,
     releasePrepare: prepareRelease.resolve,
+    get installed() {
+      return installed;
+    },
     get peer() {
       return peer;
     },
@@ -363,10 +379,10 @@ describe("managed executor broker", () => {
     });
   }
 
-  it("accepts narrower model limits and matching provider and tool grants", async () => {
-    const f = fixture();
+  it("applies narrower broker model grants to preparation and completed generation", async () => {
+    const f = fixture({ completeStream: true });
     f.input.installation.grant.models[0]!.maxOutputTokens = 200;
-    f.input.installation.grant.models[0]!.providerToolNames = ["web_search"];
+    f.input.installation.grant.models[0]!.providerToolNames = ["web_search", "web_fetch"];
     f.input.model.grant.models.get(modelId)!.providerTools = [{
       type: "provider",
       name: "web_search",
@@ -389,7 +405,14 @@ describe("managed executor broker", () => {
     try {
       runtime = await broker.start(f.input);
       runtime.accept({ kind: "execution" });
-      await runtime.agent.stream({ messages: [], abortSignal: new AbortController().signal });
+      const stream = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      await Array.fromAsync(stream.toUIMessageStream());
+      assertEquals(f.installed!.grant.models[0]!.maxOutputTokens, 100);
+      assertEquals(f.installed!.grant.models[0]!.providerToolNames, ["web_search"]);
+      assertEquals(f.input.installation.grant.models[0]!.maxOutputTokens, 200);
       assertEquals(f.executionAllowed, true);
     } finally {
       await runtime?.close();
