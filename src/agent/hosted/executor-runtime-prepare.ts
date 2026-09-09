@@ -5,7 +5,13 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import { VERYFRONT_CLOUD_MODEL_PREFIX } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
+  resolveVeryfrontCloudThinkingProviderOptions,
+  VERYFRONT_CLOUD_MODEL_PREFIX,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { executorAdditiveReasoningTokens } from "./executor-model-grant.ts";
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
 import { isToolVisibleTo } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
@@ -434,7 +440,20 @@ export function createExecutorRuntimePreparation(input: Options) {
       );
       // The first facade call can reserve resources before throwing.
       resourcesStarted = true;
-      resolveModelRuntime(modelId);
+      const modelRuntime = resolveModelRuntime(modelId)!;
+      const thinking = request.thinking ?? definition.thinking ??
+        resolveVeryfrontCloudModelThinking(modelId);
+      const reasoningBudget = executorAdditiveReasoningTokens(modelRuntime, {
+        reasoning: resolveVeryfrontCloudReasoningOption(modelId, thinking),
+        providerOptions: resolveVeryfrontCloudThinkingProviderOptions(modelId, thinking),
+      });
+      const completionAllowance = modelGrant.maxOutputTokens - reasoningBudget;
+      if (
+        completionAllowance <= 0 ||
+        (request.maxOutputTokens ?? completionAllowance) > completionAllowance
+      ) {
+        refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      }
       const execution = grant.execution;
       const steering = facades.projectSteering
         ? await facades.projectSteering.prepare({
@@ -498,13 +517,13 @@ export function createExecutorRuntimePreparation(input: Options) {
             })
             : definition.system ?? definition.instructions),
         temperature: request.temperature ?? definition.temperature,
-        thinking: request.thinking ?? definition.thinking,
+        thinking,
         maxSteps: mathMin(
           request.maxSteps ?? grant.maxSteps,
           definition.maxSteps ?? grant.maxSteps,
           grant.maxSteps,
         ),
-        maxOutputTokens: request.maxOutputTokens ?? modelGrant.maxOutputTokens,
+        maxOutputTokens: request.maxOutputTokens ?? completionAllowance,
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
         availableSkillIds: skills.allowedSkillIds,

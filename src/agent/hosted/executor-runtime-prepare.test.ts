@@ -22,6 +22,10 @@ import {
 import { ExecutorRuntimePreparationError } from "./executor-runtime-prepare-schema.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorHostedChatRuntimeAgent } from "./executor-agent-bridge.ts";
+import { createExecutorModelRuntimeResolver } from "./executor-model-bridge.ts";
+import { createEphemeralHostedExecutorModelBroker } from "./executor-model-dispatch.ts";
+import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
+import { executorAgentJson } from "./executor-agent-schema.ts";
 
 const binding = {
   allocationId: "prepare-allocation",
@@ -149,6 +153,140 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  for (
+    const request of [
+      { thinking: { enabled: true, budgetTokens: 8192 } },
+      { thinking: { enabled: true, budgetTokens: 4096 }, maxOutputTokens: 4097 },
+    ]
+  ) {
+    it("rejects a completion allowance exhausted or exceeded by thinking before streaming", async () => {
+      const id = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: id,
+          models: new Map([[id, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+        },
+        config: { model: id },
+        facades: {
+          resolveModelRuntime: () => ({
+            ...model,
+            provider: "anthropic",
+            modelId: "claude-sonnet-4-6",
+          }),
+        },
+      });
+      try {
+        assertEquals(
+          await prepare(
+            f.owner,
+            executorAgentJson({ agentId: "coder", ...request }, "EXECUTOR_AGENT_INPUT_TOO_LARGE"),
+          ),
+          {
+            ok: false,
+            code: "EXECUTOR_RUNTIME_NOT_GRANTED",
+          },
+        );
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
+  for (
+    const scenario of [
+      { name: "catalog thinking", model: "claude-sonnet-4-6", expected: 6144 },
+      {
+        name: "explicit thinking",
+        model: "claude-sonnet-4-6",
+        thinking: { enabled: true, budgetTokens: 4096 },
+        expected: 4096,
+      },
+      {
+        name: "default enabled thinking",
+        model: "claude-sonnet-4-6",
+        thinking: { enabled: true },
+        expected: 4096,
+      },
+      {
+        name: "disabled thinking",
+        model: "claude-sonnet-4-6",
+        thinking: { enabled: false },
+        expected: 8192,
+      },
+      { name: "adaptive thinking", model: "claude-opus-4-8", expected: 8192 },
+      { name: "explicit completion", model: "claude-sonnet-4-6", completion: 512, expected: 512 },
+    ] as const
+  ) {
+    it(`fits ${scenario.name} inside the broker's total output allowance`, async () => {
+      const id = `veryfront-cloud/anthropic/${scenario.model}`;
+      const provider = scriptedModel([{ text: "Complete" }], {
+        provider: "anthropic",
+        modelId: scenario.model,
+        only: "stream",
+      });
+      const forward = new TransformStream<Uint8Array, Uint8Array>();
+      const backward = new TransformStream<Uint8Array, Uint8Array>();
+      const broker = createExecutorChannel({
+        binding,
+        transport: { readable: forward.readable, writable: backward.writable },
+        operations: createEphemeralHostedExecutorModelBroker({
+          resolveModelRuntime: () => provider,
+          allowedModelIds: new Set([id]),
+          scope: { binding, signal: new AbortController().signal, assertActive() {} },
+          grant: {
+            maxCalls: 2,
+            maxConcurrentCalls: 1,
+            models: new Map([[id, { maxOutputTokens: 8192, providerTools: [] }]]),
+          },
+          prepared: { conversationId: null, canonicalRootRun: null },
+        }),
+      });
+      const executor = createExecutorChannel({
+        binding,
+        transport: { readable: backward.readable, writable: forward.writable },
+      });
+      const resolveModelRuntime = await createExecutorModelRuntimeResolver({
+        channel: executor,
+        allowedModelIds: new Set([id]),
+      });
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: id,
+          models: new Map([[id, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+        },
+        config: { model: id },
+        facades: { resolveModelRuntime },
+      });
+      try {
+        const events = await Array.fromAsync(
+          await preparedStream(
+            f,
+            executorAgentJson({
+              agentId: "coder",
+              ...("thinking" in scenario ? { thinking: scenario.thinking } : {}),
+              ...("completion" in scenario ? { maxOutputTokens: scenario.completion } : {}),
+            }, "EXECUTOR_AGENT_INPUT_TOO_LARGE"),
+          ),
+        );
+        assertEquals(provider.callCount, 1);
+        assertEquals(provider.calls[0]?.maxOutputTokens, scenario.expected);
+        assert(
+          events.some((event) =>
+            event !== null && typeof event === "object" && !Array.isArray(event) &&
+            event.type === "complete"
+          ),
+        );
+      } finally {
+        await f.owner.close();
+        broker.close();
+        executor.close();
+        await Promise.all([broker.settled, executor.settled]);
+      }
+    });
+  }
+
   it("keeps skill references and scripts outside a loader-only grant after loading a skill", async () => {
     const visible: string[][] = [];
     const f = fixture({

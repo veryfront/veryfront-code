@@ -1,5 +1,9 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import type { ModelRuntimeToolDefinition } from "#veryfront/provider/types.ts";
+import type {
+  ModelRuntimeCallOptions,
+  ModelRuntimeToolDefinition,
+  RuntimeMetadata,
+} from "#veryfront/provider/types.ts";
 import { createExecutorModelFailure } from "./executor-model-errors.ts";
 import {
   buildModelCallContextRequest,
@@ -75,10 +79,14 @@ function assertSingleCompletion(options: ExecutorModelDispatch["options"]): void
   for (const bucket of Object.values(options.providerOptions ?? {})) inspect(bucket);
 }
 
-function additiveReasoningTokens(request: ExecutorModelDispatch): number {
-  if (resolveModelCallProvider(request.model) !== "anthropic") return 0;
-  const reasoning = buildModelCallContextRequest(request.model, request.options)?.reasoning;
-  if (request.options.reasoning?.enabled === true) {
+/** @internal Shared additive output budget for preparation and broker admission. */
+export function executorAdditiveReasoningTokens(
+  model: Pick<RuntimeMetadata, "modelId" | "provider" | "modelProvider">,
+  options: Pick<ModelRuntimeCallOptions, "reasoning" | "providerOptions">,
+): number {
+  if (resolveModelCallProvider(model) !== "anthropic") return 0;
+  const reasoning = buildModelCallContextRequest(model, options)?.reasoning;
+  if (options.reasoning?.enabled === true) {
     const budget = reasoning?.budgetTokens ??
       (reasoning?.effort === "low"
         ? 1024
@@ -95,7 +103,7 @@ function additiveReasoningTokens(request: ExecutorModelDispatch): number {
   }
   // Canonical native thinking has precedence when neutral reasoning does not enable it.
   // Adaptive thinking stays within max_tokens and adds no separate budget.
-  const anthropic = request.options.providerOptions?.anthropic;
+  const anthropic = options.providerOptions?.anthropic;
   const thinking = anthropic && typeof anthropic === "object" && !Array.isArray(anthropic)
     ? (anthropic as Record<string, unknown>).thinking
     : undefined;
@@ -188,7 +196,7 @@ export function createExecutorModelAdmission(
       const policy = policies.get(request.model.id);
       if (!policy) throw new TypeError("Executor model is not granted");
       assertSingleCompletion(request.options);
-      const budget = additiveReasoningTokens(request);
+      const budget = executorAdditiveReasoningTokens(request.model, request.options);
       const available = policy.maxOutputTokens - budget;
       const maxOutputTokens = request.options.maxOutputTokens ?? available;
       if (
