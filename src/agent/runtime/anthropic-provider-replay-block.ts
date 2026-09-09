@@ -1,3 +1,14 @@
+import {
+  appendPrivateArray,
+  concatPrivateArrays,
+  everyPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+
+const isArray = Array.isArray;
+const hasOwn = Object.hasOwn;
+
 // Anthropic reports provider tool failures with the ordinary outer result type
 // and the error record inside `content`. An outer `*_tool_result_error` block
 // would only defer the failure until the provider request parser rejects it.
@@ -79,13 +90,3 @@ export function collectAnthropicProviderToolCallIds(
   }
   return ids;
 }
-import {
-  appendPrivateArray,
-  concatPrivateArrays,
-  everyPrivateArray,
-  pushPrivateArray,
-} from "#veryfront/security/private-array.ts";
-import { createPrivateSet } from "#veryfront/security/private-set.ts";
-
-const isArray = Array.isArray;
-const hasOwn = Object.hasOwn;
