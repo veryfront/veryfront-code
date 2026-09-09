@@ -11,6 +11,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
 import {
+  announceStreamedToolCallInput,
   createRuntimeStreamSource,
   createStreamState,
   processStream,
@@ -71,6 +72,26 @@ function pendingAsyncIterable() {
 }
 
 describe("chat-stream-handler", () => {
+  it("announces buffered deltas once without consulting the buffer iterator", () => {
+    const { controller, encoder, events } = createSSECollector();
+    const inputDeltas = ['{"query":', '"synthetic private input"}'];
+    let reads = 0;
+    Object.defineProperty(inputDeltas, Symbol.iterator, {
+      get() {
+        reads++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const toolCall = { id: "call", name: "inspect", arguments: inputDeltas.join(""), inputDeltas };
+    announceStreamedToolCallInput(controller, encoder, toolCall);
+    announceStreamedToolCallInput(controller, encoder, toolCall);
+    assertEquals(events, [
+      { type: "tool-input-start", toolCallId: "call", toolName: "inspect" },
+      { type: "tool-input-delta", toolCallId: "call", inputTextDelta: inputDeltas[0] },
+      { type: "tool-input-delta", toolCallId: "call", inputTextDelta: inputDeltas[1] },
+    ]);
+    assertEquals(reads, 0);
+  });
   describe("summarizeProviderToolDebugValue", () => {
     it("redacts sensitive provider tool debug fields", () => {
       assertEquals(

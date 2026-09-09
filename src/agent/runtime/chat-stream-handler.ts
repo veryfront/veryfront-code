@@ -285,7 +285,10 @@ export function announceStreamedToolCallInput(
     ...(dynamic ? { dynamic: true } : {}),
   });
 
-  for (const delta of toolCall.inputDeltas ?? []) {
+  const deltas = toolCall.inputDeltas ?? [];
+  for (let index = 0; index < deltas.length; index++) {
+    if (!hasOwn(deltas, index)) continue;
+    const delta = deltas[index]!;
     sendSSE(controller, encoder, {
       type: "tool-input-delta",
       toolCallId: toolCall.id,
@@ -726,8 +729,9 @@ async function processActiveStream(
       if (frame.class === "semantic" && frame.event.type === "usage") {
         callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
       }
-      for (const event of live.encode(frame)) {
-        sendSSE(controller, encoder, event);
+      const events = live.encode(frame);
+      for (let index = 0; index < events.length; index++) {
+        if (hasOwn(events, index)) sendSSE(controller, encoder, events[index]!);
       }
     }
   } catch (error) {
