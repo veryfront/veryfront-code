@@ -1,3 +1,4 @@
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
@@ -134,7 +135,7 @@ export function collectGeneratedToolResults(
 }
 
 export function hasSubstantiveAssistantText(text: string | undefined): boolean {
-  return typeof text === "string" && text.trim().length > 0;
+  return typeof text === "string" && privateTextTrim(text).length > 0;
 }
 
 export function isClientRecoverablePlaceholderToolCall(

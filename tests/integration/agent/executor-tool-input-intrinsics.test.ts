@@ -1,3 +1,4 @@
+import { hasSubstantiveAssistantText } from "#veryfront/agent/runtime/tool-result-continuation.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -29,6 +30,8 @@ for (const hooks of [false, true]) {
       let normalized = "";
       let merged = "";
       let completed = "";
+      let substantive = false;
+      let whitespaceOnly = true;
       let parsed: Record<string, unknown> = {};
       try {
         if (hooks) {
@@ -57,6 +60,8 @@ for (const hooks of [false, true]) {
         merged = mergeToolInputDelta(first, second);
         completed = mergeToolCallInput(raw, " {} ");
         parsed = parseToolInputObject(`{}${raw}`);
+        substantive = hasSubstantiveAssistantText(marker);
+        whitespaceOnly = hasSubstantiveAssistantText(" \n\t ");
       } finally {
         if (hooks) {
           String.prototype.trim = trim;
@@ -70,6 +75,8 @@ for (const hooks of [false, true]) {
       assertEquals(merged, raw);
       assertEquals(completed, raw);
       assertEquals(parsed, { query: marker });
+      assertEquals(substantive, true);
+      assertEquals(whitespaceOnly, false);
       assertEquals(observations, 0);
     });
   });
