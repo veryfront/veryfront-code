@@ -28,7 +28,8 @@ for (const probe of ["baseline", "strings", "arrays"]) {
         tools: {
           lookup_private: tool({
             id: "lookup_private",
-            description: marker,
+            // The query's complete marker must not also appear in authored tool metadata.
+            description: "Search private synthetic records",
             inputSchema: defineSchema((v) => v.object({}))(),
             execute: () => {
               executions++;
@@ -54,13 +55,19 @@ for (const probe of ["baseline", "strings", "arrays"]) {
       const defineProperty = Object.defineProperty;
       const originals: { target: object; key: PropertyKey; descriptor: PropertyDescriptor }[] = [];
       let observations = 0;
+      const observationSites: string[] = [];
       const replace = (target: object, key: PropertyKey) => {
         const descriptor = Object.getOwnPropertyDescriptor(target, key)!;
         originals.push({ target, key, descriptor });
         defineProperty(target, key, {
           ...descriptor,
           value: function (this: unknown, ...args: unknown[]) {
-            if (apply(includes, stringify(this) ?? "", [marker])) observations++;
+            if (apply(includes, stringify(this) ?? "", [marker])) {
+              observations++;
+              if (observationSites.length < 5) {
+                observationSites.push(`${String(key)}: ${new Error().stack}`);
+              }
+            }
             return apply(descriptor.value, this, args);
           },
         });
@@ -100,7 +107,7 @@ for (const probe of ["baseline", "strings", "arrays"]) {
       assertEquals(executions, 1);
       assertEquals(model.callCount, 3);
       assertStringIncludes(output, "Complete");
-      assertEquals(observations, 0);
+      assertEquals(observations, 0, observationSites.join("\n"));
     });
   });
 }
