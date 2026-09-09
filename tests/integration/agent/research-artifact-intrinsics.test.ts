@@ -58,7 +58,10 @@ describe("private research artifact inputs", () => {
             content: "Synthetic report",
           },
           taskContext: context,
-          error: { isError: true, content: [{ type: "text", text: `File already exists: ${marker}.md` }] },
+          error: {
+            isError: true,
+            content: [{ type: "text", text: `File already exists: ${marker}.md` }],
+          },
         });
       } finally {
         Object.defineProperty(prototype, method, descriptor);

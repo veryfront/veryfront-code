@@ -59,7 +59,10 @@ describe("private events and replay checkpoints", () => {
       __vfProviderReplayCheckpoints: checkpoints,
       __vfProviderReplayCheckpointMessageId: "assistant-synthetic",
     };
-    const model = scriptedModel([{ text: "Complete" }], { only: "generate", provider: "anthropic" });
+    const model = scriptedModel([{ text: "Complete" }], {
+      only: "generate",
+      provider: "anthropic",
+    });
     const runtime = new AgentRuntime("synthetic", config, { resolveModelRuntime: () => model });
     const find = Array.prototype.find;
     let observations = 0;
