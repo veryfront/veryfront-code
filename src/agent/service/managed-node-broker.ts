@@ -54,6 +54,9 @@ export async function startNodeManagedAgentBroker(options: {
       async handle(request) {
         const url = new URL(request.url);
         const route = resolveRoute(request.method, url.pathname);
+        if (route?.kind === "invalid") {
+          return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
+        }
         if (route?.kind === "liveness") return new Response("OK");
         if (route?.kind === "ready") {
           const ready = !shuttingDown && await options.readiness();
@@ -98,9 +101,11 @@ export async function startNodeManagedAgentBroker(options: {
   return server;
 }
 
+type RunRoute = { kind: "signedStream" | "cancel" | "resume"; runId: string };
+
 type Route =
-  | { kind: "signedStream" | "cancel" | "resume"; runId: string }
-  | { kind: "durableStart" | "agUi" | "liveness" | "ready" };
+  | RunRoute
+  | { kind: "durableStart" | "agUi" | "liveness" | "ready" | "invalid" };
 
 function resolveRoute(method: string, pathname: string): Route | undefined {
   if (method === "GET" && pathname === "/liveness") return { kind: "liveness" };
@@ -108,26 +113,30 @@ function resolveRoute(method: string, pathname: string): Route | undefined {
   if (method === "POST" && pathname === "/api/runs") return { kind: "durableStart" };
   if (method === "POST" && pathname === "/api/ag-ui") return { kind: "agUi" };
   const signed = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/u.exec(pathname);
-  if (method === "POST" && signed) return { kind: "signedStream", runId: decodeRunId(signed[1]!) };
+  if (method === "POST" && signed) return decodeRunRoute("signedStream", signed[1]!);
   const resume = /^\/api\/runs\/([^/]+)\/resume$/u.exec(pathname);
-  if (method === "POST" && resume) return { kind: "resume", runId: decodeRunId(resume[1]!) };
+  if (method === "POST" && resume) return decodeRunRoute("resume", resume[1]!);
   const controlResume = /^\/api\/control-plane\/runs\/([^/]+)\/resume$/u.exec(pathname);
   if (method === "POST" && controlResume) {
-    return { kind: "resume", runId: decodeRunId(controlResume[1]!) };
+    return decodeRunRoute("resume", controlResume[1]!);
   }
   const cancel = /^\/api\/runs\/([^/]+)$/u.exec(pathname);
-  if (method === "DELETE" && cancel) return { kind: "cancel", runId: decodeRunId(cancel[1]!) };
+  if (method === "DELETE" && cancel) return decodeRunRoute("cancel", cancel[1]!);
   const controlCancel = /^\/api\/control-plane\/runs\/([^/]+)$/u.exec(pathname);
   if (method === "DELETE" && controlCancel) {
-    return { kind: "cancel", runId: decodeRunId(controlCancel[1]!) };
+    return decodeRunRoute("cancel", controlCancel[1]!);
   }
   return undefined;
 }
 
-function decodeRunId(value: string): string {
-  const decoded = decodeURIComponent(value);
-  if (!decoded || decoded.includes("/")) throw new TypeError("Invalid managed broker run id");
-  return decoded;
+function decodeRunRoute(kind: RunRoute["kind"], value: string): Route {
+  let runId: string;
+  try {
+    runId = decodeURIComponent(value);
+  } catch {
+    return { kind: "invalid" };
+  }
+  return runId && !runId.includes("/") ? { kind, runId } : { kind: "invalid" };
 }
 
 function validateOptions(options: {

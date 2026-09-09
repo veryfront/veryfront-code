@@ -68,6 +68,60 @@ describe("managed node broker", () => {
     }
   });
 
+  it("rejects malformed run IDs before dispatching managed handlers", async () => {
+    const runIds: string[] = [];
+    const handler = {
+      handle(_request: Request, input: { runId?: string }) {
+        runIds.push(input.runId!);
+        return new Response("handled");
+      },
+    };
+    const server = await startNodeManagedAgentBroker({
+      port: 0,
+      bindAddress: "127.0.0.1",
+      signals: [],
+      readiness: () => true,
+      broker: {
+        shutdown: () => Promise.resolve(),
+        closed: Promise.resolve(),
+        settled: Promise.resolve(),
+      },
+      handlers: {
+        signedStream: handler,
+        durableStart: handler,
+        agUi: handler,
+        cancel: handler,
+        resume: handler,
+      },
+    });
+    try {
+      const routes = [
+        ["POST", "/api/control-plane/runs/", "/stream"],
+        ["POST", "/api/runs/", "/resume"],
+        ["POST", "/api/control-plane/runs/", "/resume"],
+        ["DELETE", "/api/runs/", ""],
+        ["DELETE", "/api/control-plane/runs/", ""],
+      ] as const;
+      for (const [method, prefix, suffix] of routes) {
+        for (const malformed of ["%", "%GG", "%E0%A4%A", "%2F"]) {
+          const response = await fetch(`${server.url}${prefix}${malformed}${suffix}`, { method });
+          const body = await response.text();
+          assertEquals(response.status, 400);
+          assertEquals(JSON.parse(body), { errorCode: "BROKER_INGRESS_TARGET_MISMATCH" });
+        }
+      }
+      assertEquals(runIds, []);
+      for (const [method, prefix, suffix] of routes) {
+        const response = await fetch(`${server.url}${prefix}%72un%2D1${suffix}`, { method });
+        assertEquals(await response.text(), "handled");
+        assertEquals(response.status, 200);
+      }
+      assertEquals(runIds, ["run-1", "run-1", "run-1", "run-1", "run-1"]);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("stops admission before joining handler and broker retirement", async () => {
     const events: string[] = [];
     const retirement = Promise.withResolvers<void>();

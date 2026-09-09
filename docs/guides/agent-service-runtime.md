@@ -471,6 +471,10 @@ pool, and a readiness check explicitly. It preserves `/liveness` and
 work to retire. This server adapter does not configure product policy,
 registration, credentials, or executor images.
 
+Managed run routes return HTTP 400 with `BROKER_INGRESS_TARGET_MISMATCH` when
+a run ID contains malformed URL encoding or an encoded slash. Valid encoded
+run IDs are decoded before the handler receives them.
+
 ## Verify it worked
 
 Start the service entrypoint and call the run route directly. The default
