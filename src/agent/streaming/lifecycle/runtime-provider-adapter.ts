@@ -18,6 +18,7 @@ import type {
 } from "./types.ts";
 
 const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
 
 export interface RuntimeStreamProviderOptions {
   availableToolNames: ReadonlySet<string> | null;
@@ -325,7 +326,7 @@ function toolReadySignals(
   const merged = mergeToolCallInput(streamed, finalText);
   const parsed = parseCanonicalToolInput(
     typeof typed.input === "object" && typed.input !== null &&
-      !Array.isArray(typed.input)
+      !isArray(typed.input)
       ? typed.input
       : merged,
   );

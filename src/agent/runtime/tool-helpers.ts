@@ -30,6 +30,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
+const intrinsicHasOwn = Object.hasOwn;
 const intrinsicArrayPush = Array.prototype.push;
 const intrinsicArrayIncludes = Array.prototype.includes;
 
@@ -185,7 +186,10 @@ async function getRemoteToolDefinitions(options?: {
     intrinsicReflectApply(intrinsicArrayPush, definitions, [definition]);
   };
 
-  for (const source of options?.remoteToolSources ?? []) {
+  const sources = options?.remoteToolSources ?? [];
+  for (let index = 0; index < sources.length; index++) {
+    if (!intrinsicHasOwn(sources, index)) continue;
+    const source = sources[index]!;
     try {
       const sourceDefs = await source.listTools(remoteToolContext);
       for (const def of sourceDefs) {
@@ -236,7 +240,10 @@ async function executeRemoteToolFromSources(
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
 ): Promise<{ handled: boolean; result?: unknown }> {
-  for (const source of remoteToolSources ?? []) {
+  const sources = remoteToolSources ?? [];
+  for (let index = 0; index < sources.length; index++) {
+    if (!intrinsicHasOwn(sources, index)) continue;
+    const source = sources[index]!;
     if (!(await sourceHasTool(source, toolName, context))) {
       continue;
     }

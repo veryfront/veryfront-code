@@ -25,6 +25,8 @@ import type {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const hasOwn = Object.hasOwn;
+const mapGet = Map.prototype.get;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const isArray = Array.isArray;
 const objectIs = Object.is;
 const objectKeys = Object.keys;
@@ -139,10 +141,10 @@ function equalToolInputs(
     tools,
     (tool) => tool.rejectionReason !== "unavailable",
   );
-  if (legacy.size !== lifecycleTools.length) return false;
+  if (apply(mapSize, legacy, []) !== lifecycleTools.length) return false;
   for (let index = 0; index < lifecycleTools.length; index++) {
     const tool = lifecycleTools[index]!;
-    const match = legacy.get(tool.id);
+    const match = apply(mapGet, legacy, [tool.id]) as StreamingToolCall | undefined;
     if (!match || match.name !== tool.name) return false;
     if (
       normalizeArgumentText(match.arguments ?? "") !==

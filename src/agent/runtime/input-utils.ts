@@ -1,4 +1,5 @@
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
@@ -7,19 +8,19 @@ import {
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
 
-const syntheticMessageIds = new WeakSet<object>();
-const syntheticMessageTimestamps = new WeakSet<object>();
-const syntheticMessageIdValues = new WeakMap<object, string>();
-const syntheticMessageTimestampValues = new WeakMap<object, number>();
+const syntheticMessageIds = createPrivateWeakStore<object, true>();
+const syntheticMessageTimestamps = createPrivateWeakStore<object, true>();
+const syntheticMessageIdValues = createPrivateWeakStore<object, string>();
+const syntheticMessageTimestampValues = createPrivateWeakStore<object, number>();
 
 /** Whether normalization supplied this message id from the wall clock. */
 export function hasSyntheticMessageId(message: Message): boolean {
-  return syntheticMessageIds.has(message);
+  return syntheticMessageIds.get(message) === true;
 }
 
 /** Whether normalization supplied this message timestamp from the wall clock. */
 export function hasSyntheticMessageTimestamp(message: Message): boolean {
-  return syntheticMessageTimestamps.has(message);
+  return syntheticMessageTimestamps.get(message) === true;
 }
 
 /** Whether this message still carries the id supplied by normalization. */
@@ -27,7 +28,7 @@ export function hasUnchangedSyntheticMessageId(
   message: Message,
   id: string,
 ): boolean {
-  return syntheticMessageIds.has(message) && syntheticMessageIdValues.get(message) === id;
+  return syntheticMessageIds.get(message) === true && syntheticMessageIdValues.get(message) === id;
 }
 
 /** Whether this message still carries the timestamp supplied by normalization. */
@@ -35,19 +36,19 @@ export function hasUnchangedSyntheticMessageTimestamp(
   message: Message,
   timestamp: number | undefined,
 ): boolean {
-  return syntheticMessageTimestamps.has(message) &&
+  return syntheticMessageTimestamps.get(message) === true &&
     syntheticMessageTimestampValues.get(message) === timestamp;
 }
 
 /** Preserve synthesized-field provenance when middleware clones a message. */
 export function propagateSyntheticMessageMarks(source: Message, target: Message): void {
-  if (syntheticMessageIds.has(source)) {
-    syntheticMessageIds.add(target);
+  if (syntheticMessageIds.get(source) === true) {
+    syntheticMessageIds.set(target, true);
     const id = syntheticMessageIdValues.get(source);
     if (id !== undefined) syntheticMessageIdValues.set(target, id);
   }
-  if (syntheticMessageTimestamps.has(source)) {
-    syntheticMessageTimestamps.add(target);
+  if (syntheticMessageTimestamps.get(source) === true) {
+    syntheticMessageTimestamps.set(target, true);
     const timestamp = syntheticMessageTimestampValues.get(source);
     if (timestamp !== undefined) syntheticMessageTimestampValues.set(target, timestamp);
   }
@@ -63,8 +64,8 @@ export function normalizeInput(input: string | Message[]): Message[] {
       parts: [{ type: "text", text: input }],
       timestamp: now,
     };
-    syntheticMessageIds.add(message);
-    syntheticMessageTimestamps.add(message);
+    syntheticMessageIds.set(message, true);
+    syntheticMessageTimestamps.set(message, true);
     syntheticMessageIdValues.set(message, message.id);
     syntheticMessageTimestampValues.set(message, message.timestamp!);
     return [message];
@@ -81,17 +82,17 @@ export function normalizeInput(input: string | Message[]): Message[] {
       timestamp: msg.timestamp ?? now,
     };
     if (msg.id == null) {
-      syntheticMessageIds.add(normalized);
+      syntheticMessageIds.set(normalized, true);
       syntheticMessageIdValues.set(normalized, normalized.id);
-    } else if (syntheticMessageIds.has(msg)) {
-      syntheticMessageIds.add(normalized);
+    } else if (syntheticMessageIds.get(msg) === true) {
+      syntheticMessageIds.set(normalized, true);
       syntheticMessageIdValues.set(
         normalized,
         syntheticMessageIdValues.get(msg) ?? normalized.id,
       );
     }
-    if (msg.timestamp == null || syntheticMessageTimestamps.has(msg)) {
-      syntheticMessageTimestamps.add(normalized);
+    if (msg.timestamp == null || syntheticMessageTimestamps.get(msg) === true) {
+      syntheticMessageTimestamps.set(normalized, true);
       syntheticMessageTimestampValues.set(
         normalized,
         msg.timestamp == null

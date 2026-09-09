@@ -1,12 +1,14 @@
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 
+const isArray = Array.isArray;
+
 export type CanonicalToolInputParseResult =
   | { ok: true; value: Record<string, unknown> }
   | { ok: false; reason: "invalid" | "malformed" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 export function parseCanonicalToolInput(
