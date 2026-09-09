@@ -25,6 +25,17 @@ function remoteTool(name: string): ToolDefinition {
   };
 }
 
+function platformTool(name: string, referenceName: string): ToolDefinition {
+  return {
+    ...remoteTool(name),
+    identity: {
+      type: "platform",
+      canonicalName: `veryfront__${referenceName}`,
+      referenceName,
+    },
+  };
+}
+
 function remoteSource(tools: ToolDefinition[], calls: string[] = []): RemoteToolSource {
   return {
     id: "docs",
@@ -126,6 +137,55 @@ describe("agent/mcp-tool-policy", () => {
     assertEquals(gate.filterDefinitions([remoteTool("search_docs"), remoteTool("delete_docs")]), [
       remoteTool("search_docs"),
     ]);
+  });
+
+  it("matches trusted platform aliases without widening integration names", () => {
+    const canonical = platformTool("veryfront__list_projects", "list_projects");
+    const integration = remoteTool("github__list_projects");
+    const legacyAllowedCanonicalDenied = createMcpToolPolicyGate({
+      allow: ["list_projects", "github__list_projects"],
+      deny: ["veryfront__list_projects"],
+    });
+    assertEquals(
+      legacyAllowedCanonicalDenied.filterDefinitions([canonical, integration]).map((tool) =>
+        tool.name
+      ),
+      ["github__list_projects"],
+    );
+
+    const canonicalAllowedLegacyDenied = createMcpToolPolicyGate({
+      allow: ["veryfront__list_projects", "github__list_projects"],
+      deny: ["list_projects"],
+    });
+    assertEquals(
+      canonicalAllowedLegacyDenied.filterDefinitions([canonical, integration]).map((tool) =>
+        tool.name
+      ),
+      ["github__list_projects"],
+    );
+  });
+
+  it("applies scoped platform aliases to execution after trusted discovery", async () => {
+    const calls: string[] = [];
+    const source = remoteSource([
+      platformTool("veryfront__list_projects", "list_projects"),
+      remoteTool("github__list_projects"),
+    ], calls);
+    const wrapped = wrapRemoteToolSourceWithMcpPolicy(source, {
+      allow: ["list_projects", "github__list_projects"],
+      deny: ["veryfront__list_projects"],
+    });
+
+    assertEquals((await wrapped.listTools()).map((tool) => tool.name), ["github__list_projects"]);
+    const error = captureThrown(() =>
+      wrapped.executeTool("veryfront__list_projects", { value: "blocked" })
+    );
+    assertPermissionDenied(error, 'Tool "veryfront__list_projects" is not allowed for this run');
+    assertEquals(
+      await wrapped.executeTool("github__list_projects", { value: "allowed" }),
+      { ok: true, toolName: "github__list_projects" },
+    );
+    assertEquals(calls, ["github__list_projects:allowed:undefined"]);
   });
 
   it("allow filters definition order without sorting", () => {

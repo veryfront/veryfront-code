@@ -77,6 +77,7 @@
  */
 
 export type {
+  RemoteToolIdentity,
   RemoteToolSource,
   Tool,
   ToolConfig,
@@ -98,10 +99,16 @@ export type {
 export {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
+  finalizeRemoteMCPToolDefinitions,
   type RemoteMCPToolSourceTransportOptions,
 } from "./remote-mcp.ts";
 export { hasToolExecutionErrorMarker, isErroredToolExecutionResult } from "./result.ts";
-export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
+export type {
+  RemoteMCPToolIdentityMode,
+  RemoteMCPToolListParams,
+  RemoteMCPToolSourceConfig,
+  ResolvableRemoteMCPToolListParams,
+} from "./remote-mcp.ts";
 export { createContext7ToolSource } from "./context7.ts";
 export type { Context7ToolSourceConfig } from "./context7.ts";
 export { createToolsFromHostDefinitions } from "./host-tools.ts";

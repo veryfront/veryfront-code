@@ -221,6 +221,15 @@ export interface ToolDefinition {
   parameters: JsonSchema;
   title?: string;
   annotations?: ToolAnnotations;
+  /** Trusted remote identity metadata. The observed wire name remains in `name`. */
+  identity?: RemoteToolIdentity;
+}
+
+/** Authoritative identity metadata supplied by a trusted remote tool server. */
+export interface RemoteToolIdentity {
+  type: "platform" | "integration" | "project";
+  canonicalName: string;
+  referenceName: string;
 }
 
 /**

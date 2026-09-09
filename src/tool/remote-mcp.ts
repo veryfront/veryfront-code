@@ -4,7 +4,12 @@ import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
-import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
+import type {
+  RemoteToolIdentity,
+  RemoteToolSource,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "./types.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
@@ -84,11 +89,26 @@ class RemoteMCPOAuthExpiredHttpError extends RemoteMCPHttpError {
 
 type ResolvableValue<T> = T | ((context?: ToolExecutionContext) => T | Promise<T>);
 
+/** JSON object merged into every tools/list request. */
+export type RemoteMCPToolListParams = Readonly<Record<string, unknown>>;
+
+/** Static or context-resolved tools/list parameters. */
+export type ResolvableRemoteMCPToolListParams = ResolvableValue<
+  RemoteMCPToolListParams | undefined
+>;
+
+/** Trusted remote identity contract understood by the framework. */
+export type RemoteMCPToolIdentityMode = "veryfront";
+
 /** Configuration used by remote MCP tool source. */
 export interface RemoteMCPToolSourceConfig {
   id?: string;
   endpoint: ResolvableValue<string>;
   headers?: ResolvableValue<HeadersInit | undefined>;
+  /** Parameters preserved on every paginated tools/list request. */
+  listParams?: ResolvableRemoteMCPToolListParams;
+  /** Enables authoritative identity validation for a trusted server contract. */
+  toolIdentity?: RemoteMCPToolIdentityMode;
   listMethod?: string;
   callMethod?: string;
 }
@@ -225,7 +245,98 @@ function normalizeParameters(inputSchema: unknown, toolName: string): JsonSchema
   return snapshot.value;
 }
 
-function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition {
+function readVeryfrontToolIdentity(entry: Record<string, unknown>): RemoteToolIdentity | undefined {
+  const meta = isRecord(entry._meta) ? entry._meta : undefined;
+  const identity = entry.identity ?? meta?.["veryfront/tool-identity"];
+  if (identity === undefined) return undefined;
+  if (!isRecord(identity)) {
+    throw protocolError(
+      "Remote MCP tools/list returned malformed Veryfront tool identity metadata",
+    );
+  }
+
+  const type = identity.type;
+  const canonicalName = identity.canonicalName;
+  const referenceName = identity.referenceName;
+  if (
+    (type !== "platform" && type !== "integration" && type !== "project") ||
+    typeof canonicalName !== "string" || canonicalName.length === 0 ||
+    typeof referenceName !== "string" || referenceName.length === 0
+  ) {
+    throw protocolError(
+      "Remote MCP tools/list returned malformed Veryfront tool identity metadata",
+    );
+  }
+  if (entry.name !== canonicalName && entry.name !== referenceName) {
+    throw protocolError(
+      `Remote MCP tool "${String(entry.name)}" does not match its Veryfront identity`,
+    );
+  }
+  if (type !== "platform" && canonicalName !== referenceName) {
+    throw protocolError(
+      `Remote MCP tool "${String(entry.name)}" has invalid non-platform aliases`,
+    );
+  }
+
+  return { type, canonicalName, referenceName };
+}
+
+/**
+ * Validate a complete remote catalog before policy filtering or materialization.
+ * Original entries and order are preserved.
+ */
+export function finalizeRemoteMCPToolDefinitions<T extends { name: string }>(
+  entries: readonly T[],
+  options: { identity?: RemoteMCPToolIdentityMode } = {},
+): T[] {
+  const exactNames = new Set<string>();
+  for (const entry of entries) {
+    if (exactNames.has(entry.name)) {
+      throw protocolError(`Remote MCP tools/list returned duplicate tool name "${entry.name}"`);
+    }
+    exactNames.add(entry.name);
+  }
+
+  if (options.identity !== "veryfront") return [...entries];
+
+  const identities = entries.map((entry) =>
+    readVeryfrontToolIdentity(entry as T & Record<string, unknown>)
+  );
+  const identifiedCount = identities.filter((identity) => identity !== undefined).length;
+  // A pre-contract API has no identity metadata. Preserve its exact legacy names.
+  if (identifiedCount === 0) return [...entries];
+  if (identifiedCount !== entries.length) {
+    throw protocolError("Remote MCP tools/list mixed identified and unidentified Veryfront tools");
+  }
+
+  const claimedNames = new Map<string, string>();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    const identity = identities[index]!;
+    for (
+      const claimedName of new Set([
+        entry.name,
+        identity.canonicalName,
+        identity.referenceName,
+      ])
+    ) {
+      const priorName = claimedNames.get(claimedName);
+      if (priorName !== undefined) {
+        throw protocolError(
+          `Remote MCP tools/list returned competing tool identities "${priorName}" and "${entry.name}"`,
+        );
+      }
+      claimedNames.set(claimedName, entry.name);
+    }
+  }
+  return [...entries];
+}
+
+function normalizeToolDefinition(
+  entry: unknown,
+  index: number,
+  identityMode?: RemoteMCPToolIdentityMode,
+): ToolDefinition {
   if (!isRecord(entry)) {
     throw protocolError(
       `Remote MCP tools/list returned a malformed tool definition at index ${index}`,
@@ -248,6 +359,10 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
     description: entry.description,
     parameters: normalizeParameters(entry.inputSchema, entry.name),
   };
+  if (identityMode === "veryfront") {
+    const identity = readVeryfrontToolIdentity(entry);
+    if (identity) definition.identity = identity;
+  }
 
   if (entry.title !== undefined) {
     if (
@@ -282,7 +397,10 @@ interface NormalizedToolListPage {
   nextCursor: string | undefined;
 }
 
-function normalizeToolListPage(result: unknown): NormalizedToolListPage {
+function normalizeToolListPage(
+  result: unknown,
+  identityMode?: RemoteMCPToolIdentityMode,
+): NormalizedToolListPage {
   if (!isRecord(result)) {
     throw protocolError("Remote MCP tools/list result was not a JSON object");
   }
@@ -296,7 +414,9 @@ function normalizeToolListPage(result: unknown): NormalizedToolListPage {
     );
   }
 
-  const definitions = rawTools.map(normalizeToolDefinition);
+  const definitions = rawTools.map((entry, index) =>
+    normalizeToolDefinition(entry, index, identityMode)
+  );
   const rawNextCursor = result.nextCursor;
   let nextCursor: string | undefined;
   if (rawNextCursor !== undefined && rawNextCursor !== null) {
@@ -681,6 +801,19 @@ async function resolveHeaders(
   return finalHeaders;
 }
 
+async function resolveListParams(
+  params: ResolvableRemoteMCPToolListParams | undefined,
+  context?: ToolExecutionContext,
+): Promise<Record<string, unknown>> {
+  const resolved = params ? await resolveValue(params, context) : undefined;
+  if (resolved === undefined) return {};
+  const snapshot = snapshotBoundedJsonValue(resolved);
+  if (!snapshot.success || !isRecord(snapshot.value)) {
+    throw new TypeError("Remote MCP tools/list params must be a bounded JSON object");
+  }
+  return snapshot.value;
+}
+
 function mergeAcceptHeader(existingAccept: string | null): string {
   const requiredTypes = ["application/json", "text/event-stream"];
   const existingTypes = (existingAccept ?? "")
@@ -1009,9 +1142,9 @@ function createRemoteMCPToolSourceWithFetch(
     async listTools(context) {
       const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
       const headers = await resolveHeaders(config.headers, context);
+      const configuredListParams = await resolveListParams(config.listParams, context);
 
       const definitions: ToolDefinition[] = [];
-      const definitionNames = new Set<string>();
       const seenCursors = new Set<string>();
       let cursor: string | undefined;
       for (let page = 0; page < MAX_REMOTE_MCP_TOOL_LIST_PAGES; page += 1) {
@@ -1023,7 +1156,14 @@ function createRemoteMCPToolSourceWithFetch(
             jsonrpc: "2.0",
             id: requestId,
             method: listMethod,
-            ...(cursor !== undefined ? { params: { cursor } } : {}),
+            ...(Object.keys(configuredListParams).length > 0 || cursor !== undefined
+              ? {
+                params: {
+                  ...configuredListParams,
+                  ...(cursor !== undefined ? { cursor } : {}),
+                },
+              }
+              : {}),
           },
           getRequestFetch(endpoint),
           context?.abortSignal,
@@ -1031,7 +1171,10 @@ function createRemoteMCPToolSourceWithFetch(
         );
 
         const result = getJsonRpcResult(payload, requestId);
-        const { definitions: pageDefinitions, nextCursor } = normalizeToolListPage(result);
+        const { definitions: pageDefinitions, nextCursor } = normalizeToolListPage(
+          result,
+          config.toolIdentity,
+        );
         if (
           definitions.length + pageDefinitions.length >
             MAX_REMOTE_MCP_TOOL_DEFINITIONS
@@ -1040,18 +1183,12 @@ function createRemoteMCPToolSourceWithFetch(
             `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
           );
         }
-        for (const definition of pageDefinitions) {
-          if (definitionNames.has(definition.name)) {
-            throw protocolError(
-              `Remote MCP tools/list returned duplicate tool name "${definition.name}"`,
-            );
-          }
-          definitionNames.add(definition.name);
-          definitions.push(definition);
-        }
+        definitions.push(...pageDefinitions);
 
         if (nextCursor === undefined) {
-          return definitions;
+          return finalizeRemoteMCPToolDefinitions(definitions, {
+            identity: config.toolIdentity,
+          });
         }
         if (seenCursors.has(nextCursor)) {
           throw protocolError(

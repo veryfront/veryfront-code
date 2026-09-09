@@ -94,6 +94,10 @@ function createVeryfrontApiRemoteMcpConfig(
     id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
     endpoint: () => createProjectScopedMcpUrl(input.apiMcpUrl, input.getProjectId?.()),
     headers: () => ({ Authorization: `Bearer ${input.authToken}` }),
+    listParams: {
+      _meta: { "veryfront/tool-names": "canonical" },
+    },
+    toolIdentity: "veryfront",
   };
 }
 

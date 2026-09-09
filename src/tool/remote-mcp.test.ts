@@ -11,6 +11,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
+  finalizeRemoteMCPToolDefinitions,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
@@ -19,6 +20,108 @@ import {
 import { getToolResultError } from "./result.ts";
 
 describe("tool/remote-mcp", () => {
+  it("preserves static and resolved tools/list params across pagination without mutation", async () => {
+    const staticParams = {
+      _meta: { "veryfront/tool-names": "canonical" },
+      futureOption: { enabled: true },
+    };
+    const resolvedParams = {
+      _meta: { "veryfront/tool-names": "canonical" },
+      source: "resolved",
+    };
+    const context = { projectId: "project-1", marker: { retained: true } };
+    const requests: Array<Record<string, unknown>> = [];
+    let page = 0;
+    const staticSource = createRemoteMCPToolSource({
+      id: "static",
+      endpoint: "https://93.184.216.34",
+      listParams: staticParams,
+    });
+    const resolvedSource = createRemoteMCPToolSource({
+      id: "resolved",
+      endpoint: "https://93.184.216.34",
+      listParams: (receivedContext) => {
+        assertEquals(receivedContext, context);
+        return resolvedParams;
+      },
+    });
+
+    const list = (source: ReturnType<typeof createRemoteMCPToolSource>) =>
+      withMockFetch(
+        async (_input, init) => {
+          requests.push(JSON.parse(String(init?.body)));
+          page += 1;
+          return Response.json({
+            jsonrpc: "2.0",
+            id: page <= 2 ? "static:tools:list" : "resolved:tools:list",
+            result: {
+              tools: [],
+              ...(page === 1 || page === 3 ? { nextCursor: `page-${page + 1}` } : {}),
+            },
+          });
+        },
+        async () => await source.listTools(context),
+      );
+
+    await list(staticSource);
+    await list(resolvedSource);
+
+    assertEquals(requests.map((request) => request.params), [
+      staticParams,
+      { ...staticParams, cursor: "page-2" },
+      resolvedParams,
+      { ...resolvedParams, cursor: "page-4" },
+    ]);
+    assertEquals(staticParams, {
+      _meta: { "veryfront/tool-names": "canonical" },
+      futureOption: { enabled: true },
+    });
+    assertEquals(resolvedParams, {
+      _meta: { "veryfront/tool-names": "canonical" },
+      source: "resolved",
+    });
+    assertEquals(context, { projectId: "project-1", marker: { retained: true } });
+  });
+
+  it("finalizes trusted identities before filtering and rejects cross-page aliases", () => {
+    const legacy = {
+      name: "list_projects",
+      _meta: {
+        "veryfront/tool-identity": {
+          type: "platform",
+          canonicalName: "veryfront__list_projects",
+          referenceName: "list_projects",
+        },
+      },
+    };
+    const canonical = {
+      name: "veryfront__list_projects",
+      _meta: legacy._meta,
+    };
+
+    assertThrows(
+      () => finalizeRemoteMCPToolDefinitions([legacy, canonical], { identity: "veryfront" }),
+      Error,
+      'competing tool identities "list_projects" and "veryfront__list_projects"',
+    );
+    assertEquals(
+      finalizeRemoteMCPToolDefinitions([
+        legacy,
+        {
+          name: "github__list_projects",
+          _meta: {
+            "veryfront/tool-identity": {
+              type: "integration",
+              canonicalName: "github__list_projects",
+              referenceName: "github__list_projects",
+            },
+          },
+        },
+      ], { identity: "veryfront" }).map((entry) => entry.name),
+      ["list_projects", "github__list_projects"],
+    );
+  });
+
   it("uses host transport only for an exact trusted endpoint", async () => {
     let transportCalls = 0;
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({

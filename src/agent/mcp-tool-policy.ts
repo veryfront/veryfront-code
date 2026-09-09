@@ -5,14 +5,24 @@ import type { AgentMcpToolPolicy } from "./types.ts";
 const ReflectApply = Reflect.apply;
 const ArrayIncludes = Array.prototype.includes;
 
-function includesName(names: readonly string[], toolName: string): boolean {
-  return ReflectApply(ArrayIncludes, names, [toolName]);
+function includesName(
+  names: readonly string[],
+  toolName: string,
+  identity?: { canonicalName: string; referenceName: string },
+): boolean {
+  return ReflectApply(ArrayIncludes, names, [toolName]) ||
+    (identity !== undefined &&
+      (ReflectApply(ArrayIncludes, names, [identity.canonicalName]) ||
+        ReflectApply(ArrayIncludes, names, [identity.referenceName])));
 }
 
 export type McpToolPolicyGate = {
-  allows(toolName: string): boolean;
+  allows(toolName: string, identity?: { canonicalName: string; referenceName: string }): boolean;
   filterDefinitions<T extends { name: string }>(definitions: readonly T[]): T[];
-  assertAllowed(toolName: string): void;
+  assertAllowed(
+    toolName: string,
+    identity?: { canonicalName: string; referenceName: string },
+  ): void;
 };
 
 function isPolicyEmpty(policy: AgentMcpToolPolicy | undefined): boolean {
@@ -29,12 +39,15 @@ export function createMcpToolPolicyGate(
 ): McpToolPolicyGate {
   const deniedDetail = options?.deniedDetail ?? defaultDeniedDetail;
 
-  const allows = (toolName: string): boolean => {
+  const allows = (
+    toolName: string,
+    identity?: { canonicalName: string; referenceName: string },
+  ): boolean => {
     const deny = policy?.deny;
-    if (deny !== undefined && includesName(deny, toolName)) return false;
+    if (deny !== undefined && includesName(deny, toolName, identity)) return false;
 
     const allow = policy?.allow;
-    if (allow !== undefined) return includesName(allow, toolName);
+    if (allow !== undefined) return includesName(allow, toolName, identity);
 
     return true;
   };
@@ -43,15 +56,25 @@ export function createMcpToolPolicyGate(
     const filtered: T[] = [];
     for (let index = 0; index < definitions.length; index++) {
       const definition = definitions[index];
-      if (definition !== undefined && allows(definition.name)) {
+      if (
+        definition !== undefined && allows(
+          definition.name,
+          "identity" in definition && definition.identity !== undefined
+            ? definition.identity as { canonicalName: string; referenceName: string }
+            : undefined,
+        )
+      ) {
         filtered[filtered.length] = definition;
       }
     }
     return filtered;
   };
 
-  const assertAllowed = (toolName: string): void => {
-    if (allows(toolName)) return;
+  const assertAllowed = (
+    toolName: string,
+    identity?: { canonicalName: string; referenceName: string },
+  ): void => {
+    if (allows(toolName, identity)) return;
 
     throw PERMISSION_DENIED.create({ detail: deniedDetail(toolName) });
   };
@@ -71,13 +94,21 @@ export function wrapRemoteToolSourceWithMcpPolicy(
       options?.deniedDetail?.(toolName, source.id) ??
         defaultDeniedDetail(toolName),
   });
+  const identities = new Map<string, { canonicalName: string; referenceName: string }>();
 
   return {
     ...source,
     id: source.id,
-    listTools: async (context) => gate.filterDefinitions(await source.listTools(context)),
+    listTools: async (context) => {
+      const definitions = await source.listTools(context);
+      identities.clear();
+      for (const definition of definitions) {
+        if (definition.identity) identities.set(definition.name, definition.identity);
+      }
+      return gate.filterDefinitions(definitions);
+    },
     executeTool: (toolName, args, context) => {
-      gate.assertAllowed(toolName);
+      gate.assertAllowed(toolName, identities.get(toolName));
       return source.executeTool(toolName, args, context);
     },
   };
