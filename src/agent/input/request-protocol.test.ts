@@ -8,6 +8,11 @@ import {
   getCreateInputRequestResponseSchema,
   getInputRequest,
 } from "../index.ts";
+import {
+  createAgUiEncoderState,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "#veryfront/agent/ag-ui/encoder.ts";
+import { ConversationRunEventEncoder } from "#veryfront/agent/conversation/run-events.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -315,6 +320,44 @@ describe("agent/input-request-protocol", () => {
       name: "veryfront.input_request.lifecycle",
       value: { action: "created", inputRequest },
     });
+  });
+
+  it("reaches both encoders as a native input request event", () => {
+    const inputRequest = getCreateInputRequestResponseSchema().parse(createInputRequestRecord());
+    const created = buildInputRequestLifecycleDataEvent({ action: "created", inputRequest });
+    const updated = buildInputRequestLifecycleDataEvent({ action: "updated", inputRequest });
+
+    // The bridge serializes a named data event as `data-<name>` carrying its
+    // value, so pin the name first and then drive that chunk through both
+    // encoders. This is the whole path from the tool to the wire.
+    assertEquals(created.name, "veryfront.input_request.lifecycle");
+    assertEquals(updated.name, "veryfront.input_request.lifecycle");
+    const createdChunk = {
+      type: "data-veryfront.input_request.lifecycle" as const,
+      data: created.value,
+    };
+    const updatedChunk = {
+      type: "data-veryfront.input_request.lifecycle" as const,
+      data: updated.value,
+    };
+
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, createdChunk),
+      [{ event: "InputRequestCreated", payload: { inputRequest } }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, updatedChunk),
+      [{ event: "InputRequestUpdated", payload: { inputRequest } }],
+    );
+
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode(createdChunk), [
+      { type: "INPUT_REQUEST_CREATED", inputRequest },
+    ]);
+    assertEquals(encoder.encode(updatedChunk), [
+      { type: "INPUT_REQUEST_UPDATED", inputRequest },
+    ]);
   });
 
   it("surfaces API failures with response text", async () => {

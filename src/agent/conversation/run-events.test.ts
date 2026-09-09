@@ -219,6 +219,28 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes native child-run lifecycle chunks as native durable records", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "data-veryfront.invoke_agent.lifecycle",
+        data: {
+          toolCallId: "toolu_child_1",
+          childRunId: "run_child_1",
+          status: "running",
+        },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.childRunStatusChanged,
+          toolCallId: "toolu_child_1",
+          childRunId: "run_child_1",
+          status: "running",
+        },
+      ],
+    );
+  });
+
   it("keeps state chunks and unknown data names custom", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

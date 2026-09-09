@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildInvokeAgentChildRunLifecycleCustomEvent,
   buildInvokeAgentChildRunProgressEvents,
   buildInvokeAgentChildRunStateDelta,
   publishInvokeAgentChildRunProgress,
@@ -117,22 +118,31 @@ describe("agent/invoke-agent-child-runs", () => {
         ],
       },
       {
-        type: "CUSTOM",
-        name: "veryfront.invoke_agent.lifecycle",
-        value: {
-          toolCallId: "tool/call~1",
-          childConversationId: CHILD_CONVERSATION_ID,
-          childRunId: "run_child_1",
-          childMessageId: CHILD_MESSAGE_ID,
-          childAgentId: "researcher",
-          description: "Inspect logs",
-          status: "pending",
-          sourceTargetKind: "project",
-          runtimeTargetKind: "main_branch",
-          targetBranchId: null,
-        },
+        toolCallId: "tool/call~1",
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        childAgentId: "researcher",
+        description: "Inspect logs",
+        status: "pending",
+        sourceTargetKind: "project",
+        runtimeTargetKind: "main_branch",
+        targetBranchId: null,
+        type: "CHILD_RUN_STATUS_CHANGED",
       },
     ]);
+  });
+
+  it("keeps the state delta paired with the native status record", () => {
+    const events = buildInvokeAgentChildRunProgressEvents({ ...BASE_INPUT, status: "completed" });
+
+    assertEquals(events.length, 2);
+    assertEquals(events[0]?.type, "STATE_DELTA");
+    assertEquals(events[1]?.type, "CHILD_RUN_STATUS_CHANGED");
+    assertEquals(
+      buildInvokeAgentChildRunLifecycleCustomEvent({ ...BASE_INPUT, status: "completed" }),
+      events[1],
+    );
   });
 
   it("uses a shared publisher when provided", async () => {
