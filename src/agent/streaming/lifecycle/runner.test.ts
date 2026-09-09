@@ -17,6 +17,37 @@ import type {
 } from "./types.ts";
 
 describe("runStreamLifecycle", () => {
+  it("consumes decoded signals without consulting their own array iterator", async () => {
+    const signals: StreamSignal[] = [
+      { kind: "protocol", event: { type: "text_content", delta: "synthetic private signal" } },
+      { kind: "protocol", event: { type: "step_finish", finishReason: "stop" } },
+    ];
+    let reads = 0;
+    Object.defineProperty(signals, Symbol.iterator, {
+      get() {
+        reads++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const provider: StreamProviderAdapter<unknown> = {
+      open: async function* () {
+        yield {};
+      },
+      decode: () => signals,
+      classifyError: () => ({
+        code: "PROVIDER_STREAM_ERROR",
+        publicMessage: "Failed",
+        retryable: false,
+        terminal: true,
+      }),
+    };
+    const run = runStreamLifecycle({ provider });
+    const frames = [];
+    for await (const frame of run.frames) frames.push(frame);
+    assertEquals((await run.outcome).snapshot.accumulatedText, "synthetic private signal");
+    assertEquals(frames.length > 0, true);
+    assertEquals(reads, 0);
+  });
   it("opens lazily and rejects a second frame consumer", async () => {
     const provider = createScriptedStreamProvider([]);
     const run = runStreamLifecycle({ provider });
