@@ -18,6 +18,20 @@ import {
 import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 describe("src/agent/runtime skill policy helpers", () => {
+  it("hydrates ordinary message parts without consulting their iterator", () => {
+    let reads = 0;
+    const parts: Message["parts"] = [{ type: "text", text: "synthetic private skill history" }];
+    Object.defineProperty(parts, Symbol.iterator, {
+      get() {
+        reads++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const state = hydrateActiveSkillStateFromMessages([{ id: "user", role: "user", parts }]);
+    assertEquals(state.activeSkillId, undefined);
+    assertEquals(state.activeSkillToolAvailability, INACTIVE_SKILL_TOOL_AVAILABILITY);
+    assertEquals(reads, 0);
+  });
   it("scans submitted forms without invoking overridden array methods", () => {
     const parts: Message["parts"] = [{
       type: "tool-result",

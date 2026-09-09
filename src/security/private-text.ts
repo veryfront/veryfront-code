@@ -7,6 +7,7 @@ const trimStart = String.prototype.trimStart;
 const trim = String.prototype.trim;
 const trimEnd = String.prototype.trimEnd;
 const lastIndexOf = String.prototype.lastIndexOf;
+const indexOf = String.prototype.indexOf;
 const charCodeAt = String.prototype.charCodeAt;
 const codePointAt = String.prototype.codePointAt;
 const toLowerCase = String.prototype.toLowerCase;
@@ -25,6 +26,10 @@ export function privateTextTrimEnd(value: string): string {
 
 export function privateTextLastIndexOf(value: string, search: string): number {
   return apply(lastIndexOf, value, [search]) as number;
+}
+
+export function privateTextIndexOf(value: string, search: string, start?: number): number {
+  return apply(indexOf, value, [search, start]) as number;
 }
 
 export function privateTextCharCodeAt(value: string, index: number): number {

@@ -148,8 +148,11 @@ export function hydrateActiveSkillStateFromMessages(
   };
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
     const message = messages[messageIndex]!;
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
       state = applySkillActivationResult(state, part.result);
     }
