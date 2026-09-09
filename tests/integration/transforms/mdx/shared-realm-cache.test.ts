@@ -40,6 +40,7 @@ import {
   MDX_JSX_CACHE_NAMESPACE_PREFIX,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { utf8ByteLength } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/limits.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 
 type SourceSpanCounterOperation = "dynamic" | "side-effect" | "static";
 
@@ -621,10 +622,10 @@ describe("MDX cache shared-realm lifecycle", () => {
   });
 
   it("lazy retention and pruning do not consult Array species", async () => {
-    const dir = await makeTempDir();
+    const dir = await makeTempDir({ prefix: "vf species cache " });
     const source = "export const value = 63;";
     const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/Species.tsx", source);
-    const artifactUrl = pathToFileURL(artifact).href;
+    const importLiteral = jsonForInlineScript("file://" + artifact);
     const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
     let release: (() => void) | undefined;
     try {
@@ -639,9 +640,11 @@ describe("MDX cache shared-realm lifecycle", () => {
         },
       });
       release = await retainJsxArtifactsReferencedIn(
-        `export const load = () => import("${artifactUrl}");`,
+        `export const load = () => import(${importLiteral});`,
         dir,
       );
+      assertEquals(__jsxCacheInternals.jsxArtifactActiveRefCount(artifact), 1);
+      assertEquals(__jsxCacheInternals.isLazyArtifactRetained(artifact), true);
       await __jsxCacheInternals.runLazyJsxArtifactHeartbeat();
       release();
       release = undefined;
