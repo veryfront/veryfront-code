@@ -1,8 +1,46 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { chainPrivatePromise, resolvePrivatePromise } from "./private-promise.ts";
+import {
+  allPrivatePromises,
+  chainPrivatePromise,
+  resolvePrivatePromise,
+} from "./private-promise.ts";
 
 describe("owned promise chains", () => {
+  it("joins out-of-order work in input order without caller iteration or then hooks", async () => {
+    const first = Promise.withResolvers<number>();
+    const second = Promise.withResolvers<number>();
+    const inputs = [first.promise, second.promise];
+    let hooks = 0;
+    Object.defineProperty(inputs, Symbol.iterator, {
+      get() {
+        hooks++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    Object.defineProperty(first.promise, "then", {
+      get() {
+        hooks++;
+        return Promise.prototype.then;
+      },
+    });
+    const joined = allPrivatePromises(inputs);
+    second.resolve(2);
+    first.resolve(1);
+    assertEquals(await joined, [1, 2]);
+    assertEquals(hooks, 0);
+    assertEquals(await allPrivatePromises([]), []);
+  });
+
+  it("rejects the aggregate and still observes a later input rejection", async () => {
+    const first = Promise.withResolvers<number>();
+    const later = Promise.withResolvers<number>();
+    const joined = allPrivatePromises([first.promise, later.promise]);
+    first.reject(new Error("first failure"));
+    await assertRejects(() => joined, Error, "first failure");
+    later.reject(new Error("late failure"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   it("propagates input and callback failures while allowing explicit recovery", async () => {
     const failure = new Error("Synthetic lifecycle failure");
     await assertRejects(

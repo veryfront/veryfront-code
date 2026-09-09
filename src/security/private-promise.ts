@@ -1,3 +1,5 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+
 const NativePromise = Promise;
 const NativePromisePrototype = Promise.prototype;
 const apply = Reflect.apply;
@@ -125,4 +127,30 @@ export function resolvePrivatePromise(): Promise<void> {
 /** Create an owned completion latch without consulting a replaced constructor helper. */
 export function createPrivateDeferred<T>(): PromiseWithResolvers<T> {
   return apply(promiseWithResolvers, PrivatePromise, []) as PromiseWithResolvers<T>;
+}
+
+/** Join owned promises without exposing inputs or results to shared aggregation hooks. */
+export function allPrivatePromises<T>(promises: readonly Promise<T>[]): Promise<T[]> {
+  const completion = createPrivateDeferred<T[]>();
+  const values: T[] = [];
+  const length = promises.length;
+  let remaining = length;
+  values.length = remaining;
+  const finish = (index: number, value: unknown): void => {
+    defineOwnDataProperty(values, index, value, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    if (--remaining === 0) completion.resolve(values);
+  };
+  if (remaining === 0) completion.resolve(values);
+  for (let index = 0; index < length; index++) {
+    if (!hasOwn(promises, index)) {
+      finish(index, undefined);
+      continue;
+    }
+    void chainPrivatePromise(promises[index]!, (value) => finish(index, value), completion.reject);
+  }
+  return completion.promise;
 }

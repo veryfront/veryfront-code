@@ -6,6 +6,7 @@ import {
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { PrivateJsonArrayError, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { allPrivatePromises } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   appendPrivateArray,
@@ -1029,7 +1030,7 @@ async function validateInputTexts(
   values: InputValidationTexts,
   options?: InputValidationOptions,
 ): Promise<{ valid: boolean; violations: SecurityViolation[] }> {
-  const results = await Promise.all(concatPrivateArrays(
+  const results = await allPrivatePromises(concatPrivateArrays(
     mapPrivateArray(values.texts, (value) => validator.validate(value, options)),
     mapPrivateArray(
       values.assembled,
@@ -1167,6 +1168,10 @@ function assertionInspectionWidth(source: string, unicodeSets: boolean): number 
   return width;
 }
 
+function lastTextCodeUnit(text: string): string | undefined {
+  return text.length > 0 ? text[text.length - 1] : undefined;
+}
+
 /** Prove an assembly match also has a path using unchanged trusted context. */
 function createTrustedMatchPredicate(
   pattern: RegExp,
@@ -1221,7 +1226,7 @@ function createTrustedMatchPredicate(
           if (word(segment.text[0]) === (escaped === "b")) {
             pushPrivateArray(choices, atPosition(lower));
           }
-          if (word(segment.text.at(-1)) === (escaped === "b")) {
+          if (word(lastTextCodeUnit(segment.text)) === (escaped === "b")) {
             pushPrivateArray(choices, atPosition(upper));
           }
           result += "(?:" + joinPrivateArray(choices, "|") + ")";
@@ -1284,7 +1289,7 @@ function createTrustedMatchPredicate(
         // Only assertions at a segment edge can see different word context.
         const boundary = escaped === "b";
         if (isWord(segment.text[0]) !== boundary) source += excludePosition(lower);
-        if (isWord(segment.text.at(-1)) !== boundary) source += excludePosition(upper);
+        if (isWord(lastTextCodeUnit(segment.text)) !== boundary) source += excludePosition(upper);
       }
       continue;
     }
