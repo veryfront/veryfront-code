@@ -103,7 +103,20 @@ describe("managed node broker", () => {
         ["DELETE", "/api/control-plane/runs/", ""],
       ] as const;
       for (const [method, prefix, suffix] of routes) {
-        for (const malformed of ["%", "%GG", "%E0%A4%A", "%2F"]) {
+        for (
+          const malformed of [
+            "%",
+            "%GG",
+            "%E0%A4%A",
+            "%2F",
+            "%00",
+            "%5C",
+            "%20",
+            "%C3%A9",
+            "%252F",
+            "a".repeat(129),
+          ]
+        ) {
           const response = await fetch(`${server.url}${prefix}${malformed}${suffix}`, { method });
           const body = await response.text();
           assertEquals(response.status, 400);

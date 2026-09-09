@@ -1,3 +1,4 @@
+import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
 import { containsBrokerCredential } from "#veryfront/agent/service/broker-credentials.ts";
 import type { ControlPlaneClaims, ControlPlaneSurface } from "#veryfront/channels/control-plane.ts";
 import {
@@ -135,9 +136,8 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   options: BrokerRuntimeAgentIngressOptions<TAuthorization>,
 ): Promise<BrokerRuntimeAgentIngress<TAuthorization>> {
   const expectedRunId = getRuntimeAgentRunIdSchema().parse(options.expectedRunId);
-  const expectedPath = `/api/control-plane/runs/${expectedRunId}/stream`;
   const actualPath = new URL(request.url).pathname;
-  if (request.method !== "POST" || actualPath !== expectedPath) {
+  if (request.method !== "POST" || parseBrokerSignedRunPath(actualPath) !== expectedRunId) {
     throw new BrokerIngressError(400, "BROKER_INGRESS_TARGET_MISMATCH");
   }
   const inboundAuthorization = request.headers.get("authorization");

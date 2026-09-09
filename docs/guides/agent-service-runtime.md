@@ -472,8 +472,10 @@ work to retire. This server adapter does not configure product policy,
 registration, credentials, or executor images.
 
 Managed run routes return HTTP 400 with `BROKER_INGRESS_TARGET_MISMATCH` when
-a run ID contains malformed URL encoding or an encoded slash. Valid encoded
-run IDs are decoded before the handler receives them.
+a run ID contains malformed URL encoding or fails the canonical run ID schema
+after decoding. Run IDs contain 1 to 128 ASCII letters, digits, underscores,
+or hyphens. Valid encoded run IDs are decoded before the handler receives them.
+Signed stream requests must sign the original encoded request path.
 
 ## Verify it worked
 

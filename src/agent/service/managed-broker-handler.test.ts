@@ -15,7 +15,7 @@ const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
 
-async function request(signal?: AbortSignal) {
+async function request(signal?: AbortSignal, requestPath = path) {
   const body = JSON.stringify({
     run: {
       agentServiceId: "service-1",
@@ -37,11 +37,11 @@ async function request(signal?: AbortSignal) {
     audience: "demo-project",
     projectId,
     requestId: "run-1",
-    requestPath: path,
+    requestPath,
   });
   return {
     publicKeyPem: signed.publicKeyPem,
-    request: new Request(`https://broker.test${path}`, {
+    request: new Request(`https://broker.test${requestPath}`, {
       method: "POST",
       headers: {
         authorization: "Bearer broker-token",
@@ -145,6 +145,7 @@ async function handler(
   mode: "detached" | "sse",
   options: {
     signal?: AbortSignal;
+    requestPath?: string;
     failStart?: boolean;
     admitBeforeFailure?: boolean;
     waitForPrepare?: boolean;
@@ -158,7 +159,7 @@ async function handler(
     startError?: Error;
   } = {},
 ) {
-  const first = await request(options.signal);
+  const first = await request(options.signal, options.requestPath);
   const fixture = runtimeFixture(
     options.streamFailure,
     options.terminalChunk,
@@ -266,6 +267,34 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  it("accepts encoded run IDs while verifying the original signed path", async () => {
+    const encodedPath = "/api/control-plane/runs/%72un%2D1/stream";
+    const f = await handler("detached", { requestPath: encodedPath });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      assertEquals(response.status, 202);
+      assertEquals(f.brokerStarts, 1);
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+    const canonical = await handler("detached");
+    try {
+      const original = canonical.first.request;
+      const changedPath = new Request(`https://broker.test${encodedPath}`, {
+        method: original.method,
+        headers: original.headers,
+        body: await original.text(),
+      });
+      const response = await canonical.managed.handle(changedPath);
+      assertEquals(response.status, 401);
+      assertEquals(await response.json(), { errorCode: "BROKER_INGRESS_AUTH_INVALID" });
+      assertEquals(canonical.brokerStarts, 0);
+    } finally {
+      canonical.fixture.release();
+      await canonical.managed.close();
+    }
+  });
   it("preserves typed executor failure statuses on both response modes", async () => {
     for (const mode of ["detached", "sse"] as const) {
       const f = await handler(mode, {

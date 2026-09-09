@@ -1,3 +1,4 @@
+import { decodeBrokerRunId } from "./broker-run-route.ts";
 import {
   createVeryfrontServer,
   type NodeVeryfrontServiceServer,
@@ -130,13 +131,8 @@ function resolveRoute(method: string, pathname: string): Route | undefined {
 }
 
 function decodeRunRoute(kind: RunRoute["kind"], value: string): Route {
-  let runId: string;
-  try {
-    runId = decodeURIComponent(value);
-  } catch {
-    return { kind: "invalid" };
-  }
-  return runId && !runId.includes("/") ? { kind, runId } : { kind: "invalid" };
+  const runId = decodeBrokerRunId(value);
+  return runId === null ? { kind: "invalid" } : { kind, runId };
 }
 
 function validateOptions(options: {

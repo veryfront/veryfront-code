@@ -82,6 +82,17 @@ function options(publicKeyPem: string) {
 }
 
 describe("managed broker ingress", () => {
+  it("accepts a canonical run ID encoded in the signed request path", async () => {
+    const encodedPath = "/api/control-plane/runs/%72un%2D1/stream";
+    const signed = await signedRequest(invocation(), { requestPath: encodedPath });
+    const encoded = new Request(`https://broker.test${encodedPath}`, {
+      method: "POST",
+      headers: signed.request.headers,
+      body: await signed.request.text(),
+    });
+    const result = await parseBrokerRuntimeAgentIngress(encoded, options(signed.publicKeyPem));
+    assertEquals(result.executor.run.runId, "run-1");
+  });
   it("verifies the exact body and produces disjoint private authority and executor data", async () => {
     const signed = await signedRequest();
     const result = await parseBrokerRuntimeAgentIngress(

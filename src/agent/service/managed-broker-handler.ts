@@ -25,7 +25,7 @@ import {
   parseBrokerRuntimeAgentIngress,
 } from "./broker-ingress.ts";
 
-const runPath = /^\/api\/control-plane\/runs\/([A-Za-z0-9_-]{1,128})\/stream$/u;
+import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
 
 /** Trusted executor admission boundary with actual settlement notification. */
 export interface ManagedExecutorStarter {
@@ -62,14 +62,13 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   let closed = false;
 
   async function handle(request: Request): Promise<Response> {
-    const match = runPath.exec(new URL(request.url).pathname);
-    if (request.method !== "POST" || !match) {
+    const runId = parseBrokerSignedRunPath(new URL(request.url).pathname);
+    if (request.method !== "POST" || runId === null) {
       return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
     }
     if (closed || options.signal?.aborted) {
       return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
     }
-    const runId = match[1]!;
     try {
       const signal = AbortSignal.any([
         request.signal,
