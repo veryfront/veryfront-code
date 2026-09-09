@@ -1,5 +1,6 @@
 import {
   concatPrivateArrays,
+  everyPrivateArray,
   filterPrivateArray,
   flatMapPrivateArray,
   joinPrivateArray,
@@ -41,6 +42,7 @@ import { getProviderToolProfile } from "./provider-tool-compat.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
+const ArrayIsArray = Array.isArray;
 const IntrinsicSet = Set;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetAdd = Set.prototype.add;
@@ -217,7 +219,8 @@ function getTrustedAllowedSkillIds(
   input: PrepareAgentRuntimeStepInput,
 ): readonly string[] | undefined {
   const value = input.toolContextBase?.allowedSkillIds ?? input.runtimeContext?.allowedSkillIds;
-  return Array.isArray(value) && value.every((entry): entry is string => typeof entry === "string")
+  return ArrayIsArray(value) &&
+      everyPrivateArray(value, (entry): entry is string => typeof entry === "string")
     ? value
     : undefined;
 }
@@ -350,7 +353,7 @@ export async function prepareAgentRuntimeStep(
     )
     : baseSystemPrompt;
   const systemPrompt = typeof baseSystemPrompt === "string" &&
-      Array.isArray(instructionsWithToolInventory)
+      ArrayIsArray(instructionsWithToolInventory)
     ? flattenSystemInstructions(instructionsWithToolInventory)
     : instructionsWithToolInventory;
 

@@ -31,6 +31,7 @@ const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
 const intrinsicHasOwn = Object.hasOwn;
+const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
 const intrinsicArrayIncludes = Array.prototype.includes;
 
@@ -66,7 +67,7 @@ export function parseToolArgs(
 
     const parsed = typeof rawArgs === "string" ? privateJsonParse(rawArgs) : rawArgs;
 
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!parsed || typeof parsed !== "object" || intrinsicIsArray(parsed)) {
       return { args: {}, error: "Tool call arguments must be a JSON object" };
     }
 

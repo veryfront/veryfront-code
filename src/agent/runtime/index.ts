@@ -389,6 +389,7 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
+const ObjectValues = Object.values;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
 const WeakMapGet = IntrinsicWeakMap.prototype.get;
@@ -1441,8 +1442,9 @@ function containsSubmittedFormInputExecutionResult(result: unknown, depth = 0): 
   if ((normalized as { submitted?: unknown }).submitted === true) {
     return true;
   }
-  return Object.values(normalized).some((value) =>
-    containsSubmittedFormInputExecutionResult(value, depth + 1)
+  return somePrivateArray(
+    ObjectValues(normalized),
+    (value) => containsSubmittedFormInputExecutionResult(value, depth + 1),
   );
 }
 
@@ -2194,7 +2196,7 @@ export class AgentRuntime {
     systemPrompt: AgentSystem,
     providerOptionKey: string | undefined,
   ): Promise<RuntimeStepState> {
-    const structuredSystem = Array.isArray(systemPrompt) ? systemPrompt : undefined;
+    const structuredSystem = ArrayIsArray(systemPrompt) ? systemPrompt : undefined;
     const refreshed: ResolvedRuntimeState | undefined = await this.config.resolveRuntimeState?.({
       agentId: this.id,
       mode,
@@ -4695,7 +4697,7 @@ async function reconcileSuppressedProviderMetadata(
   if (
     reconciled === null ||
     typeof reconciled !== "object" ||
-    Array.isArray(reconciled)
+    ArrayIsArray(reconciled)
   ) {
     throw new TypeError(
       "Model runtime returned invalid provider metadata after suppressing a tool call",
