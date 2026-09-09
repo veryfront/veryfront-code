@@ -69,11 +69,15 @@ function readNativeAsLegacyCustom(
     definition.storedType === "INPUT_REQUEST_CREATED" ||
     definition.storedType === "INPUT_REQUEST_UPDATED"
   ) {
+    // `...value` first so a key smuggled inside the stored value (e.g. an
+    // "action" field the native builders never write) cannot win over the
+    // action this reader derives from the stored type -- mirrors the chat
+    // decoder's `{ ...payload, type: "source-document" }` at ag-ui.ts:1039.
     return {
       name: definition.legacyCustomName,
       value: {
-        action: definition.storedType === "INPUT_REQUEST_CREATED" ? "created" : "updated",
         ...value,
+        action: definition.storedType === "INPUT_REQUEST_CREATED" ? "created" : "updated",
       },
     };
   }
@@ -81,9 +85,23 @@ function readNativeAsLegacyCustom(
     // The citation and file twins carried the whole chunk, type field
     // included, as their CUSTOM value. The native builders strip that field
     // before storing, so it must be reinstated here to make the twin exact.
+    // `...value` first for the same reason as the input-request case above.
+    //
+    // DOCUMENT_CITED's title is required at the chat UI type level
+    // (ChatSourceDocumentUiPart.title is not optional, unlike its siblings'
+    // title/filename/url), so buildDocumentCitedEvent never lets it be
+    // dropped from either shape -- it falls back to sourceId instead of an
+    // empty string -- and there is nothing to restore here. FILE_ATTACHED's
+    // url has the same chat-type requirement but no safe non-empty
+    // fallback (a placeholder url would be an actively misleading, possibly
+    // broken link), so a chunk whose url was empty is, once stored and
+    // replayed, indistinguishable from one that never had a url at all and
+    // reads back the same way: unrenderable, falling back to a raw data
+    // chunk on replay even though the live frame (which keeps the empty
+    // string) rendered it correctly the first time. Known, accepted gap.
     return {
       name: definition.legacyCustomName,
-      value: { type: definition.legacyCustomName, ...value },
+      value: { ...value, type: definition.legacyCustomName },
     };
   }
   return { name: definition.legacyCustomName, value };

@@ -186,7 +186,9 @@ describe("agent/ag-ui-native-run-events", () => {
     );
     assertEquals(
       buildDocumentCitedEvent({ type: "source-document", mediaType: "text/markdown" }).live.payload,
-      { mediaType: "text/markdown", sourceId: "text/markdown" },
+      // The projector also falls back to the source id for a missing title,
+      // the way it already does for a missing source id itself.
+      { mediaType: "text/markdown", sourceId: "text/markdown", title: "text/markdown" },
     );
     assertEquals(
       buildFileAttachedEvent({
@@ -201,6 +203,154 @@ describe("agent/ag-ui-native-run-events", () => {
         filename: "report.pdf",
         type: "FILE_ATTACHED",
       },
+    );
+  });
+
+  it("drops empty-string optionals from the durable record only, keeping the live wire frame lenient", () => {
+    // The API declares title/filename/url as z.string().min(1).optional(), so
+    // an empty string is a hard rejection on the batch append route -- the
+    // durable record must drop it. The live wire frame must NOT: the chat
+    // decoder's UrlCited and FileAttached cases use a string url (for
+    // FileAttached) -- empty string included -- as their gate for rendering
+    // the citation/attachment at all (src/chat/ag-ui.ts), so dropping the
+    // key there would make it disappear rather than merely lose its title,
+    // exactly the legacy `Custom` wrapper never did. DocumentCited's title
+    // has the same gate but no drop-and-restore split, since it is never
+    // empty in either shape -- see the dedicated title-fallback test below.
+    // Required fields (url+sourceId, mediaType+sourceId, mediaType) are
+    // unaffected by this: they already go through readString with a
+    // non-empty fallback, in both shapes.
+    assertEquals(
+      buildUrlCitedEvent({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://a",
+        title: "",
+      }),
+      {
+        live: {
+          event: "UrlCited",
+          payload: { sourceId: "web-1", url: "https://a", title: "" },
+        },
+        durable: { sourceId: "web-1", url: "https://a", type: "URL_CITED" },
+      },
+      "an empty title must reach the live frame unchanged but be dropped from the durable record",
+    );
+    assertEquals(
+      buildUrlCitedEvent({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://a",
+        title: "Reference",
+      }).live.payload,
+      { sourceId: "web-1", url: "https://a", title: "Reference" },
+      "a non-empty title must still be carried through",
+    );
+
+    assertEquals(
+      buildDocumentCitedEvent({
+        type: "source-document",
+        sourceId: "d1",
+        mediaType: "text/markdown",
+        title: "Report",
+        filename: "",
+      }),
+      {
+        live: {
+          event: "DocumentCited",
+          payload: { sourceId: "d1", mediaType: "text/markdown", title: "Report", filename: "" },
+        },
+        durable: {
+          sourceId: "d1",
+          mediaType: "text/markdown",
+          title: "Report",
+          type: "DOCUMENT_CITED",
+        },
+      },
+      "an empty filename must reach the live frame unchanged but be dropped from the durable record",
+    );
+    assertEquals(
+      buildDocumentCitedEvent({
+        type: "source-document",
+        sourceId: "d1",
+        mediaType: "text/markdown",
+        title: "Report",
+        filename: "report.md",
+      }).live.payload,
+      { sourceId: "d1", mediaType: "text/markdown", title: "Report", filename: "report.md" },
+      "a non-empty title and filename must still be carried through",
+    );
+
+    assertEquals(
+      buildFileAttachedEvent({
+        type: "file",
+        mediaType: "application/pdf",
+        url: "",
+        filename: "",
+      }),
+      {
+        live: {
+          event: "FileAttached",
+          payload: { mediaType: "application/pdf", url: "", filename: "" },
+        },
+        durable: { mediaType: "application/pdf", type: "FILE_ATTACHED" },
+      },
+      "an empty url and filename must reach the live frame unchanged but be dropped from the durable record",
+    );
+    assertEquals(
+      buildFileAttachedEvent({
+        type: "file",
+        mediaType: "application/pdf",
+        url: "https://cdn.example.com/a.pdf",
+        filename: "a.pdf",
+      }).live.payload,
+      {
+        mediaType: "application/pdf",
+        url: "https://cdn.example.com/a.pdf",
+        filename: "a.pdf",
+      },
+      "a non-empty url and filename must still be carried through",
+    );
+  });
+
+  it("falls back an empty or missing DOCUMENT_CITED title to the source id, in both shapes", () => {
+    // Unlike its own filename or buildUrlCitedEvent's title, DocumentCited's
+    // title is required at the chat UI type level
+    // (ChatSourceDocumentUiPart.title is not optional), so the chat decoder
+    // uses a string title as its gate for rendering the citation at all.
+    // Dropping an empty one from the durable record the way the other
+    // optionals are dropped would make a replayed citation unrenderable, so
+    // this builder never lets title be empty in either shape -- it falls
+    // back to the source id instead, the same value it already falls back
+    // to when the chunk has no source id of its own.
+    assertEquals(
+      buildDocumentCitedEvent({
+        type: "source-document",
+        sourceId: "doc-1",
+        mediaType: "text/markdown",
+        title: "",
+      }),
+      {
+        live: {
+          event: "DocumentCited",
+          payload: { sourceId: "doc-1", mediaType: "text/markdown", title: "doc-1" },
+        },
+        durable: {
+          sourceId: "doc-1",
+          mediaType: "text/markdown",
+          title: "doc-1",
+          type: "DOCUMENT_CITED",
+        },
+      },
+      "an empty title must fall back to the source id in both shapes",
+    );
+    assertEquals(
+      buildDocumentCitedEvent({
+        type: "source-document",
+        mediaType: "text/markdown",
+      }).durable.title,
+      "text/markdown",
+      "a missing title falls back to the derived source id (here, the media type) the same way",
     );
   });
 

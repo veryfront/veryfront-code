@@ -74,14 +74,27 @@ function summarizeOversizedEvent(
     case "TOOL_CALL_RESULT":
       return [summarizeToolResultEvent(event)];
 
-    // The `url` field is where these three carry an oversized value (typically
+    // The `url` field is where these two carry an oversized value (typically
     // an inline `data:` URL); truncating it keeps every API-catalog-required
     // field (`mediaType`, `sourceId`, ...) intact, unlike the generic summary.
+    // DOCUMENT_CITED has no `url` field (ChatSourceDocumentUiPart carries
+    // none), so it always falls straight to the omission event below --
+    // dropped from this case rather than left to fail the `typeof` check,
+    // since it behaves identically either way.
     case "URL_CITED":
-    case "DOCUMENT_CITED":
     case "FILE_ATTACHED": {
       if (typeof event.url === "string") {
-        const truncated = truncateEventStringFieldToLimit(event, "url", " [truncated]");
+        // buildUrlCitedEvent falls back to `sourceId = url` when the source
+        // chunk has no id of its own, so a citation's sourceId can mirror an
+        // oversized url exactly; truncate both together in that case (see
+        // truncateEventStringFieldToLimit's mirrorField).
+        const sourceIdMirrorsUrl = event.type === "URL_CITED" && event.sourceId === event.url;
+        const truncated = truncateEventStringFieldToLimit(
+          event,
+          "url",
+          " [truncated]",
+          sourceIdMirrorsUrl ? "sourceId" : undefined,
+        );
         if (truncated) return [truncated];
       }
       return [buildOmittedEvent(event)];
@@ -179,21 +192,32 @@ function summarizeToolResultEvent(event: ConversationRunEventRecord): Conversati
  * Measures the JSON-serialized event (not the raw string), so it stays correct
  * for escape-heavy content that expands under JSON.stringify — the same unit the
  * API enforces. Returns null when the envelope alone already exceeds the limit.
+ *
+ * `mirrorField`, when given, is set to the same truncated string as `field`
+ * in every candidate the search tries -- for a URL_CITED record whose
+ * `sourceId` mirrors an oversized `url` (buildUrlCitedEvent's fallback when
+ * the chunk had no source id of its own), truncating `url` alone would leave
+ * `sourceId` unchanged and the record still over the limit, so both fields
+ * must shrink together rather than being sized independently.
  */
 function truncateEventStringFieldToLimit(
   event: ConversationRunEventRecord,
   field: string,
   suffix: string,
+  mirrorField?: string,
 ): ConversationRunEventRecord | null {
   const value = event[field];
   if (typeof value !== "string") {
     return null;
   }
 
-  const buildCandidate = (prefixLength: number): ConversationRunEventRecord =>
-    prefixLength >= value.length
-      ? event
-      : { ...event, [field]: `${value.slice(0, prefixLength)}${suffix}` };
+  const buildCandidate = (prefixLength: number): ConversationRunEventRecord => {
+    if (prefixLength >= value.length) return event;
+    const truncatedValue = `${value.slice(0, prefixLength)}${suffix}`;
+    return mirrorField
+      ? { ...event, [field]: truncatedValue, [mirrorField]: truncatedValue }
+      : { ...event, [field]: truncatedValue };
+  };
 
   if (
     getConversationRunEventJsonByteLength(buildCandidate(value.length)) <=

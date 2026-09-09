@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   ConversationRunEventEncoder,
@@ -640,6 +640,7 @@ describe("agent/conversation-run-events", () => {
       mediaType: "image/png",
     }];
     const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+    assertExists(normalized);
 
     assertEquals(normalized.type, conversationRunEventTypes.fileAttached);
     assertEquals(normalized.mediaType, "image/png");
@@ -648,6 +649,56 @@ describe("agent/conversation-run-events", () => {
       true,
       "the oversized url must be truncated",
     );
+  });
+
+  it("re-derives sourceId from the truncated url when a URL_CITED citation had none of its own", () => {
+    // M1: buildUrlCitedEvent falls back to sourceId = url when the chunk has
+    // no source id. If that url is the oversized value, truncating url alone
+    // leaves sourceId mirroring the untouched oversized string, so the
+    // record stays over the limit and degrades to the CUSTOM omission event
+    // -- lossier than it needs to be.
+    const oversizedUrl = "data:image/png;base64," + "A".repeat(250 * 1024);
+    const events = [{ type: "source-url", url: oversizedUrl }];
+    const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+    assertExists(normalized);
+
+    assertEquals(
+      normalized.type,
+      conversationRunEventTypes.urlCited,
+      "the citation must survive as URL_CITED, not degrade to the omission event",
+    );
+    assertEquals(
+      typeof normalized.url === "string" && (normalized.url as string).length < 250 * 1024,
+      true,
+      "the oversized url must be truncated",
+    );
+    assertEquals(
+      normalized.sourceId,
+      normalized.url,
+      "sourceId must be re-derived from the truncated url, not left mirroring the untruncated one",
+    );
+    assertEquals(
+      getConversationRunEventJsonByteLength(normalized) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
+  });
+
+  it("does not attempt to truncate an oversized DOCUMENT_CITED citation's absent url field", () => {
+    // M2: ChatSourceDocumentUiPart has no url field, so DOCUMENT_CITED always
+    // falls to the always-valid omission event for an oversized record --
+    // dropped from the url-truncation case rather than left to fail its
+    // `typeof event.url === "string"` check, since the two behave
+    // identically.
+    const events = [{
+      type: "source-document",
+      sourceId: "doc-1",
+      mediaType: "text/markdown",
+      title: "A".repeat(250 * 1024),
+    }];
+    const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+    assertExists(normalized);
+
+    assertEquals(normalized.type, conversationRunEventTypes.custom);
     assertEquals(
       getConversationRunEventJsonByteLength(normalized) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
       true,

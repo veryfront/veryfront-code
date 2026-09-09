@@ -88,7 +88,12 @@ const NATIVE_LEGACY_NAMES: ReadonlySet<string> = new Set(
   NATIVE_RUN_EVENTS.map((entry) => entry.legacyCustomName),
 );
 
-/** Reports whether a custom event name has a native replacement. */
+/**
+ * Reports whether a custom event name has a native replacement. Every
+ * routing decision in this module goes through `buildNativeRunEventFrame`
+ * returning null instead of calling this directly; it is exported for other
+ * consumers of this module that need the same check without building a frame.
+ */
 export function isNativeRunEventName(name: string): name is NativeRunEventLegacyName {
   return NATIVE_LEGACY_NAMES.has(name);
 }
@@ -134,13 +139,23 @@ const FILE_ATTACHED = NATIVE_RUN_EVENTS[6];
 
 // `type` is written last so a payload that still carries a chunk type can
 // never win over the stored type. No builder passes one through.
+//
+// `durablePayload` defaults to `livePayload` and only the three citation/file
+// builders pass a distinct one: the API's batch append route rejects an
+// empty-string `title`/`filename`/`url` outright (I1), so those builders drop
+// it from the durable record, but the chat decoder in src/chat/ag-ui.ts uses
+// a string `title` (DocumentCited) or `url` (FileAttached) -- empty string
+// included -- as its gate for rendering the citation/attachment at all, so
+// the live wire frame must keep the field exactly as the legacy `Custom`
+// wrapper carried it.
 function toFrame(
   definition: NativeRunEventEntry,
-  payload: Record<string, unknown>,
+  livePayload: Record<string, unknown>,
+  durablePayload: Record<string, unknown> = livePayload,
 ): NativeRunEventFrame {
   return {
-    live: { event: definition.wireName, payload },
-    durable: { ...payload, type: definition.storedType },
+    live: { event: definition.wireName, payload: livePayload },
+    durable: { ...durablePayload, type: definition.storedType },
   };
 }
 
@@ -152,6 +167,28 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+/**
+ * Drop the listed keys from `rest` when their value is an empty string, for
+ * the durable payload only (see `toFrame`). The API catalog declares
+ * `title`/`filename`/`url` as `z.string().min(1).optional()`, so an empty
+ * string is a hard validation failure on the batch append route while an
+ * absent key, `null`, or any other value is not -- only the empty-string
+ * case needs dropping, never passed through like the required fields' own
+ * `readString` guard.
+ */
+function omitEmptyStrings(
+  rest: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...rest };
+  for (const key of keys) {
+    if (result[key] === "") {
+      delete result[key];
+    }
+  }
+  return result;
 }
 
 /**
@@ -220,11 +257,17 @@ export function buildChildRunStatusChangedEvent(
  * A chunk with no url yields an empty one, which the API catalog rejects as a
  * required field. `buildNativeRunEventFrame` guards that case and keeps the
  * `Custom` wrapper instead; a direct caller must do the same.
+ *
+ * `title` reaches the live wire frame exactly as the chunk carried it,
+ * empty string included, since the chat decoder's UrlCited case renders the
+ * citation regardless of title; the durable record drops an empty one
+ * instead, since the API catalog rejects it there.
  */
 export function buildUrlCitedEvent(source: Record<string, unknown>): NativeRunEventFrame {
   const { type: _type, ...rest } = source;
   const url = readString(rest.url) ?? "";
-  return toFrame(URL_CITED, { ...rest, url, sourceId: readString(rest.sourceId) ?? url });
+  const payload = { ...rest, url, sourceId: readString(rest.sourceId) ?? url };
+  return toFrame(URL_CITED, payload, omitEmptyStrings(payload, ["title"]));
 }
 
 /**
@@ -233,15 +276,26 @@ export function buildUrlCitedEvent(source: Record<string, unknown>): NativeRunEv
  * As with `buildUrlCitedEvent`, a chunk with no media type yields an empty one
  * that the API catalog rejects. Route through `buildNativeRunEventFrame`, which
  * guards it, rather than calling this directly with unvalidated input.
+ *
+ * `title` is never dropped, in either shape, unlike this event's own
+ * `filename` or `buildUrlCitedEvent`'s `title`: `ChatSourceDocumentUiPart.title`
+ * is a required chat UI field (not optional like its siblings), so the chat
+ * decoder uses a string title as its gate for rendering the citation at all.
+ * An empty title falls back to the source id instead -- the same value this
+ * builder already falls back to when the chunk has no source id of its own
+ * -- so the citation always has a renderable, API-valid title in both the
+ * live frame and the durable record, with nothing for a later replay to
+ * restore. `filename` reaches the live wire frame exactly as the chunk
+ * carried it, empty string included, and the durable record drops an empty
+ * one, since the API catalog rejects it there and the chat decoder never
+ * gates rendering on it.
  */
 export function buildDocumentCitedEvent(source: Record<string, unknown>): NativeRunEventFrame {
   const { type: _type, ...rest } = source;
   const mediaType = readString(rest.mediaType) ?? "";
-  return toFrame(DOCUMENT_CITED, {
-    ...rest,
-    mediaType,
-    sourceId: readString(rest.sourceId) ?? mediaType,
-  });
+  const sourceId = readString(rest.sourceId) ?? mediaType;
+  const payload = { ...rest, mediaType, sourceId, title: readString(rest.title) ?? sourceId };
+  return toFrame(DOCUMENT_CITED, payload, omitEmptyStrings(payload, ["filename"]));
 }
 
 /**
@@ -249,10 +303,26 @@ export function buildDocumentCitedEvent(source: Record<string, unknown>): Native
  *
  * The caller decides whether the chunk is a plain file: `buildNativeRunEventFrame`
  * rejects a `file-change` value, which the API projects to `FILES_CHANGED`.
+ *
+ * `url`/`filename` reach the live wire frame exactly as the chunk carried
+ * them, empty string included: the chat decoder's FileAttached case uses a
+ * string `url` -- empty string included -- as its gate for rendering the
+ * attachment at all, so dropping an empty one from the live frame would make
+ * the attachment disappear instead of merely losing its url. The durable
+ * record drops an empty url or filename instead, since the API catalog
+ * rejects either there.
+ *
+ * Unlike `buildDocumentCitedEvent`'s title, `url` has no safe non-empty
+ * fallback here -- a placeholder url would be an actively misleading,
+ * possibly broken link -- so a chunk whose url was empty is, once stored,
+ * indistinguishable on replay from one that never had a url at all: both
+ * read back unrenderable. Known, accepted gap; the live frame still renders
+ * it correctly the first time.
  */
 export function buildFileAttachedEvent(source: Record<string, unknown>): NativeRunEventFrame {
   const { type: _type, ...rest } = source;
-  return toFrame(FILE_ATTACHED, { ...rest, mediaType: readString(rest.mediaType) ?? "" });
+  const payload = { ...rest, mediaType: readString(rest.mediaType) ?? "" };
+  return toFrame(FILE_ATTACHED, payload, omitEmptyStrings(payload, ["filename", "url"]));
 }
 
 /** Routing input for one custom event name and its value. */

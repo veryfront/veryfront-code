@@ -1636,5 +1636,70 @@ describe("conversation run lifecycle read adapter", () => {
         assertEquals(result.code, "UNSUPPORTED_DURABLE_EVENT");
       }
     });
+
+    // M5: both twin-reconstruction sites rebuild `{ authoritativeKey, ...value
+    // }`, so a key smuggled inside the stored value wins over the value the
+    // reader derived from the stored type. No native builder writes these
+    // fields today, but a corrupted or hand-built durable record could still
+    // carry one, so the reader must not trust it over its own derivation --
+    // the chat decoder at ag-ui.ts:1039 makes the same call for the wire
+    // payload's `type` field.
+    it("keeps the derived action instead of one smuggled inside a corrupted INPUT_REQUEST_CREATED value", () => {
+      const frames = customFramesFor(2, {
+        type: "INPUT_REQUEST_CREATED",
+        inputRequest: { id: "req-1", kind: "form" },
+        action: "updated",
+        ...v2Envelope(1, "smuggle:action"),
+      });
+      assertEquals(frames.length, 1);
+      const data = (frames[0] as { data: Record<string, unknown> }).data;
+      assertEquals(
+        data.action,
+        "created",
+        "the action derived from the stored INPUT_REQUEST_CREATED type must win over one smuggled inside the stored value",
+      );
+    });
+
+    it("keeps the derived type as the CUSTOM twin's type field for a citation record", () => {
+      const native = buildUrlCitedEvent({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/a",
+      }).durable;
+      const frames = customFramesFor(2, { ...native, ...v2Envelope(1, "smuggle:type") });
+      assertEquals(frames.length, 1);
+      const data = (frames[0] as { data: Record<string, unknown> }).data;
+      assertEquals(
+        data.type,
+        "source-url",
+        "the rebuilt CUSTOM twin's type field must be the legacy custom name derived from the stored type",
+      );
+    });
+
+    // Regression guard: a DOCUMENT_CITED chunk built with an empty title
+    // must still read back with a renderable (non-empty) title after a
+    // durable round trip, since ChatSourceDocumentUiPart.title is required
+    // at the chat UI type level -- buildDocumentCitedEvent falls back to
+    // sourceId instead of dropping it, so there is nothing for this reader
+    // to restore, and a replayed record renders exactly as the live frame
+    // did.
+    it("replays a DOCUMENT_CITED citation built with an empty title as its sourceId-titled CUSTOM twin", () => {
+      const durable = buildDocumentCitedEvent({
+        type: "source-document",
+        sourceId: "doc-1",
+        mediaType: "text/markdown",
+        title: "",
+      }).durable;
+      assertEquals(
+        durable.title,
+        "doc-1",
+        "the durable record must fall back to a non-empty title",
+      );
+
+      const frames = customFramesFor(2, { ...durable, ...v2Envelope(1, "empty-title-fallback") });
+      assertEquals(frames.length, 1);
+      const data = (frames[0] as { data: Record<string, unknown> }).data;
+      assertEquals(data.title, "doc-1", "the replayed CUSTOM twin must keep the fallback title");
+    });
   });
 });

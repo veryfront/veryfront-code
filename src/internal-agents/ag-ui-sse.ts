@@ -126,6 +126,49 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         finishReason: v.string().optional(),
       }),
     }),
+    // The seven native run event wire names replace the AG-UI `Custom`
+    // wrapper (see native-run-events.ts). They carry API-catalog-required
+    // fields beyond `type` and mirror the shapes declared in
+    // src/chat/ag-ui.ts's decoder schema, each `.passthrough()`-ed so the
+    // extension fields I1 and answer A depend on (result, error, exitCode,
+    // parentMessageId, ...) survive this allow-list rather than being
+    // silently dropped the way elapsedMs once was.
+    ToolCallStatusChanged: withTiming({
+      toolCallId: v.string().min(1),
+      status: v.string().min(1),
+      toolCallName: v.string().nullable(),
+    }).passthrough(),
+    InputRequestCreated: withTiming({
+      inputRequest: v.object({ id: v.string().min(1) }).passthrough(),
+    }).passthrough(),
+    InputRequestUpdated: withTiming({
+      inputRequest: v.object({ id: v.string().min(1) }).passthrough(),
+    }).passthrough(),
+    ChildRunStatusChanged: withTiming({
+      toolCallId: v.string().min(1),
+      childRunId: v.string().min(1),
+      status: v.string().min(1),
+    }).passthrough(),
+    UrlCited: withTiming({
+      // sourceId is optional here for the same reason it is in the chat
+      // decoder: toRenderableCustomChunk falls back to url when it is absent
+      // or empty. title is undeclared in the API catalog and passed through
+      // unguarded like its DocumentCited and FileAttached siblings.
+      sourceId: v.string().optional(),
+      url: v.string().min(1),
+      title: v.unknown().optional(),
+    }).passthrough(),
+    DocumentCited: withTiming({
+      sourceId: v.string().min(1),
+      mediaType: v.string().min(1),
+      title: v.unknown().optional(),
+      filename: v.unknown().optional(),
+    }).passthrough(),
+    FileAttached: withTiming({
+      mediaType: v.string().min(1),
+      url: v.unknown().optional(),
+      filename: v.unknown().optional(),
+    }).passthrough(),
   };
   return schemas;
 }
@@ -159,7 +202,14 @@ type AgUiEventName =
   | "ToolCallResult"
   | "Custom"
   | "RunError"
-  | "RunFinished";
+  | "RunFinished"
+  | "ToolCallStatusChanged"
+  | "InputRequestCreated"
+  | "InputRequestUpdated"
+  | "ChildRunStatusChanged"
+  | "UrlCited"
+  | "DocumentCited"
+  | "FileAttached";
 
 export function formatAgUiEvent(event: string, payload: Record<string, unknown>): Uint8Array {
   const eventNameMatch = AG_UI_EVENT_NAME_PATTERN.exec(event);

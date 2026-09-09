@@ -10,7 +10,11 @@ import {
 // client bundle graph that `deno task lint:client-bundle` audits, so these
 // pin the decoder's copied wire-name and timing-stamp-field lists against
 // their sources of truth without widening the browser bundle.
-import { NATIVE_RUN_EVENTS } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import {
+  buildDocumentCitedEvent,
+  buildFileAttachedEvent,
+  NATIVE_RUN_EVENTS,
+} from "#veryfront/agent/ag-ui/native-run-events.ts";
 import { AG_UI_EVENT_TIMING_STAMP_FIELDS } from "#veryfront/agent/ag-ui/encoder.ts";
 import {
   createAgUiChatEventDecoderState,
@@ -762,11 +766,14 @@ describe("chat/ag-ui", () => {
 
   it("accepts empty-string title and filename like the legacy custom mapping", () => {
     ensureTestSchemaValidator();
-    // The native builders pass title/filename through unguarded, so an empty
-    // string is a value the wire can legitimately carry. The legacy `Custom`
-    // twin only ever checked `typeof value.title === "string"`, with no
-    // length requirement, so the native decoder must accept it too instead
-    // of dropping the whole frame.
+    // The native builders pass title/filename through unguarded on the live
+    // wire frame (native-run-events.ts keeps this decoder's own render gate
+    // intact -- see the round-trip test below), so an empty string is a
+    // value the wire can legitimately carry. Only the durable record drops
+    // one, since the API's z.string().min(1).optional() catalog rejects it
+    // there. The legacy `Custom` twin only ever checked
+    // `typeof value.title === "string"`, with no length requirement, so the
+    // native decoder must accept it too instead of dropping the whole frame.
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
     const frames = [
       'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
@@ -783,6 +790,43 @@ describe("chat/ag-ui", () => {
         filename: "",
       },
       { type: "file", url: "", mediaType: "application/pdf", filename: "" },
+    ]);
+  });
+
+  it("still renders a citation/attachment the builders produced with an empty title/url", () => {
+    // Encoder-to-decoder round trip, not a hand-built frame like the test
+    // above. This decoder's DocumentCited case uses a string title as its
+    // gate for rendering `source-document` at all; the FileAttached case
+    // does the same with url. buildDocumentCitedEvent never lets title be
+    // empty in the first place -- it falls back to the source id -- so the
+    // citation always renders. buildFileAttachedEvent's live frame still
+    // carries an empty url through unchanged (only its durable record drops
+    // it, for the API's append route), so the attachment renders too;
+    // dropping it from the live frame instead, as an earlier version of
+    // this fix did, would make the attachment disappear from the chat's
+    // sources.
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+
+    const documentFrame = buildDocumentCitedEvent({
+      type: "source-document",
+      sourceId: "doc-1",
+      mediaType: "text/markdown",
+      title: "",
+    }).live;
+    const fileFrame = buildFileAttachedEvent({
+      type: "file",
+      mediaType: "application/pdf",
+      url: "",
+    }).live;
+    const frames = [
+      `event: ${documentFrame.event}\ndata: ${JSON.stringify(documentFrame.payload)}\n\n`,
+      `event: ${fileFrame.event}\ndata: ${JSON.stringify(fileFrame.payload)}\n\n`,
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "doc-1" },
+      { type: "file", url: "", mediaType: "application/pdf" },
     ]);
   });
 

@@ -1036,18 +1036,11 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         },
       ];
 
-    default: {
-      if (typeof event.type === "string" && event.type.startsWith("data-")) {
-        const name = event.type.slice("data-".length);
-        const native = buildNativeRunEventFrame({
-          name,
-          value: event.data,
-          parentMessageId: state.messageId,
-        });
-        return [native ? native.live : createCustomDataEvent(name, event.data)];
-      }
+    default:
+      // The `data-` guard at the top of this function already returns for
+      // any event.type starting with "data-", so that case can never reach
+      // here -- this was a second, unreachable copy of the native routing.
       return [];
-    }
   }
 }
 
