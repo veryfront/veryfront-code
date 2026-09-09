@@ -15,7 +15,7 @@ const SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN =
 
 /** Public API contract for agent service sandbox background command client. */
 export interface AgentServiceSandboxBackgroundCommandClient {
-  startBackgroundCommand(command: string): Promise<BackgroundCommand>;
+  startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand>;
   getBackgroundCommand(commandId: string): Promise<BackgroundCommand>;
   getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput>;
   cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand>;
@@ -97,7 +97,8 @@ export function createAgentServiceSandboxClient(
   const sandbox = new LazySandbox({ ...input, getProjectId });
 
   const getExecOptions = () => createProjectScopedExecOptions(getProjectId());
-  const getBackgroundCommandExecOptions = () => ({
+  const getBackgroundCommandExecOptions = (options?: ExecOptions) => ({
+    ...options,
     ...getExecOptions(),
     cwd: SANDBOX_WORKING_DIRECTORY,
   });
@@ -109,10 +110,10 @@ export function createAgentServiceSandboxClient(
     },
     readFile: (path) => sandbox.readFile(path),
     writeFiles: (files) => sandbox.writeFiles(files.map((file) => normalizeSandboxWriteFile(file))),
-    startBackgroundCommand: (command) =>
+    startBackgroundCommand: (command, options) =>
       sandbox.startBackgroundCommand(
         unwrapSandboxWorkingDirectoryCommand(command),
-        getBackgroundCommandExecOptions(),
+        getBackgroundCommandExecOptions(options),
       ),
     getBackgroundCommand: (commandId) => sandbox.getBackgroundCommand(commandId),
     getBackgroundCommandOutput: (commandId) => sandbox.getBackgroundCommandOutput(commandId),
@@ -133,6 +134,9 @@ export function createAgentServiceSandboxClient(
 const getStartBackgroundCommandInputSchema = defineSchema((v) =>
   v.object({
     command: v.string().describe("Single shell command to run asynchronously in the sandbox"),
+    timeoutSeconds: v.number().int().positive().optional().describe(
+      "Optional command timeout in seconds. The sandbox applies its configured maximum.",
+    ),
   })
 );
 
@@ -155,7 +159,11 @@ export async function createAgentServiceSandboxTools(
       description:
         "Start a long-running sandbox command as an async background command. Use this instead of bash for durable shell operations.",
       inputSchema: getStartBackgroundCommandInputSchema(),
-      execute: async ({ command }) => await sandbox.startBackgroundCommand(command),
+      execute: async ({ command, timeoutSeconds }) =>
+        await sandbox.startBackgroundCommand(
+          command,
+          timeoutSeconds === undefined ? undefined : { timeout_seconds: timeoutSeconds },
+        ),
     }),
     get_background_command: tool({
       description:

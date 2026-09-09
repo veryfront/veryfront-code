@@ -85,10 +85,11 @@ function createCommandPayload(overrides: Record<string, unknown> = {}) {
 async function executeStartBackgroundCommand(
   tools: SandboxShellToolSet,
   command: string,
+  timeoutSeconds?: number,
 ): Promise<unknown> {
   const execute = tools.start_background_command?.execute;
   assertExists(execute);
-  return await execute({ command });
+  return await execute({ command, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }) });
 }
 
 describe("sandbox/agent-service-tools", () => {
@@ -121,6 +122,35 @@ describe("sandbox/agent-service-tools", () => {
     assertExists(tools.cancel_background_command);
     assertEquals(tools.readFile, undefined);
     assertEquals(tools.writeFile, undefined);
+  });
+
+  it("passes an explicit background command timeout to the sandbox", async () => {
+    mockFetch([
+      createSandboxSessionResponse(),
+      createOkResponse(),
+      jsonResponse(createCommandPayload()),
+      createOkResponse(),
+    ]);
+
+    const { tools, closeSandbox } = await createAgentServiceSandboxTools({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+      projectId: "project-123",
+      createBashTool,
+    });
+
+    try {
+      await executeStartBackgroundCommand(tools, "npm test", 600);
+    } finally {
+      await closeSandbox();
+    }
+
+    assertEquals(jsonBody(fetchCalls, 2), {
+      command: "npm test",
+      cwd: "/workspace",
+      projectReference: "project-123",
+      timeout_seconds: 600,
+    });
   });
 
   it("normalizes sandbox writeFiles entries before dispatch", async () => {
