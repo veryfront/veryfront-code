@@ -31,6 +31,7 @@ const dateNow = Date.now;
 const mathCeil = Math.ceil;
 const isSafeInteger = Number.isSafeInteger;
 const isArray = Array.isArray;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 const SNAPSHOT_KEY_PREFIX = "dependency-snapshots";
 
@@ -78,7 +79,8 @@ function decodeRecord(raw: string): DependencySnapshotRecord {
   if (parsed === null || typeof parsed !== "object" || isArray(parsed)) {
     throw new Error("Dependency snapshot record must be an object");
   }
-  const { value, expiresAt } = parsed as Record<string, unknown>;
+  const value = getOwnPropertyDescriptor(parsed, "value")?.value;
+  const expiresAt = getOwnPropertyDescriptor(parsed, "expiresAt")?.value;
   if (typeof value !== "string" || !isSafeInteger(expiresAt)) {
     throw new Error("Dependency snapshot record fields are malformed");
   }
