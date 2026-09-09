@@ -1,4 +1,4 @@
-import { privateTextTrim } from "#veryfront/security/private-text.ts";
+import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
@@ -312,7 +312,7 @@ export function materializeStreamedToolCall(
       kind: "incomplete",
       part: basePart,
       partialArgumentsLength: tc.arguments.length,
-      partialArgumentsPreview: tc.arguments.slice(0, 200),
+      partialArgumentsPreview: privateTextSlice(tc.arguments, 0, 200),
     };
   }
 
