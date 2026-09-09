@@ -749,6 +749,8 @@ describe("chat/ag-ui", () => {
       'event: InputRequestUpdated\ndata: {"inputRequest":{"id":"req-1"}}\n\n',
       'event: ChildRunStatusChanged\ndata: {"toolCallId":"t","childRunId":"r",' +
       '"status":"running"}\n\n',
+      'event: RuntimeEventRecorded\ndata: {"runtime":"veryfront","kind":"runtime_context",' +
+      '"value":{"currentTimeUtc":"2026-09-09T00:00:00.000Z"}}\n\n',
     ].join("");
 
     assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
@@ -770,6 +772,10 @@ describe("chat/ag-ui", () => {
       {
         type: "data-veryfront.invoke_agent.lifecycle",
         data: { toolCallId: "t", childRunId: "r", status: "running" },
+      },
+      {
+        type: "data-veryfront.runtime_context",
+        data: { currentTimeUtc: "2026-09-09T00:00:00.000Z" },
       },
     ]);
   });
@@ -1162,10 +1168,10 @@ describe("chat/ag-ui", () => {
   it("decodes every native run event wire name NATIVE_RUN_EVENTS defines", () => {
     ensureTestSchemaValidator();
     // NATIVE_RUN_EVENTS (src/agent/ag-ui/native-run-events.ts) is the
-    // producer's source of truth for the seven native wire names; this
+    // producer's source of truth for the eight native wire names; this
     // decoder keeps its own copy in AG_UI_WIRE_EVENT_NAMES rather than
     // importing that module, to keep the agent tree off the client bundle
-    // graph. Nothing else catches the two lists drifting apart: an eighth
+    // graph. Nothing else catches the two lists drifting apart: a ninth
     // native type added there would be silently dropped here, which is the
     // exact failure P9 exists to prevent.
     for (const { wireName } of NATIVE_RUN_EVENTS) {
@@ -1294,9 +1300,9 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
   });
 
   it("decodes native run event frames through the hand-rolled validator too", () => {
-    // The seven native arms in isValidAgUiPayload only run on this path, so
+    // The eight native arms in isValidAgUiPayload only run on this path, so
     // the zod-backed coverage above does not exercise them at all. Reuse the
-    // same seven-frame string the schema-validated twin-equality test uses.
+    // same eight-frame string the schema-validated twin-equality test uses.
     unregister("SchemaValidator");
     try {
       const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
@@ -1312,6 +1318,8 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
         'event: InputRequestUpdated\ndata: {"inputRequest":{"id":"req-1"}}\n\n',
         'event: ChildRunStatusChanged\ndata: {"toolCallId":"t","childRunId":"r",' +
         '"status":"running"}\n\n',
+        'event: RuntimeEventRecorded\ndata: {"runtime":"veryfront","kind":"runtime_context",' +
+        '"value":{"currentTimeUtc":"2026-09-09T00:00:00.000Z"}}\n\n',
       ].join("");
 
       assertEquals(
@@ -1340,6 +1348,10 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
           {
             type: "data-veryfront.invoke_agent.lifecycle",
             data: { toolCallId: "t", childRunId: "r", status: "running" },
+          },
+          {
+            type: "data-veryfront.runtime_context",
+            data: { currentTimeUtc: "2026-09-09T00:00:00.000Z" },
           },
         ],
         "the hand-rolled validator must decode native frames the same way the zod schema does",

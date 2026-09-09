@@ -388,6 +388,27 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("declares RuntimeEventRecorded in the payload allow-list with extra fields intact", () => {
+    // The eighth native wire name (see native-run-events.ts's P12 decision):
+    // an API-catalog diagnostics record with no fixed shape beyond
+    // runtime/kind/value, so this allow-list entry is `.passthrough()`-ed
+    // like its seven siblings rather than declaring extra fields.
+    const payload = new TextDecoder().decode(
+      formatAgUiEvent("RuntimeEventRecorded", {
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: { currentTimeUtc: "2026-09-09T00:00:00.000Z" },
+        emittedAt: 8,
+      }),
+    );
+
+    assertEquals(
+      payload,
+      'event: RuntimeEventRecorded\ndata: {"runtime":"veryfront","kind":"runtime_context",' +
+        '"value":{"currentTimeUtc":"2026-09-09T00:00:00.000Z"},"emittedAt":8}\n\n',
+    );
+  });
+
   it("declares the seven native run event names in the payload allow-list with extra fields intact", () => {
     // M3: the seven native wire names used to have no schema entry, so they
     // took formatAgUiEvent's unvalidated pass-through branch instead of this

@@ -273,9 +273,10 @@ describe("agent/ag-ui-encoder", () => {
         data: { runStartedAtUtc: "2026-07-19T07:30:00.000Z" },
       }),
       [{
-        event: "Custom",
+        event: "RuntimeEventRecorded",
         payload: {
-          name: "veryfront.runtime_context",
+          runtime: "veryfront",
+          kind: "runtime_context",
           value: { runStartedAtUtc: "2026-07-19T07:30:00.000Z" },
         },
       }],

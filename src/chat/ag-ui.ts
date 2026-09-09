@@ -129,6 +129,7 @@ const AG_UI_WIRE_EVENT_NAMES = [
   "UrlCited",
   "DocumentCited",
   "FileAttached",
+  "RuntimeEventRecorded",
   "RunFinished",
   "RunError",
 ] as const;
@@ -595,6 +596,14 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       }).passthrough(),
     }),
     v.object({
+      eventName: v.literal("RuntimeEventRecorded"),
+      payload: v.object({
+        runtime: v.string().min(1),
+        kind: v.string().min(1),
+        value: v.unknown(),
+      }).passthrough(),
+    }),
+    v.object({
       eventName: v.literal("RunFinished"),
       payload: v.object({ metadata: getAgUiRunFinishedMetadataSchema().optional() }),
     }),
@@ -724,6 +733,10 @@ function isValidAgUiPayload(
 
     case "FileAttached":
       return hasStringField(payload, "mediaType");
+
+    case "RuntimeEventRecorded":
+      return hasStringField(payload, "runtime") && hasStringField(payload, "kind") &&
+        "value" in payload;
 
     case "ToolCallResult":
       return hasStringField(payload, "toolCallId") &&
@@ -1091,6 +1104,17 @@ function mapWireEventToChatEvents(
         ...(typeof filename === "string" ? { filename } : {}),
       }];
     }
+
+    case "RuntimeEventRecorded":
+      // The Custom twin's data chunk carried the bare runtime context value,
+      // not the API's { runtime, kind, value } wrapper -- veryfront-code's
+      // one producer today (runtime/index.ts's #streamWithinTurn) always
+      // sent the whole snapshot object as `data`, so unwrap the same way
+      // legacy-run-read-adapter.ts's durable twin does.
+      return [{
+        type: "data-veryfront.runtime_context",
+        data: wireEvent.payload.value,
+      }];
 
     case "RunFinished":
       state.toolCalls.clear();

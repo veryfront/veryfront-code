@@ -18,6 +18,7 @@ import {
   buildDocumentCitedEvent,
   buildFileAttachedEvent,
   buildInputRequestLifecycleEvent,
+  buildRuntimeEventRecordedEvent,
   buildToolCallStatusChangedEvent,
   buildUrlCitedEvent,
   NATIVE_RUN_EVENTS,
@@ -1567,6 +1568,27 @@ describe("conversation run lifecycle read adapter", () => {
           type: "CUSTOM",
           name: "file",
           value: { type: "file", mediaType: "text/plain", path: "notes.txt" },
+        },
+      },
+      {
+        description: "RUNTIME_EVENT_RECORDED",
+        native: buildRuntimeEventRecordedEvent({
+          runtime: "veryfront",
+          kind: "runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
         },
       },
     ];

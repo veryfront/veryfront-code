@@ -56,7 +56,7 @@ const DURABLE_ENVELOPE_KEYS = [
  */
 function readNativeAsLegacyCustom(
   event: Record<string, unknown>,
-): { name: string; value: Record<string, unknown> } | null {
+): { name: string; value: unknown } | null {
   const definition = typeof event.type === "string"
     ? NATIVE_STORED_TYPE_TO_LEGACY.get(event.type)
     : undefined;
@@ -64,6 +64,16 @@ function readNativeAsLegacyCustom(
   const value = { ...event };
   for (const key of DURABLE_ENVELOPE_KEYS) {
     delete value[key];
+  }
+  if (definition.storedType === "RUNTIME_EVENT_RECORDED") {
+    // The legacy `veryfront.runtime_context` CUSTOM twin carried the bare
+    // AgentRunRuntimeContext object as its value; the native payload wraps
+    // that same object as `{ runtime, kind, value }` to match the API
+    // catalog's generic diagnostics shape (RUNTIME_EVENT_RECORDED has other
+    // producers with other runtimes/kinds, so the wrapper is required
+    // there). Unwrap back to the twin's own value here, the same way the
+    // citation/file case below restores a field the native payload dropped.
+    return { name: definition.legacyCustomName, value: value.value };
   }
   if (
     definition.storedType === "INPUT_REQUEST_CREATED" ||

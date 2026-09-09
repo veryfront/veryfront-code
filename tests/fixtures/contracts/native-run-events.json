@@ -35,7 +35,13 @@
           "requestedResponderType": "human",
           "title": "Choose a deployment target",
           "description": null,
-          "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+          "fields": [
+            {
+              "type": "confirm",
+              "name": "confirmed",
+              "label": "Confirm?"
+            }
+          ],
           "recommendations": null,
           "metadata": null,
           "createdAt": "2026-09-09T00:00:00.000Z",
@@ -58,7 +64,13 @@
         "requestedResponderType": "human",
         "title": "Choose a deployment target",
         "description": null,
-        "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+        "fields": [
+          {
+            "type": "confirm",
+            "name": "confirmed",
+            "label": "Confirm?"
+          }
+        ],
         "recommendations": null,
         "metadata": null,
         "createdAt": "2026-09-09T00:00:00.000Z",
@@ -87,7 +99,13 @@
           "requestedResponderType": "human",
           "title": "Choose a deployment target",
           "description": null,
-          "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+          "fields": [
+            {
+              "type": "confirm",
+              "name": "confirmed",
+              "label": "Confirm?"
+            }
+          ],
           "recommendations": null,
           "metadata": null,
           "createdAt": "2026-09-09T00:00:00.000Z",
@@ -110,7 +128,13 @@
         "requestedResponderType": "human",
         "title": "Choose a deployment target",
         "description": null,
-        "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+        "fields": [
+          {
+            "type": "confirm",
+            "name": "confirmed",
+            "label": "Confirm?"
+          }
+        ],
         "recommendations": null,
         "metadata": null,
         "createdAt": "2026-09-09T00:00:00.000Z",
@@ -211,6 +235,32 @@
       "mediaType": "application/pdf",
       "filename": "report.pdf",
       "type": "FILE_ATTACHED"
+    }
+  },
+  {
+    "storedType": "RUNTIME_EVENT_RECORDED",
+    "legacyCustomName": "veryfront.runtime_context",
+    "live": {
+      "event": "RuntimeEventRecorded",
+      "payload": {
+        "runtime": "veryfront",
+        "kind": "runtime_context",
+        "value": {
+          "currentTimeUtc": "2026-09-09T00:00:00.000Z",
+          "currentDateUtc": "2026-09-09",
+          "runStartedAtUtc": "2026-09-09T00:00:00.000Z"
+        }
+      }
+    },
+    "durable": {
+      "runtime": "veryfront",
+      "kind": "runtime_context",
+      "value": {
+        "currentTimeUtc": "2026-09-09T00:00:00.000Z",
+        "currentDateUtc": "2026-09-09",
+        "runStartedAtUtc": "2026-09-09T00:00:00.000Z"
+      },
+      "type": "RUNTIME_EVENT_RECORDED"
     }
   }
 ]
