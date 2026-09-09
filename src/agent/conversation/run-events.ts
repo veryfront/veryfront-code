@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
+import { buildNativeRunEventFrame, nativeRunEventTypes } from "../ag-ui/native-run-events.ts";
 import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 
@@ -19,6 +20,7 @@ export const conversationRunEventTypes = {
   toolCallArgs: "TOOL_CALL_ARGS",
   toolCallEnd: "TOOL_CALL_END",
   toolCallResult: "TOOL_CALL_RESULT",
+  ...nativeRunEventTypes,
 } as const;
 
 export const getConversationRunEventSchema = defineSchema((v) =>
@@ -93,10 +95,16 @@ function providerExecutionMarker(
 
 function encodeCustomDataEvent(
   chunk: Extract<ChatStreamEvent, { type: `data-${string}` }>,
+  parentMessageId: string | null,
 ): ConversationRunEvent[] {
   const name = chunk.type.slice("data-".length);
   if (name.length === 0) {
     return [];
+  }
+
+  const native = buildNativeRunEventFrame({ name, value: chunk.data, parentMessageId });
+  if (native) {
+    return [native.durable];
   }
 
   return [{
@@ -291,6 +299,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallStart,
           toolCallId: chunk.toolCallId,
           toolCallName: chunk.toolName,
+          ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           ...providerExecutionMarker(chunk),
         }];
 
@@ -400,12 +409,16 @@ export class ConversationRunEventEncoder {
 
       case "source-document":
       case "source-url":
-      case "file":
-        return [{
-          type: conversationRunEventTypes.custom,
-          name: chunk.type,
-          value: chunk,
-        }];
+      case "file": {
+        const native = buildNativeRunEventFrame({ name: chunk.type, value: chunk });
+        return [
+          native ? native.durable : {
+            type: conversationRunEventTypes.custom,
+            name: chunk.type,
+            value: chunk,
+          },
+        ];
+      }
 
       case "start-step":
         return [{
@@ -427,7 +440,9 @@ export class ConversationRunEventEncoder {
         return [];
 
       default:
-        return chunk.type.startsWith("data-") ? encodeCustomDataEvent(chunk) : [];
+        return chunk.type.startsWith("data-")
+          ? encodeCustomDataEvent(chunk, this.activeMessageId)
+          : [];
     }
   }
 }

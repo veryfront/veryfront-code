@@ -56,6 +56,7 @@ describe("lifecycle run event adapter", () => {
           event: {
             type: "tool_input_status",
             toolCallId: "tool-1",
+            toolCallName: "create_file",
             status: "pending_input",
           },
         },
@@ -64,6 +65,7 @@ describe("lifecycle run event adapter", () => {
           event: {
             type: "tool_input_status",
             toolCallId: "tool-1",
+            toolCallName: "create_file",
             status: "pending_input",
           },
         },
@@ -79,13 +81,15 @@ describe("lifecycle run event adapter", () => {
       "TEXT_MESSAGE_START",
       "TEXT_MESSAGE_CONTENT",
       "TEXT_MESSAGE_END",
-      "CUSTOM",
+      "TOOL_CALL_STATUS_CHANGED",
     ]);
     assertEquals(emitted[1]?.delta, "hello world");
     assertEquals(emitted[3], {
-      type: "CUSTOM",
-      name: "tool-call-status",
-      value: { toolCallId: "tool-1", status: "pending_input" },
+      type: "TOOL_CALL_STATUS_CHANGED",
+      toolCallId: "tool-1",
+      status: "pending_input",
+      toolCallName: "create_file",
+      parentMessageId: "message-1",
       stream_protocol_version: 2,
       attempt_id: "attempt-1",
       attempt_index: 0,
@@ -126,7 +130,12 @@ describe("lifecycle run event adapter", () => {
     }
     adapter.dispose();
     assertEquals(
-      emitted.map((event) => event.value as { toolCallId: string; status: string }),
+      emitted.map((event) =>
+        ({
+          toolCallId: event.toolCallId,
+          status: event.status,
+        }) as { toolCallId: string; status: string }
+      ),
       [
         { toolCallId: "tool-1", status: "pending_input" },
         { toolCallId: "tool-2", status: "pending_input" },

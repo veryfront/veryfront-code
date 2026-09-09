@@ -1,4 +1,8 @@
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import {
+  buildNativeRunEventFrame,
+  buildToolCallStatusChangedEvent,
+} from "../ag-ui/native-run-events.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import {
   type ConversationRunEvent,
@@ -322,13 +326,21 @@ export function createLifecycleRunEventAdapter(input: {
         streamedToolInputs.delete(event.toolCallId);
         return;
       }
-      case "custom":
-        emit({
-          type: conversationRunEventTypes.custom,
+      case "custom": {
+        const native = buildNativeRunEventFrame({
           name: event.name,
           value: event.data,
+          parentMessageId: input.messageId,
         });
+        emit(
+          native ? native.durable : {
+            type: conversationRunEventTypes.custom,
+            name: event.name,
+            value: event.data,
+          },
+        );
         return;
+      }
       case "message_start":
       case "step_start":
         return;
@@ -348,11 +360,14 @@ export function createLifecycleRunEventAdapter(input: {
         const { toolCallId, status } = frame.event;
         if (lastToolStatus.get(toolCallId) === status) return;
         lastToolStatus.set(toolCallId, status);
-        emit({
-          type: conversationRunEventTypes.custom,
-          name: "tool-call-status",
-          value: { toolCallId, status },
-        });
+        emit(
+          buildToolCallStatusChangedEvent({
+            toolCallId,
+            status,
+            toolCallName: frame.event.toolCallName,
+            parentMessageId: input.messageId,
+          }).durable,
+        );
         return;
       }
       handleSemantic(frame.event);

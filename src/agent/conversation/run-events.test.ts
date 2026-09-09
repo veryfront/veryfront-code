@@ -201,24 +201,43 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
-  it("encodes data-* chunks as custom events", () => {
+  it("encodes native data-* chunks as native durable records", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(
       encoder.encode({
         type: "data-tool-call-status",
-        data: { toolCallId: "tc-1", status: "pending_input" },
+        data: { toolCallId: "tc-1", toolCallName: "create_file", status: "pending_input" },
       }),
       [
         {
-          type: conversationRunEventTypes.custom,
-          name: "tool-call-status",
-          value: { toolCallId: "tc-1", status: "pending_input" },
+          type: conversationRunEventTypes.toolCallStatusChanged,
+          toolCallId: "tc-1",
+          status: "pending_input",
+          toolCallName: "create_file",
         },
       ],
     );
   });
 
-  it("encodes source documents as durable custom events", () => {
+  it("keeps state chunks and unknown data names custom", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({ type: "data-state-delta", data: { ops: [] } }),
+      [
+        {
+          type: conversationRunEventTypes.custom,
+          name: "state-delta",
+          value: { ops: [] },
+        },
+      ],
+    );
+    assertEquals(
+      encoder.encode({ type: "data-foo", data: { a: 1 } }),
+      [{ type: conversationRunEventTypes.custom, name: "foo", value: { a: 1 } }],
+    );
+  });
+
+  it("encodes source documents as native document citations", () => {
     const encoder = new ConversationRunEventEncoder();
     const path = "knowledge/knowledge-ingest-20260723131451088-source.md";
 
@@ -231,49 +250,98 @@ describe("agent/conversation-run-events", () => {
         filename: path,
       }),
       [{
-        type: conversationRunEventTypes.custom,
-        name: "source-document",
-        value: {
-          type: "source-document",
-          sourceId: path,
-          mediaType: "text/markdown",
-          title: path,
-          filename: path,
-        },
+        type: conversationRunEventTypes.documentCited,
+        sourceId: path,
+        mediaType: "text/markdown",
+        title: path,
+        filename: path,
       }],
     );
   });
 
-  it("encodes source URLs as durable custom events", () => {
+  it("encodes source URLs as native URL citations", () => {
     const encoder = new ConversationRunEventEncoder();
-    const sourceUrl = {
-      type: "source-url" as const,
-      sourceId: "web-1",
-      url: "https://example.com/reference",
-      title: "Reference",
-    };
 
-    assertEquals(encoder.encode(sourceUrl), [{
-      type: conversationRunEventTypes.custom,
-      name: "source-url",
-      value: sourceUrl,
-    }]);
+    assertEquals(
+      encoder.encode({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      }),
+      [{
+        type: conversationRunEventTypes.urlCited,
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      }],
+    );
   });
 
-  it("encodes files as durable custom events", () => {
+  it("encodes files as native file attachments", () => {
     const encoder = new ConversationRunEventEncoder();
-    const file = {
-      type: "file" as const,
-      url: "https://cdn.example.com/report.pdf",
-      mediaType: "application/pdf",
-      filename: "report.pdf",
-    };
 
-    assertEquals(encoder.encode(file), [{
-      type: conversationRunEventTypes.custom,
-      name: "file",
-      value: file,
-    }]);
+    assertEquals(
+      encoder.encode({
+        type: "file",
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      }),
+      [{
+        type: conversationRunEventTypes.fileAttached,
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      }],
+    );
+  });
+
+  it("names the parent message on tool records inside an open message", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+    assertEquals(
+      encoder.encode({
+        type: "data-tool-call-status",
+        data: { toolCallId: "tc-1", toolCallName: "create_file", status: "streaming_input" },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStatusChanged,
+          toolCallId: "tc-1",
+          status: "streaming_input",
+          toolCallName: "create_file",
+          parentMessageId: "assistant-1",
+        },
+      ],
+    );
+    // The API derives tool spans from the rows it stores, and these are those
+    // rows, so the start record names its turn too.
+    assertEquals(
+      encoder.encode({ type: "tool-input-start", toolCallId: "tc-1", toolName: "create_file" }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStart,
+          toolCallId: "tc-1",
+          toolCallName: "create_file",
+          parentMessageId: "assistant-1",
+        },
+      ],
+    );
+  });
+
+  it("leaves a tool call start outside any message unchanged", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({ type: "tool-input-start", toolCallId: "tc-1", toolName: "create_file" }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStart,
+          toolCallId: "tc-1",
+          toolCallName: "create_file",
+        },
+      ],
+    );
   });
 
   it("gives an unresolved provider-executed tool call a durable terminal result", () => {
