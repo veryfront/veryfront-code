@@ -328,16 +328,16 @@ describe("provider/runtime-loader", () => {
       { type: "tool-input-start", id: "tool-1", toolName: "create_file" },
       {
         type: "data-tool-call-status",
-        data: { toolCallId: "tool-1", status: "pending_input" },
+        data: { toolCallId: "tool-1", toolCallName: "create_file", status: "pending_input" },
       },
       {
         type: "data-tool-call-status",
-        data: { toolCallId: "tool-1", status: "streaming_input" },
+        data: { toolCallId: "tool-1", toolCallName: "create_file", status: "streaming_input" },
       },
       { type: "tool-input-delta", id: "tool-1", delta: '{"path":"docs/report.md"' },
       {
         type: "data-tool-call-status",
-        data: { toolCallId: "tool-1", status: "pending_input" },
+        data: { toolCallId: "tool-1", toolCallName: "create_file", status: "pending_input" },
       },
       {
         type: "tool-call",
@@ -424,7 +424,7 @@ describe("provider/runtime-loader", () => {
     assertEquals(events[0], { type: "tool-input-start", id: "tool-1", toolName: "create_file" });
     assertEquals(events[1], {
       type: "data-tool-call-status",
-      data: { toolCallId: "tool-1", status: "streaming_input" },
+      data: { toolCallId: "tool-1", toolCallName: "create_file", status: "streaming_input" },
     });
     assertEquals(events[firstDeltaIndex], {
       type: "tool-input-delta",
@@ -433,7 +433,7 @@ describe("provider/runtime-loader", () => {
     });
     assertEquals(events[secondDeltaIndex - 1], {
       type: "data-tool-call-status",
-      data: { toolCallId: "tool-1", status: "streaming_input" },
+      data: { toolCallId: "tool-1", toolCallName: "create_file", status: "streaming_input" },
     });
     assertEquals(events[secondDeltaIndex], {
       type: "tool-input-delta",

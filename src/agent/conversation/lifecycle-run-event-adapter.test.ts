@@ -110,11 +110,11 @@ describe("lifecycle run event adapter", () => {
     const { emitted, adapter } = createCollector();
     for (
       const tick of [
-        { toolCallId: "tool-1", status: "pending_input" },
-        { toolCallId: "tool-2", status: "pending_input" },
-        { toolCallId: "tool-1", status: "pending_input" },
-        { toolCallId: "tool-1", status: "streaming_input" },
-        { toolCallId: "tool-2", status: "streaming_input" },
+        { toolCallId: "tool-1", toolCallName: null, status: "pending_input" },
+        { toolCallId: "tool-2", toolCallName: null, status: "pending_input" },
+        { toolCallId: "tool-1", toolCallName: null, status: "pending_input" },
+        { toolCallId: "tool-1", toolCallName: null, status: "streaming_input" },
+        { toolCallId: "tool-2", toolCallName: null, status: "streaming_input" },
       ] as const
     ) {
       adapter.handleFrame({

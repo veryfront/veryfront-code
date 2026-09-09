@@ -8,11 +8,16 @@ type ToolInputActivityStatus = "pending_input" | "streaming_input";
 type ToolInputStatusState = {
   dueAt: number | null;
   lastStatus: ToolInputActivityStatus | null;
+  toolCallName: string | null;
 };
 
 type ToolStatusEvent = {
   type: "data-tool-call-status";
-  data: { toolCallId: string; status: "pending_input" | "streaming_input" };
+  data: {
+    toolCallId: string;
+    toolCallName: string | null;
+    status: "pending_input" | "streaming_input";
+  };
 };
 
 type ToolInputStatusLifecycle = {
@@ -40,13 +45,35 @@ export function getToolCallIdFromStreamPart(part: unknown): string | null {
   return null;
 }
 
+/** Return the tool name a provider stream part carries, when it names one. */
+export function getToolNameFromStreamPart(part: unknown): string | null {
+  if (!part || typeof part !== "object") {
+    return null;
+  }
+
+  const record = part as Record<string, unknown>;
+  if (typeof record.toolName === "string" && record.toolName.length > 0) {
+    return record.toolName;
+  }
+
+  return null;
+}
+
 export function collectDueToolStatuses(
   toolStates: Map<string, ToolInputStatusState>,
   now: number,
   thresholdMs: number,
-): Array<{ type: "data-tool-call-status"; data: { toolCallId: string; status: "pending_input" } }> {
+): Array<
+  {
+    type: "data-tool-call-status";
+    data: { toolCallId: string; toolCallName: string | null; status: "pending_input" };
+  }
+> {
   const events: Array<
-    { type: "data-tool-call-status"; data: { toolCallId: string; status: "pending_input" } }
+    {
+      type: "data-tool-call-status";
+      data: { toolCallId: string; toolCallName: string | null; status: "pending_input" };
+    }
   > = [];
 
   for (const [toolCallId, state] of toolStates.entries()) {
@@ -60,6 +87,7 @@ export function collectDueToolStatuses(
       type: "data-tool-call-status",
       data: {
         toolCallId,
+        toolCallName: state.toolCallName,
         status: "pending_input",
       },
     });
@@ -188,7 +216,7 @@ async function* applyToolInputStatusTransitions(
     toolStates.delete(toolCallId);
   };
 
-  const schedulePending = (toolCallId: string | null) => {
+  const schedulePending = (toolCallId: string | null, toolCallName: string | null) => {
     if (!toolCallId) {
       return;
     }
@@ -196,12 +224,14 @@ async function* applyToolInputStatusTransitions(
     const state = toolStates.get(toolCallId) ?? {
       dueAt: null,
       lastStatus: null,
+      toolCallName: null,
     };
     state.dueAt = Date.now() + thresholdMs;
+    if (toolCallName) state.toolCallName = toolCallName;
     toolStates.set(toolCallId, state);
   };
 
-  const markStreaming = (toolCallId: string | null) => {
+  const markStreaming = (toolCallId: string | null, toolCallName: string | null) => {
     if (!toolCallId) {
       return;
     }
@@ -209,7 +239,9 @@ async function* applyToolInputStatusTransitions(
     const state = toolStates.get(toolCallId) ?? {
       dueAt: null,
       lastStatus: null,
+      toolCallName: null,
     };
+    if (toolCallName) state.toolCallName = toolCallName;
 
     if (state.lastStatus !== "streaming_input") {
       buffered.push(
@@ -217,6 +249,7 @@ async function* applyToolInputStatusTransitions(
           type: "data-tool-call-status",
           data: {
             toolCallId,
+            toolCallName: state.toolCallName,
             status: "streaming_input",
           },
         } satisfies ToolStatusEvent,
@@ -240,11 +273,11 @@ async function* applyToolInputStatusTransitions(
 
     switch (partType) {
       case "tool-input-start":
-        schedulePending(toolCallId);
+        schedulePending(toolCallId, getToolNameFromStreamPart(part));
         buffered.push(part);
         return;
       case "tool-input-delta":
-        markStreaming(toolCallId);
+        markStreaming(toolCallId, getToolNameFromStreamPart(part));
         buffered.push(part);
         return;
       case "tool-call":

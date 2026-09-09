@@ -182,6 +182,7 @@ export function runStreamLifecycle<TProviderPart>(
             const frame = sequenceTelemetry(reducer, {
               type: "tool_input_status",
               toolCallId,
+              toolCallName: tool.name,
               status: tool.phase === "input_streaming" ? "streaming_input" : "pending_input",
             }, elapsedMs());
             notifyObserver(() => observer?.onFrame(frame));

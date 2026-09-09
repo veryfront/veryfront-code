@@ -68,6 +68,33 @@ describe("stream lifecycle reducer", () => {
     }
   });
 
+  it("names the tool on the status telemetry it emits from a custom signal", () => {
+    let state = createInitialReducerState();
+    const events = [
+      { type: "tool_input_start", toolCallId: "tool-1", toolName: "create_file" },
+      {
+        type: "custom",
+        name: "tool-call-status",
+        data: { toolCallId: "tool-1", status: "pending_input" },
+      },
+    ] as const;
+    const frames = events.flatMap((event, index) => {
+      const reduced = reduceStreamSignal(state, protocol(event), index + 1);
+      state = reduced.state;
+      return reduced.frames;
+    });
+
+    assertEquals(
+      frames.filter((frame) => frame.class === "telemetry").map((frame) => frame.event),
+      [{
+        type: "tool_input_status",
+        toolCallId: "tool-1",
+        toolCallName: "create_file",
+        status: "pending_input",
+      }],
+    );
+  });
+
   it("records reducer-approved tool progress in the canonical snapshot", () => {
     let state = createInitialReducerState();
     state = reduceStreamSignal(

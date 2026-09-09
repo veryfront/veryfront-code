@@ -51,6 +51,7 @@ describe("stream lifecycle live adapter", () => {
       {
         type: "tool_input_status",
         toolCallId: "local-1",
+        toolCallName: "create_file",
         status: "pending_input",
       },
     ]).flatMap((frame) => adapter.encode(frame));
@@ -77,7 +78,7 @@ describe("stream lifecycle live adapter", () => {
       },
       {
         type: "data-tool-call-status",
-        data: { toolCallId: "local-1", status: "pending_input" },
+        data: { toolCallId: "local-1", toolCallName: "create_file", status: "pending_input" },
       },
     ]);
 
