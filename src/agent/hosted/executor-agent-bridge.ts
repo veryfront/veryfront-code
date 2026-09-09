@@ -1,3 +1,11 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import {
+  cancelPrivateStream,
+  createPrivateReadableStream,
+  isPrivateStreamLocked,
+} from "#veryfront/security/private-stream.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ExecutorChannel, ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
@@ -20,7 +28,9 @@ import {
   parseExecutorAgentData,
 } from "./executor-agent-schema.ts";
 
-const textEncoder = new TextEncoder();
+const MapConstructor = Map;
+const mapSet = Map.prototype.set;
+const apply = Reflect.apply;
 
 async function startExecutorRuntimeStream(
   start: () => Promise<ReadableStream<Uint8Array>>,
@@ -32,7 +42,7 @@ async function startExecutorRuntimeStream(
   // that lifetime; a noncooperative setup is fenced by the handler deadline.
   const stream = await start();
   if (signal.aborted) {
-    await stream.cancel().catch(() => {});
+    await cancelPrivateStream(stream).catch(() => {});
     throw new ExecutorAgentError("ABORTED");
   }
   return stream;
@@ -50,7 +60,7 @@ export function createExecutorAgentOperations(options: {
     options.preparedRuntimeHandle,
   );
   let started = false;
-  return new Map([["agent.stream", {
+  const streamOperation: ExecutorOperation = {
     mode: "stream",
     async *handle(value, context) {
       let phase: "setup" | "stream" = "setup";
@@ -73,7 +83,9 @@ export function createExecutorAgentOperations(options: {
         );
         phase = "stream";
         yield { type: "ready" };
-        for await (const event of readExecutorDataEvents(stream, context.signal)) {
+        for await (
+          const event of getPrivateAsyncIterator(readExecutorDataEvents(stream, context.signal))
+        ) {
           yield executorAgentJson({ type: "event", event }, "EXECUTOR_AGENT_INVALID_STREAM");
         }
       } catch (error) {
@@ -88,7 +100,9 @@ export function createExecutorAgentOperations(options: {
       } finally {
         // A return while suspended at ready can precede acquisition of the
         // SSE reader. Close that unconsumed source as well as the runtime.
-        if (stream && !stream.locked) await stream.cancel().catch(() => {});
+        if (stream && !isPrivateStreamLocked(stream)) {
+          await cancelPrivateStream(stream).catch(() => {});
+        }
         if (ownsRuntime) {
           try {
             await options.cleanup?.();
@@ -100,7 +114,10 @@ export function createExecutorAgentOperations(options: {
       context.signal.throwIfAborted();
       yield failure ?? { type: "complete" };
     },
-  }]]);
+  };
+  const operations = new MapConstructor<string, ExecutorOperation>();
+  apply(mapSet, operations, ["agent.stream", streamOperation]);
+  return operations;
 }
 
 function parseFrame(value: unknown) {
@@ -162,7 +179,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
           if (consumed) throw new ExecutorAgentError("EXECUTOR_AGENT_ALREADY_STARTED");
           consumed = true;
           let terminal = false;
-          const stream = new ReadableStream<Uint8Array>({
+          const stream = createPrivateReadableStream<Uint8Array>({
             async pull(controller) {
               try {
                 const next = await iterator.next();
@@ -173,7 +190,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                   const event = parseExecutorDataEvent(frame.event);
                   terminal ||= event.type === "message-finish" || event.type === "error";
                   controller.enqueue(
-                    textEncoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+                    encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`),
                   );
                 } else if (frame.type === "complete") {
                   if (!terminal || !(await iterator.next()).done) {

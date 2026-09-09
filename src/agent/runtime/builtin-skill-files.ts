@@ -1,3 +1,4 @@
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 import {
   closeSync,
   constants,
@@ -32,7 +33,7 @@ import {
 import type { SkillOperationBudget } from "#veryfront/skill/operation-budget.ts";
 import { normalizeStrictRuntimeSkillReferencePath } from "./skill-metadata.ts";
 
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const UTF8_DECODER = createPrivateTextDecoder("utf-8", { fatal: true });
 const BUILTIN_SKILL_READABLE_DIR_SET = new Set<string>(SKILL_READABLE_DIRS);
 const builtinFileSystem = createFileSystem();
 

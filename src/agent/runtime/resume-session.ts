@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 
 /** Public API contract for run session status. */
@@ -91,7 +92,7 @@ export interface RunResumeSessionManagerOptions<T> {
 }
 
 function defaultConflictKey(value: unknown): string {
-  return JSON.stringify(value);
+  return privateJsonStringify(value);
 }
 
 /** Implement run resume session manager. */

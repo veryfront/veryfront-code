@@ -1,9 +1,12 @@
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
 import type { Message, MessagePart } from "../types.ts";
 import type { ChatStreamState, StreamingReasoningPart } from "./chat-stream-handler.ts";
 import {
   materializeStreamedToolCall,
   shouldOmitRecoverablePlaceholderToolCall,
 } from "./tool-result-continuation.ts";
+
+const hasOwn = Object.hasOwn;
 
 export interface StreamedAssistantMessageIdentity {
   id: string;
@@ -40,11 +43,13 @@ export function buildStreamedAssistantMessage(
 ): Message {
   const parts: MessagePart[] = [];
 
-  for (const reasoningPart of state.reasoningParts) {
+  for (let index = 0; index < state.reasoningParts.length; index++) {
+    if (!hasOwn(state.reasoningParts, index)) continue;
+    const reasoningPart = state.reasoningParts[index]!;
     if (!isPersistedReasoningPart(reasoningPart)) {
       continue;
     }
-    parts.push({
+    pushPrivateArray(parts, {
       type: "reasoning",
       ...(reasoningPart.text.length > 0 ? { text: reasoningPart.text } : {}),
       ...(reasoningPart.signature ? { signature: reasoningPart.signature } : {}),
@@ -53,7 +58,7 @@ export function buildStreamedAssistantMessage(
   }
 
   if (state.accumulatedText) {
-    parts.push({ type: "text", text: state.accumulatedText });
+    pushPrivateArray(parts, { type: "text", text: state.accumulatedText });
   }
 
   for (const toolCall of state.toolCalls.values()) {
@@ -63,7 +68,7 @@ export function buildStreamedAssistantMessage(
     ) {
       continue;
     }
-    parts.push(materializeStreamedToolCall(toolCall).part);
+    pushPrivateArray(parts, materializeStreamedToolCall(toolCall).part);
   }
 
   return {

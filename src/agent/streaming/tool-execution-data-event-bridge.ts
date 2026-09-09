@@ -1,3 +1,14 @@
+const hasOwn = Object.hasOwn;
+import { toPrivateUint8Array } from "#veryfront/security/private-bytes.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import {
+  closePrivateStream,
+  createPrivateReadableStream,
+  enqueuePrivateStream,
+  errorPrivateStream,
+  getPrivateStreamReader,
+} from "#veryfront/security/private-stream.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 
@@ -12,27 +23,20 @@ export type ToolExecutionDataEventBridgeStreamInput = {
 
 function serializeToolExecutionDataEvent(event: ToolExecutionDataEvent): Uint8Array {
   if (typeof event.name === "string" && event.name.length > 0) {
-    const data = Object.hasOwn(event, "value") ? event.value : event.data;
-    return new TextEncoder().encode(
-      `data: ${JSON.stringify({ type: `data-${event.name}`, data })}\n\n`,
+    const data = hasOwn(event, "value") ? event.value : event.data;
+    return encodePrivateText(
+      `data: ${privateJsonStringify({ type: `data-${event.name}`, data })}\n\n`,
     );
   }
 
-  return new TextEncoder().encode(`data: ${JSON.stringify({ type: "data", data: event })}\n\n`);
+  return encodePrivateText(
+    `data: ${privateJsonStringify({ type: "data", data: event })}\n\n`,
+  );
 }
 
 function toUint8ArrayChunk(value: unknown): Uint8Array {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
+  const bytes = toPrivateUint8Array(value);
+  if (bytes !== undefined) return bytes;
 
   throw AGENT_ERROR.create({ detail: "Agent runtime returned a non-binary stream chunk" });
 }
@@ -44,17 +48,17 @@ export function createToolExecutionDataEventBridgeStream(
   let baseReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let closed = false;
 
-  return new ReadableStream<Uint8Array>({
+  return createPrivateReadableStream<Uint8Array>({
     start(controller) {
       input.installPublisher((event) => {
         if (closed) {
           return;
         }
 
-        controller.enqueue(serializeToolExecutionDataEvent(event));
+        enqueuePrivateStream(controller, serializeToolExecutionDataEvent(event));
       });
 
-      const reader = input.baseStream.getReader();
+      const reader = getPrivateStreamReader(input.baseStream);
       baseReader = reader;
 
       void (async () => {
@@ -65,17 +69,17 @@ export function createToolExecutionDataEventBridgeStream(
               break;
             }
 
-            controller.enqueue(toUint8ArrayChunk(value));
+            enqueuePrivateStream(controller, toUint8ArrayChunk(value));
           }
 
           if (!closed) {
             closed = true;
-            controller.close();
+            closePrivateStream(controller);
           }
         } catch (error) {
           if (!closed) {
             closed = true;
-            controller.error(error);
+            errorPrivateStream(controller, error);
           }
         } finally {
           input.installPublisher(() => {});

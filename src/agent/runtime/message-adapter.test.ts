@@ -96,6 +96,24 @@ function agentRuntimeToolResultPart(result: unknown): AgentRuntimeMessagePart {
 }
 
 describe("agent runtime message adapter", () => {
+  it("replays private messages without consulting supplied array iterators", () => {
+    const parts = [{ type: "text" as const, text: "synthetic private replay" }];
+    const messages = [{ role: "assistant" as const, parts }];
+    let observations = 0;
+    for (const values of [messages, parts]) {
+      Object.defineProperty(values, Symbol.iterator, {
+        value: function (this: unknown[]) {
+          observations++;
+          return Reflect.apply(Array.prototype[Symbol.iterator], this, []);
+        },
+      });
+    }
+    assertEquals(convertAgentRuntimeMessagesToProviderMessages(messages), [{
+      role: "assistant",
+      content: [{ type: "text", text: "synthetic private replay" }],
+    }]);
+    assertEquals(observations, 0);
+  });
   it("converts text, tool-call, and tool-result provider model messages into agent runtime messages", () => {
     const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
       providerMessage({ role: "system", content: "System instructions" }),

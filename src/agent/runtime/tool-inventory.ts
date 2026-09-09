@@ -1,4 +1,19 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
+import {
+  concatPrivateArrays,
+  filterPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import {
+  privateTextEndsWith,
+  privateTextLastIndexOf,
+  privateTextSlice,
+  privateTextStartsWith,
+  privateTextTrim,
+  privateTextTrimEnd,
+} from "#veryfront/security/private-text.ts";
 
 const RUNTIME_TOOL_INVENTORY_HEADER = "Current run tool inventory:";
 const RUNTIME_TOOL_INVENTORY_FOOTER =
@@ -20,7 +35,7 @@ export interface DeferredToolSummary {
 }
 
 function getRuntimeToolInventoryFooter(toolNames: readonly string[]): string {
-  return toolNames.includes("tool_search")
+  return somePrivateArray(toolNames, (name) => name === "tool_search")
     ? `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_TOOL_SEARCH_GUIDANCE}`
     : RUNTIME_TOOL_INVENTORY_FOOTER;
 }
@@ -35,13 +50,16 @@ function getRuntimeToolInventoryFooter(toolNames: readonly string[]): string {
  * the whole reason an unloaded tool is worth mentioning at all.
  */
 function createDeferredToolSection(deferredTools: readonly DeferredToolSummary[]): string {
-  const entries = deferredTools
-    .map((tool) =>
-      tool.description === undefined || tool.description.length === 0
-        ? `- ${tool.name}`
-        : `- ${tool.name}: ${tool.description}`
-    )
-    .join("\n");
+  const entries = joinPrivateArray(
+    mapPrivateArray(
+      deferredTools,
+      (tool) =>
+        tool.description === undefined || tool.description.length === 0
+          ? `- ${tool.name}`
+          : `- ${tool.name}: ${tool.description}`,
+    ),
+    "\n",
+  );
 
   return `\n\n${RUNTIME_DEFERRED_TOOL_HEADER}
 
@@ -55,7 +73,7 @@ function createRuntimeToolInventoryMessage(
   deferredTools: readonly DeferredToolSummary[],
 ): ChatSystemMessage {
   const toolList = toolNames.length > 0
-    ? toolNames.map((toolName) => `- ${toolName}`).join("\n")
+    ? joinPrivateArray(mapPrivateArray(toolNames, (toolName) => `- ${toolName}`), "\n")
     : "- none";
   const deferredSection = deferredTools.length > 0 ? createDeferredToolSection(deferredTools) : "";
 
@@ -70,23 +88,29 @@ ${getRuntimeToolInventoryFooter(toolNames)}${deferredSection}`,
 }
 
 function removeFlattenedRuntimeToolInventory(instructions: string): string {
-  const headerIndex = instructions.lastIndexOf(RUNTIME_TOOL_INVENTORY_HEADER);
+  const headerIndex = privateTextLastIndexOf(instructions, RUNTIME_TOOL_INVENTORY_HEADER);
   if (headerIndex < 0) {
     return instructions;
   }
 
-  const inventory = instructions.slice(headerIndex);
+  const inventory = privateTextSlice(instructions, headerIndex);
   // A deferred section, when present, is the last thing written, so it carries
   // the terminator. Missing it here would leave the previous inventory in place
   // and append a second one on the next step.
-  const terminatesInventory = inventory.endsWith(RUNTIME_TOOL_INVENTORY_FOOTER) ||
-    inventory.endsWith(`${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_TOOL_SEARCH_GUIDANCE}`) ||
-    inventory.endsWith(RUNTIME_DEFERRED_TOOL_FOOTER);
-  if (!inventory.startsWith(`${RUNTIME_TOOL_INVENTORY_HEADER}\n\n- `) || !terminatesInventory) {
+  const terminatesInventory = privateTextEndsWith(inventory, RUNTIME_TOOL_INVENTORY_FOOTER) ||
+    privateTextEndsWith(
+      inventory,
+      `${RUNTIME_TOOL_INVENTORY_FOOTER}\n${RUNTIME_TOOL_SEARCH_GUIDANCE}`,
+    ) ||
+    privateTextEndsWith(inventory, RUNTIME_DEFERRED_TOOL_FOOTER);
+  if (
+    !privateTextStartsWith(inventory, `${RUNTIME_TOOL_INVENTORY_HEADER}\n\n- `) ||
+    !terminatesInventory
+  ) {
     return instructions;
   }
 
-  return instructions.slice(0, headerIndex).trimEnd();
+  return privateTextTrimEnd(privateTextSlice(instructions, 0, headerIndex));
 }
 
 function removeStructuredRuntimeToolInventory(
@@ -105,8 +129,9 @@ export function hasRuntimeToolInventory(
 ): boolean {
   return typeof instructions === "string"
     ? removeFlattenedRuntimeToolInventory(instructions) !== instructions
-    : instructions.some((message) =>
-      removeFlattenedRuntimeToolInventory(message.content) !== message.content
+    : somePrivateArray(
+      instructions,
+      (message) => removeFlattenedRuntimeToolInventory(message.content) !== message.content,
     );
 }
 
@@ -131,16 +156,20 @@ export function withRuntimeToolInventory(
       : [inventoryMessage];
   }
 
-  const baseInstructions = instructions
-    .map(removeStructuredRuntimeToolInventory)
-    .filter((message): message is ChatSystemMessage => message !== undefined);
-  return [...baseInstructions, inventoryMessage];
+  const baseInstructions = filterPrivateArray(
+    mapPrivateArray(instructions, removeStructuredRuntimeToolInventory),
+    (message): message is ChatSystemMessage => message !== undefined,
+  );
+  return concatPrivateArrays(baseInstructions, [inventoryMessage]);
 }
 
 /** Flatten system instructions helper. */
 export function flattenSystemInstructions(instructions: readonly ChatSystemMessage[]): string {
-  return instructions
-    .map((message) => message.content.trim())
-    .filter((content) => content.length > 0)
-    .join("\n\n");
+  return joinPrivateArray(
+    filterPrivateArray(
+      mapPrivateArray(instructions, (message) => privateTextTrim(message.content)),
+      (content) => content.length > 0,
+    ),
+    "\n\n",
+  );
 }

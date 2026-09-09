@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 /** Public API contract for hosted runtime allowed tool names. */
 export type HostedRuntimeAllowedToolNames = readonly string[] | ReadonlySet<string> | null;
 
@@ -37,7 +38,7 @@ export function normalizeHostedRuntimeAllowedToolNames(
     return null;
   }
 
-  return new Set(toolNames);
+  return createPrivateSet(toolNames);
 }
 
 /** Resolve allowed tools after applying runtime-essential hosted tool policy. */
@@ -45,7 +46,7 @@ export function resolveHostedRuntimeAllowedToolNames(
   input: ResolveHostedRuntimeAllowedToolNamesInput,
 ): ReadonlySet<string> | null {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  const localToolNames = new Set(input.localToolNames);
+  const localToolNames = createPrivateSet(input.localToolNames);
   const hasKnownSkillManifest = input.availableSkillIds !== undefined;
   const hasAuthorizedSkills = (input.availableSkillIds?.length ?? 0) > 0;
 
@@ -54,8 +55,9 @@ export function resolveHostedRuntimeAllowedToolNames(
       return null;
     }
 
-    const resolvedToolNames = new Set(localToolNames);
-    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+    const resolvedToolNames = createPrivateSet(localToolNames);
+    for (let index = 0; index < EMPTY_SKILL_MANIFEST_TOOL_NAMES.length; index++) {
+      const toolName = EMPTY_SKILL_MANIFEST_TOOL_NAMES[index]!;
       resolvedToolNames.delete(toolName);
     }
     return resolvedToolNames;
@@ -65,10 +67,11 @@ export function resolveHostedRuntimeAllowedToolNames(
     return allowedToolNames;
   }
 
-  const resolvedToolNames = new Set(allowedToolNames);
+  const resolvedToolNames = createPrivateSet(allowedToolNames);
 
   if (hasKnownSkillManifest && !hasAuthorizedSkills) {
-    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+    for (let index = 0; index < EMPTY_SKILL_MANIFEST_TOOL_NAMES.length; index++) {
+      const toolName = EMPTY_SKILL_MANIFEST_TOOL_NAMES[index]!;
       resolvedToolNames.delete(toolName);
     }
   }
@@ -81,7 +84,8 @@ export function resolveHostedRuntimeAllowedToolNames(
     (resolvedToolNames.size > 0 || input.configDerivedSelector) &&
     (!hasKnownSkillManifest || hasAuthorizedSkills)
   ) {
-    for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
+    for (let index = 0; index < SKILL_RUNTIME_TOOL_NAMES.length; index++) {
+      const toolName = SKILL_RUNTIME_TOOL_NAMES[index]!;
       if (localToolNames.has(toolName)) {
         resolvedToolNames.add(toolName);
       }
@@ -93,7 +97,8 @@ export function resolveHostedRuntimeAllowedToolNames(
   // tools or declares a non-empty set, while a request- or delegation-derived
   // allowlist never has delegation appended to it.
   if (input.configDerivedSelector && hasAuthorizedSkills) {
-    for (const toolName of SKILL_DELEGATION_TOOL_NAMES) {
+    for (let index = 0; index < SKILL_DELEGATION_TOOL_NAMES.length; index++) {
+      const toolName = SKILL_DELEGATION_TOOL_NAMES[index]!;
       if (localToolNames.has(toolName)) {
         resolvedToolNames.add(toolName);
       }

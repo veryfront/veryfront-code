@@ -7,9 +7,32 @@ import {
   getForwardedHostedRuntimeOverrides,
   getServerResolvedProviderReplayCheckpoints,
   getServerResolvedToolExposureCheckpoint,
+  resolveHostedRuntimeAllowedTools,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
-} from "./runtime-request-config.ts";
+} from "#veryfront/agent/hosted/runtime-request-config.ts";
+
+describe("authored tool selector snapshots", () => {
+  it("reads configured tools and delegates by index without invoking collection hooks", () => {
+    const tools = ["read_file"];
+    const delegates = ["writer"];
+    Object.defineProperty(tools, Symbol.iterator, {
+      value: () => ["hidden_tool"].values(),
+    });
+    Object.defineProperty(delegates, "map", {
+      value: () => ["agent_hidden"],
+    });
+    assertEquals(
+      resolveHostedRuntimeAllowedTools({
+        configuredTools: tools,
+        configuredDelegates: delegates,
+        configuredSkills: [],
+        requestedTools: undefined,
+      }),
+      ["read_file", "agent_writer"],
+    );
+  });
+});
 
 it("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
   const checkpoint = {

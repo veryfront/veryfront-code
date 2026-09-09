@@ -1,3 +1,6 @@
+import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 /**
  * Runtime Bridge
  *
@@ -47,6 +50,8 @@ const cloneStructuredValue = globalThis.structuredClone;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
+const ObjectEntries = Object.entries;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
 const logger = serverLogger.component("runtime-bridge");
@@ -201,7 +206,7 @@ function readSystemProviderOptions(
 
   const providerOptions = descriptor.value;
   return providerOptions && typeof providerOptions === "object" &&
-      !Array.isArray(providerOptions)
+      !ArrayIsArray(providerOptions)
     ? providerOptions as Record<string, unknown>
     : undefined;
 }
@@ -248,14 +253,16 @@ function normalizeSystemMessages(system: GenerateTextOptions["system"]): ChatSys
     }];
   }
 
-  if (Array.isArray(system)) {
+  if (ArrayIsArray(system)) {
     const messages: ChatSystemMessage[] = [];
-    for (const entry of system) {
+    for (let entryIndex = 0; entryIndex < system.length; entryIndex++) {
+      if (!ObjectHasOwn(system, entryIndex)) continue;
+      const entry = system[entryIndex]!;
       if (!entry || typeof entry !== "object") continue;
       const entryContent = readSystemContent(entry);
       if (entryContent === undefined) continue;
       const providerOptions = readSystemProviderOptions(entry);
-      messages.push({
+      pushPrivateArray(messages, {
         role: "system",
         content: entryContent,
         ...(providerOptions ? { providerOptions } : {}),
@@ -270,10 +277,12 @@ function normalizeSystemMessages(system: GenerateTextOptions["system"]): ChatSys
 function getProviderRequestMessages(
   messages: TextGenerationRuntimeMessage[],
 ): TextGenerationRuntimeMessage[] {
-  const requestMessages = [...messages];
+  const requestMessages = mapPrivateArray(messages, (message) => message);
 
-  while (requestMessages.at(-1)?.role === "assistant") {
-    requestMessages.pop();
+  while (
+    requestMessages.length > 0 && requestMessages[requestMessages.length - 1]?.role === "assistant"
+  ) {
+    requestMessages.length--;
   }
 
   return requestMessages;
@@ -283,19 +292,21 @@ function toRuntimePrompt(
   system: readonly ChatSystemMessage[],
   messages: TextGenerationRuntimeMessage[],
 ): DirectModelMessage[] {
-  const prompt: DirectModelMessage[] = system.map((message) => ({
+  const prompt: DirectModelMessage[] = mapPrivateArray(system, (message) => ({
     role: "system",
     content: message.content,
     ...(message.providerOptions === undefined ? {} : { providerOptions: message.providerOptions }),
   }));
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!ObjectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
     switch (message.role) {
       case "system":
-        prompt.push({ role: "system", content: message.content });
+        pushPrivateArray(prompt, { role: "system", content: message.content });
         break;
       case "user":
-        prompt.push({
+        pushPrivateArray(prompt, {
           role: "user",
           content: typeof message.content === "string"
             ? [{ type: "text", text: message.content }]
@@ -303,15 +314,17 @@ function toRuntimePrompt(
         });
         break;
       case "assistant":
-        prompt.push({
+        pushPrivateArray(prompt, {
           role: "assistant",
-          content: message.content.map((part) =>
-            part.type === "text" ? { type: "text" as const, text: part.text } : {
-              type: "tool-call" as const,
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              input: part.input,
-            }
+          content: mapPrivateArray(
+            message.content,
+            (part) =>
+              part.type === "text" ? { type: "text" as const, text: part.text } : {
+                type: "tool-call" as const,
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                input: part.input,
+              },
           ),
           ...(message.providerMetadata === undefined
             ? {}
@@ -319,9 +332,9 @@ function toRuntimePrompt(
         });
         break;
       case "tool":
-        prompt.push({
+        pushPrivateArray(prompt, {
           role: "tool",
-          content: message.content.map((part) => ({
+          content: mapPrivateArray(message.content, (part) => ({
             type: "tool-result" as const,
             toolCallId: part.toolCallId,
             toolName: part.toolName,
@@ -359,7 +372,7 @@ function readOwnEnumerableDataDescriptor(
 }
 
 function sanitizePersistedCacheControl(value: unknown): PersistedCacheControl | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || ArrayIsArray(value)) {
     return undefined;
   }
   const type = readOwnEnumerableDataDescriptor(value, "type");
@@ -379,7 +392,7 @@ function sanitizePersistedCacheControl(value: unknown): PersistedCacheControl | 
 function sanitizePersistedProviderOptions(
   value: unknown,
 ): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || ArrayIsArray(value)) {
     return undefined;
   }
 
@@ -391,12 +404,14 @@ function sanitizePersistedProviderOptions(
   }
   const sanitized: Record<string, unknown> = {};
   let retained = false;
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    if (!ObjectHasOwn(keys, keyIndex)) continue;
+    const key = keys[keyIndex]!;
     if (typeof key !== "string" || key.length === 0) {
       continue;
     }
     const providerBucket = readOwnEnumerableDataDescriptor(value, key)?.value;
-    if (!providerBucket || typeof providerBucket !== "object" || Array.isArray(providerBucket)) {
+    if (!providerBucket || typeof providerBucket !== "object" || ArrayIsArray(providerBucket)) {
       continue;
     }
     const cacheControl = sanitizePersistedCacheControl(
@@ -419,7 +434,7 @@ function sanitizePersistedProviderOptions(
 function sanitizeModelCallContextMessages(
   messages: readonly DirectModelMessage[],
 ): ModelCallMessage[] {
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (message) => {
     if (message.role === "assistant") {
       return { role: "assistant", content: message.content };
     }
@@ -605,7 +620,7 @@ function isRuntimeProviderToolDefinition(
     "args" in value &&
     typeof value.args === "object" &&
     value.args !== null &&
-    !Array.isArray(value.args);
+    !ArrayIsArray(value.args);
 }
 
 function isRuntimeFunctionToolDefinition(
@@ -633,9 +648,12 @@ async function resolveDirectTools(
 
   const resolvedTools: ModelCallTool[] = [];
 
-  for (const [name, definition] of Object.entries(tools)) {
+  const entries = ObjectEntries(tools);
+  for (let index = 0; index < entries.length; index++) {
+    const name = entries[index]![0];
+    const definition = entries[index]![1];
     if (isRuntimeProviderToolDefinition(definition)) {
-      resolvedTools.push({
+      pushPrivateArray(resolvedTools, {
         type: "provider",
         name,
         id: definition.id,
@@ -649,7 +667,7 @@ async function resolveDirectTools(
     }
 
     const inputSchema = await Promise.resolve(definition.inputSchema.jsonSchema);
-    resolvedTools.push({
+    pushPrivateArray(resolvedTools, {
       type: "function",
       name,
       ...(typeof definition.description === "string"
@@ -825,14 +843,17 @@ function buildDirectGenerateResult(
   const toolCalls: RuntimeGenerateTextResult["toolCalls"] = [];
   const toolResults: RuntimeGenerateTextResult["toolResults"] = [];
 
-  for (const part of result.content ?? []) {
+  const content = result.content ?? [];
+  for (let partIndex = 0; partIndex < content.length; partIndex++) {
+    if (!ObjectHasOwn(content, partIndex)) continue;
+    const part = content[partIndex]!;
     if (isDirectTextPart(part)) {
       text += part.text;
       continue;
     }
 
     if (isDirectToolCallPart(part)) {
-      toolCalls.push({
+      pushPrivateArray(toolCalls, {
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         input: parseToolCallInput(part.input),
@@ -840,7 +861,7 @@ function buildDirectGenerateResult(
     }
 
     if (isDirectToolResultPart(part)) {
-      toolResults.push({
+      pushPrivateArray(toolResults, {
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         result: part.result,
@@ -934,11 +955,17 @@ async function buildGenerateResultFromStream(
   let usage: RuntimeGenerateTextResult["usage"];
   let finishReason: string | null = null;
   let providerMetadata: Record<string, unknown> | undefined;
-  const toolCalls = new Map<string, NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]>();
-  const toolInputs = new Map<string, { toolCallId: string; toolName: string; input: string }>();
+  const toolCalls = createPrivateMap<
+    string,
+    NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]
+  >();
+  const toolInputs = createPrivateMap<
+    string,
+    { toolCallId: string; toolName: string; input: string }
+  >();
   const toolResults: NonNullable<RuntimeGenerateTextResult["toolResults"]> = [];
 
-  for await (const rawPart of mapReadableStream(stream)) {
+  for await (const rawPart of getPrivateAsyncIterator(mapReadableStream(stream))) {
     if (!rawPart || typeof rawPart !== "object" || !("type" in rawPart)) {
       continue;
     }
@@ -1000,7 +1027,7 @@ async function buildGenerateResultFromStream(
 
       case "tool-result": {
         const result = part.result ?? part.output ?? part.error;
-        toolResults.push({
+        pushPrivateArray(toolResults, {
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           result,
@@ -1011,7 +1038,7 @@ async function buildGenerateResultFromStream(
       }
 
       case "tool-error":
-        toolResults.push({
+        pushPrivateArray(toolResults, {
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           result: part.error,
@@ -1208,7 +1235,7 @@ async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterabl
 }
 
 async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
-  for await (const materializedPart of mapReadableStream(stream)) {
+  for await (const materializedPart of getPrivateAsyncIterator(mapReadableStream(stream))) {
     if (
       typeof materializedPart === "object" && materializedPart !== null &&
       (materializedPart as { type?: unknown }).type === "text-delta"
@@ -1272,10 +1299,10 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
 
   return {
     fullStream: (async function* () {
-      yield* mapReadableStream(await acquire("full"));
+      yield* getPrivateAsyncIterator(mapReadableStream(await acquire("full")));
     })(),
     textStream: (async function* () {
-      yield* textDeltasFromStream(await acquire("text"));
+      yield* getPrivateAsyncIterator(textDeltasFromStream(await acquire("text")));
     })(),
   };
 }
@@ -1317,12 +1344,12 @@ function assertValidEmbeddingVectors(
   value: unknown,
   expectedCount: number,
 ): asserts value is number[][] {
-  if (!Array.isArray(value) || value.length !== expectedCount) {
+  if (!ArrayIsArray(value) || value.length !== expectedCount) {
     throw new TypeError("Embedding runtime returned invalid vectors");
   }
   let dimension: number | undefined;
   for (const vector of value) {
-    if (!Array.isArray(vector) || vector.length === 0) {
+    if (!ArrayIsArray(vector) || vector.length === 0) {
       throw new TypeError("Embedding runtime returned invalid vectors");
     }
     if (dimension === undefined) dimension = vector.length;

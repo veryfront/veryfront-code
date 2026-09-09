@@ -61,9 +61,31 @@ import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts"
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const apply = Reflect.apply;
 const TypeErrorConstructor = TypeError;
+const objectEntries = Object.entries;
+const objectSetPrototypeOf = Object.setPrototypeOf;
+
+function mapOwnRecord<TInput, TOutput>(
+  input: Record<string, TInput>,
+  mapper: (name: string, value: TInput) => TOutput,
+): Record<string, TOutput> {
+  const entries = apply(objectEntries, Object, [input]) as Array<[string, TInput]>;
+  const output: Record<string, TOutput> = {};
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    defineOwnDataProperty(
+      output,
+      entry[0],
+      mapper(entry[0], entry[1]),
+      { enumerable: true, configurable: true, writable: true },
+    );
+  }
+  return output;
+}
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -196,7 +218,8 @@ function createDefaultTaskContext(
   };
 }
 
-function incrementSteeringRevision(context: DefaultHostedChatRuntimeTaskContext): void {
+/** @internal Share steering invalidation with facaded runtime preparation. */
+export function incrementSteeringRevision(context: HostedRuntimeStateResolverContext): void {
   context.steeringRevision = (context.steeringRevision ?? 0) + 1;
 }
 
@@ -287,30 +310,23 @@ async function buildToolAssembly(
   };
 }
 
-function createRuntimeAgentConfig(input: {
-  options: DefaultHostedChatRuntimeCreationOptions;
-  taskContext: DefaultHostedChatRuntimeTaskContext;
+/** @internal Shared runtime construction after transport-free tool assembly. */
+export type PreparedHostedRuntimeAgentOptions = {
+  options: Omit<DefaultHostedChatRuntimeCreationOptions, "authToken">;
+  taskContext: HostedRuntimeStateResolverContext;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  refreshSystem?: CreateDefaultHostedChatRuntimeOptions["refreshSystem"];
-}): AgentConfig {
-  const liveProjectSteering = input.options.liveProjectSteering;
-  const systemRefresh = input.refreshSystem;
-  const refreshSystem = systemRefresh && liveProjectSteering
-    ? () =>
-      systemRefresh({
-        taskContext: input.taskContext,
-        liveProjectSteering,
-        toolAssembly: input.toolAssembly,
-      })
-    : undefined;
+  refreshSystem?: () => Promise<AgentSystem> | AgentSystem;
+};
 
-  const runtimeTools = Object.fromEntries(
-    Object.entries(input.toolAssembly.runtimeTools).map(([toolName, runtimeTool]) => [
-      toolName,
-      markRuntimeLocalTool(runtimeTool),
-    ]),
+function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): AgentConfig {
+  const liveProjectSteering = input.options.liveProjectSteering;
+  const refreshSystem = input.refreshSystem;
+
+  const runtimeTools = mapOwnRecord(
+    input.toolAssembly.runtimeTools,
+    (_toolName, runtimeTool) => markRuntimeLocalTool(runtimeTool),
   );
   const resolveHostedRuntimeState = createHostedRuntimeStateResolver({
     taskContext: input.taskContext,
@@ -363,6 +379,7 @@ function createRuntimeAgentConfig(input: {
       remoteToolSource: input.toolAssembly.remoteToolSources[0],
     }),
   };
+  objectSetPrototypeOf(runtimeConfig, null);
   return runtimeConfig;
 }
 
@@ -415,37 +432,47 @@ function snapshotHostedToolResult(result: unknown): unknown {
   return snapshot.value;
 }
 
+/** @internal Bound tool results and sanitize errors without trusted provenance. */
+export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
+  return mapOwnRecord(
+    tools,
+    (_toolName, tool) => {
+      const execute = tool.execute;
+      const preserveTrustedError = hasTrustedHostToolProvenance(tool);
+      return {
+        ...tool,
+        execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+          try {
+            return snapshotHostedToolResult(
+              await apply(execute, tool, [toolInput, context]),
+            );
+          } catch (error) {
+            if (preserveTrustedError) throw error;
+            throw new TypeErrorConstructor("Hosted project tool execution failed");
+          }
+        },
+      };
+    },
+  );
+}
+
 /** @internal Scope local tool execution and sanitize errors without trusted provenance. */
 export function scopeHostedRuntimeTools(input: {
   tools: ToolSet;
   taskContext: DefaultHostedChatRuntimeTaskContext;
   cloudContext: VeryfrontCloudContext;
 }): ToolSet {
-  return Object.fromEntries(
-    Object.entries(input.tools).map(([toolName, tool]) => {
-      const execute = tool.execute;
-      const preserveTrustedError = hasTrustedHostToolProvenance(tool);
-      return [
-        toolName,
-        {
-          ...tool,
-          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-            withoutHostedCredentials({
-              taskContext: input.taskContext,
-              cloudContext: input.cloudContext,
-              operation: async () => {
-                try {
-                  return snapshotHostedToolResult(
-                    await apply(execute, tool, [toolInput, context]),
-                  );
-                } catch (error) {
-                  if (preserveTrustedError) throw error;
-                  throw new TypeErrorConstructor("Hosted project tool execution failed");
-                }
-              },
-            }),
-        },
-      ];
+  const scopedTools = scopeHostedRuntimeToolResults(input.tools);
+  return mapOwnRecord(
+    scopedTools,
+    (_toolName, tool) => ({
+      ...tool,
+      execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+        withoutHostedCredentials({
+          taskContext: input.taskContext,
+          cloudContext: input.cloudContext,
+          operation: () => apply(tool.execute, tool, [toolInput, context]),
+        }),
     }),
   );
 }
@@ -514,17 +541,24 @@ export async function createDefaultHostedChatRuntime(
           effectiveRunEventWriterCapability,
           () => buildToolAssembly({ ...input, taskContext, cloudContext }),
         );
-        const runtimeAgentConfig = createRuntimeAgentConfig({
-          options: input.options,
-          taskContext,
-          toolAssembly,
-          modelId,
-          sourceIntegrationPolicy: input.sourceIntegrationPolicy,
-          refreshSystem: input.refreshSystem,
-        });
+        const refreshSystem = input.refreshSystem;
+        const liveProjectSteering = input.options.liveProjectSteering;
         const runtimeAgent = runWithVeryfrontCloudContext(
           cloudContext,
-          () => createEphemeralAgentWithRuntimeOptions(runtimeAgentConfig, runtimeOptions),
+          () =>
+            createPreparedHostedRuntimeAgent({
+              options: input.options,
+              taskContext,
+              toolAssembly,
+              modelId,
+              sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+              ...(refreshSystem && liveProjectSteering
+                ? {
+                  refreshSystem: () =>
+                    refreshSystem({ taskContext, liveProjectSteering, toolAssembly }),
+                }
+                : {}),
+            }, runtimeOptions),
         );
 
         return {
@@ -573,5 +607,21 @@ export async function createDefaultHostedChatRuntime(
         throw error;
       }
     },
+  );
+}
+
+/** @internal Construct from explicit runtime state; no private transport or credential defaults. */
+export function createPreparedHostedRuntimeAgent(
+  input: PreparedHostedRuntimeAgentOptions,
+  runtimeOptions: AgentRuntimeInternalOptions,
+) {
+  const resolvedRuntimeOptions = {
+    ...runtimeOptions,
+    modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
+  };
+  objectSetPrototypeOf(resolvedRuntimeOptions, null);
+  return createEphemeralAgentWithRuntimeOptions(
+    createRuntimeAgentConfig(input),
+    resolvedRuntimeOptions,
   );
 }

@@ -19,13 +19,146 @@ import {
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
   prepareConfigDerivedHostedChatRuntimeToolAssembly,
+  prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
-} from "./chat-runtime-tool-assembly.ts";
+} from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
+
+describe("private host tool metadata", () => {
+  it("observes private conversation work without invoking its own then override", async () => {
+    const text = Promise.resolve("Synthetic private conversation text");
+    const nativeThen = Promise.prototype.then;
+    let observations = 0;
+    Object.defineProperties(text, {
+      constructor: { value: Object },
+      then: {
+        value(...args: unknown[]) {
+          observations++;
+          return Reflect.apply(nativeThen, text, args);
+        },
+      },
+    });
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { agentId: "synthetic", model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: "Synthetic instructions",
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      localTools: {},
+      allowedToolNames: [],
+      remoteToolSources: [],
+      loadLatestConversationUserText: () => text,
+    });
+    assertEquals(assembly.availableToolNames, []);
+    assertEquals(observations, 0);
+  });
+
+  it("does not read inherited short names while enforcing denials", async () => {
+    let reads = 0;
+    const definition = Object.create({
+      get shortName() {
+        reads++;
+        return "hidden";
+      },
+    }, {
+      description: { value: "Synthetic tool", enumerable: true },
+      inputSchema: { value: defineSchema((v) => v.object({}))(), enumerable: true },
+      execute: { value: () => ({ ok: true }), enumerable: true },
+    });
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { agentId: "synthetic", model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: "Synthetic instructions",
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      localTools: { visible: definition },
+      hostToolPolicy: { allow: ["visible"] },
+      allowedToolNames: ["visible"],
+      deniedToolNames: ["other"],
+      remoteToolSources: [],
+    });
+    assertEquals(reads, 0);
+    assertEquals(assembly.localToolNames, ["visible"]);
+    assertEquals(await assembly.runtimeTools.visible?.execute({}), { ok: true });
+  });
+});
+
+it("facaded assembly preserves project tool normalization and mutation callbacks without private transport config", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  let mutations = 0;
+  const source: RemoteToolSource = {
+    id: "api",
+    listTools: () =>
+      Promise.resolve([{
+        ...remoteTool("update_file", "Update file"),
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" }, project_reference: { type: "string" } },
+          required: ["project_reference"],
+        },
+      }, remoteTool("delete_file", "Delete file")]),
+    executeTool: (_name, args) => {
+      calls.push(args);
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+    signal: new AbortController().signal,
+    taskContext: {
+      projectId: "project-1",
+      branchId: null,
+      model: "veryfront-cloud/openai/gpt-5.4",
+    },
+    instructions: "Synthetic instructions",
+    localTools: {},
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    allowedToolNames: ["update_file"],
+    remoteToolSources: [source],
+    onSteeringMutation: () => {
+      mutations++;
+    },
+  });
+  assertEquals(assembly.availableToolNames, ["update_file"]);
+  await assembly.remoteToolSources[0]!.executeTool("update_file", {
+    path: "AGENTS.md",
+    project_reference: "untrusted-project",
+  });
+  assertEquals(calls, [{ path: "AGENTS.md", project_reference: "project-1" }]);
+  assertEquals(mutations, 1);
+  await assertRejects(() => assembly.remoteToolSources[0]!.executeTool("delete_file", {}));
+  assertEquals(calls.length, 1);
+});
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
   mode: "unrestricted",
 } as const;
+
+for (const structured of [false, true]) {
+  it(`facaded assembly retains research artifact reminders in system output (${structured})`, async () => {
+    const content = "Synthetic source instructions";
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { projectId: null, model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: structured ? [{ role: "system", content }] : content,
+      localTools: {},
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      allowedToolNames: [],
+      remoteToolSources: [],
+      loadLatestConversationUserText: () =>
+        Promise.resolve("/research Research synthetic widgets and save the report to the project."),
+    });
+    assertStringIncludes(assembly.systemInstructions, content);
+    assertStringIncludes(assembly.systemInstructions, "research/synthetic-widgets/report.md");
+    if (structured) {
+      assertExists(assembly.systemMessages);
+      assertEquals(assembly.systemMessages[0], { role: "system", content });
+      assertStringIncludes(
+        JSON.stringify(assembly.systemMessages),
+        "research/synthetic-widgets/report.md",
+      );
+    } else {
+      assertEquals(assembly.systemMessages, undefined);
+    }
+  });
+}
 
 function localTool(description: string) {
   return {

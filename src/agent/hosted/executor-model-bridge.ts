@@ -1,4 +1,6 @@
+const hasOwn = Object.hasOwn;
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
+import { createPrivateReadableStream } from "#veryfront/security/private-stream.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { executorModelFailure, throwExecutorModelFailure } from "./executor-model-errors.ts";
 import type {
@@ -300,7 +302,7 @@ function throwProviderStreamError(value: unknown, rawEnvelope = false): void {
 function rejectReceivedStreamError(value: JsonValue, rawEnvelope = false): void {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return;
   if (value.type === "tool-error" && !rawEnvelope) return;
-  if (value.type === "error" || Object.hasOwn(value, "error")) {
+  if (value.type === "error" || hasOwn(value, "error")) {
     throw new TypeError("Invalid managed model stream chunk");
   }
   if (value.type === "raw" && value.rawValue !== undefined) {
@@ -429,7 +431,7 @@ function createExecutorModelRuntime(
         const start = parseExecutorModelData(getExecutorModelStreamFrameSchema(), first.value);
         throwExecutorModelFailure(start);
         if (start.type !== "start") throw new TypeError("Invalid managed model stream start");
-        const stream = new ReadableStream<unknown>({
+        const stream = createPrivateReadableStream<unknown>({
           async pull(controller) {
             try {
               const next = await iterator.next();

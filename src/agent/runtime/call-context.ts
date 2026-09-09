@@ -1,3 +1,24 @@
+import {
+  appendPrivateArray,
+  concatPrivateArrays,
+  filterPrivateArray,
+  flatMapPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  slicePrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import {
+  privateTextIndexOf,
+  privateTextSlice,
+  privateTextStartsWith,
+  privateTextTrim,
+  privateTextTrimEnd,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
+import { execPrivateRegExp } from "#veryfront/security/private-regexp.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 /**
  * Agent Call Context
  *
@@ -44,6 +65,8 @@ import { flattenSystemInstructions } from "./tool-inventory.ts";
 import { isOwnDataPropertyDescriptor, readOwnDataProperty } from "./data-property-descriptor.ts";
 
 const ObjectDefineProperty = Object.defineProperty;
+const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ReflectApply = Reflect.apply;
@@ -128,21 +151,23 @@ function splitInstructionsAtMarker(input: {
   instructions: string;
   runtimeContextMarker: string;
 }): { before: string; after: string | null; hasMarker: boolean } {
-  const markerIndex = input.instructions.indexOf(input.runtimeContextMarker);
+  const markerIndex = privateTextIndexOf(input.instructions, input.runtimeContextMarker);
 
   if (markerIndex < 0) {
     return { before: input.instructions, after: null, hasMarker: false };
   }
 
   return {
-    before: input.instructions.slice(0, markerIndex).trim(),
-    after: input.instructions.slice(markerIndex + input.runtimeContextMarker.length).trim() || null,
+    before: privateTextTrim(privateTextSlice(input.instructions, 0, markerIndex)),
+    after: privateTextTrim(
+      privateTextSlice(input.instructions, markerIndex + input.runtimeContextMarker.length),
+    ) || null,
     hasMarker: true,
   };
 }
 
 function getBlockName(block: string): string | null {
-  return /^<([A-Za-z0-9_-]+)[\s>]/.exec(block)?.[1] ?? null;
+  return execPrivateRegExp(/^<([A-Za-z0-9_-]+)[\s>]/, block)?.[1] ?? null;
 }
 
 /**
@@ -152,28 +177,28 @@ function getBlockName(block: string): string | null {
  * closing tag follows it.
  */
 function hasBlock(instructions: string, blockName: string): boolean {
-  const openIndex = instructions.indexOf(`<${blockName}>`);
+  const openIndex = privateTextIndexOf(instructions, `<${blockName}>`);
   if (openIndex < 0) {
     return false;
   }
-  return instructions.indexOf(`</${blockName}>`, openIndex) > openIndex;
+  return privateTextIndexOf(instructions, `</${blockName}>`, openIndex) > openIndex;
 }
 
 function removeCompleteBlocks(instructions: string, blockName: string): string {
   const openTag = `<${blockName}>`;
   const closeTag = `</${blockName}>`;
   let result = instructions;
-  let openIndex = result.indexOf(openTag);
+  let openIndex = privateTextIndexOf(result, openTag);
 
   while (openIndex >= 0) {
-    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    const closeIndex = privateTextIndexOf(result, closeTag, openIndex + openTag.length);
     if (closeIndex < 0) {
       break;
     }
-    const before = result.slice(0, openIndex).trimEnd();
-    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    const before = privateTextTrimEnd(privateTextSlice(result, 0, openIndex));
+    const after = privateTextTrimStart(privateTextSlice(result, closeIndex + closeTag.length));
     result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
-    openIndex = result.indexOf(openTag);
+    openIndex = privateTextIndexOf(result, openTag);
   }
 
   return result;
@@ -186,21 +211,23 @@ function removeGeneratedSkillCatalogBlocks(instructions: string): string {
   let searchIndex = 0;
 
   while (searchIndex < result.length) {
-    const openIndex = result.indexOf(openTag, searchIndex);
+    const openIndex = privateTextIndexOf(result, openTag, searchIndex);
     if (openIndex < 0) {
       break;
     }
-    const closeIndex = result.indexOf(closeTag, openIndex + openTag.length);
+    const closeIndex = privateTextIndexOf(result, closeTag, openIndex + openTag.length);
     if (closeIndex < 0) {
       break;
     }
-    const content = result.slice(openIndex + openTag.length, closeIndex).trimStart();
-    if (!content.startsWith(RUNTIME_GENERATED_SKILL_CATALOG_MARKER)) {
+    const content = privateTextTrimStart(
+      privateTextSlice(result, openIndex + openTag.length, closeIndex),
+    );
+    if (!privateTextStartsWith(content, RUNTIME_GENERATED_SKILL_CATALOG_MARKER)) {
       searchIndex = closeIndex + closeTag.length;
       continue;
     }
-    const before = result.slice(0, openIndex).trimEnd();
-    const after = result.slice(closeIndex + closeTag.length).trimStart();
+    const before = privateTextTrimEnd(privateTextSlice(result, 0, openIndex));
+    const after = privateTextTrimStart(privateTextSlice(result, closeIndex + closeTag.length));
     result = before.length > 0 && after.length > 0 ? `${before}\n\n${after}` : `${before}${after}`;
     searchIndex = 0;
   }
@@ -231,7 +258,9 @@ function snapshotOwnEnumerableDataRecord(
 
   const snapshot: Record<PropertyKey, unknown> = {};
   const keys = ReflectApply(ReflectOwnKeys, undefined, [descriptors]) as PropertyKey[];
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    if (!hasOwn(keys, keyIndex)) continue;
+    const key = keys[keyIndex]!;
     const descriptorEntry = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
       descriptors,
       key,
@@ -262,7 +291,7 @@ function prepareStructuredInstructionMessages(input: {
   instructions: ChatSystemMessage[];
   removeGeneratedSkillContext: boolean;
 }): ChatSystemMessage[] {
-  return input.instructions.flatMap((message, index) => {
+  return flatMapPrivateArray(input.instructions, (message, index) => {
     const label = `Structured system message ${index}`;
     const contentValue = readOwnDataProperty(message, "content", label);
     if (typeof contentValue !== "string") {
@@ -304,9 +333,11 @@ function splitStructuredInstructionMessages(
   const after: ChatSystemMessage[] = [];
   let foundMarker = false;
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!hasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
     if (foundMarker) {
-      after.push(message);
+      pushPrivateArray(after, message);
       continue;
     }
 
@@ -315,16 +346,16 @@ function splitStructuredInstructionMessages(
       runtimeContextMarker,
     });
     if (!split.hasMarker) {
-      before.push(message);
+      pushPrivateArray(before, message);
       continue;
     }
 
     foundMarker = true;
     if (split.before.length > 0) {
-      before.push({ ...message, content: split.before });
+      pushPrivateArray(before, { ...message, content: split.before });
     }
     if (split.after !== null) {
-      after.push({ ...message, content: split.after });
+      pushPrivateArray(after, { ...message, content: split.after });
     }
   }
 
@@ -343,7 +374,7 @@ function buildCacheControl(cacheTtl: AgentCallCacheTtl | undefined): {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 function isAnthropicCacheProviderKey(key: string): boolean {
@@ -354,7 +385,7 @@ function isAnthropicCacheProviderKey(key: string): boolean {
 
 function getAnthropicCacheProviderAlias(input: BuildAgentCallContextInput): string {
   const alias = input.anthropicProviderAlias;
-  return alias && alias.trim().length > 0 ? alias : "veryfront-cloud";
+  return alias && privateTextTrim(alias).length > 0 ? alias : "veryfront-cloud";
 }
 
 function isAnthropicCacheControl(value: unknown): boolean {
@@ -385,7 +416,9 @@ function getStructuredCacheProviderBuckets(
 ): StructuredCacheProviderBucket[] {
   const buckets: StructuredCacheProviderBucket[] = [];
   const keys = ReflectApply(ReflectOwnKeys, undefined, [providerOptions]) as PropertyKey[];
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    if (!hasOwn(keys, keyIndex)) continue;
+    const key = keys[keyIndex]!;
     if (key !== "anthropic" && key !== anthropicProviderAlias) {
       continue;
     }
@@ -433,7 +466,7 @@ function getStructuredCacheProviderBuckets(
     ) {
       continue;
     }
-    buckets.push({
+    pushPrivateArray(buckets, {
       key,
       cacheControl,
       value: snapshotOwnEnumerableDataRecord(
@@ -450,7 +483,7 @@ function removeStructuredCacheControls(
   messages: readonly ChatSystemMessage[],
   anthropicProviderAlias: string,
 ): ChatSystemMessage[] {
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (message) => {
     const providerOptions = snapshotOwnEnumerableDataRecord(
       message.providerOptions,
       "Structured system message providerOptions",
@@ -464,7 +497,9 @@ function removeStructuredCacheControls(
     }
 
     const nextProviderOptions = { ...providerOptions };
-    for (const bucket of cacheProviderBuckets) {
+    for (let bucketIndex = 0; bucketIndex < cacheProviderBuckets.length; bucketIndex++) {
+      if (!hasOwn(cacheProviderBuckets, bucketIndex)) continue;
+      const bucket = cacheProviderBuckets[bucketIndex]!;
       const nextBucket = { ...bucket.value };
       ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
       if (ReflectOwnKeys(nextBucket).length > 0) {
@@ -489,14 +524,17 @@ function hasStructuredCacheControl(
   messages: readonly ChatSystemMessage[],
   anthropicProviderAlias: string,
 ): boolean {
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!hasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
     const providerOptions = snapshotOwnEnumerableDataRecord(
       message.providerOptions,
       "Structured system message providerOptions",
     );
     if (
-      getStructuredCacheProviderBuckets(providerOptions, anthropicProviderAlias).some((bucket) =>
-        bucket.cacheControl !== undefined
+      somePrivateArray(
+        getStructuredCacheProviderBuckets(providerOptions, anthropicProviderAlias),
+        (bucket) => bucket.cacheControl !== undefined,
       )
     ) {
       return true;
@@ -520,7 +558,7 @@ function applyStructuredCacheTtl(
   }
 
   const breakpointIndex = messages.length - 1;
-  const cacheMetadata = messages.map((message) => {
+  const cacheMetadata = mapPrivateArray(messages, (message) => {
     const providerOptions = snapshotOwnEnumerableDataRecord(
       message.providerOptions,
       "Structured system message providerOptions",
@@ -529,11 +567,13 @@ function applyStructuredCacheTtl(
       providerOptions,
       anthropicProviderAlias,
     );
-    const cacheProviderBuckets = structuredCacheProviderBuckets.filter((bucket) =>
-      bucket.cacheControl !== undefined
+    const cacheProviderBuckets = filterPrivateArray(
+      structuredCacheProviderBuckets,
+      (bucket) => bucket.cacheControl !== undefined,
     );
-    const undefinedCacheProviderBuckets = structuredCacheProviderBuckets.filter((bucket) =>
-      bucket.cacheControl === undefined
+    const undefinedCacheProviderBuckets = filterPrivateArray(
+      structuredCacheProviderBuckets,
+      (bucket) => bucket.cacheControl === undefined,
     );
     return {
       providerOptions,
@@ -542,20 +582,22 @@ function applyStructuredCacheTtl(
     };
   });
   const breakpointIndexes: number[] = [];
-  for (const [index, { cacheProviderBuckets }] of cacheMetadata.entries()) {
+  for (let index = 0; index < cacheMetadata.length; index++) {
+    if (!hasOwn(cacheMetadata, index)) continue;
+    const { cacheProviderBuckets } = cacheMetadata[index]!;
     if (cacheProviderBuckets.length > 0) {
-      breakpointIndexes.push(index);
+      pushPrivateArray(breakpointIndexes, index);
     }
   }
   const addCanonicalBreakpoint = cacheMetadata[breakpointIndex]!.cacheProviderBuckets.length === 0;
   if (addCanonicalBreakpoint) {
-    breakpointIndexes.push(breakpointIndex);
+    pushPrivateArray(breakpointIndexes, breakpointIndex);
   }
-  const retainedBreakpointIndexes = new Set(
-    breakpointIndexes.slice(-ANTHROPIC_MAX_CACHE_BREAKPOINTS),
+  const retainedBreakpointIndexes = createPrivateSet(
+    slicePrivateArray(breakpointIndexes, -ANTHROPIC_MAX_CACHE_BREAKPOINTS),
   );
 
-  return messages.map((message, index) => {
+  return mapPrivateArray(messages, (message, index) => {
     const { providerOptions, cacheProviderBuckets, undefinedCacheProviderBuckets } =
       cacheMetadata[index]!;
     const shouldAddCanonicalBreakpoint = addCanonicalBreakpoint && index === breakpointIndex;
@@ -567,7 +609,9 @@ function applyStructuredCacheTtl(
     }
 
     const nextProviderOptions = { ...providerOptions };
-    for (const bucket of undefinedCacheProviderBuckets) {
+    for (let bucketIndex = 0; bucketIndex < undefinedCacheProviderBuckets.length; bucketIndex++) {
+      if (!hasOwn(undefinedCacheProviderBuckets, bucketIndex)) continue;
+      const bucket = undefinedCacheProviderBuckets[bucketIndex]!;
       const nextBucket = { ...bucket.value };
       ReflectApply(ReflectDeleteProperty, undefined, [nextBucket, "cacheControl"]);
       if (ReflectOwnKeys(nextBucket).length > 0) {
@@ -581,7 +625,9 @@ function applyStructuredCacheTtl(
         ReflectApply(ReflectDeleteProperty, undefined, [nextProviderOptions, bucket.key]);
       }
     }
-    for (const bucket of cacheProviderBuckets) {
+    for (let bucketIndex = 0; bucketIndex < cacheProviderBuckets.length; bucketIndex++) {
+      if (!hasOwn(cacheProviderBuckets, bucketIndex)) continue;
+      const bucket = cacheProviderBuckets[bucketIndex]!;
       if (retainedBreakpointIndexes.has(index)) {
         ReflectApply(ObjectDefineProperty, undefined, [nextProviderOptions, bucket.key, {
           configurable: true,
@@ -651,7 +697,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   )[PRESERVE_RUNTIME_CONTEXT_MARKER] === true;
   const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
   const anthropicProviderAlias = getAnthropicCacheProviderAlias(input);
-  if (Array.isArray(input.instructions)) {
+  if (isArray(input.instructions)) {
     const preparedMessages = prepareStructuredInstructionMessages({
       instructions: input.instructions,
       removeGeneratedSkillContext: input.skills !== undefined,
@@ -665,23 +711,22 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
       input.cacheTtl,
       anthropicProviderAlias,
     );
-    const flattenedInstructions = flattenSystemInstructions([
-      ...splitMessages.before,
-      ...splitMessages.after,
-    ]);
+    const flattenedInstructions = flattenSystemInstructions(
+      concatPrivateArrays(splitMessages.before, splitMessages.after),
+    );
     const generatedMessages = buildAgentCallContext({
       ...input,
       instructions: flattenedInstructions,
     });
     const dynamicMessage = generatedMessages[flattenedInstructions.length > 0 ? 1 : 0];
-    return [
-      ...staticMessages,
-      ...(preserveRuntimeContextMarker && splitMessages.hasMarker
+    return flatMapPrivateArray([
+      staticMessages,
+      preserveRuntimeContextMarker && splitMessages.hasMarker
         ? [{ role: "system" as const, content: runtimeContextMarker }]
-        : []),
-      ...(dynamicMessage ? [dynamicMessage] : []),
-      ...removeStructuredCacheControls(splitMessages.after, anthropicProviderAlias),
-    ];
+        : [],
+      dynamicMessage ? [dynamicMessage] : [],
+      removeStructuredCacheControls(splitMessages.after, anthropicProviderAlias),
+    ], (messages) => messages);
   }
   const sourceInstructions = input.skills === undefined ? input.instructions : removeCompleteBlocks(
     removeCompleteBlocks(
@@ -704,19 +749,21 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   const dynamicParts: string[] = [];
 
   if (preserveRuntimeContextMarker && instructions.hasMarker) {
-    dynamicParts.push(runtimeContextMarker);
+    pushPrivateArray(dynamicParts, runtimeContextMarker);
   }
 
   const projectBlocks: string[] = [];
   if (input.projectInstructions) {
-    projectBlocks.push(buildProjectInstructionsPromptBlock(input.projectInstructions));
+    pushPrivateArray(projectBlocks, buildProjectInstructionsPromptBlock(input.projectInstructions));
   }
   if (input.projectContext) {
-    projectBlocks.push(buildProjectContextPromptBlock(input.projectContext));
+    pushPrivateArray(projectBlocks, buildProjectContextPromptBlock(input.projectContext));
   }
-  projectBlocks.push(...(input.extraBlocks ?? []));
+  appendPrivateArray(projectBlocks, input.extraBlocks ?? []);
 
-  for (const block of projectBlocks) {
+  for (let blockIndex = 0; blockIndex < projectBlocks.length; blockIndex++) {
+    if (!hasOwn(projectBlocks, blockIndex)) continue;
+    const block = projectBlocks[blockIndex]!;
     if (block.length === 0) {
       continue;
     }
@@ -724,13 +771,14 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     if (blockName !== null && hasBlock(sourceInstructions, blockName)) {
       continue;
     }
-    dynamicParts.push(block);
+    pushPrivateArray(dynamicParts, block);
   }
 
   if (input.skills !== undefined) {
     const hasAuthoredSkillCatalog = hasBlock(sourceInstructions, AVAILABLE_SKILLS_BLOCK_NAME);
     if (input.skills.length > 0 || hasAuthoredSkillCatalog) {
-      dynamicParts.push(
+      pushPrivateArray(
+        dynamicParts,
         hasAuthoredSkillCatalog
           ? buildRuntimeAuthorizedSkillIdsPromptBlock(input.skills)
           : buildRuntimeAvailableSkillsPromptBlock(input.skills),
@@ -739,7 +787,8 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   }
 
   if (input.environmentContext && !hasBlock(sourceInstructions, ENVIRONMENT_CONTEXT_BLOCK_NAME)) {
-    dynamicParts.push(
+    pushPrivateArray(
+      dynamicParts,
       createRuntimePromptBlock({
         name: ENVIRONMENT_CONTEXT_BLOCK_NAME,
         content: input.environmentContext,
@@ -748,7 +797,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
   }
 
   if (instructions.after) {
-    dynamicParts.push(instructions.after);
+    pushPrivateArray(dynamicParts, instructions.after);
   }
 
   const messages: ChatSystemMessage[] = staticPrompt.length > 0
@@ -762,9 +811,9 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     : [];
 
   if (dynamicParts.length > 0) {
-    messages.push({
+    pushPrivateArray(messages, {
       role: "system",
-      content: dynamicParts.join("\n\n"),
+      content: joinPrivateArray(dynamicParts, "\n\n"),
     });
   }
 

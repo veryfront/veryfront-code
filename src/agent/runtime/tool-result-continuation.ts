@@ -1,3 +1,6 @@
+import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
 import type {
@@ -7,6 +10,8 @@ import type {
 } from "./chat-stream-handler.ts";
 import { parseToolArgs } from "./tool-helpers.ts";
 import type { RuntimeGenerateToolResult, RuntimeToolSet } from "./runtime-tool-types.ts";
+
+const hasOwn = Object.hasOwn;
 
 export { getToolResultError } from "#veryfront/tool/result.ts";
 
@@ -74,9 +79,11 @@ export function getProviderExecutedToolNames(runtimeTools: RuntimeToolSet | unde
 export function collectFinalStreamToolResults(
   state: Pick<ChatStreamState, "toolResults">,
 ): Map<string, StreamingToolResult> {
-  const finalToolResults = new Map<string, StreamingToolResult>();
+  const finalToolResults = createPrivateMap<string, StreamingToolResult>();
 
-  for (const toolResult of state.toolResults) {
+  for (let index = 0; index < state.toolResults.length; index++) {
+    if (!hasOwn(state.toolResults, index)) continue;
+    const toolResult = state.toolResults[index]!;
     if (toolResult.preliminary === true) {
       continue;
     }
@@ -90,14 +97,18 @@ export function collectFinalStreamToolResults(
 export function collectPersistedToolResults(
   messages: Message[],
 ): Map<string, ToolResultPart> {
-  const persistedToolResults = new Map<string, ToolResultPart>();
+  const persistedToolResults = createPrivateMap<string, ToolResultPart>();
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index++) {
+    if (!hasOwn(messages, index)) continue;
+    const message = messages[index]!;
     if (message.role !== "tool") {
       continue;
     }
 
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       if (!isToolResultPart(part)) {
         continue;
       }
@@ -112,9 +123,11 @@ export function collectPersistedToolResults(
 export function collectGeneratedToolResults(
   toolResults: RuntimeGenerateToolResult[] | undefined,
 ): Map<string, RuntimeGenerateToolResult> {
-  const generatedToolResults = new Map<string, RuntimeGenerateToolResult>();
+  const generatedToolResults = createPrivateMap<string, RuntimeGenerateToolResult>();
 
-  for (const toolResult of toolResults ?? []) {
+  for (let index = 0; index < (toolResults?.length ?? 0); index++) {
+    if (!hasOwn(toolResults!, index)) continue;
+    const toolResult = toolResults![index]!;
     generatedToolResults.set(toolResult.toolCallId, toolResult);
   }
 
@@ -122,7 +135,7 @@ export function collectGeneratedToolResults(
 }
 
 export function hasSubstantiveAssistantText(text: string | undefined): boolean {
-  return typeof text === "string" && text.trim().length > 0;
+  return typeof text === "string" && privateTextTrim(text).length > 0;
 }
 
 export function isClientRecoverablePlaceholderToolCall(
@@ -151,16 +164,22 @@ export function shouldContinueAfterStreamStep(
     return state.finishReason === "tool-calls" && Boolean(state.suppressedToolCalls?.length);
   }
 
-  const streamedToolCalls = Array.from(state.toolCalls.values());
-  const hasIncompleteToolCall = streamedToolCalls.some(isStreamedToolCallIncomplete);
-  const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.inputAvailable === true && toolCall.providerExecuted !== true
+  const streamedToolCalls: StreamingToolCall[] = [];
+  for (const toolCall of state.toolCalls.values()) pushPrivateArray(streamedToolCalls, toolCall);
+  const hasIncompleteToolCall = somePrivateArray(streamedToolCalls, isStreamedToolCallIncomplete);
+  const hasFinalizedClientToolCall = somePrivateArray(
+    streamedToolCalls,
+    (toolCall) => toolCall.inputAvailable === true && toolCall.providerExecuted !== true,
   );
-  const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.providerExecuted === true
+  const hasProviderExecutedToolCall = somePrivateArray(
+    streamedToolCalls,
+    (toolCall) => toolCall.providerExecuted === true,
   );
   const finalToolResults = collectFinalStreamToolResults(state);
-  const hasInterruptedClientToolCall = streamedToolCalls.some(isInterruptedClientToolCall);
+  const hasInterruptedClientToolCall = somePrivateArray(
+    streamedToolCalls,
+    isInterruptedClientToolCall,
+  );
   // A finalized local call has already emitted tool-input-available. Client
   // callbacks may have applied its side effect, so reconstructing the batch
   // could repeat that mutation even when no result reached this stream.
@@ -293,7 +312,7 @@ export function materializeStreamedToolCall(
       kind: "incomplete",
       part: basePart,
       partialArgumentsLength: tc.arguments.length,
-      partialArgumentsPreview: tc.arguments.slice(0, 200),
+      partialArgumentsPreview: privateTextSlice(tc.arguments, 0, 200),
     };
   }
 

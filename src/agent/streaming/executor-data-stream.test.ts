@@ -23,6 +23,19 @@ async function collect(stream: ReadableStream<Uint8Array>) {
 }
 
 describe("executor runtime data stream validation", () => {
+  it("joins multiline data fields while retaining strict line prefixes", async () => {
+    const body =
+      'data: {\ndata:   "type": "text-delta",\ndata:   "delta": "Synthetic multiline"}\n\ndata: {"type":"message-finish"}\n\n';
+    assertEquals(await collect(new Response(body).body!), [
+      { type: "text-delta", delta: "Synthetic multiline" },
+      { type: "message-finish" },
+    ]);
+    await assertRejects(
+      () => collect(new Response(body.replace('data:   "delta"', 'event: "delta"')).body!),
+      ExecutorAgentError,
+    );
+  });
+
   it("requires whole-message completion after a provider finishes its step", async () => {
     const step = 'data: {"type":"finish","finishReason":"tool-calls"}\n\n';
     await assertRejects(() => collect(new Response(step).body!), ExecutorAgentError);

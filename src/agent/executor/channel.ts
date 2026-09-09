@@ -1,3 +1,14 @@
+import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import {
+  getPrivateStreamReader,
+  getPrivateStreamWriter,
+} from "#veryfront/security/private-stream.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import {
@@ -15,6 +26,36 @@ import {
   getExecutorBindingSchema,
   readExecutorFrames,
 } from "./protocol.ts";
+
+const apply = Reflect.apply;
+const setPrototypeOf = Object.setPrototypeOf;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapDelete = Map.prototype.delete;
+const mapClear = Map.prototype.clear;
+const mapForEach = Map.prototype.forEach;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const setClear = Set.prototype.clear;
+
+function appendPrivateQueue<T>(queue: T[], value: T): void {
+  defineOwnDataProperty(queue, queue.length, value, {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function shiftPrivateQueue<T>(queue: T[]): T | undefined {
+  if (!queue.length) return undefined;
+  const first = queue[0];
+  for (let index = 1; index < queue.length; index++) queue[index - 1] = queue[index]!;
+  queue.length--;
+  return first;
+}
+
+function privateMapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return apply(mapGet, map, [key]) as V | undefined;
+}
 
 /** A connection authenticated by its owner before channel construction. No reconnect or replay. */
 export interface ExecutorByteTransport {
@@ -80,7 +121,7 @@ export interface ExecutorChannel {
 }
 
 type EndError = Extract<ExecutorMessage, { type: "end" }>["error"];
-type Deferred<T> = ReturnType<typeof Promise.withResolvers<T>>;
+type Deferred<T> = ReturnType<typeof createPrivateDeferred<T>>;
 
 interface OutgoingCall {
   id: number;
@@ -142,7 +183,10 @@ export function createExecutorChannel(options: ExecutorChannelOptions): Executor
 class Channel implements ExecutorChannel {
   readonly #binding: Readonly<ExecutorBinding>;
   readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
-  readonly #writer: WritableStreamDefaultWriter<Uint8Array>;
+  readonly #writer: Pick<
+    WritableStreamDefaultWriter<Uint8Array>,
+    "write" | "abort" | "releaseLock"
+  >;
   readonly #operations: ReadonlyMap<string, ExecutorOperation>;
   readonly #maxCalls: number;
   readonly #timeout: number;
@@ -150,10 +194,10 @@ class Channel implements ExecutorChannel {
   readonly #maxRetainedBytes: number;
   #retainedBytes = 0;
   readonly #controller = new AbortController();
-  readonly #ready = Promise.withResolvers<void>();
-  readonly #closed = Promise.withResolvers<Error>();
-  readonly #settled = Promise.withResolvers<void>();
-  readonly #outgoing = new Set<OutgoingCall>();
+  readonly #ready = createPrivateDeferred<void>();
+  readonly #closed = createPrivateDeferred<Error>();
+  readonly #settled = createPrivateDeferred<void>();
+  readonly #outgoing = createPrivateSet<OutgoingCall>();
   readonly #outgoingById = new Map<number, OutgoingCall>();
   readonly #incoming = new Map<number, IncomingCall>();
   readonly #writes: { bytes: Uint8Array; done: Deferred<void> }[] = [];
@@ -182,8 +226,8 @@ class Channel implements ExecutorChannel {
     );
     const handshakeTimeout = positiveBound(options.handshakeTimeoutMs ?? 5_000, 60_000);
     this.#operations = new Map(options.operations);
-    this.#reader = options.transport.readable.getReader();
-    this.#writer = options.transport.writable.getWriter();
+    this.#reader = getPrivateStreamReader(options.transport.readable);
+    this.#writer = getPrivateStreamWriter(options.transport.writable);
     this.#handshakeTimer = setTimeout(
       () => this.#fail("Executor handshake deadline exceeded"),
       handshakeTimeout,
@@ -290,7 +334,7 @@ class Channel implements ExecutorChannel {
       inputBytes: this.#retainPayload(snapshot.value),
       mode,
       queue: [],
-      completion: Promise.withResolvers<void>(),
+      completion: createPrivateDeferred<void>(),
       received: 0,
       consumed: 0,
       unaryBytes: 0,
@@ -299,6 +343,7 @@ class Channel implements ExecutorChannel {
       cancelled: false,
       reading: false,
     };
+    setPrototypeOf(call, null);
     void call.completion.promise.catch(() => {});
     this.#outgoing.add(call);
     call.timer = setTimeout(() => this.#cancelOutgoing(call, "deadline"), timeoutMs);
@@ -326,7 +371,7 @@ class Channel implements ExecutorChannel {
         return;
       }
       call.id = ++this.#nextId;
-      this.#outgoingById.set(call.id, call);
+      apply(mapSet, this.#outgoingById, [call.id, call]);
       await this.#send({ ...message, id: call.id, timeoutMs: remaining });
     } catch {
       if (!this.#error) this.#fail("Executor channel write failed");
@@ -349,7 +394,7 @@ class Channel implements ExecutorChannel {
         await this.#releaseOutgoing(call);
         return { done: true, value: undefined };
       }
-      const { value, bytes } = call.queue.shift()!;
+      const { value, bytes } = shiftPrivateQueue(call.queue)!;
       if (call.mode === "unary") call.unaryBytes = bytes;
       try {
         call.consumed++;
@@ -395,7 +440,7 @@ class Channel implements ExecutorChannel {
       try {
         // Keep the admission slot and a deadline until release is written.
         if (call.id && !this.#error) {
-          call.releaseAck = Promise.withResolvers<void>();
+          call.releaseAck = createPrivateDeferred<void>();
           const acknowledgement = call.releaseAck;
           void acknowledgement.promise.catch(() => {});
           call.cancellationTimer = setTimeout(
@@ -412,7 +457,7 @@ class Channel implements ExecutorChannel {
       } finally {
         this.#clearCallTimers(call);
         this.#outgoing.delete(call);
-        this.#outgoingById.delete(call.id);
+        apply(mapDelete, this.#outgoingById, [call.id]);
       }
     })();
     return call.release;
@@ -420,7 +465,7 @@ class Channel implements ExecutorChannel {
 
   async #receive(): Promise<void> {
     try {
-      for await (const frame of readExecutorFrames(this.#reader)) {
+      for await (const frame of getPrivateAsyncIterator(readExecutorFrames(this.#reader))) {
         if (this.#error) return;
         this.#accept(frame);
       }
@@ -463,7 +508,7 @@ class Channel implements ExecutorChannel {
       return;
     }
     if (message.type === "released") {
-      const call = this.#outgoingById.get(message.id);
+      const call = privateMapGet(this.#outgoingById, message.id);
       if (!call?.releaseAck || !call.ended) {
         throw new ExecutorProtocolError("Executor unknown release acknowledgement");
       }
@@ -472,7 +517,7 @@ class Channel implements ExecutorChannel {
       return;
     }
     if (message.type === "data" || message.type === "end") {
-      const call = this.#outgoingById.get(message.id);
+      const call = privateMapGet(this.#outgoingById, message.id);
       if (!call || call.ended || call.released) {
         throw new ExecutorProtocolError("Executor unknown or completed response");
       }
@@ -485,7 +530,7 @@ class Channel implements ExecutorChannel {
         call.received++;
         if (!call.cancelled) {
           const bytes = this.#retainPayload(message.value);
-          call.queue.push({ value: message.value, bytes });
+          appendPrivateQueue(call.queue, { value: message.value, bytes });
         }
       } else {
         call.ended = true;
@@ -501,7 +546,7 @@ class Channel implements ExecutorChannel {
       call.wake?.();
       return;
     }
-    const call = this.#incoming.get(message.id);
+    const call = privateMapGet(this.#incoming, message.id);
     if (!call || call.released) throw new ExecutorProtocolError("Executor unknown call control");
     if (message.type === "credit") {
       if (
@@ -527,7 +572,7 @@ class Channel implements ExecutorChannel {
     if (message.id <= this.#lastReceivedId) {
       throw new ExecutorProtocolError("Executor request sequence violation");
     }
-    if (this.#incoming.size >= this.#maxCalls) {
+    if (apply(mapSize, this.#incoming, []) >= this.#maxCalls) {
       throw new ExecutorProtocolError("Executor concurrent request limit exceeded");
     }
     this.#lastReceivedId = message.id;
@@ -545,7 +590,8 @@ class Channel implements ExecutorChannel {
       cancelled: false,
       settled: false,
     };
-    this.#incoming.set(call.id, call);
+    setPrototypeOf(call, null);
+    apply(mapSet, this.#incoming, [call.id, call]);
     call.timer = setTimeout(() => this.#abortIncoming(call, "deadline"), timeout);
     this.#activeHandlers++;
     void this.#run(call, message, call.deadline).catch(() => {
@@ -563,7 +609,7 @@ class Channel implements ExecutorChannel {
   ): Promise<void> {
     let iterator: AsyncIterator<JsonValue> | undefined;
     try {
-      const operation = this.#operations.get(message.operation);
+      const operation = privateMapGet(this.#operations, message.operation);
       if (!operation) {
         await this.#end(call, "operation-not-found");
         return;
@@ -573,12 +619,13 @@ class Channel implements ExecutorChannel {
         return;
       }
       const context = { binding: this.#binding, signal: call.controller.signal, deadline };
+      setPrototypeOf(context, null);
       if (operation.mode === "unary") {
         const value = await operation.handle(message.value, context);
         if (call.ended || this.#error) return;
         await this.#send({ type: "data", id: call.id, index: call.sent++, value });
       } else {
-        iterator = operation.handle(message.value, context)[Symbol.asyncIterator]();
+        iterator = getPrivateAsyncIterator(operation.handle(message.value, context));
         while (!call.ended && !this.#error) {
           while (
             call.sent - call.consumed >= EXECUTOR_STREAM_WINDOW && !call.ended && !this.#error
@@ -642,7 +689,7 @@ class Channel implements ExecutorChannel {
     if (call.released && call.settled) {
       clearTimeout(call.timer);
       clearTimeout(call.cancellationTimer);
-      this.#incoming.delete(call.id);
+      apply(mapDelete, this.#incoming, [call.id]);
       if (!this.#error) this.#control({ type: "released", id: call.id });
     }
   }
@@ -662,15 +709,16 @@ class Channel implements ExecutorChannel {
     // Bound both queued bytes and control-frame bookkeeping, including the active write.
     if (
       this.#writes.length >= this.#maxCalls * 4 + EXECUTOR_STREAM_WINDOW ||
-      this.#queuedBytes + bytes.byteLength > EXECUTOR_STREAM_WINDOW * EXECUTOR_MAX_FRAME_BYTES
+      this.#queuedBytes + privateByteLength(bytes) >
+        EXECUTOR_STREAM_WINDOW * EXECUTOR_MAX_FRAME_BYTES
     ) {
       this.#fail("Executor write queue limit exceeded");
       return Promise.reject(this.#error);
     }
     this.#sendSequence++;
-    const done = Promise.withResolvers<void>();
-    this.#writes.push({ bytes, done });
-    this.#queuedBytes += bytes.byteLength;
+    const done = createPrivateDeferred<void>();
+    appendPrivateQueue(this.#writes, { bytes, done });
+    this.#queuedBytes += privateByteLength(bytes);
     if (!this.#writing) void this.#flush();
     return done.promise;
   }
@@ -682,8 +730,8 @@ class Channel implements ExecutorChannel {
         const entry = this.#writes[0]!;
         await this.#writer.write(entry.bytes);
         if (this.#error) return;
-        this.#writes.shift();
-        this.#queuedBytes -= entry.bytes.byteLength;
+        shiftPrivateQueue(this.#writes);
+        this.#queuedBytes -= privateByteLength(entry.bytes);
         entry.done.resolve();
       }
     } catch {
@@ -701,7 +749,7 @@ class Channel implements ExecutorChannel {
   }
 
   #retainPayload(value: JsonValue): number {
-    const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    const bytes = privateByteLength(encodePrivateText(privateJsonStringify(value)));
     if (this.#retainedBytes + bytes > this.#maxRetainedBytes) {
       this.#fail("Executor retained payload budget exceeded");
       throw new ExecutorProtocolError("Executor retained payload budget exceeded");
@@ -711,7 +759,9 @@ class Channel implements ExecutorChannel {
   }
 
   #clearResults(call: OutgoingCall): void {
-    for (const result of call.queue) this.#retainedBytes -= result.bytes;
+    for (let index = 0; index < call.queue.length; index++) {
+      this.#retainedBytes -= call.queue[index]!.bytes;
+    }
     call.queue.length = 0;
   }
 
@@ -736,16 +786,18 @@ class Channel implements ExecutorChannel {
       call.completion.reject(error);
       call.wake?.();
     }
-    for (const call of this.#incoming.values()) {
+    apply(mapForEach, this.#incoming, [(call: IncomingCall) => {
       clearTimeout(call.timer);
       clearTimeout(call.cancellationTimer);
       call.controller.abort(error);
       call.wake?.();
+    }]);
+    apply(setClear, this.#outgoing, []);
+    apply(mapClear, this.#outgoingById, []);
+    apply(mapClear, this.#incoming, []);
+    for (let index = 0; index < this.#writes.length; index++) {
+      this.#writes[index]!.done.reject(error);
     }
-    this.#outgoing.clear();
-    this.#outgoingById.clear();
-    this.#incoming.clear();
-    for (const entry of this.#writes) entry.done.reject(error);
     this.#writes.length = 0;
     this.#queuedBytes = 0;
     void this.#reader.cancel(error).catch(() => {}).finally(() => {

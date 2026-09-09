@@ -1,3 +1,5 @@
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
+
 /** Options accepted by runtime prompt block. */
 export type RuntimePromptBlockOptions = {
   name: string;
@@ -17,5 +19,5 @@ export function createRuntimePromptBlock({
       .join("")
     : "";
 
-  return `<${name}${attrString}>\n${content.trim()}\n</${name}>`;
+  return `<${name}${attrString}>\n${privateTextTrim(content)}\n</${name}>`;
 }

@@ -1,15 +1,13 @@
 const REMOTE_TOOL_PROVENANCE = Symbol("veryfront.remote-tool-provenance");
-
-type RemoteToolProvenance = {
-  [REMOTE_TOOL_PROVENANCE]?: string;
-};
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 /** Mark a runtime tool as materialized from a trusted remote tool source. */
 export function markRemoteToolProvenance<T extends object>(
   tool: T,
   canonicalToolName: string,
 ): T {
-  Object.defineProperty(tool, REMOTE_TOOL_PROVENANCE, {
+  objectDefineProperty(tool, REMOTE_TOOL_PROVENANCE, {
     value: canonicalToolName,
     enumerable: true,
   });
@@ -22,7 +20,7 @@ export function getRemoteToolProvenance(value: unknown): string | undefined {
     return undefined;
   }
 
-  const canonicalToolName = (value as RemoteToolProvenance)[REMOTE_TOOL_PROVENANCE];
+  const canonicalToolName = objectGetOwnPropertyDescriptor(value, REMOTE_TOOL_PROVENANCE)?.value;
   return typeof canonicalToolName === "string" && canonicalToolName.length > 0
     ? canonicalToolName
     : undefined;

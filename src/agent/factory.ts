@@ -76,6 +76,7 @@ const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicArrayFilter = Array.prototype.filter;
 const IntrinsicObjectEntries = Object.entries;
 const IntrinsicObjectKeys = Object.keys;
+const IntrinsicObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -561,16 +562,30 @@ function createAgent<TOutput = never>(
       : { providerTools: resolveProviderToolsConfiguration(config) }),
     model: resolveConfiguredAgentModel(config.model),
   };
+  const preserveToolCatalog = options.runtimeOptions?.preserveToolCatalog === true;
+  if (preserveToolCatalog) IntrinsicObjectSetPrototypeOf(publicConfig, null);
 
   registerConfiguredLocalTools(config);
 
-  const mergedToolsConfig = resolveToolsConfiguration({
-    config,
-    id,
-    delegates,
-    skillTools: resolveSkillToolDisposition(config, id),
-    resolveSkillSnapshot,
-  });
+  let mergedToolsConfig: AgentConfig["tools"];
+  if (preserveToolCatalog) {
+    if (config.tools === true || delegates !== undefined) {
+      throw new TypeError(
+        "A prevalidated agent requires an explicit tool catalog without delegates",
+      );
+    }
+    ensureBuiltinSchemaValidator();
+    mergedToolsConfig = { ...(config.tools ?? {}) };
+    IntrinsicObjectSetPrototypeOf(mergedToolsConfig, null);
+  } else {
+    mergedToolsConfig = resolveToolsConfiguration({
+      config,
+      id,
+      delegates,
+      skillTools: resolveSkillToolDisposition(config, id),
+      resolveSkillSnapshot,
+    });
+  }
 
   const augmentedSystem = createAugmentedSystem({
     config,
@@ -582,12 +597,14 @@ function createAgent<TOutput = never>(
 
   assertPlatformCompatible(config, id);
 
-  const runtime = new AgentRuntime(id, {
+  const runtimeConfig = {
     ...publicConfig,
     tools: mergedToolsConfig,
     system: augmentedSystem,
     middleware: resolvedMiddleware,
-  }, options.runtimeOptions);
+  };
+  if (preserveToolCatalog) IntrinsicObjectSetPrototypeOf(runtimeConfig, null);
+  const runtime = new AgentRuntime(id, runtimeConfig, options.runtimeOptions);
 
   const agentInstance = createAgentInstance({
     id,

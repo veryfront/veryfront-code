@@ -1,3 +1,7 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
@@ -108,7 +112,7 @@ export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
       }).strict(),
     ).max(64).optional(),
   }).strict().refine((value) =>
-    new TextEncoder().encode(JSON.stringify(value)).byteLength <=
+    privateByteLength(encodePrivateText(privateJsonStringify(value))) <=
       EXECUTOR_DISCOVERY_MAX_DEFINITION_BYTES
   );
 });
@@ -165,13 +169,15 @@ export const getExecutorAgentDescribeResultSchema = defineSchema((v) =>
 );
 
 export function parseDiscoveryData<T>(schema: Schema<T>, value: unknown, output = false): T {
-  const result = schema.safeParse(value);
-  if (!result.success) {
-    throw new ExecutorDiscoveryError(
-      output ? "EXECUTOR_DISCOVERY_INVALID_OUTPUT" : "EXECUTOR_DISCOVERY_INVALID_INPUT",
-    );
+  try {
+    const result = schema.safeParse(snapshotOwnDataRecords(value));
+    if (result.success) return snapshotOwnDataRecords(result.data) as T;
+  } catch {
+    // Snapshot and validation failures share the fixed boundary diagnostic.
   }
-  return result.data;
+  throw new ExecutorDiscoveryError(
+    output ? "EXECUTOR_DISCOVERY_INVALID_OUTPUT" : "EXECUTOR_DISCOVERY_INVALID_INPUT",
+  );
 }
 
 export function discoverySuccess(value: unknown): JsonValue {

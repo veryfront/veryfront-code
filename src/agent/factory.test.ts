@@ -14,7 +14,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
-import { agent } from "./factory.ts";
+import { agent, createEphemeralAgentWithRuntimeOptions } from "./factory.ts";
 import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
@@ -77,6 +77,24 @@ function createLoadSkillModel(skillId: string): ModelRuntime {
 }
 
 describe("agent factory", () => {
+  it("requires an explicit catalog when framework construction preserves tool authority", () => {
+    for (
+      const config of [
+        { id: "strict-catalog", tools: true as const },
+        { id: "strict-catalog", tools: {}, delegates: ["another-agent"] },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          createEphemeralAgentWithRuntimeOptions({ ...config, system: "Synthetic" }, {
+            preserveToolCatalog: true,
+          }),
+        TypeError,
+        "explicit tool catalog",
+      );
+    }
+  });
+
   beforeEach(() => {
     agentRegistry.clearAll();
     skillRegistryInternal.clearAll();

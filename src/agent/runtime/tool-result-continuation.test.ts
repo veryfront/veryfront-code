@@ -22,6 +22,23 @@ function createState(
 }
 
 describe("agent runtime streamed tool result collection", () => {
+  it("keeps the last final result without consulting the stored-result iterator", () => {
+    const first = { toolCallId: "call", toolName: "inspect", output: "first" };
+    const final = { toolCallId: "call", toolName: "inspect", output: "synthetic private output" };
+    const results = [first, { ...final, preliminary: true }, final];
+    let observations = 0;
+    Object.defineProperty(results, Symbol.iterator, {
+      get() {
+        observations++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const collected = collectFinalStreamToolResults({ toolResults: results });
+    assertEquals(collected.size, 1);
+    assertEquals(collected.get("call"), final);
+    assertEquals(observations, 0);
+  });
+
   it("continues after suppressing unavailable streamed tool calls", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",

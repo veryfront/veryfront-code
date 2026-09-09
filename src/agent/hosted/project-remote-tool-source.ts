@@ -10,6 +10,7 @@ import {
   type ToolDefinition,
   type ToolExecutionContext,
 } from "#veryfront/tool";
+
 import {
   type AgentServiceMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
@@ -35,6 +36,7 @@ import {
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 import { serverLogger } from "#veryfront/utils";
 
+const objectSetPrototypeOf = Object.setPrototypeOf;
 const logger = serverLogger.component("agent");
 const REMOTE_TOOL_CATALOG_INITIAL_BACKOFF_MS = 1_000;
 const REMOTE_TOOL_CATALOG_MAX_BACKOFF_MS = 30_000;
@@ -197,13 +199,15 @@ export function createHostedProjectRemoteToolSource(
     ? input.activatedRemoteToolNames
     : input.allowedToolNames;
   const resilientSource = createRunResilientRemoteToolSource(input.source);
-  const toolCatalog = createProjectScopedRemoteToolCatalog({
+  const catalogOptions: ProjectScopedRemoteToolCatalogOptions = {
     source: resilientSource,
     defaultProjectId: input.defaultProjectId,
     allowedToolNames: catalogAllowedToolNames,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     filterToolDefinitions: input.filterToolDefinitions,
-  });
+  };
+  objectSetPrototypeOf(catalogOptions, null);
+  const toolCatalog = createProjectScopedRemoteToolCatalog(catalogOptions);
   const retryToolName = input.retryToolName ?? "update_file";
 
   function normalizeProjectToolInput(

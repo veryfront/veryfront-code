@@ -14,6 +14,8 @@ import {
   parseExecutorModelData,
 } from "./executor-model-schema.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+
 type ProviderTool = Extract<ModelRuntimeToolDefinition, { type: "provider" }>;
 
 /** Broker-owned policy. No default quota or API billing authority is implied. */
@@ -75,7 +77,12 @@ function assertSingleCompletion(options: ExecutorModelDispatch["options"]): void
   for (const bucket of Object.values(options.providerOptions ?? {})) inspect(bucket);
 }
 
-function additiveReasoningTokens(request: ExecutorModelDispatch): number {
+/** Internal output allowance reserved by the effective provider thinking configuration. */
+export function getExecutorModelAdditiveReasoningTokens(
+  request: Pick<ExecutorModelDispatch, "model"> & {
+    options: Pick<ExecutorModelDispatch["options"], "reasoning" | "providerOptions">;
+  },
+): number {
   if (resolveModelCallProvider(request.model) !== "anthropic") return 0;
   const reasoning = buildModelCallContextRequest(request.model, request.options)?.reasoning;
   if (request.options.reasoning?.enabled === true) {
@@ -88,7 +95,7 @@ function additiveReasoningTokens(request: ExecutorModelDispatch): number {
         ? 32768
         : 4096);
     // Match the first-party Anthropic builder; its offline contract matrix guards drift.
-    if (!Number.isSafeInteger(budget) || budget < 1024) {
+    if (!numberIsSafeInteger(budget) || budget < 1024) {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
     return budget;
@@ -104,7 +111,7 @@ function additiveReasoningTokens(request: ExecutorModelDispatch): number {
     (thinking as Record<string, unknown>).type === "enabled"
   ) {
     const budget = reasoning?.budgetTokens;
-    if (budget === undefined || !Number.isSafeInteger(budget) || budget < 1024) {
+    if (budget === undefined || !numberIsSafeInteger(budget) || budget < 1024) {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
     return budget;
@@ -188,7 +195,7 @@ export function createExecutorModelAdmission(
       const policy = policies.get(request.model.id);
       if (!policy) throw new TypeError("Executor model is not granted");
       assertSingleCompletion(request.options);
-      const budget = additiveReasoningTokens(request);
+      const budget = getExecutorModelAdditiveReasoningTokens(request);
       const available = policy.maxOutputTokens - budget;
       const maxOutputTokens = request.options.maxOutputTokens ?? available;
       if (

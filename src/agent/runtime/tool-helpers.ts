@@ -1,3 +1,7 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
  *
@@ -5,6 +9,8 @@
  *
  * @module ai/agent/runtime/tool-helpers
  */
+
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
@@ -27,6 +33,8 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
+const intrinsicHasOwn = Object.hasOwn;
+const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
 const intrinsicArrayIncludes = Array.prototype.includes;
 
@@ -40,27 +48,6 @@ function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
 export interface ParsedToolArgs {
   args: Record<string, unknown>;
   error?: string;
-}
-
-function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
-  let normalized = rawArgs.trim();
-
-  while (normalized.startsWith("{}")) {
-    const remainder = normalized.slice(2).trimStart();
-    if (remainder.startsWith("{")) {
-      normalized = remainder;
-      continue;
-    }
-
-    if (remainder.startsWith('"')) {
-      normalized = `{${remainder}`;
-      continue;
-    }
-
-    break;
-  }
-
-  return normalized;
 }
 
 /**
@@ -81,9 +68,9 @@ export function parseToolArgs(
       rawArgs = trimmed;
     }
 
-    const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+    const parsed = typeof rawArgs === "string" ? privateJsonParse(rawArgs) : rawArgs;
 
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!parsed || typeof parsed !== "object" || intrinsicIsArray(parsed)) {
       return { args: {}, error: "Tool call arguments must be a JSON object" };
     }
 
@@ -187,7 +174,7 @@ async function getRemoteToolDefinitions(options?: {
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
-  const seenToolNames = new Set<string>();
+  const seenToolNames = createPrivateSet<string>();
 
   const addDefinition = (definition: ToolDefinition): void => {
     if (seenToolNames.has(definition.name)) {
@@ -203,11 +190,14 @@ async function getRemoteToolDefinitions(options?: {
     intrinsicReflectApply(intrinsicArrayPush, definitions, [definition]);
   };
 
-  for (const source of options?.remoteToolSources ?? []) {
+  const sources = options?.remoteToolSources ?? [];
+  for (let index = 0; index < sources.length; index++) {
+    if (!intrinsicHasOwn(sources, index)) continue;
+    const source = sources[index]!;
     try {
       const sourceDefs = await source.listTools(remoteToolContext);
-      for (const def of sourceDefs) {
-        addDefinition(def);
+      for (let index = 0; index < sourceDefs.length; index++) {
+        if (intrinsicHasOwn(sourceDefs, index)) addDefinition(sourceDefs[index]!);
       }
     } catch (error) {
       logger.warn("Failed to fetch remote tool definitions from source", {
@@ -254,7 +244,10 @@ async function executeRemoteToolFromSources(
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
 ): Promise<{ handled: boolean; result?: unknown }> {
-  for (const source of remoteToolSources ?? []) {
+  const sources = remoteToolSources ?? [];
+  for (let index = 0; index < sources.length; index++) {
+    if (!intrinsicHasOwn(sources, index)) continue;
+    const source = sources[index]!;
     if (!(await sourceHasTool(source, toolName, context))) {
       continue;
     }
@@ -391,7 +384,7 @@ export async function executeConfiguredTool(
 function logToolDefinition(name: string, def: ToolDefinition): void {
   logger.debug(
     `[AGENT] Tool definition for "${name}":`,
-    JSON.stringify(def, null, 2),
+    privateJsonStringify(def, null, 2),
   );
 }
 
@@ -425,7 +418,7 @@ function appendForwardedToolDefinitions(
   allowedNames: string[] | undefined,
 ): void {
   if (!forwarded?.length) return;
-  const existing = new Set(remoteDefs.map((def) => def.name));
+  const existing = createPrivateSet(mapPrivateArray(remoteDefs, (def) => def.name));
   for (const def of forwarded) {
     if (existing.has(def.name)) continue;
     if (allowedNames && !intrinsicIncludes(allowedNames, def.name)) continue;
@@ -509,10 +502,10 @@ export async function getAvailableTools(
       options?.allowedRemoteToolNames,
     );
   }
-  const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
-  const explicitlyRequestedRemoteToolNames = new Set<string>();
+  const remoteToolNames = createPrivateSet(mapPrivateArray(remoteDefs, (def) => def.name));
+  const explicitlyRequestedRemoteToolNames = createPrivateSet<string>();
   const unresolvedConfiguredToolNames: string[] = [];
-  const configuredAuthorizationToolNames = new Map<string, string>();
+  const configuredAuthorizationToolNames = createPrivateMap<string, string>();
 
   const configuredEntries = intrinsicReflectApply(intrinsicObjectEntries, Object, [
     toolsConfig,

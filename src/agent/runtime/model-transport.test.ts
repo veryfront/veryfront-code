@@ -132,6 +132,31 @@ describe("resolveAgentModelTransport", () => {
     assertStrictEquals(transport.languageModel, projectModel);
   });
 
+  for (const mode of ["generate", "stream"] as const) {
+    it(`keeps private thinking controls independent of source transport in ${mode}`, async () => {
+      const frameworkModel = createModel("veryfront-cloud/openai/gpt-5.4");
+      const transport = await resolveAgentModelTransport({
+        agentId: "synthetic-agent",
+        config: {
+          model: "veryfront-cloud/openai/gpt-5.4",
+          system: "Synthetic instructions",
+          resolveModelTransport: () => {
+            throw new Error("Source transport called");
+          },
+        },
+        context: undefined,
+        modelOverride: undefined,
+        mode,
+        resolveModelRuntime: () => frameworkModel,
+        modelCallThinking: { enabled: false },
+      });
+      assertStrictEquals(transport.languageModel, frameworkModel);
+      assertEquals(transport.headers, undefined);
+      assertEquals(transport.providerOptions, undefined);
+      assertEquals(transport.reasoning, { enabled: false });
+    });
+  }
+
   it("defaults reasoning for non-Anthropic thinking-capable Veryfront Cloud models", async () => {
     const hostModel = createModel("veryfront-cloud/google-ai-studio/gemini-2.5-pro");
     const config: AgentConfig = {

@@ -8,6 +8,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { agent } from "../index.ts";
 import { AgentRuntime } from "./index.ts";
+import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -93,6 +94,78 @@ function settleAbortedRun(): Promise<void> {
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
+  it("copies turn messages without consulting an overridden array mapper", async () => {
+    let reads = 0;
+    const messages = [{
+      id: "synthetic-message",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Synthetic private input" }],
+    }];
+    Object.defineProperty(messages, "map", {
+      get() {
+        reads++;
+        return Array.prototype.map;
+      },
+    });
+    const model = scriptedModel([{ text: "Synthetic answer" }]);
+    const runtime = new AgentRuntime("private-messages", {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic instructions",
+    }, {
+      resolveModelRuntime: () => model,
+    });
+    await Array.fromAsync(await runtime.stream(messages));
+    assertEquals(reads, 0);
+    assertEquals(model.calls.length, 1);
+  });
+
+  it("reserves completion before producer work and joins failure finalization after cancellation", async () => {
+    const entered = Promise.withResolvers<void>();
+    const unblock = Promise.withResolvers<void>();
+    let completion: Promise<void> | undefined;
+    let completed = false;
+    const config: RuntimeToolFilterConfig = {
+      model: "veryfront-cloud/openai/gpt-5.4",
+      system: "Synthetic instructions",
+      __vfProviderReplayCheckpointTurnFailed: async () => {
+        entered.resolve();
+        await unblock.promise;
+      },
+    };
+    const runtime = new AgentRuntime("synthetic-runtime", config, {
+      resolveModelRuntime: () => ({
+        provider: "openai",
+        modelId: "gpt-5.4",
+        doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+        doStream: () => {
+          assert(completion, "Completion must be registered before producer work");
+          return Promise.reject(new Error("Synthetic stream failure"));
+        },
+      }),
+      onStreamCompletion: (pending) => {
+        completion = pending;
+        void pending.then(() => {
+          completed = true;
+        });
+      },
+    });
+    const stream = await runtime.stream([{
+      id: "synthetic-message",
+      role: "user",
+      parts: [{ type: "text", text: "Synthetic input" }],
+    }]);
+    try {
+      await entered.promise;
+      await stream.cancel();
+      assert(completion);
+      assertEquals(completed, false);
+    } finally {
+      unblock.resolve();
+      await completion;
+    }
+    assertEquals(completed, true);
+  });
+
   it("revokes run-scoped model authority when generation starts aborted", async () => {
     const model = scriptedModel([{ text: "must not run" }], {
       modelId: "veryfront-cloud/openai/pre-aborted-model",

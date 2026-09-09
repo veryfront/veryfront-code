@@ -18,6 +18,84 @@ import {
 import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 describe("src/agent/runtime skill policy helpers", () => {
+  it("hydrates ordinary message parts without consulting their iterator", () => {
+    let reads = 0;
+    const parts: Message["parts"] = [{ type: "text", text: "synthetic private skill history" }];
+    Object.defineProperty(parts, Symbol.iterator, {
+      get() {
+        reads++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const state = hydrateActiveSkillStateFromMessages([{ id: "user", role: "user", parts }]);
+    assertEquals(state.activeSkillId, undefined);
+    assertEquals(state.activeSkillToolAvailability, INACTIVE_SKILL_TOOL_AVAILABILITY);
+    assertEquals(reads, 0);
+  });
+  it("scans submitted forms without invoking overridden array methods", () => {
+    const parts: Message["parts"] = [{
+      type: "tool-result",
+      toolCallId: "synthetic-form",
+      toolName: "form_input",
+      result: { submitted: true },
+    }];
+    const messages: Message[] = [
+      {
+        id: "synthetic-user",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic private request" }],
+      },
+      { id: "synthetic-result", role: "tool", parts },
+    ];
+    let reads = 0;
+    Object.defineProperty(messages, "slice", {
+      get() {
+        reads++;
+        return Array.prototype.slice;
+      },
+    });
+    Object.defineProperty(parts, "some", {
+      get() {
+        reads++;
+        return Array.prototype.some;
+      },
+    });
+    assertEquals(hasSubmittedFormInputResult(messages), true);
+    assertEquals(reads, 0);
+  });
+
+  it("ignores inherited message entries when locating the active turn and form results", () => {
+    const messages: Message[] = [{
+      id: "synthetic-user",
+      role: "user",
+      parts: [{ type: "text", text: "Synthetic private request" }],
+    }];
+    messages.length = 2;
+    let reads = 0;
+    Object.setPrototypeOf(
+      messages,
+      Object.create(Array.prototype, {
+        1: {
+          get() {
+            reads++;
+            return {
+              id: "inherited-result",
+              role: "tool",
+              parts: [{
+                type: "tool-result",
+                toolCallId: "inherited",
+                toolName: "form_input",
+                result: { submitted: true },
+              }],
+            };
+          },
+        },
+      }),
+    );
+    assertEquals(hasSubmittedFormInputResult(messages), false);
+    assertEquals(reads, 0);
+  });
+
   describe("enforceSkillPolicy", () => {
     it("should allow any tool when no policy is active", () => {
       const result = enforceSkillPolicy("Read");

@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
 
@@ -86,7 +87,7 @@ async function readApiErrorMessage(response: Response): Promise<string> {
     success: false;
   };
   try {
-    const jsonValue = JSON.parse(body);
+    const jsonValue = privateJsonParse(body);
     const result = getApiErrorBodySchema().safeParse(jsonValue);
     parsedJson = result.success ? { success: true, data: result.data } : { success: false };
   } catch {

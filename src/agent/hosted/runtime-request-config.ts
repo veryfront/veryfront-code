@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import type { ChatRuntimeOverrides } from "../../chat/types.ts";
 import { type HostedChatRequest, hostedChatRuntimeOverridesSchema } from "./chat-request.ts";
 import type {
@@ -18,6 +19,8 @@ import {
   parseServerResolvedProviderReplayCheckpoints,
   type ProviderReplayCheckpoint,
 } from "../runtime/provider-replay.ts";
+
+const arrayIsArray = Array.isArray;
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -81,7 +84,7 @@ export function getServerResolvedToolExposureCheckpoint(
     !isSupportedToolExposureCheckpointVersion(value.version) ||
     !Array.isArray(value.loadedToolNames) ||
     !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
-    new Set(value.loadedToolNames).size !== value.loadedToolNames.length
+    createPrivateSet(value.loadedToolNames).size !== value.loadedToolNames.length
   ) {
     return undefined;
   }
@@ -213,24 +216,32 @@ export function resolveHostedRuntimeAllowedTools(input: {
 }): string[] | undefined {
   if (input.configuredTools === true) {
     if (input.configuredDeniedTools?.length) return [];
-    return input.requestedTools === undefined ? undefined : [...new Set(input.requestedTools)];
+    return input.requestedTools === undefined
+      ? undefined
+      : [...createPrivateSet(input.requestedTools)];
   }
 
-  const configuredToolNames = new Set([
-    ...(input.configuredTools ?? []),
-    ...(input.configuredDelegates ?? []).map((id) => `${AGENT_DELEGATE_TOOL_PREFIX}${id}`),
-  ]);
+  const configuredToolNames = createPrivateSet(input.configuredTools ?? []);
+  const delegates = input.configuredDelegates ?? [];
+  for (let index = 0; index < delegates.length; index++) {
+    const id = delegates[index];
+    if (id !== undefined) configuredToolNames.add(`${AGENT_DELEGATE_TOOL_PREFIX}${id}`);
+  }
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
 
   const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
     input.configuredSkills === true ||
-    (Array.isArray(input.configuredSkills) && input.configuredSkills.length > 0);
-  return [...new Set(input.requestedTools)].filter((toolName) =>
-    configuredToolNames.has(toolName) ||
-    (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
-  );
+    (arrayIsArray(input.configuredSkills) && input.configuredSkills.length > 0);
+  const selectedToolNames = createPrivateSet<string>();
+  for (const toolName of createPrivateSet(input.requestedTools)) {
+    if (
+      configuredToolNames.has(toolName) ||
+      (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
+    ) selectedToolNames.add(toolName);
+  }
+  return [...selectedToolNames];
 }
 
 /** Resolve provider-native tool bindings without widening direct tool access. */
@@ -238,12 +249,16 @@ export function resolveHostedRuntimeAllowedProviderTools(input: {
   configuredProviderTools: RuntimeAgentMarkdownDefinition["providerTools"];
   requestedTools: string[] | undefined;
 }): string[] {
-  const configuredToolNames = new Set(input.configuredProviderTools ?? []);
+  const configuredToolNames = createPrivateSet(input.configuredProviderTools ?? []);
   if (input.requestedTools === undefined) {
     return [...configuredToolNames];
   }
 
-  return [...new Set(input.requestedTools)].filter((toolName) => configuredToolNames.has(toolName));
+  const selectedToolNames = createPrivateSet<string>();
+  for (const toolName of createPrivateSet(input.requestedTools)) {
+    if (configuredToolNames.has(toolName)) selectedToolNames.add(toolName);
+  }
+  return [...selectedToolNames];
 }
 
 /** Configuration used by resolve hosted runtime request. */
@@ -257,7 +272,7 @@ export function resolveHostedRuntimeRequestConfig(
       input.agentConfig.model,
   );
   const failClosedUnrestrictedToolDenials = input.agentConfig.tools === true &&
-    Boolean(input.agentConfig.deniedTools?.length);
+    (input.agentConfig.deniedTools?.length ?? 0) > 0;
 
   return {
     effectiveRuntimeOverrides,

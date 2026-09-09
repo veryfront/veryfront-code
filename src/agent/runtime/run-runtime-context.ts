@@ -1,3 +1,6 @@
+import { concatPrivateArrays, flatMapPrivateArray } from "#veryfront/security/private-array.ts";
+import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
+import { execPrivateRegExp, replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -18,39 +21,49 @@ export function captureAgentRunRuntimeContext(now = new Date()): AgentRunRuntime
   const runStartedAtUtc = now.toISOString();
   return Object.freeze({
     currentTimeUtc: runStartedAtUtc,
-    currentDateUtc: runStartedAtUtc.slice(0, 10),
+    currentDateUtc: privateTextSlice(runStartedAtUtc, 0, 10),
     runStartedAtUtc,
   });
 }
 
 function removeReservedRuntimeContextBlocks(instructions: string): string {
   let result = instructions;
-  let openIndex = result.search(RUNTIME_CONTEXT_OPEN_TAG_PATTERN);
+  let openIndex = execPrivateRegExp(RUNTIME_CONTEXT_OPEN_TAG_PATTERN, result)?.index ?? -1;
 
   while (openIndex >= 0) {
-    const openingTag = result.slice(openIndex).match(RUNTIME_CONTEXT_OPEN_TAG_PATTERN)?.[0];
+    const openingTag = execPrivateRegExp(
+      RUNTIME_CONTEXT_OPEN_TAG_PATTERN,
+      privateTextSlice(result, openIndex),
+    )?.[0];
     if (!openingTag) break;
     const contentStart = openIndex + openingTag.length;
-    const closeOffset = result.slice(contentStart).search(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN);
+    const closeOffset =
+      execPrivateRegExp(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN, privateTextSlice(result, contentStart))
+        ?.index ?? -1;
     if (closeOffset < 0) {
       // An unclosed authored tag must not swallow everything after it: later
       // framework-authored blocks are appended behind authored instructions, so
       // truncating here would let authored content delete those guardrails.
       // Drop only the reserved opening tag and keep scanning the remainder.
-      result = result.slice(0, openIndex) + result.slice(contentStart);
-      openIndex = result.search(RUNTIME_CONTEXT_OPEN_TAG_PATTERN);
+      result = privateTextSlice(result, 0, openIndex) + privateTextSlice(result, contentStart);
+      openIndex = execPrivateRegExp(RUNTIME_CONTEXT_OPEN_TAG_PATTERN, result)?.index ?? -1;
       continue;
     }
 
     const closeIndex = contentStart + closeOffset;
-    const closingTag = result.slice(closeIndex).match(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN)?.[0];
+    const closingTag = execPrivateRegExp(
+      RUNTIME_CONTEXT_CLOSE_TAG_PATTERN,
+      privateTextSlice(result, closeIndex),
+    )?.[0];
     if (!closingTag) break;
-    result = result.slice(0, openIndex) +
-      result.slice(closeIndex + closingTag.length);
-    openIndex = result.search(RUNTIME_CONTEXT_OPEN_TAG_PATTERN);
+    result = privateTextSlice(result, 0, openIndex) +
+      privateTextSlice(result, closeIndex + closingTag.length);
+    openIndex = execPrivateRegExp(RUNTIME_CONTEXT_OPEN_TAG_PATTERN, result)?.index ?? -1;
   }
 
-  return result.replaceAll(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN_GLOBAL, "").trim();
+  return privateTextTrim(
+    replacePrivateRegExp(RUNTIME_CONTEXT_CLOSE_TAG_PATTERN_GLOBAL, result, ""),
+  );
 }
 
 /** Render the authoritative UTC snapshot as a reserved system block. */
@@ -90,11 +103,11 @@ export function withAgentRunRuntimeContext(
     return base.length > 0 ? `${base}\n\n${block}` : block;
   }
 
-  const base = instructions.flatMap((message) => {
+  const base = flatMapPrivateArray(instructions, (message) => {
     const content = removeReservedRuntimeContextBlocks(message.content);
     return content.length > 0 ? [{ ...message, content }] : [];
   });
-  return [...base, { role: "system", content: block }];
+  return concatPrivateArrays<ChatSystemMessage>(base, [{ role: "system", content: block }]);
 }
 
 /** Add the exact run snapshot to response diagnostics without dropping other metadata. */

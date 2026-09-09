@@ -4,6 +4,18 @@ import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectEntries = Object.entries;
+const objectCreate = Object.create;
+const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
 
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -41,7 +53,7 @@ export interface HostToolMaterializationOptions {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !arrayIsArray(value);
 }
 
 /** Detect a contract `Schema<T>` value produced by defineSchema. */
@@ -78,6 +90,43 @@ function defaultToolCallId(toolName: string): string {
   return `${toolName}-${crypto.randomUUID()}`;
 }
 
+function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const descriptors = objectGetOwnPropertyDescriptors(value);
+  const snapshot: Record<string, unknown> = objectCreate(null);
+  const keys = objectKeys(descriptors);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const descriptor = descriptors[key];
+    if (descriptor && objectHasOwn(descriptor, "value")) {
+      defineOwnDataProperty(snapshot, key, descriptor.value, { enumerable: true });
+    }
+  }
+  const prototypeFields: (keyof HostToolDefinition)[] = [
+    "description",
+    "execute",
+    "inputSchema",
+    "inputSchemaJson",
+    "mcp",
+  ];
+  for (let index = 0; index < prototypeFields.length; index++) {
+    const key = prototypeFields[index]!;
+    if (objectHasOwn(snapshot, key)) continue;
+    let current: Record<string, unknown> | null = value;
+    for (let depth = 0; current !== null && current !== objectPrototype && depth < 128; depth++) {
+      const descriptor = objectGetOwnPropertyDescriptor(current, key);
+      if (descriptor !== undefined) {
+        if (objectHasOwn(descriptor, "value")) {
+          defineOwnDataProperty(snapshot, key, descriptor.value, { enumerable: true });
+        }
+        break;
+      }
+      current = objectGetPrototypeOf(current);
+    }
+  }
+  return snapshot;
+}
+
 function normalizeExecutionContext(
   toolName: string,
   context: ToolExecutionContext | undefined,
@@ -110,40 +159,55 @@ export function createToolsFromHostDefinitions(
 ): ToolSet {
   const tools: ToolSet = {};
 
-  for (const [toolName, definition] of Object.entries(definitions)) {
+  const entries = apply(objectEntries, Object, [definitions]) as Array<[string, unknown]>;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    const toolName = entry[0];
+    const originalDefinition = entry[1];
+    const definition = snapshotHostToolDefinition(originalDefinition);
     if (!isHostToolDefinition(definition)) continue;
 
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
-      await definition.execute(input, normalizeExecutionContext(toolName, context, options));
+      await apply(definition.execute, originalDefinition, [
+        input,
+        normalizeExecutionContext(toolName, context, options),
+      ]);
 
     try {
       let materializedTool: Tool | undefined;
       if (definition.inputSchemaJson) {
-        materializedTool = dynamicTool({
+        const config = {
+          __proto__: null,
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
           execute,
           mcp: definition.mcp,
-        });
+        };
+        materializedTool = dynamicTool(config);
       } else if (isSchemaLike(definition.inputSchema)) {
-        materializedTool = tool({
+        const config = {
+          __proto__: null,
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
-        });
+        };
+        materializedTool = tool(config);
       }
       if (materializedTool) {
-        const canonicalRemoteToolName = getRemoteToolProvenance(definition);
+        const canonicalRemoteToolName = getRemoteToolProvenance(originalDefinition);
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
           : materializedTool;
-        tools[toolName] = inheritTrustedHostToolProvenance(
-          definition,
-          toolWithRemoteProvenance,
+        defineOwnDataProperty(
+          tools,
+          toolName,
+          inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
+          { enumerable: true, configurable: true, writable: true },
         );
       }
     } catch (error) {

@@ -1,23 +1,33 @@
+import {
+  privateTextEndsWith as endsWith,
+  privateTextSlice as slice,
+  privateTextStartsWith as startsWith,
+  privateTextTrim as trim,
+  privateTextTrimStart as trimStart,
+} from "#veryfront/security/private-text.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = serverLogger.component("agent-tool-input");
+const isArray = Array.isArray;
+const min = Math.min;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 /** Normalize provider tool input by removing transient empty-object prefixes. */
 export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
-  let normalized = rawArgs.trim();
+  let normalized = trim(rawArgs);
 
-  while (normalized.startsWith("{}")) {
-    const remainder = normalized.slice(2).trimStart();
-    if (remainder.startsWith("{")) {
+  while (startsWith(normalized, "{}")) {
+    const remainder = trimStart(slice(normalized, 2));
+    if (startsWith(remainder, "{")) {
       normalized = remainder;
       continue;
     }
 
-    if (remainder.startsWith('"')) {
+    if (startsWith(remainder, '"')) {
       normalized = `{${remainder}`;
       continue;
     }
@@ -52,14 +62,15 @@ const MIN_OVERLAP_DEDUP_LENGTH = 4;
 
 /** Merge tool input delta helper. */
 export function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
-  const normalizedDelta = nextDelta.trimStart();
-  const candidateDeltas = normalizedDelta.startsWith('"')
+  const normalizedDelta = trimStart(nextDelta);
+  const candidateDeltas = startsWith(normalizedDelta, '"')
     ? [normalizedDelta, `{${normalizedDelta}`]
     : [normalizedDelta];
 
   if (currentArguments === "{}" || currentArguments.length === 0) {
-    for (const candidate of candidateDeltas) {
-      if (candidate.startsWith("{")) {
+    for (let index = 0; index < candidateDeltas.length; index++) {
+      const candidate = candidateDeltas[index]!;
+      if (startsWith(candidate, "{")) {
         return candidate;
       }
     }
@@ -80,7 +91,8 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
     return currentArguments + nextDelta;
   }
 
-  for (const candidate of candidateDeltas) {
+  for (let index = 0; index < candidateDeltas.length; index++) {
+    const candidate = candidateDeltas[index]!;
     // Exact duplicate: the provider resent the same full buffer.
     if (candidate === currentArguments) {
       return currentArguments;
@@ -88,7 +100,7 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
 
     // Cumulative mode: the delta is a strict extension of the current
     // buffer and supersedes it verbatim.
-    if (candidate.startsWith(currentArguments)) {
+    if (startsWith(candidate, currentArguments)) {
       return candidate;
     }
 
@@ -97,10 +109,10 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
     // MIN_OVERLAP_DEDUP_LENGTH or longer. Trivial 1-3 char matches in
     // streamed JSON are overwhelmingly coincidental and deduping them
     // corrupts append-mode streams.
-    const maxOverlap = Math.min(currentArguments.length, candidate.length);
+    const maxOverlap = min(currentArguments.length, candidate.length);
     for (let overlap = maxOverlap; overlap >= MIN_OVERLAP_DEDUP_LENGTH; overlap--) {
-      if (currentArguments.endsWith(candidate.slice(0, overlap))) {
-        return currentArguments + candidate.slice(overlap);
+      if (endsWith(currentArguments, slice(candidate, 0, overlap))) {
+        return currentArguments + slice(candidate, overlap);
       }
     }
   }
@@ -116,15 +128,15 @@ export function mergeToolCallInput(currentArguments: string, nextInput: string):
 
   const normalizedCurrent = stripLeadingEmptyObjectPlaceholder(currentArguments);
 
-  if (nextInput.trim() === "{}" && currentArguments.trim().startsWith("{")) {
+  if (trim(nextInput) === "{}" && startsWith(trim(currentArguments), "{")) {
     return currentArguments;
   }
 
-  if (nextInput.trim() === "{}" && normalizedCurrent.trim().startsWith("{")) {
+  if (trim(nextInput) === "{}" && startsWith(trim(normalizedCurrent), "{")) {
     return normalizedCurrent;
   }
 
-  if (currentArguments.trim() === "{}" && nextInput.trim().startsWith("{")) {
+  if (trim(currentArguments) === "{}" && startsWith(trim(nextInput), "{")) {
     return nextInput;
   }
 
@@ -139,12 +151,12 @@ export function parseToolInputObject(input: unknown): Record<string, unknown> {
 
   if (typeof input === "string") {
     try {
-      const parsed = JSON.parse(stripLeadingEmptyObjectPlaceholder(input));
+      const parsed = privateJsonParse(stripLeadingEmptyObjectPlaceholder(input));
       if (isRecord(parsed)) {
         return parsed;
       }
       logger.warn("Tool input decoded to a non-record value; using empty object", {
-        parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
+        parsedType: isArray(parsed) ? "array" : typeof parsed,
         inputLength: input.length,
       });
     } catch (error) {

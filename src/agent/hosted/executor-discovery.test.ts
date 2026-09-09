@@ -11,8 +11,10 @@ import { createExecutorDiscovery, type ExecutorDiscoveryBackend } from "./execut
 import {
   EXECUTOR_DISCOVERY_MAX_AGENTS,
   ExecutorDiscoveryError,
+  getExecutorAgentDefinitionSchema,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoveryResultSchema,
+  parseDiscoveryData,
 } from "./executor-discovery-schema.ts";
 
 const binding = { allocationId: "allocation", invocationId: "invocation", generation: 1 };
@@ -96,6 +98,24 @@ async function call(
 }
 
 describe("executor discovery operations", () => {
+  it("validates only own definition fields without reading inherited selectors", () => {
+    let reads = 0;
+    const definition = Object.create({
+      get tools() {
+        reads++;
+        return true;
+      },
+    }, {
+      id: { value: "coder", enumerable: true },
+      name: { value: "Coder", enumerable: true },
+      description: { value: "Synthetic", enumerable: true },
+      instructions: { value: "Synthetic instructions", enumerable: true },
+    });
+    const parsed = parseDiscoveryData(getExecutorAgentDefinitionSchema(), definition, true);
+    assertEquals(reads, 0);
+    assertEquals(parsed.tools, undefined);
+  });
+
   it("is lazy, exposes only metadata operations, and retains the runtime locally", async () => {
     const f = fixture();
     try {
@@ -357,6 +377,33 @@ describe("executor discovery operations", () => {
     });
     await f.owner.close();
     assertEquals(cleaned, 1);
+  });
+
+  it("joins producer work retained by startup after upstream cancellation", async () => {
+    const f = fixture();
+    await call(f.owner, "discovery.describe");
+    const resumeStartup = Promise.withResolvers<void>();
+    const producer = Promise.withResolvers<void>();
+    const startup = resumeStartup.promise.then(() => {
+      f.owner.retainRuntimeTask(producer.promise);
+    });
+    f.owner.retainRuntimeTask(startup);
+    f.controller.abort();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(f.cleanups, 0);
+      resumeStartup.resolve();
+      await startup;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(f.cleanups, 0);
+    } finally {
+      resumeStartup.resolve();
+      producer.resolve();
+      await startup;
+      await f.owner.settled;
+    }
+    assertEquals(f.cleanups, 1);
+    assertThrows(() => f.owner.retainRuntimeTask(Promise.resolve()), ExecutorDiscoveryError);
   });
 
   for (const failure of [CONFIG_INVALID, CONFIG_VALIDATION_FAILED, CONFIG_PARSE_ERROR]) {

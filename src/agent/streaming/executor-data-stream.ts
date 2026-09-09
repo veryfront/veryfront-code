@@ -1,3 +1,13 @@
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
+import {
+  isPrivateUint8Array,
+  privateByteLength,
+  privateByteSubarray,
+  PrivateUint8Array,
+  setPrivateBytes,
+} from "#veryfront/security/private-bytes.ts";
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { EXECUTOR_MAX_RETAINED_BYTES } from "../executor/protocol.ts";
 import {
   EXECUTOR_AGENT_MAX_PAYLOAD_BYTES,
@@ -5,14 +15,26 @@ import {
 } from "../hosted/executor-agent-schema.ts";
 import { parseExecutorDataEvent } from "./executor-data-schema.ts";
 
+const apply = Reflect.apply;
+const indexOf = String.prototype.indexOf;
+const slice = String.prototype.slice;
+const trimStart = String.prototype.trimStart;
+const minimum = Math.min;
+
 function parseBlock(block: string) {
-  const lines = block.split("\n");
-  if (!lines.length || lines.some((line) => !line.startsWith("data:"))) {
-    throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+  let payload = "";
+  for (let offset = 0; offset <= block.length;) {
+    const newline = apply(indexOf, block, ["\n", offset]) as number;
+    const end = newline === -1 ? block.length : newline;
+    if (apply(slice, block, [offset, offset + 5]) !== "data:") {
+      throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+    }
+    if (offset > 0) payload += "\n";
+    payload += apply(trimStart, apply(slice, block, [offset + 5, end]), []);
+    if (newline === -1) break;
+    offset = end + 1;
   }
-  return parseExecutorDataEvent(
-    JSON.parse(lines.map((line) => line.slice(5).trimStart()).join("\n")),
-  );
+  return parseExecutorDataEvent(privateJsonParse(payload));
 }
 
 /** @internal Strict bounded SSE reader for the executor's runtime stream. */
@@ -20,10 +42,10 @@ export async function* readExecutorDataEvents(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
 ) {
-  const reader = stream.getReader();
-  const validator = new TextDecoder("utf-8", { fatal: true });
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let pending = new Uint8Array(4096);
+  const reader = getPrivateStreamReader(stream);
+  const validator = createPrivateTextDecoder("utf-8", { fatal: true });
+  const decoder = createPrivateTextDecoder("utf-8", { fatal: true });
+  let pending = new PrivateUint8Array(4096);
   let pendingBytes = 0;
   let terminal = false;
   let completed = false;
@@ -44,29 +66,33 @@ export async function* readExecutorDataEvents(
       signal.throwIfAborted();
       if (next.done) break;
       if (
-        !(next.value instanceof Uint8Array) || next.value.byteLength > EXECUTOR_MAX_RETAINED_BYTES
+        !isPrivateUint8Array(next.value) ||
+        privateByteLength(next.value) > EXECUTOR_MAX_RETAINED_BYTES
       ) {
         throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
       }
       // Validate UTF-8 incrementally, including malformed streams that never end.
       // Frame raw bytes once; small chunks never rescan or re-encode a prefix.
-      for (let offset = 0; offset < next.value.byteLength; offset += 4096) {
-        const fragment = next.value.subarray(offset, offset + 4096);
+      for (let offset = 0; offset < privateByteLength(next.value); offset += 4096) {
+        const fragment = privateByteSubarray(next.value, offset, offset + 4096);
         validator.decode(fragment, { stream: true });
-        for (const byte of fragment) {
+        for (let byteIndex = 0; byteIndex < privateByteLength(fragment); byteIndex++) {
+          const byte = fragment[byteIndex]!;
           if (terminal) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
-          if (pendingBytes === pending.length) {
-            const grown = new Uint8Array(
-              Math.min(pending.length * 2, EXECUTOR_AGENT_MAX_PAYLOAD_BYTES + 2),
+          if (pendingBytes === privateByteLength(pending)) {
+            const grown = new PrivateUint8Array(
+              minimum(privateByteLength(pending) * 2, EXECUTOR_AGENT_MAX_PAYLOAD_BYTES + 2),
             );
-            grown.set(pending);
+            setPrivateBytes(grown, pending);
             pending = grown;
           }
           pending[pendingBytes++] = byte;
           if (byte === 10 && pendingBytes >= 2 && pending[pendingBytes - 2] === 10) {
-            const block = decoder.decode(pending.subarray(0, pendingBytes), { stream: true });
+            const block = decoder.decode(privateByteSubarray(pending, 0, pendingBytes), {
+              stream: true,
+            });
             pendingBytes = 0;
-            const event = parseBlock(block.slice(0, -2));
+            const event = parseBlock(apply(slice, block, [0, -2]) as string);
             terminal ||= event.type === "message-finish" || event.type === "error";
             yield event;
           } else if (pendingBytes > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES + (byte === 10 ? 1 : 0)) {

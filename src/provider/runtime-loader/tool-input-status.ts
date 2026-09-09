@@ -1,3 +1,4 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 
 /** Shared tool input pending threshold ms value. */
@@ -77,8 +78,8 @@ export function withToolInputStatusTransitions(
   if (normalizedThresholdMs === 0) {
     throw new RangeError("thresholdMs must be greater than zero");
   }
-  const iterator = stream[Symbol.asyncIterator]();
-  const returnSource = iterator.return?.bind(iterator);
+  const iterator = getPrivateAsyncIterator(stream);
+  const returnSource = iterator.return === undefined ? undefined : () => iterator.return!();
   let resolveCancellation!: () => void;
   const lifecycle: ToolInputStatusLifecycle = {
     cancellation: new Promise<void>((resolve) => {
@@ -117,12 +118,12 @@ export function withToolInputStatusTransitions(
     closeSource();
   };
 
-  const transformed = applyToolInputStatusTransitions(
+  const transformed = getPrivateAsyncIterator(applyToolInputStatusTransitions(
     iterator,
     normalizedThresholdMs,
     lifecycle,
     closeSource,
-  );
+  ));
 
   const wrapped: AsyncIterableIterator<unknown> = {
     next() {
@@ -130,11 +131,11 @@ export function withToolInputStatusTransitions(
     },
     async return(value?: unknown) {
       requestCancellation();
-      return await transformed.return(value);
+      return await transformed.return!(value);
     },
     async throw(error?: unknown) {
       requestCancellation();
-      return await transformed.throw(error);
+      return await transformed.throw!(error);
     },
     [Symbol.asyncIterator]() {
       return this;

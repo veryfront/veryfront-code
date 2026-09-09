@@ -12,6 +12,10 @@
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+
+// Model fakes represent the trusted provider boundary during intrinsic-hook regressions.
+const stringifyProviderFixture = JSON.stringify;
 
 export type ScriptedUsage = NonNullable<
   Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"]
@@ -80,7 +84,7 @@ export interface ScriptedModel extends ModelRuntime<ModelRuntimeCallOptions> {
 export function runtimeStream(parts: readonly RuntimeStreamPart[]): ReadableStream<unknown> {
   return new ReadableStream<unknown>({
     start(controller) {
-      for (const part of parts) controller.enqueue(part);
+      for (let index = 0; index < parts.length; index++) controller.enqueue(parts[index]);
       controller.close();
     },
   });
@@ -120,7 +124,7 @@ function pendingStream(
 ): ReadableStream<unknown> {
   return new ReadableStream<unknown>({
     start(controller) {
-      for (const part of parts) controller.enqueue(part);
+      for (let index = 0; index < parts.length; index++) controller.enqueue(parts[index]);
       if (!abortSignal) return;
       if (abortSignal.aborted) {
         controller.error(abortSignal.reason);
@@ -145,7 +149,7 @@ export function scriptedModel(
 
   const nextTurn = (callOptions: ModelRuntimeCallOptions): ScriptedTurn => {
     const call = calls.length;
-    calls.push(callOptions);
+    pushPrivateArray(calls, callOptions);
     const scripted = turns[call] ?? (options.repeatLastTurn ? turns.at(-1) : undefined);
     if (scripted === undefined) {
       throw new Error(
@@ -207,7 +211,7 @@ export function scriptedModel(
         : { providerMetadata: turn.providerMetadata };
       if ("content" in turn) {
         return Promise.resolve({
-          content: [...turn.content],
+          content: mapPrivateArray(turn.content, (part) => part),
           finishReason: turn.finishReason ?? "stop",
           usage,
           ...metadata,
@@ -222,11 +226,11 @@ export function scriptedModel(
         });
       }
       return Promise.resolve({
-        content: turn.toolCalls.map((call) => ({
+        content: mapPrivateArray(turn.toolCalls, (call) => ({
           type: "tool-call",
           toolCallId: call.id,
           toolName: call.name,
-          input: typeof call.input === "string" ? call.input : JSON.stringify(call.input),
+          input: typeof call.input === "string" ? call.input : stringifyProviderFixture(call.input),
         })),
         finishReason: turn.finishReason ?? "tool-calls",
         usage,
@@ -261,11 +265,12 @@ export function scriptedModel(
       const parts: RuntimeStreamPart[] = [];
       let finishReason: string;
       if ("text" in turn) {
-        parts.push({ type: "text-delta", text: turn.text });
+        pushPrivateArray(parts, { type: "text-delta", text: turn.text });
         finishReason = turn.finishReason ?? "stop";
       } else {
-        for (const call of turn.toolCalls) {
-          parts.push({
+        for (let index = 0; index < turn.toolCalls.length; index++) {
+          const call = turn.toolCalls[index]!;
+          pushPrivateArray(parts, {
             type: "tool-call",
             toolCallId: call.id,
             toolName: call.name,
@@ -274,7 +279,7 @@ export function scriptedModel(
         }
         finishReason = turn.finishReason ?? "tool-calls";
       }
-      parts.push({
+      pushPrivateArray(parts, {
         type: "finish",
         finishReason,
         totalUsage: usage,

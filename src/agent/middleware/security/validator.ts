@@ -1,3 +1,27 @@
+import {
+  privateTextCharCodeAt,
+  privateTextCodePointAt,
+  privateTextSlice,
+  privateTextTrim,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { PrivateJsonArrayError, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { allPrivatePromises } from "#veryfront/security/private-promise.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  appendPrivateArray,
+  concatPrivateArrays,
+  everyPrivateArray,
+  filterPrivateArray,
+  findLastPrivateArrayIndex,
+  flatMapPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { isDeepStrictEqual } from "node:util";
 import type {
   AgentContext,
@@ -122,22 +146,41 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
 ];
 
+const RegExpConstructor = RegExp;
+const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
+const objectEntries = Object.entries;
+const regexpExec = RegExp.prototype.exec;
+const regexpReplace = RegExp.prototype[Symbol.replace];
+const applyRegExp = Reflect.apply;
+
+function replacePrivatePattern(input: string, pattern: RegExp, replacement: string): string {
+  const matcher = new RegExpConstructor(pattern.source, pattern.flags);
+  matcher.lastIndex = pattern.lastIndex;
+  defineOwnDataProperty(matcher, "exec", regexpExec);
+  return applyRegExp(regexpReplace, matcher, [input, replacement]) as string;
+}
+
+function testBlockedPattern(pattern: RegExp, input: string): boolean {
+  return applyRegExp(regexpExec, freshStatefulPattern(pattern), [input]) !== null;
+}
+
 function freshStatefulPattern(pattern: RegExp): RegExp {
   if (!pattern.global && !pattern.sticky) return pattern;
 
-  const matcher = new RegExp(pattern.source, pattern.flags);
+  const matcher = new RegExpConstructor(pattern.source, pattern.flags);
   if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
   return matcher;
 }
 
 function advanceStringIndex(input: string, index: number, unicode: boolean): number {
   if (!unicode) return index + 1;
-  return index + ((input.codePointAt(index) ?? 0) > 0xffff ? 2 : 1);
+  return index + ((privateTextCodePointAt(input, index) ?? 0) > 0xffff ? 2 : 1);
 }
 
 function redactBlockedPattern(input: string, pattern: RegExp): string {
   const matcher = freshStatefulPattern(pattern);
-  if (!matcher.sticky) return input.replace(matcher, "[REDACTED]");
+  if (!matcher.sticky) return replacePrivatePattern(input, matcher, "[REDACTED]");
 
   // replace() resets global sticky regexes to index 0, and Bun does not
   // currently honor lastIndex for non-global sticky replacements. Use exec and
@@ -147,8 +190,12 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
   let cursor = 0;
   let matched = false;
 
-  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
-    redacted += `${input.slice(cursor, match.index)}[REDACTED]`;
+  for (
+    let match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null;
+    match;
+    match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null
+  ) {
+    redacted += `${privateTextSlice(input, cursor, match.index)}[REDACTED]`;
     cursor = match.index + match[0].length;
     matched = true;
     if (!matcher.global) break;
@@ -161,7 +208,7 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
     }
   }
 
-  return matched ? redacted + input.slice(cursor) : input;
+  return matched ? redacted + privateTextSlice(input, cursor) : input;
 }
 
 /**
@@ -206,10 +253,10 @@ export class InputValidator {
 
     const maxLength = options?.checkMaxLength === false ? undefined : this.config.maxLength;
     if (maxLength != null && input.length > maxLength) {
-      violations.push({
+      pushPrivateArray(violations, {
         type: "input",
         reason: `Input exceeds maximum length of ${maxLength}`,
-        content: `${input.substring(0, 100)}...`,
+        content: `${privateTextSlice(input, 0, 100)}...`,
       });
     }
 
@@ -217,9 +264,9 @@ export class InputValidator {
       // Blocked pattern groups are shared module-level objects reused across
       // requests. Test stateful patterns through a fresh matcher so lastIndex
       // cannot skip a repeat match and caller-owned patterns remain untouched.
-      if (!freshStatefulPattern(pattern).test(input)) continue;
+      if (!testBlockedPattern(pattern, input)) continue;
 
-      violations.push({
+      pushPrivateArray(violations, {
         type: "input",
         reason: "Input matches blocked pattern",
         content: input,
@@ -233,7 +280,7 @@ export class InputValidator {
     if (customValidate) {
       const customValid = await customValidate(input);
       if (!customValid) {
-        violations.push({
+        pushPrivateArray(violations, {
           type: "input",
           reason: "Custom validation failed",
           content: input,
@@ -272,10 +319,11 @@ export class InputValidator {
    * Sanitize input (remove potentially harmful content)
    */
   private sanitizeInput(input: string): string {
-    return InputValidator.SANITIZE_PATTERNS.reduce(
-      (text, pattern) => text.replace(pattern, ""),
-      input,
-    );
+    let sanitized = input;
+    for (let index = 0; index < InputValidator.SANITIZE_PATTERNS.length; index++) {
+      sanitized = replacePrivatePattern(sanitized, InputValidator.SANITIZE_PATTERNS[index]!, "");
+    }
+    return sanitized;
   }
 }
 
@@ -302,9 +350,9 @@ export class OutputFilter {
     for (const pattern of this.config.blockedPatterns ?? []) {
       // See InputValidator.validate: shared /g patterns must not carry
       // lastIndex across calls or require caller-owned regexes to be mutable.
-      if (!freshStatefulPattern(pattern).test(filtered)) continue;
+      if (!testBlockedPattern(pattern, filtered)) continue;
 
-      violations.push({
+      pushPrivateArray(violations, {
         type: "output",
         reason: "Output contains blocked pattern",
         content: filtered,
@@ -330,10 +378,12 @@ export class OutputFilter {
    * Filter PII from output
    */
   private filterPII(output: string): string {
-    return PII_REPLACEMENTS.reduce(
-      (text, { pattern, label }) => text.replace(pattern, label),
-      output,
-    );
+    let filtered = output;
+    for (let index = 0; index < PII_REPLACEMENTS.length; index++) {
+      const { pattern, label } = PII_REPLACEMENTS[index]!;
+      filtered = replacePrivatePattern(filtered, pattern, label);
+    }
+    return filtered;
   }
 }
 
@@ -345,7 +395,9 @@ function reportViolations(
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
   if (!onViolation) return;
-  for (const violation of violations) onViolation(violation);
+  for (let index = 0; index < violations.length; index++) {
+    if (hasOwn(violations, index)) onViolation(violations[index]!);
+  }
 }
 
 async function filterStructuredOutputValue(
@@ -360,13 +412,14 @@ async function filterStructuredOutputValue(
     return { value: result.filtered, violations: result.violations };
   }
 
-  if (Array.isArray(value)) {
-    const filteredItems = [];
+  if (isArray(value)) {
+    const filteredItems: unknown[] = [];
     const violations: SecurityViolation[] = [];
-    for (const item of value) {
+    for (let itemIndex = 0; itemIndex < value.length; itemIndex++) {
+      const item = hasOwn(value, itemIndex) ? value[itemIndex] : undefined;
       const result = await filterStructuredOutputValue(item, outputFilter);
-      filteredItems.push(result.value);
-      violations.push(...result.violations);
+      pushPrivateArray(filteredItems, result.value);
+      appendPrivateArray(violations, result.violations);
     }
     return { value: filteredItems, violations };
   }
@@ -374,10 +427,17 @@ async function filterStructuredOutputValue(
   if (isRecord(value)) {
     const filteredObject: Record<string, unknown> = {};
     const violations: SecurityViolation[] = [];
-    for (const [key, item] of Object.entries(value)) {
+    const entries = objectEntries(value);
+    for (let index = 0; index < entries.length; index++) {
+      const key = entries[index]![0];
+      const item = entries[index]![1];
       const result = await filterStructuredOutputValue(item, outputFilter);
-      filteredObject[key] = result.value;
-      violations.push(...result.violations);
+      defineOwnDataProperty(filteredObject, key, result.value, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      appendPrivateArray(violations, result.violations);
     }
     return { value: filteredObject, violations };
   }
@@ -386,7 +446,7 @@ async function filterStructuredOutputValue(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 function extractPartInputText(part: unknown): string[] {
@@ -394,15 +454,19 @@ function extractPartInputText(part: unknown): string[] {
   if (!isRecord(part) || part.type === "tool-result") return [];
 
   const values: string[] = [];
-  if (typeof part.inputText === "string") values.push(part.inputText);
+  if (typeof part.inputText === "string") pushPrivateArray(values, part.inputText);
   const appendSerialized = (value: unknown) => {
     if (!isRecord(value)) return;
     try {
-      const serialized = JSON.stringify(value);
-      if (typeof serialized === "string") values.push(serialized);
-    } catch {
-      // Provider converters ignore non-text input on caller-authored user and
-      // system messages. Unsupported JSON values must not fail the turn here.
+      const serialized = privateJsonStringify(value);
+      if (typeof serialized === "string") pushPrivateArray(values, serialized);
+    } catch (error) {
+      throw toError(createError({
+        type: "agent",
+        message: error instanceof PrivateJsonArrayError
+          ? "Input validation failed: Array input cannot be safely copied"
+          : "Input validation failed: Structured input cannot be safely inspected",
+      }));
     }
   };
   appendSerialized(part.args);
@@ -419,7 +483,7 @@ function extractPartInputText(part: unknown): string[] {
  * tool messages remain exempt for replay compatibility. The host must supply
  * trusted replay: this role-based filter does not authenticate message origin.
  */
-const VALIDATED_INPUT_ROLES: ReadonlySet<Message["role"]> = new Set(["user", "system"]);
+const VALIDATED_INPUT_ROLES: ReadonlySet<Message["role"]> = createPrivateSet(["user", "system"]);
 
 function isTextPart(part: unknown): part is { type: "text"; text: string } {
   return isRecord(part) && part.type === "text" && typeof part.text === "string";
@@ -457,7 +521,7 @@ function extractMessageInputText(message: Message): string[] {
 }
 
 function extractMessageInputTextRegardlessOfRole(message: Message): string[] {
-  return message.parts.flatMap(extractPartInputText);
+  return flatMapPrivateArray(message.parts, extractPartInputText);
 }
 
 /** The assembled forms of one message's text parts, if it has more than one. */
@@ -474,20 +538,21 @@ function extractMessageAssembledTextsRegardlessOfRole(message: Message): string[
     ? getProviderAttachmentMetadata(message.parts)
     : [];
   if (textParts.length < 2) {
-    return [
-      ...(message.role === "user" && buildAttachmentContextFromParts(message.parts)
-        ? textParts
-        : []),
-      ...attachmentMetadata,
-    ];
+    return concatPrivateArrays(
+      message.role === "user" && buildAttachmentContextFromParts(message.parts) ? textParts : [],
+      attachmentMetadata,
+    );
   }
 
-  const assembled = [
-    ...ASSEMBLED_TEXT_SEPARATORS.map((separator) => textParts.join(separator)),
-    ...attachmentMetadata,
-  ];
+  const assembled = concatPrivateArrays(
+    mapPrivateArray(
+      ASSEMBLED_TEXT_SEPARATORS,
+      (separator) => joinPrivateArray(textParts, separator),
+    ),
+    attachmentMetadata,
+  );
   if (message.role === "user" && buildAttachmentContextFromParts(message.parts)) {
-    assembled.push(getUserTextWithAttachmentContext(message.parts));
+    pushPrivateArray(assembled, getUserTextWithAttachmentContext(message.parts));
   }
   return assembled;
 }
@@ -556,11 +621,12 @@ function extractAdjacentRuns(
   const flushRun = () => {
     // Runs of a single message are already covered by the per-message
     // extraction, including its own assembled forms.
-    if (run.length > 1) runs.push(run);
+    if (run.length > 1) pushPrivateArray(runs, run);
     run = [];
   };
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role !== role) {
       if (role === "user" && message.role === "tool") continue;
       if (role === "user" && message.role === "system") continue;
@@ -576,8 +642,13 @@ function extractAdjacentRuns(
       continue;
     }
     if (isEmptyText(message)) continue;
-    if (dropWhitespaceOnly && messageTextParts(message).join("").trim().length === 0) continue;
-    run.push(message);
+    if (
+      dropWhitespaceOnly &&
+      privateTextTrim(joinPrivateArray(messageTextParts(message), "")).length === 0
+    ) {
+      continue;
+    }
+    pushPrivateArray(run, message);
   }
   flushRun();
 
@@ -585,16 +656,16 @@ function extractAdjacentRuns(
 }
 
 function messageTextParts(message: Message, includeAttachments = true): string[] {
-  const texts = message.parts.filter(isTextPart).map((part) => part.text);
+  const texts = mapPrivateArray(filterPrivateArray(message.parts, isTextPart), (part) => part.text);
   const attachmentContext = includeAttachments && message.role === "user"
-    ? buildAttachmentContextFromParts(message.parts).trimStart()
+    ? privateTextTrimStart(buildAttachmentContextFromParts(message.parts))
     : "";
-  if (attachmentContext) texts.push(attachmentContext);
+  if (attachmentContext) pushPrivateArray(texts, attachmentContext);
   return texts;
 }
 
 function isEmptyText(message: Message): boolean {
-  return messageTextParts(message).join("").length === 0;
+  return joinPrivateArray(messageTextParts(message), "").length === 0;
 }
 
 /**
@@ -621,29 +692,28 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   // merging the remaining adjacent system layers. Anthropic retains those
   // layers, so keep the original runs above and validate this alternate view
   // in addition.
-  for (const run of extractAdjacentRuns(messages, "system", true)) {
-    const alreadyCovered = runs.some(
-      (candidate) =>
-        candidate.length === run.length &&
-        candidate.every((message, index) => message === run[index]),
-    );
-    if (!alreadyCovered) runs.push(run);
+  const alternateRuns = extractAdjacentRuns(messages, "system", true);
+  for (let index = 0; index < alternateRuns.length; index++) {
+    const run = alternateRuns[index]!;
+    const alreadyCovered = somePrivateArray(runs, (candidate) =>
+      candidate.length === run.length &&
+      everyPrivateArray(candidate, (message, index) => message === run[index]));
+    if (!alreadyCovered) pushPrivateArray(runs, run);
   }
 
   // Anthropic retains whitespace-only system layers and joins each layer with
   // a blank line. It drops only system layers whose assembled text is empty.
-  const hoisted = messages.filter(
+  const hoisted = filterPrivateArray(
+    messages,
     (message) => message.role === "system" && !isEmptyText(message),
   );
   // A single system message is covered by the per-message extraction.
   if (hoisted.length < 2) return runs;
 
-  const alreadyCovered = runs.some(
-    (run) =>
-      run.length === hoisted.length &&
-      run.every((message, index) => message === hoisted[index]),
-  );
-  return alreadyCovered ? runs : [...runs, hoisted];
+  const alreadyCovered = somePrivateArray(runs, (run) =>
+    run.length === hoisted.length &&
+    everyPrivateArray(run, (message, index) => message === hoisted[index]));
+  return alreadyCovered ? runs : concatPrivateArrays(runs, [hoisted]);
 }
 
 /**
@@ -653,7 +723,10 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
  * turn.
  */
 function extractMergedRuns(messages: Message[]): Message[][] {
-  return [...extractMergedSystemRuns(messages), ...extractAdjacentRuns(messages, "user")];
+  return concatPrivateArrays(
+    extractMergedSystemRuns(messages),
+    extractAdjacentRuns(messages, "user"),
+  );
 }
 
 function sameProviderMessageContent(previous: Message, projected: Message): boolean {
@@ -662,8 +735,10 @@ function sameProviderMessageContent(previous: Message, projected: Message): bool
 
 function createMessageOccurrenceMatcher(previousMessages: Message[], messages: Message[]) {
   const uniqueById = (values: Message[]): Map<string, Message | undefined> => {
-    const unique = new Map<string, Message | undefined>();
-    for (const message of values) {
+    const unique = createPrivateMap<string, Message | undefined>();
+    for (let messageIndex = 0; messageIndex < values.length; messageIndex++) {
+      if (!hasOwn(values, messageIndex)) continue;
+      const message = values[messageIndex]!;
       unique.set(message.id, unique.has(message.id) ? undefined : message);
     }
     return unique;
@@ -708,19 +783,23 @@ function extractMergedRunTexts(
   const sameOccurrence = previousMessages
     ? createMessageOccurrenceMatcher(previousMessages, messages)
     : undefined;
-  const runTexts = new Set<string>();
-  for (const run of extractMergedRuns(messages)) {
+  const runTexts = createPrivateSet<string>();
+  const mergedRuns = extractMergedRuns(messages);
+  for (let runIndex = 0; runIndex < mergedRuns.length; runIndex++) {
+    const run = mergedRuns[runIndex]!;
     // Only an identical grouping keeps its provenance. Comparing text alone
     // would also exempt a newly joined boundary that happens to duplicate a
     // different historical run, or a run shortened by trimming.
     if (
-      previousRuns?.some((previous) =>
+      previousRuns !== undefined &&
+      somePrivateArray(previousRuns, (previous) =>
         previous.length === run.length &&
-        previous.every((message, index) => sameOccurrence?.(message, run[index]))
-      )
+        everyPrivateArray(previous, (message, index) => sameOccurrence?.(message, run[index])))
     ) continue;
-    if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
-    if (mustAlsoInclude && !run.some((message) => mustAlsoInclude.has(message))) continue;
+    if (mustInclude && !somePrivateArray(run, (message) => mustInclude.has(message))) continue;
+    if (mustAlsoInclude && !somePrivateArray(run, (message) => mustAlsoInclude.has(message))) {
+      continue;
+    }
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
       // The OpenAI-compatible converter and the Anthropic builder join system
       // run members with a blank line, but the Google builder sends each
@@ -730,9 +809,13 @@ function extractMergedRunTexts(
       // concatenation of the run is assembled as well.
       for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
         runTexts.add(
-          run
-            .map((message) => messageTextParts(message).join(partSeparator))
-            .join(runSeparator),
+          joinPrivateArray(
+            mapPrivateArray(
+              run,
+              (message) => joinPrivateArray(messageTextParts(message), partSeparator),
+            ),
+            runSeparator,
+          ),
         );
       }
     }
@@ -744,7 +827,7 @@ function providerSystemMessages(system: AgentSystem): Message[] {
   const layers = typeof system === "string"
     ? [{ role: "system" as const, content: system }]
     : system;
-  return layers.map((layer, index) => ({
+  return mapPrivateArray(layers, (layer, index) => ({
     id: `provider-system-${index}`,
     role: "system",
     parts: [{ type: "text", text: layer.content }],
@@ -754,11 +837,11 @@ function providerSystemMessages(system: AgentSystem): Message[] {
 function extractInputValidationTexts(input: AgentContext["input"]): InputValidationTexts {
   if (typeof input === "string") return { texts: [input], assembled: [] };
   return {
-    texts: input.flatMap(extractMessageInputText),
-    assembled: [
-      ...input.flatMap(extractMessageAssembledTexts),
-      ...extractMergedRunTexts(input),
-    ],
+    texts: flatMapPrivateArray(input, extractMessageInputText),
+    assembled: concatPrivateArrays(
+      flatMapPrivateArray(input, extractMessageAssembledTexts),
+      extractMergedRunTexts(input),
+    ),
   };
 }
 
@@ -789,12 +872,14 @@ function sanitizeTextToFixpoint(validator: InputValidator, text: string): string
 function collapseTextParts(parts: Message["parts"], text: string | undefined): Message["parts"] {
   const collapsed: Message["parts"] = [];
   let replaced = false;
-  for (const part of parts) {
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    if (!hasOwn(parts, partIndex)) continue;
+    const part = parts[partIndex]!;
     if (!isTextPart(part)) {
-      collapsed.push(part);
+      pushPrivateArray(collapsed, part);
     } else if (!replaced && text !== undefined) {
       replaced = true;
-      collapsed.push(copySanitizedTextPart(part, text));
+      pushPrivateArray(collapsed, copySanitizedTextPart(part, text));
     }
   }
   return collapsed;
@@ -819,11 +904,11 @@ function copySanitizedTextPart(part: MessagePart, text: string): MessagePart {
 function sanitizeStructuredInput(validator: InputValidator, messages: Message[]): Message[] {
   let changed = false;
 
-  const sanitizedMessages = messages.map((message) => {
+  const sanitizedMessages = mapPrivateArray(messages, (message) => {
     if (!VALIDATED_INPUT_ROLES.has(message.role)) return message;
 
     let messageChanged = false;
-    let parts = message.parts.map((part) => {
+    let parts = mapPrivateArray(message.parts, (part) => {
       if (!isTextPart(part)) return part;
       const sanitized = sanitizeTextToFixpoint(validator, part.text);
       if (sanitized === part.text) return part;
@@ -837,14 +922,17 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
     // When any assembled form still changes under sanitization, the part
     // boundary itself is hiding the payload, so the text parts are collapsed
     // into one fully sanitized part instead of being kept apart.
-    const textValues = parts.filter(isTextPart).map((part) => part.text);
+    const textValues = mapPrivateArray(filterPrivateArray(parts, isTextPart), (part) => part.text);
     const assembledNeedsRewrite = textValues.length > 1 &&
-      ASSEMBLED_TEXT_SEPARATORS.some((separator) => {
-        const assembled = textValues.join(separator);
+      somePrivateArray(ASSEMBLED_TEXT_SEPARATORS, (separator) => {
+        const assembled = joinPrivateArray(textValues, separator);
         return (validator.sanitize(assembled) ?? assembled) !== assembled;
       });
     if (assembledNeedsRewrite) {
-      parts = collapseTextParts(parts, sanitizeTextToFixpoint(validator, textValues.join("")));
+      parts = collapseTextParts(
+        parts,
+        sanitizeTextToFixpoint(validator, joinPrivateArray(textValues, "")),
+      );
       messageChanged = true;
     }
 
@@ -887,9 +975,11 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
  * occurs for caller text that already required a security rewrite.
  */
 function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Message[] {
-  const rewrites = new Map<Message, Message["parts"]>();
+  const rewrites = createPrivateMap<Message, Message["parts"]>();
 
-  for (const run of extractMergedRuns(messages)) {
+  const mergedRuns = extractMergedRuns(messages);
+  for (let runIndex = 0; runIndex < mergedRuns.length; runIndex++) {
+    const run = mergedRuns[runIndex]!;
     // The run-level join is "\n\n" on OpenAI-compatible providers and the
     // Anthropic builder, but the Google builder ships each system message as
     // a separate `systemInstruction` part whose server-side concatenation
@@ -898,9 +988,13 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
     let unsafeAssembly: string | undefined;
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
       for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-        const assembled = run
-          .map((message) => messageTextParts(message, false).join(partSeparator))
-          .join(runSeparator);
+        const assembled = joinPrivateArray(
+          mapPrivateArray(
+            run,
+            (message) => joinPrivateArray(messageTextParts(message, false), partSeparator),
+          ),
+          runSeparator,
+        );
         if ((validator.sanitize(assembled) ?? assembled) !== assembled) {
           unsafeAssembly = assembled;
           break;
@@ -913,16 +1007,18 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
     // Keep the triggering assembly: introducing a newline before sanitizing
     // can hide a script body from a pattern whose dot does not span lines.
     const collapsedText = sanitizeTextToFixpoint(validator, unsafeAssembly);
-    run.forEach((message, index) => {
+    for (let index = 0; index < run.length; index++) {
+      if (!hasOwn(run, index)) continue;
+      const message = run[index]!;
       rewrites.set(
         message,
         collapseTextParts(message.parts, index === 0 ? collapsedText : undefined),
       );
-    });
+    }
   }
 
   if (rewrites.size === 0) return messages;
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (message) => {
     const parts = rewrites.get(message);
     if (parts === undefined) return message;
     const rewritten = { ...message, parts };
@@ -936,15 +1032,21 @@ async function validateInputTexts(
   values: InputValidationTexts,
   options?: InputValidationOptions,
 ): Promise<{ valid: boolean; violations: SecurityViolation[] }> {
-  const results = await Promise.all([
-    ...values.texts.map((value) => validator.validate(value, options)),
-    ...values.assembled.map((value) =>
-      validator.validate(value, { ...options, checkMaxLength: false, checkCustomValidation: false })
+  const results = await allPrivatePromises(concatPrivateArrays(
+    mapPrivateArray(values.texts, (value) => validator.validate(value, options)),
+    mapPrivateArray(
+      values.assembled,
+      (value) =>
+        validator.validate(value, {
+          ...options,
+          checkMaxLength: false,
+          checkCustomValidation: false,
+        }),
     ),
-  ]);
+  ));
   return {
-    valid: results.every((result) => result.valid),
-    violations: results.flatMap((result) => result.violations),
+    valid: everyPrivateArray(results, (result) => result.valid),
+    violations: flatMapPrivateArray(results, (result) => result.violations),
   };
 }
 
@@ -1027,7 +1129,7 @@ function negativeAssertionBody(
       groupDepth++;
     } else if (character === ")" && --groupDepth === 0) {
       return {
-        body: source.slice(start + prefixLength, index),
+        body: privateTextSlice(source, start + prefixLength, index),
         end: index,
         context,
         backrefs,
@@ -1055,7 +1157,7 @@ function assertionInspectionWidth(source: string, unicodeSets: boolean): number 
     else if (classDepth === 0) {
       if (character === "*" || character === "+") return Infinity;
       if (character === "{") {
-        const quantifier = /^\{(\d+)(?:,(\d*))?\}/.exec(source.slice(index));
+        const quantifier = /^\{(\d+)(?:,(\d*))?\}/.exec(privateTextSlice(source, index));
         if (quantifier) {
           if (quantifier[2] === "") return Infinity;
           width *= Math.max(1, Number(quantifier[2] ?? quantifier[1]));
@@ -1068,6 +1170,10 @@ function assertionInspectionWidth(source: string, unicodeSets: boolean): number 
   return width;
 }
 
+function lastTextCodeUnit(text: string): string | undefined {
+  return text.length > 0 ? text[text.length - 1] : undefined;
+}
+
 /** Prove an assembly match also has a path using unchanged trusted context. */
 function createTrustedMatchPredicate(
   pattern: RegExp,
@@ -1076,8 +1182,10 @@ function createTrustedMatchPredicate(
 ): (match: { index: number; text: string }) => boolean {
   const unicode = pattern.unicode || pattern.unicodeSets;
   const splitsCodePoint = (offset: number) =>
-    assembled.charCodeAt(offset - 1) >= 0xd800 && assembled.charCodeAt(offset - 1) <= 0xdbff &&
-    assembled.charCodeAt(offset) >= 0xdc00 && assembled.charCodeAt(offset) <= 0xdfff;
+    privateTextCharCodeAt(assembled, offset - 1) >= 0xd800 &&
+    privateTextCharCodeAt(assembled, offset - 1) <= 0xdbff &&
+    privateTextCharCodeAt(assembled, offset) >= 0xdc00 &&
+    privateTextCharCodeAt(assembled, offset) <= 0xdfff;
   // Joining lone surrogates changes Unicode matching even without assertions.
   if (
     unicode &&
@@ -1085,8 +1193,15 @@ function createTrustedMatchPredicate(
   ) {
     return () => false;
   }
-  const units = (text: string) => unicode ? [...text].length : text.length;
-  const lower = units(assembled.slice(0, segment.start));
+  const units = (text: string) => {
+    if (!unicode) return text.length;
+    let count = 0;
+    for (let index = 0; index < text.length; count++) {
+      index += (privateTextCodePointAt(text, index) ?? 0) > 0xffff ? 2 : 1;
+    }
+    return count;
+  };
+  const lower = units(privateTextSlice(assembled, 0, segment.start));
   const upper = lower + units(segment.text);
   const lowerGuard = "(?<=[\\s\\S]{" + lower + "})";
   const upperGuard = "(?<![\\s\\S]{" + (upper + 1) + "})";
@@ -1097,11 +1212,13 @@ function createTrustedMatchPredicate(
   let ignoreCase = pattern.ignoreCase;
   const isWord = (character: string | undefined) =>
     character !== undefined &&
-    new RegExp(
-      "\\w",
-      (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
-    )
-      .test(character);
+    testBlockedPattern(
+      new RegExpConstructor(
+        "\\w",
+        (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
+      ),
+      character,
+    );
   const localNegativeBody = (body: string): string => {
     let result = "";
     let depth = 0;
@@ -1109,19 +1226,26 @@ function createTrustedMatchPredicate(
     const cases: Array<{ ignoreCase: boolean; assertion?: "ahead" | "behind" }> = [];
     const word = (character: string | undefined) =>
       character !== undefined &&
-      new RegExp(
-        "\\w",
-        (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (localIgnoreCase ? "i" : ""),
-      ).test(character);
+      testBlockedPattern(
+        new RegExpConstructor(
+          "\\w",
+          (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (localIgnoreCase ? "i" : ""),
+        ),
+        character,
+      );
     for (let index = 0; index < body.length; index++) {
       const character = body[index];
       if (character === "\\") {
         const escaped = body[++index];
         if (depth === 0 && (escaped === "b" || escaped === "B")) {
           const choices = [character + escaped + excludePosition(lower) + excludePosition(upper)];
-          if (word(segment.text[0]) === (escaped === "b")) choices.push(atPosition(lower));
-          if (word(segment.text.at(-1)) === (escaped === "b")) choices.push(atPosition(upper));
-          result += "(?:" + choices.join("|") + ")";
+          if (word(segment.text[0]) === (escaped === "b")) {
+            pushPrivateArray(choices, atPosition(lower));
+          }
+          if (word(lastTextCodeUnit(segment.text)) === (escaped === "b")) {
+            pushPrivateArray(choices, atPosition(upper));
+          }
+          result += "(?:" + joinPrivateArray(choices, "|") + ")";
         } else result += character + escaped;
         continue;
       }
@@ -1133,22 +1257,22 @@ function createTrustedMatchPredicate(
           continue;
         }
         if (character === "(") {
-          const assertion = /^\(\?(<?)=/.exec(body.slice(index));
+          const assertion = /^\(\?(<?)=/.exec(privateTextSlice(body, index));
           if (assertion) {
             const direction = assertion[1] ? "behind" : "ahead";
-            cases.push({ ignoreCase: localIgnoreCase, assertion: direction });
+            pushPrivateArray(cases, { ignoreCase: localIgnoreCase, assertion: direction });
             result += assertion[0] + (direction === "behind" ? lowerGuard : "") + "(?:";
             index += assertion[0].length - 1;
             continue;
           }
-          cases.push({ ignoreCase: localIgnoreCase });
-          const named = /^\(\?<[^>]+>/.exec(body.slice(index));
+          pushPrivateArray(cases, { ignoreCase: localIgnoreCase });
+          const named = /^\(\?<[^>]+>/.exec(privateTextSlice(body, index));
           if (body[index + 1] !== "?" || named) {
             result += "(?:";
             if (named) index += named[0].length - 1;
             continue;
           }
-          const flags = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(body.slice(index));
+          const flags = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(privateTextSlice(body, index));
           if (flags?.[1]?.includes("i")) localIgnoreCase = true;
           if (flags?.[2]?.includes("i")) localIgnoreCase = false;
         } else if (character === ")") {
@@ -1181,7 +1305,7 @@ function createTrustedMatchPredicate(
         // Only assertions at a segment edge can see different word context.
         const boundary = escaped === "b";
         if (isWord(segment.text[0]) !== boundary) source += excludePosition(lower);
-        if (isWord(segment.text.at(-1)) !== boundary) source += excludePosition(upper);
+        if (isWord(lastTextCodeUnit(segment.text)) !== boundary) source += excludePosition(upper);
       }
       continue;
     }
@@ -1202,7 +1326,7 @@ function createTrustedMatchPredicate(
     if (character === "(") {
       const negative = negativeAssertionBody(pattern, index);
       if (negative) {
-        const original = pattern.source.slice(index, negative.end + 1);
+        const original = privateTextSlice(pattern.source, index, negative.end + 1);
         if (
           negative.nestedNegative || ((negative.nested || negative.context) && negative.backrefs)
         ) {
@@ -1228,19 +1352,21 @@ function createTrustedMatchPredicate(
         continue;
       }
       if (pattern.source.startsWith("(?=", index)) {
-        groups.push({ kind: "ahead", ignoreCase, bodyStart: index + 3 });
+        pushPrivateArray(groups, { kind: "ahead", ignoreCase, bodyStart: index + 3 });
         source += "(?=(?:";
         index += 2;
         continue;
       }
       if (pattern.source.startsWith("(?<=", index)) {
-        groups.push({ kind: "behind", ignoreCase, bodyStart: index + 4 });
+        pushPrivateArray(groups, { kind: "behind", ignoreCase, bodyStart: index + 4 });
         source += "(?<=" + lowerGuard + "(?:";
         index += 3;
         continue;
       }
-      groups.push({ kind: "ordinary", ignoreCase });
-      const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(pattern.source.slice(index));
+      pushPrivateArray(groups, { kind: "ordinary", ignoreCase });
+      const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(
+        privateTextSlice(pattern.source, index),
+      );
       if (modifiers?.[1]?.includes("i")) ignoreCase = true;
       if (modifiers?.[2]?.includes("i")) ignoreCase = false;
     } else if (character === ")") {
@@ -1251,7 +1377,7 @@ function createTrustedMatchPredicate(
         inspectionRadius = Math.max(
           inspectionRadius,
           assertionInspectionWidth(
-            pattern.source.slice(group.bodyStart, index),
+            privateTextSlice(pattern.source, group.bodyStart, index),
             pattern.unicodeSets,
           ) * (unicode ? 2 : 1),
         );
@@ -1271,7 +1397,7 @@ function createTrustedMatchPredicate(
     // Guard positive assertions' consumed context without adding captures or
     // changing backreference numbers. Contextual negative assertions also
     // check a capture-free body against the trusted segment's own boundaries.
-    const matcher = new RegExp(source, pattern.flags.replace(/[gy]/g, "") + "y");
+    const matcher = new RegExpConstructor(source, pattern.flags.replace(/[gy]/g, "") + "y");
     return (match) => {
       // Interior matches cannot inspect caller text. Avoid prefix scans for
       // each occurrence in long trusted prompts with many boundary matches.
@@ -1280,7 +1406,7 @@ function createTrustedMatchPredicate(
         match.index + match.text.length + inspectionRadius <= segment.text.length
       ) return true;
       matcher.lastIndex = segment.start + match.index;
-      const found = matcher.exec(assembled);
+      const found = applyRegExp(regexpExec, matcher, [assembled]) as RegExpExecArray | null;
       return found?.index === segment.start + match.index && found[0] === match.text;
     };
   } catch {
@@ -1297,28 +1423,41 @@ async function assertProviderRunsValid(
   if (providerRuns.length === 0) return;
   const patternOnly = { checkCustomValidation: false } as const;
   const introducedViolations: SecurityViolation[] = [];
-  for (const { text, trustedSegments } of providerRuns) {
+  for (let runIndex = 0; runIndex < providerRuns.length; runIndex++) {
+    if (!hasOwn(providerRuns, runIndex)) continue;
+    const { text, trustedSegments } = providerRuns[runIndex]!;
     const validation = await validator.validate(text, { ...patternOnly, checkMaxLength: false });
-    for (const violation of validation.violations) {
+    for (let violationIndex = 0; violationIndex < validation.violations.length; violationIndex++) {
+      if (!hasOwn(validation.violations, violationIndex)) continue;
+      const violation = validation.violations[violationIndex]!;
       const pattern = violation.pattern;
       if (pattern === undefined) {
-        introducedViolations.push(violation);
+        pushPrivateArray(introducedViolations, violation);
         continue;
       }
-      const trustedMatches = trustedSegments.flatMap((segment) =>
-        patternOccurrences(segment.text, pattern)
-          .filter(createTrustedMatchPredicate(pattern, segment, text))
-          .map((match) => ({
-            index: segment.start + match.index,
-            text: match.text,
-          }))
+      const trustedMatches = flatMapPrivateArray(
+        trustedSegments,
+        (segment) =>
+          mapPrivateArray(
+            filterPrivateArray(
+              patternOccurrences(segment.text, pattern),
+              createTrustedMatchPredicate(pattern, segment, text),
+            ),
+            (match) => ({
+              index: segment.start + match.index,
+              text: match.text,
+            }),
+          ),
       );
-      const introduced = patternOccurrences(text, pattern).some((match) =>
-        !trustedMatches.some((trusted) =>
-          trusted.index === match.index && trusted.text === match.text
-        )
+      const introduced = somePrivateArray(
+        patternOccurrences(text, pattern),
+        (match) =>
+          !somePrivateArray(
+            trustedMatches,
+            (trusted) => trusted.index === match.index && trusted.text === match.text,
+          ),
       );
-      if (introduced) introducedViolations.push(violation);
+      if (introduced) pushPrivateArray(introducedViolations, violation);
     }
   }
   if (introducedViolations.length > 0) {
@@ -1331,15 +1470,19 @@ async function assertProviderRunsValid(
     );
   }
 
-  for (const { text, trustedSegments } of providerRuns) {
+  for (let runIndex = 0; runIndex < providerRuns.length; runIndex++) {
+    if (!hasOwn(providerRuns, runIndex)) continue;
+    const { text, trustedSegments } = providerRuns[runIndex]!;
     let expected = "";
     let cursor = 0;
-    for (const segment of trustedSegments) {
-      expected += text.slice(cursor, segment.start) +
+    for (let segmentIndex = 0; segmentIndex < trustedSegments.length; segmentIndex++) {
+      if (!hasOwn(trustedSegments, segmentIndex)) continue;
+      const segment = trustedSegments[segmentIndex]!;
+      expected += privateTextSlice(text, cursor, segment.start) +
         (validator.sanitize(segment.text) ?? segment.text);
       cursor = segment.start + segment.text.length;
     }
-    expected += text.slice(cursor);
+    expected += privateTextSlice(text, cursor);
     if ((validator.sanitize(text) ?? text) === expected) continue;
     const violation: SecurityViolation = {
       type: "input",
@@ -1354,11 +1497,18 @@ async function assertProviderRunsValid(
 }
 
 function patternOccurrences(input: string, pattern: RegExp): { index: number; text: string }[] {
-  const matcher = new RegExp(pattern.source, pattern.global ? pattern.flags : `${pattern.flags}g`);
+  const matcher = new RegExpConstructor(
+    pattern.source,
+    pattern.global ? pattern.flags : `${pattern.flags}g`,
+  );
   if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
   const matches: { index: number; text: string }[] = [];
-  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
-    matches.push({ index: match.index, text: match[0] });
+  for (
+    let match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null;
+    match;
+    match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null
+  ) {
+    pushPrivateArray(matches, { index: match.index, text: match[0] });
     if (match[0].length === 0) {
       matcher.lastIndex = advanceStringIndex(
         input,
@@ -1394,7 +1544,9 @@ function assertTextsNeedNoSanitization(
   reason: string,
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
-  for (const value of values) {
+  for (let valueIndex = 0; valueIndex < values.length; valueIndex++) {
+    if (!hasOwn(values, valueIndex)) continue;
+    const value = values[valueIndex]!;
     if ((validator.sanitize(value) ?? value) === value) continue;
 
     const violation: SecurityViolation = {
@@ -1427,7 +1579,7 @@ function sanitizeAgentInput(
 
 function sameTexts(left: InputValidationTexts, right: InputValidationTexts): boolean {
   const sameList = (a: string[], b: string[]) =>
-    a.length === b.length && a.every((value, index) => value === b[index]);
+    a.length === b.length && everyPrivateArray(a, (value, index) => value === b[index]);
   return sameList(left.texts, right.texts) && sameList(left.assembled, right.assembled);
 }
 
@@ -1456,34 +1608,46 @@ export function securityMiddleware(
       // would brick the conversation on every later turn (`extractMergedRunTexts`).
       registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
         const systemMessages = providerSystemMessages(providerSystem);
-        const pendingCurrent = typeof context.input === "string" ? [] : context.input
-          .filter((message) => message.role === "system");
+        let pendingCurrent = typeof context.input === "string"
+          ? []
+          : filterPrivateArray(context.input, (message) => message.role === "system");
         // Separate occurrences even when a memory adapter returns the same
         // object twice. Current inputs are appended after historical messages.
-        const callerMessages = messages.map((message) =>
-          message.role === "system"
-            ? { id: message.id, role: message.role, parts: message.parts }
-            : message
+        const callerMessages = mapPrivateArray(
+          messages,
+          (message) =>
+            message.role === "system"
+              ? { id: message.id, role: message.role, parts: message.parts }
+              : message,
         );
-        const currentSystemMessages = new Set<Message>();
+        const currentSystemMessages = createPrivateSet<Message>();
         for (let index = messages.length - 1; index >= 0; index--) {
           const message = messages[index]!;
           if (message.role !== "system") continue;
-          const current = pendingCurrent.findLastIndex((input) =>
-            input === message || input.id === message.id && isDeepStrictEqual(input, message)
+          const current = findLastPrivateArrayIndex(
+            pendingCurrent,
+            (input) =>
+              input === message || input.id === message.id && isDeepStrictEqual(input, message),
           );
           if (current < 0) continue;
-          pendingCurrent.splice(current, 1);
+          pendingCurrent = filterPrivateArray(pendingCurrent, (_, index) => index !== current);
           currentSystemMessages.add(callerMessages[index]!);
         }
-        const callerSystemMessages = callerMessages.filter((message) => message.role === "system");
-        const trusted = new Set(systemMessages);
-        const callers = new Set(callerSystemMessages);
+        const callerSystemMessages = filterPrivateArray(
+          callerMessages,
+          (message) => message.role === "system",
+        );
+        const trusted = createPrivateSet(systemMessages);
+        const callers = createPrivateSet(callerSystemMessages);
         const providerRuns: ProviderValidationRun[] = [];
-        for (const run of extractMergedSystemRuns([...systemMessages, ...callerMessages])) {
+        const mergedSystemRuns = extractMergedSystemRuns(
+          concatPrivateArrays(systemMessages, callerMessages),
+        );
+        for (let runIndex = 0; runIndex < mergedSystemRuns.length; runIndex++) {
+          const run = mergedSystemRuns[runIndex]!;
           if (
-            !run.some((message) => trusted.has(message)) ||
-            !run.some((message) => callers.has(message))
+            !somePrivateArray(run, (message) => trusted.has(message)) ||
+            !somePrivateArray(run, (message) => callers.has(message))
           ) continue;
           // Runtime and historical text have separate exemptions. A new match
           // across their boundary must still be checked when the runtime changes.
@@ -1491,10 +1655,12 @@ export function securityMiddleware(
             for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
               const assembled: ProviderValidationRun = { text: "", trustedSegments: [] };
               let previousKind: "runtime" | "history" | "current" | undefined;
-              for (const [index, message] of run.entries()) {
+              for (let index = 0; index < run.length; index++) {
+                if (!hasOwn(run, index)) continue;
+                const message = run[index]!;
                 if (index > 0) assembled.text += runSeparator;
                 const start = assembled.text.length;
-                const text = messageTextParts(message).join(partSeparator);
+                const text = joinPrivateArray(messageTextParts(message), partSeparator);
                 assembled.text += text;
                 const kind = trusted.has(message)
                   ? "runtime"
@@ -1502,13 +1668,16 @@ export function securityMiddleware(
                   ? "current"
                   : "history";
                 if (kind !== "current") {
-                  const previous = assembled.trustedSegments.at(-1);
+                  const last = assembled.trustedSegments.length - 1;
+                  const previous = hasOwn(assembled.trustedSegments, last)
+                    ? assembled.trustedSegments[last]
+                    : undefined;
                   if (previous && kind === previousKind) previous.text += runSeparator + text;
-                  else assembled.trustedSegments.push({ start, text });
+                  else pushPrivateArray(assembled.trustedSegments, { start, text });
                 }
                 previousKind = kind;
               }
-              providerRuns.push(assembled);
+              pushPrivateArray(providerRuns, assembled);
             }
           }
         }
@@ -1521,31 +1690,42 @@ export function securityMiddleware(
       registerTurnMessageValidator(context, async (history, turnInput) => {
         const individualValues = history.length === 0
           ? {
-            texts: turnInput
-              .filter((message) => !isSummaryMemoryProjectionMessage(message))
-              .flatMap(extractMessageInputText),
-            assembled: [
-              ...turnInput
-                .filter(isSummaryMemoryProjectionMessage)
-                .flatMap(extractMessageInputText),
-              ...turnInput.flatMap(extractMessageAssembledTexts),
-            ],
+            texts: flatMapPrivateArray(
+              filterPrivateArray(
+                turnInput,
+                (message) => !isSummaryMemoryProjectionMessage(message),
+              ),
+              extractMessageInputText,
+            ),
+            assembled: concatPrivateArrays(
+              flatMapPrivateArray(
+                filterPrivateArray(turnInput, isSummaryMemoryProjectionMessage),
+                extractMessageInputText,
+              ),
+              flatMapPrivateArray(turnInput, extractMessageAssembledTexts),
+            ),
           }
           : { texts: [], assembled: [] };
-        const runTexts = extractMergedRunTexts([...history, ...turnInput], new Set(turnInput));
+        const runTexts = extractMergedRunTexts(
+          concatPrivateArrays(history, turnInput),
+          createPrivateSet(turnInput),
+        );
         // Merged runs are synthetic assemblies, so they are pattern-checked but
         // never length-checked (`InputValidationOptions.checkMaxLength`).
         await assertInputTextsValid(
           inputValidator,
           {
             texts: individualValues.texts,
-            assembled: [...individualValues.assembled, ...runTexts],
+            assembled: concatPrivateArrays(individualValues.assembled, runTexts),
           },
           onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
-          [...individualValues.texts, ...individualValues.assembled, ...runTexts],
+          concatPrivateArrays(
+            concatPrivateArrays(individualValues.texts, individualValues.assembled),
+            runTexts,
+          ),
           "Provider-visible messages contain content sanitization removes",
           onProviderViolation,
         );
@@ -1553,22 +1733,34 @@ export function securityMiddleware(
       registerTurnMessageProjectionValidator(context, async (messages, previousMessages) => {
         // Consume occurrences, rather than IDs, so duplicate IDs and freshly
         // deserialized messages retain their individual validation provenance.
-        const remainingPrevious = previousMessages?.slice() ?? [];
-        const changed = messages.filter((message) => {
-          const index = remainingPrevious.findIndex((previous) =>
-            previous.id === message.id && sameProviderMessageContent(previous, message)
+        let remainingPrevious = previousMessages
+          ? mapPrivateArray(previousMessages, (message) => message)
+          : [];
+        const changed = filterPrivateArray(messages, (message) => {
+          let index = 0;
+          while (index < remainingPrevious.length) {
+            const previous = remainingPrevious[index]!;
+            if (previous.id === message.id && sameProviderMessageContent(previous, message)) break;
+            index++;
+          }
+          if (index === remainingPrevious.length) return true;
+          remainingPrevious = filterPrivateArray(
+            remainingPrevious,
+            (_, candidate) => candidate !== index,
           );
-          if (index < 0) return true;
-          remainingPrevious.splice(index, 1);
           return false;
         });
-        const texts = changed
-          .filter((message) => !isSummaryMemoryProjectionMessage(message))
-          .flatMap(extractMessageInputText);
-        const assembled = [
-          ...changed.filter(isSummaryMemoryProjectionMessage).flatMap(extractMessageInputText),
-          ...changed.flatMap(extractMessageAssembledTexts),
-        ];
+        const texts = flatMapPrivateArray(
+          filterPrivateArray(changed, (message) => !isSummaryMemoryProjectionMessage(message)),
+          extractMessageInputText,
+        );
+        const assembled = concatPrivateArrays(
+          flatMapPrivateArray(
+            filterPrivateArray(changed, isSummaryMemoryProjectionMessage),
+            extractMessageInputText,
+          ),
+          flatMapPrivateArray(changed, extractMessageAssembledTexts),
+        );
         const runTexts = extractMergedRunTexts(
           messages,
           undefined,
@@ -1577,12 +1769,12 @@ export function securityMiddleware(
         );
         await assertInputTextsValid(
           inputValidator,
-          { texts, assembled: [...assembled, ...runTexts] },
+          { texts, assembled: concatPrivateArrays(assembled, runTexts) },
           onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
-          [...texts, ...assembled, ...runTexts],
+          concatPrivateArrays(concatPrivateArrays(texts, assembled), runTexts),
           "Provider-visible messages contain content sanitization removes",
           onProviderViolation,
         );
@@ -1597,13 +1789,16 @@ export function securityMiddleware(
       if (typeof context.input !== "string") {
         assertTextsNeedNoSanitization(
           inputValidator,
-          context.input.filter((message) => message.role === "user")
-            .flatMap((
+          flatMapPrivateArray(
+            filterPrivateArray(context.input, (message) => message.role === "user"),
+            (
               message,
-            ) => [
-              buildAttachmentContextFromParts(message.parts),
-              ...getProviderAttachmentMetadata(message.parts),
-            ]),
+            ) =>
+              concatPrivateArrays(
+                [buildAttachmentContextFromParts(message.parts)],
+                getProviderAttachmentMetadata(message.parts),
+              ),
+          ),
           "Attachment annotations contain content sanitization removes",
           config.onViolation,
         );
@@ -1626,7 +1821,7 @@ export function securityMiddleware(
       }
       const approvedMessages = typeof context.input === "string"
         ? undefined
-        : context.input.map((message) => ({ id: message.id, role: message.role }));
+        : mapPrivateArray(context.input, (message) => ({ id: message.id, role: message.role }));
 
       // A middleware later in the chain can still replace `context.input` or
       // mutate a message in place after this middleware approved it, and the
@@ -1639,26 +1834,37 @@ export function securityMiddleware(
         const resolvedTexts = extractInputValidationTexts(messages);
         const sameMessageIdentity = approvedMessages !== undefined &&
           approvedMessages.length === messages.length &&
-          approvedMessages.every((message, index) => message.id === messages[index]?.id);
+          everyPrivateArray(
+            approvedMessages,
+            (message, index) => message.id === messages[index]?.id,
+          );
         const roleRewriteCandidates = approvedMessages === undefined
-          ? messages.filter((message) => !VALIDATED_INPUT_ROLES.has(message.role))
-          : messages.filter((message, index) =>
-            !VALIDATED_INPUT_ROLES.has(message.role) &&
-            (!sameMessageIdentity || VALIDATED_INPUT_ROLES.has(approvedMessages[index]!.role))
+          ? filterPrivateArray(messages, (message) => !VALIDATED_INPUT_ROLES.has(message.role))
+          : filterPrivateArray(
+            messages,
+            (message, index) =>
+              !VALIDATED_INPUT_ROLES.has(message.role) &&
+              (!sameMessageIdentity || VALIDATED_INPUT_ROLES.has(approvedMessages[index]!.role)),
           );
         const rewrittenRoleTexts: InputValidationTexts = {
-          texts: roleRewriteCandidates.flatMap(extractMessageInputTextRegardlessOfRole),
-          assembled: roleRewriteCandidates.flatMap(extractMessageAssembledTextsRegardlessOfRole),
+          texts: flatMapPrivateArray(
+            roleRewriteCandidates,
+            extractMessageInputTextRegardlessOfRole,
+          ),
+          assembled: flatMapPrivateArray(
+            roleRewriteCandidates,
+            extractMessageAssembledTextsRegardlessOfRole,
+          ),
         };
         const completeResolvedTexts: InputValidationTexts = {
-          texts: [...resolvedTexts.texts, ...rewrittenRoleTexts.texts],
-          assembled: [...resolvedTexts.assembled, ...rewrittenRoleTexts.assembled],
+          texts: concatPrivateArrays(resolvedTexts.texts, rewrittenRoleTexts.texts),
+          assembled: concatPrivateArrays(resolvedTexts.assembled, rewrittenRoleTexts.assembled),
         };
         if (sameTexts(completeResolvedTexts, approvedInputTexts)) return;
         await assertInputTextsValid(inputValidator, completeResolvedTexts, config.onViolation);
         assertTextsNeedNoSanitization(
           inputValidator,
-          [...completeResolvedTexts.texts, ...completeResolvedTexts.assembled],
+          concatPrivateArrays(completeResolvedTexts.texts, completeResolvedTexts.assembled),
           "Middleware-rewritten input contains content sanitization removes",
           config.onViolation,
         );

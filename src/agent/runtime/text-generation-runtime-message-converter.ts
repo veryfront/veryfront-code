@@ -1,3 +1,19 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  privateTextEndsWith,
+  privateTextIncludes,
+  privateTextStartsWith,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
+import {
+  appendPrivateArray,
+  findLastPrivateArrayIndex,
+  flatMapPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 /**
  * Text-Generation Runtime Message Converter
  *
@@ -29,15 +45,19 @@ import {
   groupAnthropicRawAssistantMessagesByAnchor,
 } from "./anthropic-provider-replay-block.ts";
 
+const hasOwn = Object.hasOwn;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isArray = Array.isArray;
+
 function getStringPartField(part: unknown, key: string): string | undefined {
-  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
+  if (!part || typeof part !== "object" || isArray(part)) return undefined;
 
   const value = (part as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !isArray(value);
 }
 
 function getRecordPartField(part: unknown, key: string): Record<string, unknown> | undefined {
@@ -48,11 +68,12 @@ function getRecordPartField(part: unknown, key: string): Record<string, unknown>
 }
 
 function hasOwnField(part: Record<string, unknown>, key: string): boolean {
-  return Object.hasOwn(part, key);
+  return hasOwn(part, key);
 }
 
 function isProviderExecutedToolPart(part: Record<string, unknown>): boolean {
-  return part.providerExecuted === true;
+  const descriptor = getOwnPropertyDescriptor(part, "providerExecuted");
+  return descriptor !== undefined && hasOwn(descriptor, "value") && descriptor.value === true;
 }
 
 function getToolCallId(part: unknown): string | undefined {
@@ -98,7 +119,9 @@ function consumeProviderExecutedToolResults(
   message: Message,
   providerExecutedToolCallIds: Set<string>,
 ): void {
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
   }
 }
@@ -109,7 +132,7 @@ function getToolInputRecord(part: Record<string, unknown>): Record<string, unkno
 
 function getTextGenerationToolCallPart(
   part: unknown,
-  providerExecutedToolCallIds: ReadonlySet<string> = new Set(),
+  providerExecutedToolCallIds: ReadonlySet<string> = createPrivateSet(),
 ): TextGenerationRuntimeToolCallPart | null {
   if (!isRecord(part) || typeof part.type !== "string") {
     return null;
@@ -118,7 +141,7 @@ function getTextGenerationToolCallPart(
   if (
     part.type !== "tool_call" &&
     part.type !== "tool-call" &&
-    !(part.type.startsWith("tool-") && part.type !== "tool-result")
+    !(privateTextStartsWith(part.type, "tool-") && part.type !== "tool-result")
   ) {
     return null;
   }
@@ -126,7 +149,7 @@ function getTextGenerationToolCallPart(
   const toolName = getStringPartField(part, "toolName") ??
     getStringPartField(part, "tool_name") ??
     getStringPartField(part, "name") ??
-    (part.type.startsWith("tool-") && part.type !== "tool-call"
+    (privateTextStartsWith(part.type, "tool-") && part.type !== "tool-call"
       ? part.type.replace(/^tool-/, "")
       : undefined);
 
@@ -190,8 +213,8 @@ function getTextGenerationToolResultPart(
 
 /** @internal Provider-visible text annotation shared with input validation. */
 export function buildAttachmentContextFromParts(parts: Message["parts"]): string {
-  if (getTextFromParts(parts).includes("<uploaded_files>")) return "";
-  const refs = parts.flatMap((part) => {
+  if (privateTextIncludes(getTextFromParts(parts), "<uploaded_files>")) return "";
+  const refs = flatMapPrivateArray(parts, (part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
 
@@ -203,13 +226,14 @@ export function buildAttachmentContextFromParts(parts: Message["parts"]): string
     const url = getStringPartField(part, "url");
 
     return [{
+      __proto__: null,
       name: getStringPartField(part, "filename") ?? (type === "image" ? "image" : "file"),
       mediaType,
       ...(uploadId ? { uploadId } : {}),
       ...(uploadPath ? { path: uploadPath } : {}),
       // Never inline a `data:` URL here — it would dump the whole base64 blob
       // into the prompt as text. The bytes ride in the native file part below.
-      ...(url && !url.startsWith("data:") ? { url } : {}),
+      ...(url && !privateTextStartsWith(url, "data:") ? { url } : {}),
     }];
   });
 
@@ -217,7 +241,7 @@ export function buildAttachmentContextFromParts(parts: Message["parts"]): string
 }
 
 function appendReadableAttachmentContext(text: string, attachmentContext: string): string {
-  const normalizedContext = attachmentContext.trimStart();
+  const normalizedContext = privateTextTrimStart(attachmentContext);
   if (!normalizedContext) {
     return text;
   }
@@ -226,32 +250,37 @@ function appendReadableAttachmentContext(text: string, attachmentContext: string
     return normalizedContext;
   }
 
-  const separator = text.endsWith("\n\n") ? "" : text.endsWith("\n") ? "\n" : "\n\n";
+  const separator = privateTextEndsWith(text, "\n\n")
+    ? ""
+    : privateTextEndsWith(text, "\n")
+    ? "\n"
+    : "\n\n";
   return `${text}${separator}${normalizedContext}`;
 }
 
 /** @internal Exact text projection shared with input validation. */
 export function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
   const text = getTextFromParts(parts);
-  return text.includes("<uploaded_files>")
+  return privateTextIncludes(text, "<uploaded_files>")
     ? text
     : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
 }
 
 /** @internal Text metadata sent in native attachment parts, independent of annotations. */
 export function getProviderAttachmentMetadata(parts: Message["parts"]): string[] {
-  return getUserFileParts(parts, false).flatMap((part) => [
-    part.mediaType,
-    ...(part.filename ? [part.filename] : []),
-    ...(part.url.startsWith("data:") ? [] : [part.url]),
-  ]);
+  return flatMapPrivateArray(getUserFileParts(parts, false), (part) => {
+    const metadata = [part.mediaType];
+    if (part.filename) pushPrivateArray(metadata, part.filename);
+    if (!privateTextStartsWith(part.url, "data:")) pushPrivateArray(metadata, part.url);
+    return metadata;
+  });
 }
 
 function getUserFileParts(
   parts: Message["parts"],
   requireInternetReachableAttachments: boolean,
 ): TextGenerationRuntimeFilePart[] {
-  return parts.flatMap((part) => {
+  return flatMapPrivateArray(parts, (part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
 
@@ -306,7 +335,8 @@ export function convertToTextGenerationRuntimeMessage(
     & { providerExecutedToolCallIds?: Set<string> }
     & TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage {
-  const providerExecutedToolCallIds = options.providerExecutedToolCallIds ?? new Set<string>();
+  const providerExecutedToolCallIds = options.providerExecutedToolCallIds ??
+    createPrivateSet<string>();
   addProviderMetadataToolCallIds(msg, providerExecutedToolCallIds);
   const requireInternetReachableAttachments = options.requireInternetReachableAttachments ?? true;
 
@@ -324,33 +354,32 @@ export function convertToTextGenerationRuntimeMessage(
       }
 
       const text = getTextFromParts(msg.parts);
-      const attachmentContext = text.includes("<uploaded_files>")
+      const attachmentContext = privateTextIncludes(text, "<uploaded_files>")
         ? ""
         : buildAttachmentContextFromParts(msg.parts);
-      return {
-        role: "user",
-        content: [
-          ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
-          ...fileParts,
-          ...(attachmentContext.length > 0
-            ? [{ type: "text" as const, text: attachmentContext.trimStart() }]
-            : []),
-        ],
-      };
+      const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeFilePart> = [];
+      if (text.length > 0) pushPrivateArray(content, { type: "text", text });
+      appendPrivateArray(content, fileParts);
+      if (attachmentContext.length > 0) {
+        pushPrivateArray(content, { type: "text", text: privateTextTrimStart(attachmentContext) });
+      }
+      return { role: "user", content };
     }
 
     case "assistant": {
       const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart> = [];
 
-      for (const part of msg.parts) {
+      for (let partIndex = 0; partIndex < msg.parts.length; partIndex++) {
+        if (!hasOwn(msg.parts, partIndex)) continue;
+        const part = msg.parts[partIndex]!;
         if (part.type === "text" && "text" in part) {
-          content.push({ type: "text", text: (part as { text: string }).text });
+          pushPrivateArray(content, { type: "text", text: (part as { text: string }).text });
           continue;
         }
 
         const toolPart = getTextGenerationToolCallPart(part, providerExecutedToolCallIds);
         if (toolPart) {
-          content.push({
+          pushPrivateArray(content, {
             type: "tool-call",
             toolCallId: toolPart.toolCallId,
             toolName: toolPart.toolName,
@@ -363,7 +392,7 @@ export function convertToTextGenerationRuntimeMessage(
 
       // Ensure non-empty content (providers need at least empty text for tool-only messages)
       if (content.length === 0) {
-        content.push({ type: "text", text: "" });
+        pushPrivateArray(content, { type: "text", text: "" });
       }
 
       const providerMetadata = readAttachedProviderMetadata(msg);
@@ -377,9 +406,11 @@ export function convertToTextGenerationRuntimeMessage(
 
     case "tool": {
       const content: TextGenerationRuntimeToolMessage["content"] = [];
-      const toolNamesById = new Map<string, string>();
+      const toolNamesById = createPrivateMap<string, string>();
 
-      for (const part of msg.parts) {
+      for (let partIndex = 0; partIndex < msg.parts.length; partIndex++) {
+        if (!hasOwn(msg.parts, partIndex)) continue;
+        const part = msg.parts[partIndex]!;
         if (
           shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)
         ) {
@@ -388,7 +419,7 @@ export function convertToTextGenerationRuntimeMessage(
 
         const toolResultPart = getTextGenerationToolResultPart(part, toolNamesById);
         if (toolResultPart) {
-          content.push(toolResultPart);
+          pushPrivateArray(content, toolResultPart);
         }
       }
 
@@ -415,7 +446,7 @@ export function convertToTextGenerationRuntimeMessage(
  */
 export function hasProviderSendableAssistantContent(
   message: Message,
-  priorProviderExecutedToolCallIds: ReadonlySet<string> = new Set(),
+  priorProviderExecutedToolCallIds: ReadonlySet<string> = createPrivateSet(),
 ): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
@@ -424,13 +455,17 @@ export function hasProviderSendableAssistantContent(
   // ordinary call in the same assistant message. Mirror that state here so a
   // duplicate ID cannot make the predicate claim content that conversion will
   // remove.
-  const providerExecutedToolCallIds = new Set(priorProviderExecutedToolCallIds);
-  for (const part of message.parts) {
+  const providerExecutedToolCallIds = createPrivateSet(priorProviderExecutedToolCallIds);
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     const toolCallId = getProviderExecutedToolCallId(part);
     if (toolCallId) providerExecutedToolCallIds.add(toolCallId);
   }
 
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     if (part.type === "text" && "text" in part) {
       if (
         typeof (part as { text?: unknown }).text === "string" &&
@@ -449,14 +484,17 @@ export function hasProviderSendableAssistantContent(
 export function getProviderSendableAssistantMessages(
   messages: readonly Message[],
 ): ReadonlySet<Message> {
-  const sendable = new Set<Message>();
-  const providerExecutedToolCallIds = new Set<string>();
-  for (const message of messages) {
+  const sendable = createPrivateSet<Message>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
@@ -473,7 +511,9 @@ export function getProviderSendableAssistantMessages(
       continue;
     }
     if (message.role === "tool") {
-      for (const part of message.parts) {
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        if (!hasOwn(message.parts, partIndex)) continue;
+        const part = message.parts[partIndex]!;
         shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
       }
     }
@@ -485,14 +525,17 @@ export function getProviderSendableAssistantMessages(
 export function getProviderSendableToolMessages(
   messages: readonly Message[],
 ): ReadonlySet<Message> {
-  const sendable = new Set<Message>();
-  const providerExecutedToolCallIds = new Set<string>();
-  for (const message of messages) {
+  const sendable = createPrivateSet<Message>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
@@ -514,44 +557,50 @@ export function getProviderSendableToolMessages(
 export function getAnthropicCompactedAssistantMessages(
   messages: readonly Message[],
 ): ReadonlySet<Message> {
-  const compacted = new Set<Message>();
-  const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
-  const lastHistoricalAssistantTextIndex = messages.findLastIndex((message, index) =>
-    index < lastUserIndex &&
-    message.role === "assistant" &&
-    message.parts.some((part) =>
-      part.type === "text" && "text" in part &&
-      typeof (part as { text?: unknown }).text === "string" &&
-      (part as { text: string }).text.length > 0
-    )
+  const compacted = createPrivateSet<Message>();
+  const lastUserIndex = findLastPrivateArrayIndex(messages, (message) => message.role === "user");
+  const lastHistoricalAssistantTextIndex = findLastPrivateArrayIndex(
+    messages,
+    (message, index) =>
+      index < lastUserIndex &&
+      message.role === "assistant" &&
+      somePrivateArray(message.parts, (part) =>
+        part.type === "text" && "text" in part &&
+        typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0),
   );
-  const providerExecutedToolCallIds = new Set<string>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
 
-  for (const [index, message] of messages.entries()) {
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
     if (
       message.role === "assistant" &&
       index < lastHistoricalAssistantTextIndex &&
-      message.parts.some((part) =>
-        getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null
+      somePrivateArray(
+        message.parts,
+        (part) => getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null,
       ) &&
-      !message.parts.some((part) =>
+      !somePrivateArray(message.parts, (part) =>
         part.type === "text" && "text" in part &&
         typeof (part as { text?: unknown }).text === "string" &&
-        (part as { text: string }).text.length > 0
-      )
+        (part as { text: string }).text.length > 0)
     ) {
       compacted.add(message);
     }
     if (message.role === "tool") {
-      for (const part of message.parts) {
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        if (!hasOwn(message.parts, partIndex)) continue;
+        const part = message.parts[partIndex]!;
         shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
       }
     }
@@ -570,7 +619,7 @@ function splitAnthropicProviderMetadata(
     anthropic.rawAssistantMessages,
     segmentCount,
   );
-  return grouped?.map((rawAssistantMessages) => ({
+  return grouped && mapPrivateArray(grouped, (rawAssistantMessages) => ({
     ...providerMetadata,
     anthropic: { ...anthropic, rawAssistantMessages },
   }));
@@ -583,8 +632,8 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   const assistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
   const deferredAssistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
   const toolResults: TextGenerationRuntimeToolMessage["content"] = [];
-  const pendingToolCallIds = new Set<string>();
-  const toolNamesById = new Map<string, string>();
+  const pendingToolCallIds = createPrivateSet<string>();
+  const toolNamesById = createPrivateMap<string, string>();
   const messages: TextGenerationRuntimeMessage[] = [];
 
   const flushAssistantMessage = (content: TextGenerationRuntimeAssistantMessage["content"]) => {
@@ -592,7 +641,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    messages.push({ role: "assistant", content: [...content] });
+    pushPrivateArray(messages, {
+      role: "assistant",
+      content: mapPrivateArray(content, (part) => part),
+    });
     content.length = 0;
   };
 
@@ -601,7 +653,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    messages.push({ role: "tool", content: [...toolResults] });
+    pushPrivateArray(messages, {
+      role: "tool",
+      content: mapPrivateArray(toolResults, (part) => part),
+    });
     toolResults.length = 0;
   };
 
@@ -617,14 +672,14 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
         flushAssistantMessage(deferredAssistantContent);
       }
 
-      assistantContent.push(part);
+      pushPrivateArray(assistantContent, part);
       pendingToolCallIds.add(part.toolCallId);
       toolNamesById.set(part.toolCallId, part.toolName);
       return;
     }
 
     if (pendingToolCallIds.size > 0) {
-      deferredAssistantContent.push(part);
+      pushPrivateArray(deferredAssistantContent, part);
       return;
     }
 
@@ -634,7 +689,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       flushAssistantMessage(deferredAssistantContent);
     }
 
-    assistantContent.push(part);
+    pushPrivateArray(assistantContent, part);
   };
 
   const pushToolResult = (part: TextGenerationRuntimeToolResultPart) => {
@@ -642,11 +697,13 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    toolResults.push(part);
+    pushPrivateArray(toolResults, part);
     pendingToolCallIds.delete(part.toolCallId);
   };
 
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
     if (providerExecutedToolCallId) {
       providerExecutedToolCallIds.add(providerExecutedToolCallId);
@@ -678,7 +735,11 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   flushAssistantMessage(deferredAssistantContent);
 
   const providerMetadata = readAttachedProviderMetadata(message);
-  const assistantMessages = messages.filter((entry) => entry.role === "assistant");
+  const assistantMessages: Extract<TextGenerationRuntimeMessage, { role: "assistant" }>[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    const entry = messages[index];
+    if (entry?.role === "assistant") pushPrivateArray(assistantMessages, entry);
+  }
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
     if (isProviderReplayDelivered(message)) {
@@ -693,7 +754,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     if (isProviderReplayDelivered(message)) {
       markProviderReplayDelivered(anchorMessage);
     }
-    messages.push(anchorMessage);
+    pushPrivateArray(messages, anchorMessage);
   } else if (providerMetadata !== undefined) {
     const splitMetadata = splitAnthropicProviderMetadata(
       providerMetadata,
@@ -702,7 +763,8 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     if (splitMetadata === undefined) {
       throw new TypeError("Provider replay metadata cannot follow a split assistant turn");
     }
-    for (const [index, assistantMessage] of assistantMessages.entries()) {
+    for (let index = 0; index < assistantMessages.length; index++) {
+      const assistantMessage = assistantMessages[index]!;
       assistantMessage.providerMetadata = splitMetadata[index];
       if (isProviderReplayDelivered(message)) {
         markProviderReplayDelivered(assistantMessage);
@@ -721,15 +783,18 @@ export function convertToTextGenerationRuntimeMessages(
   options: TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
-  const providerExecutedToolCallIds = new Set<string>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
 
-  for (const message of messages) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
 
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) {
         providerExecutedToolCallIds.add(providerExecutedToolCallId);
@@ -748,19 +813,24 @@ export function convertToTextGenerationRuntimeMessages(
         ...options,
       })];
 
-    for (const convertedMessage of convertedMessages) {
+    for (let convertedIndex = 0; convertedIndex < convertedMessages.length; convertedIndex++) {
+      if (!hasOwn(convertedMessages, convertedIndex)) continue;
+      const convertedMessage = convertedMessages[convertedIndex]!;
       if (convertedMessage.role === "tool" && convertedMessage.content.length === 0) {
         continue;
       }
 
-      const previousMessage = textGenerationRuntimeMessages.at(-1);
+      const previousIndex = textGenerationRuntimeMessages.length - 1;
+      const previousMessage = hasOwn(textGenerationRuntimeMessages, previousIndex)
+        ? textGenerationRuntimeMessages[previousIndex]
+        : undefined;
 
       if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
-        previousMessage.content.push(...convertedMessage.content);
+        appendPrivateArray(previousMessage.content, convertedMessage.content);
         continue;
       }
 
-      textGenerationRuntimeMessages.push(convertedMessage);
+      pushPrivateArray(textGenerationRuntimeMessages, convertedMessage);
     }
   }
 
@@ -784,11 +854,11 @@ export function convertToTextGenerationRuntimeRequestMessages(
   // Only a delivered replay checkpoint may keep a trailing assistant message:
   // live in-run metadata also reaches converted messages, and providers reject
   // or misread an unexpected trailing prefill on ordinary resumes.
-  while (
-    requestMessages.at(-1)?.role === "assistant" &&
-    !isProviderReplayDelivered(requestMessages.at(-1))
-  ) {
-    requestMessages.pop();
+  while (requestMessages.length > 0) {
+    const lastIndex = requestMessages.length - 1;
+    const tail = hasOwn(requestMessages, lastIndex) ? requestMessages[lastIndex] : undefined;
+    if (tail?.role !== "assistant" || isProviderReplayDelivered(tail)) break;
+    requestMessages.length = lastIndex;
   }
 
   return requestMessages;

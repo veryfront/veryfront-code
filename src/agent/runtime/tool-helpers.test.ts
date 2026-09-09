@@ -1192,3 +1192,48 @@ describe("tool-helpers", () => {
     });
   });
 });
+
+it("skips inherited entries while discovering and executing remote sources", async () => {
+  let observations = 0;
+  let executions = 0;
+  const source: RemoteToolSource = {
+    id: "synthetic-source",
+    listTools: () =>
+      Promise.resolve([{
+        name: "allowed",
+        description: "Allowed tool",
+        parameters: { type: "object" },
+      }]),
+    executeTool: () => {
+      executions++;
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const sources: RemoteToolSource[] = [];
+  sources[1] = source;
+  const prototype = Object.create(Array.prototype);
+  Object.defineProperty(prototype, "0", {
+    get() {
+      observations++;
+      return source;
+    },
+  });
+  Object.setPrototypeOf(sources, prototype);
+  const definitions = await getAvailableTools({ allowed: true }, {
+    includeIntegrationTools: false,
+    remoteToolSources: sources,
+    allowedRemoteToolNames: ["allowed"],
+  });
+  const result = await executeConfiguredTool(
+    "allowed",
+    {},
+    { allowed: true },
+    undefined,
+    ["allowed"],
+    sources,
+  );
+  assertEquals(observations, 0);
+  assertEquals(definitions.map((definition) => definition.name), ["allowed"]);
+  assertEquals(result, { ok: true });
+  assertEquals(executions, 1);
+});

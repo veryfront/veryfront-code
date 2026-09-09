@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import type {
   ChatDynamicToolUiPart,
@@ -206,7 +207,7 @@ function getParsedStreamedToolInput(inputText: string): Record<string, unknown> 
   }
 
   try {
-    const parsed = JSON.parse(normalizedInputText);
+    const parsed = privateJsonParse(normalizedInputText);
     return isRecord(parsed) ? Object.fromEntries(Object.entries(parsed)) : {};
   } catch {
     return null;

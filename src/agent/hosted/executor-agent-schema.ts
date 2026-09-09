@@ -1,9 +1,13 @@
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { defineError, snapshotVeryfrontError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "../executor/protocol.ts";
+
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 // Reserve the complete worst-case protocol envelope: two 128-character binding
 // strings can each require six JSON bytes per character, plus numeric identities,
@@ -84,7 +88,7 @@ export class ExecutorAgentError extends VeryfrontError {
 export function executorAgentFailureCode(error: unknown, fallback: FailureCode): FailureCode {
   if (error instanceof ExecutorAgentError) return error.code;
   if (error !== null && typeof error === "object") {
-    const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+    const descriptor = objectGetOwnPropertyDescriptor(error, "code");
     const explicit = getExecutorAgentFailureCodeSchema().safeParse(descriptor?.value);
     if (explicit.success) return explicit.data;
   }
@@ -164,14 +168,14 @@ export function parseExecutorAgentData<T>(schema: Schema<T>, input: unknown): T 
 
 /** Serialize schema-validated values; optional undefined properties are omitted. */
 export function executorAgentJson(input: unknown, oversized: FailureCode): JsonValue {
-  const encoded = JSON.stringify(input);
+  const encoded = privateJsonStringify(input);
   if (
     encoded === undefined ||
-    new TextEncoder().encode(encoded).byteLength > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES
+    utf8ByteLength(encoded, EXECUTOR_AGENT_MAX_PAYLOAD_BYTES) > EXECUTOR_AGENT_MAX_PAYLOAD_BYTES
   ) {
     throw new ExecutorAgentError(oversized);
   }
-  const snapshot = snapshotBoundedJsonValue(JSON.parse(encoded));
+  const snapshot = snapshotBoundedJsonValue(privateJsonParse(encoded));
   if (!snapshot.success) throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_INPUT");
   return snapshot.value;
 }

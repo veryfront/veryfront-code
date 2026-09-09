@@ -35,6 +35,8 @@ import type {
 
 type StreamProviderSignal = StreamSignal;
 
+const hasOwn = Object.hasOwn;
+
 export function runStreamLifecycle<TProviderPart>(
   input: StreamLifecycleInput<TProviderPart>,
 ): StreamLifecycleRun {
@@ -170,9 +172,19 @@ export function runStreamLifecycle<TProviderPart>(
         deadlines.pauseProviderWait();
 
         if (raced.kind === "status") {
-          for (const toolCallId of raced.toolCallIds) {
+          for (let index = 0; index < raced.toolCallIds.length; index++) {
+            if (!hasOwn(raced.toolCallIds, index)) continue;
+            const toolCallId = raced.toolCallIds[index]!;
             if (outcome.settled) return;
-            const tool = reducer.snapshot.tools.find((entry) => entry.id === toolCallId);
+            let tool;
+            for (let toolIndex = 0; toolIndex < reducer.snapshot.tools.length; toolIndex++) {
+              if (!hasOwn(reducer.snapshot.tools, toolIndex)) continue;
+              const entry = reducer.snapshot.tools[toolIndex]!;
+              if (entry.id === toolCallId) {
+                tool = entry;
+                break;
+              }
+            }
             if (
               !tool ||
               (tool.phase !== "input_open" && tool.phase !== "input_streaming")
@@ -221,7 +233,9 @@ export function runStreamLifecycle<TProviderPart>(
               reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
               outcome.settle(failed);
             }
-            for (const frame of resolved.reduction.frames) {
+            for (let index = 0; index < resolved.reduction.frames.length; index++) {
+              if (!hasOwn(resolved.reduction.frames, index)) continue;
+              const frame = resolved.reduction.frames[index]!;
               notifyObserver(() => observer?.onFrame(frame));
               yield frame;
             }
@@ -293,7 +307,9 @@ export function runStreamLifecycle<TProviderPart>(
           );
           return;
         }
-        for (const signal of signals) {
+        for (let signalIndex = 0; signalIndex < signals.length; signalIndex++) {
+          if (!hasOwn(signals, signalIndex)) continue;
+          const signal = signals[signalIndex]!;
           if (signal.kind === "diagnostic_candidate") {
             const safe = acceptDiagnosticCandidate(diagnostics, signal.candidate);
             if (safe) {
@@ -346,7 +362,9 @@ export function runStreamLifecycle<TProviderPart>(
           if (terminalCommitted) {
             settleReducerTerminal(outcome, reducer, elapsedMs());
           }
-          for (const frame of reduced.frames) {
+          for (let index = 0; index < reduced.frames.length; index++) {
+            if (!hasOwn(reduced.frames, index)) continue;
+            const frame = reduced.frames[index]!;
             if (!terminalCommitted && outcome.settled) return;
             notifyObserver(() => observer?.onFrame(frame));
             yield frame;

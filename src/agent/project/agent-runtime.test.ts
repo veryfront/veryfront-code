@@ -260,6 +260,28 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
 });
 
 describe("project agent runtime tool denials", () => {
+  it("projects optional configuration only from own fields", async () => {
+    const original = agent({
+      id: "own-config",
+      system: "Synthetic instructions",
+      model: "openai/synthetic",
+      tools: {},
+    });
+    let reads = 0;
+    const config = { ...original.config };
+    delete config.tools;
+    Object.setPrototypeOf(config, {
+      get tools() {
+        reads++;
+        return true;
+      },
+    });
+    const wrapped: typeof original = Object.create(original, { config: { value: config } });
+    const definition = await createRuntimeAgentDefinitionFromAgent(wrapped);
+    assertEquals(reads, 0);
+    assertEquals(definition.tools, undefined);
+  });
+
   it("project agent runtime preserves code agent delegate denials", async () => {
     const coordinator = agent({
       id: "restricted-coordinator",

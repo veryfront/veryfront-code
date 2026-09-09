@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import type { Message } from "../types.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { serverLogger } from "#veryfront/utils";
@@ -27,6 +28,8 @@ import {
 import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
 
 const logger = serverLogger.component("agent");
+const objectHasOwn = Object.hasOwn;
+const arrayIsArray = Array.isArray;
 
 export const LOAD_SKILL_TOOL_ID = "load_skill";
 export const FORM_INPUT_TOOL_ID = "form_input";
@@ -47,7 +50,7 @@ const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   try {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
+    return value !== null && typeof value === "object" && !arrayIsArray(value);
   } catch {
     return false;
   }
@@ -55,7 +58,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getBoundedArrayLength(value: unknown, maxEntries: number): number | null {
   try {
-    if (!Array.isArray(value)) return null;
+    if (!arrayIsArray(value)) return null;
   } catch {
     return null;
   }
@@ -144,8 +147,12 @@ export function hydrateActiveSkillStateFromMessages(
     activeSkillDelegationOverrides: undefined,
   };
 
-  for (const message of messages) {
-    for (const part of message.parts) {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!objectHasOwn(messages, messageIndex)) continue;
+    const message = messages[messageIndex]!;
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!objectHasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
       state = applySkillActivationResult(state, part.result);
     }
@@ -250,7 +257,7 @@ export function applySkillActivationResult(
 
 function parseToolResultJson(result: string): unknown {
   try {
-    return JSON.parse(result);
+    return privateJsonParse(result);
   } catch {
     return null;
   }
@@ -263,7 +270,8 @@ export function isSubmittedFormInputResult(result: unknown): boolean {
   if (submitted === UNREADABLE_TOOL_RESULT_PROPERTY) return false;
   if (submitted !== undefined) return submitted === true;
 
-  for (const wrapperName of ["response", "output"]) {
+  for (let index = 0; index < 2; index++) {
+    const wrapperName = index === 0 ? "response" : "output";
     const wrapper = readToolResultOwnDataProperty(normalized, wrapperName);
     if (!isRecord(wrapper) || hasToolExecutionErrorMarker(wrapper)) continue;
     const wrappedSubmitted = readToolResultOwnDataProperty(wrapper, "submitted");
@@ -276,6 +284,7 @@ export function isSubmittedFormInputResult(result: unknown): boolean {
 
 function latestUserMessageIndex(messages: readonly Message[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
+    if (!objectHasOwn(messages, index)) continue;
     if (messages[index] && isGenuineUserTurnMessage(messages[index]!)) {
       return index;
     }
@@ -287,13 +296,19 @@ function latestUserMessageIndex(messages: readonly Message[]): number {
 export function hasSubmittedFormInputResult(messages: readonly Message[]): boolean {
   const startIndex = latestUserMessageIndex(messages) + 1;
 
-  return messages.slice(startIndex).some((message) =>
-    message.parts.some((part) =>
-      isToolResultPart(part) &&
-      part.toolName === FORM_INPUT_TOOL_ID &&
-      isSubmittedFormInputResult(part.result)
-    )
-  );
+  for (let index = startIndex; index < messages.length; index++) {
+    if (!objectHasOwn(messages, index)) continue;
+    const parts = messages[index]!.parts;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      if (!objectHasOwn(parts, partIndex)) continue;
+      const part = parts[partIndex]!;
+      if (
+        isToolResultPart(part) && part.toolName === FORM_INPUT_TOOL_ID &&
+        isSubmittedFormInputResult(part.result)
+      ) return true;
+    }
+  }
+  return false;
 }
 
 export function filterToolsAfterSubmittedFormInput(

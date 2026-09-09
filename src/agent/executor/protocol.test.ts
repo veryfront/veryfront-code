@@ -66,6 +66,35 @@ async function tick(): Promise<void> {
 }
 
 describe("executor byte protocol", () => {
+  it("reads native transport bytes without consulting an overridden reader method", async () => {
+    const frame = envelope({
+      type: "data",
+      id: 1,
+      index: 0,
+      value: { text: "Synthetic private frame" },
+    });
+    const reader = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encodeExecutorFrame(frame));
+        controller.close();
+      },
+    }).getReader();
+    const original = reader.read;
+    let reads = 0;
+    Object.defineProperty(reader, "read", {
+      value: () => {
+        reads++;
+        return original.call(reader);
+      },
+    });
+    try {
+      assertEquals(await Array.fromAsync(readExecutorFrames(reader)), [frame]);
+      assertEquals(reads, 0);
+    } finally {
+      reader.releaseLock();
+    }
+  });
+
   it("decodes fragmented prefixes, split UTF-8 and coalesced frames", async () => {
     const frames = [
       envelope({ type: "hello" }),

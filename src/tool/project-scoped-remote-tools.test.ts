@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertEquals,
   assertRejects,
@@ -36,6 +36,24 @@ function toolDefinition(input: {
     ...(input.annotations !== undefined ? { annotations: input.annotations } : {}),
   };
 }
+
+describe("private remote source listing", () => {
+  it("lists indexed source entries without invoking a caller-supplied array iterator", async () => {
+    const sources: RemoteToolSource[] = [{
+      id: "synthetic-source",
+      listTools: () => Promise.resolve([toolDefinition({ name: "read_file" })]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }];
+    Object.defineProperty(sources, Symbol.iterator, {
+      value: () => {
+        throw new Error("Source-array iterator must not receive private sources");
+      },
+    });
+    assertEquals(await listProjectScopedRemoteToolNames(sources, { projectId: null }), [
+      "read_file",
+    ]);
+  });
+});
 
 it("filterProjectScopedRemoteToolDefinitions hides project-bound tools when no active project exists", () => {
   const tools = [

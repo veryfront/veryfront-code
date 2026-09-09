@@ -1,3 +1,6 @@
+import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
@@ -13,22 +16,21 @@ const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_CREDENTIAL_BYTES = MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES;
-const encoder = new TextEncoder();
+const encoder = new PrivateTextEncoder();
 const IntrinsicReflectApply = Reflect.apply;
 const RegExpPrototypeTest = RegExp.prototype.test;
-const TextEncoderEncode = TextEncoder.prototype.encode;
 const INFERENCE_CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
-    return encoder.encode(JSON.stringify(value)).byteLength <= maxBytes;
+    return privateByteLength(encodePrivateText(privateJsonStringify(value), encoder)) <= maxBytes;
   } catch {
     return false;
   }
 }
 
 function isWithinUtf8SizeLimit(value: string, maxBytes: number): boolean {
-  return (IntrinsicReflectApply(TextEncoderEncode, encoder, [value]) as Uint8Array).byteLength <=
+  return privateByteLength(encodePrivateText(value, encoder)) <=
     maxBytes;
 }
 

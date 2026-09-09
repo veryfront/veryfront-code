@@ -19,6 +19,71 @@ function reduceEvents(events: readonly StreamProtocolEvent[]) {
 }
 
 describe("stream lifecycle reducer", () => {
+  for (const target of ["reasoning", "tools", "snapshot deltas", "map deltas"] as const) {
+    it(`clones ${target} without dispatching through own collection hooks`, () => {
+      const state = reduceEvents([
+        { type: "reasoning_content", id: "r1", delta: "private reasoning" },
+        { type: "tool_input_start", toolCallId: "t1", toolName: "inspect" },
+        { type: "tool_input_content", toolCallId: "t1", delta: '{"text":"private input"}' },
+      ]);
+      state.snapshot.tools[0]!.inputDeltas = [...state.snapshot.tools[0]!.inputDeltas];
+      const values = target === "reasoning"
+        ? state.snapshot.reasoning
+        : target === "tools"
+        ? state.snapshot.tools
+        : target === "snapshot deltas"
+        ? state.snapshot.tools[0]!.inputDeltas
+        : state.tools.get("t1")!.inputDeltas;
+      const method = target === "reasoning" || target === "tools" ? "map" : Symbol.iterator;
+      const original = values[method];
+      let observations = 0;
+      Object.defineProperty(values, method, {
+        value: function (...args: unknown[]) {
+          observations++;
+          return Reflect.apply(original, values, args);
+        },
+      });
+
+      const reduced = reduceStreamSignal(state, protocol({ type: "step_start" }), 10);
+
+      assertEquals(observations, 0);
+      assertEquals(reduced.state.snapshot.reasoning, [{ id: "r1", text: "private reasoning" }]);
+      assertEquals(reduced.state.snapshot.tools[0]!.inputDeltas, ['{"text":"private input"}']);
+      assertEquals(reduced.state.tools.get("t1")!.inputDeltas, ['{"text":"private input"}']);
+      assertEquals(reduced.frames[0]!.event.type, "step_start");
+    });
+  }
+
+  it("isolates cloned records and deltas while retaining tool payload identity and order", () => {
+    const input = { nested: { text: "private input" } };
+    const state = reduceEvents([
+      { type: "reasoning_content", id: "r1", delta: "private reasoning" },
+      { type: "tool_input_start", toolCallId: "b", toolName: "inspect" },
+      { type: "tool_input_content", toolCallId: "b", delta: '{"nested":' },
+      { type: "tool_input_ready", toolCallId: "b", toolName: "inspect", input },
+      { type: "tool_input_start", toolCallId: "a", toolName: "inspect" },
+    ]);
+    const cloned = reduceStreamSignal(state, protocol({ type: "step_start" }), 10).state;
+    assertEquals(cloned.snapshot.tools.map((tool) => tool.id), ["b", "a"]);
+    assertEquals([...cloned.tools.keys()], ["b", "a"]);
+    assertEquals(cloned.tools.get("b")!.input === input, true);
+    assertEquals(cloned.snapshot.tools[0]!.input === input, true);
+    assertEquals(
+      cloned.snapshot.tools[0]!.inputDeltas === cloned.tools.get("b")!.inputDeltas,
+      false,
+    );
+    cloned.snapshot.reasoning[0]!.text = "changed";
+    (cloned.snapshot.tools[0]!.inputDeltas as string[]).push("snapshot change");
+    (cloned.tools.get("b")!.inputDeltas as string[]).push("map change");
+    cloned.snapshot.usage.inputTokens = 10;
+    assertEquals(state.snapshot.reasoning[0]!.text, "private reasoning");
+    assertEquals(state.snapshot.tools[0]!.inputDeltas, ['{"nested":']);
+    assertEquals(state.tools.get("b")!.inputDeltas, ['{"nested":']);
+    assertEquals(state.snapshot.usage.inputTokens, 0);
+    assertEquals(cloned.snapshot.tools[0]!.inputDeltas, ['{"nested":', "snapshot change"]);
+    assertEquals(cloned.tools.get("b")!.inputDeltas, ['{"nested":', "map change"]);
+  });
+
   it("balances reasoning before text and creates a new text identity after end", () => {
     let state = createInitialReducerState();
     const events = [

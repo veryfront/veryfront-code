@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isDynamicTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
 import {
@@ -15,6 +16,9 @@ import type {
   StreamToolSnapshot,
   StreamUsage,
 } from "./types.ts";
+
+const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
 
 export interface RuntimeStreamProviderOptions {
   availableToolNames: ReadonlySet<string> | null;
@@ -173,7 +177,12 @@ function findTool(
   snapshot: Readonly<StreamSnapshot>,
   toolCallId: string,
 ): StreamToolSnapshot | undefined {
-  return snapshot.tools.find((tool) => tool.id === toolCallId);
+  for (let index = 0; index < snapshot.tools.length; index++) {
+    if (!hasOwn(snapshot.tools, index)) continue;
+    const tool = snapshot.tools[index]!;
+    if (tool.id === toolCallId) return tool;
+  }
+  return undefined;
 }
 
 function isToolAvailable(
@@ -313,11 +322,11 @@ function toolReadySignals(
   const streamed = prior?.inputText ?? "";
   const finalText = typeof typed.input === "string"
     ? typed.input
-    : JSON.stringify(typed.input ?? {});
+    : privateJsonStringify(typed.input ?? {});
   const merged = mergeToolCallInput(streamed, finalText);
   const parsed = parseCanonicalToolInput(
     typeof typed.input === "object" && typed.input !== null &&
-      !Array.isArray(typed.input)
+      !isArray(typed.input)
       ? typed.input
       : merged,
   );

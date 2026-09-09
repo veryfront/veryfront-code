@@ -30,6 +30,27 @@ function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
 }
 
 describe("runtime-bridge", () => {
+  it("copies request and result arrays without consulting their own iterators", async () => {
+    let reads = 0;
+    const messages = [{ role: "user" as const, content: "synthetic private request" }];
+    const content = [{ type: "text" as const, text: "synthetic private result" }];
+    for (const value of [messages, content]) {
+      Object.defineProperty(value, Symbol.iterator, {
+        get() {
+          reads++;
+          return Array.prototype[Symbol.iterator];
+        },
+      });
+    }
+    const model = createGenerateModel("test", "test/private-arrays", async () => ({
+      content,
+      finishReason: "stop",
+      usage: {},
+    }));
+    const result = await generateText({ model, messages });
+    assertEquals(result.text, "synthetic private result");
+    assertEquals(reads, 0);
+  });
   it("preserves structured system messages and cache metadata at model dispatch", async () => {
     let capturedPrompt: unknown;
     const model = createGenerateModel("test", "test/layered-system", async (options) => {

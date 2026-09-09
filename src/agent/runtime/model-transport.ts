@@ -16,6 +16,7 @@ import {
 import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
+  resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
@@ -181,6 +182,7 @@ export interface ResolveAgentModelTransportInput {
   modelOverride: string | undefined;
   mode: "generate" | "stream";
   resolveModelRuntime?: AgentModelRuntimeResolver;
+  modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
 }
 
 function resolveReasoningWithDefaults(
@@ -223,10 +225,21 @@ export async function resolveAgentModelTransport(
       mode: input.mode,
     });
 
-  const providerOptions = resolveProviderOptionsWithDefaults(
+  const privateThinking = privatelyResolvedModel
+    ? input.modelCallThinking ?? resolveVeryfrontCloudModelThinking(resolvedModelString)
+    : undefined;
+  const privateReasoning = resolveVeryfrontCloudReasoningOption(
     resolvedModelString,
-    transport?.providerOptions,
+    privateThinking,
   );
+  // Private managed calls carry audited neutral controls. Only adaptive
+  // Anthropic thinking needs native call data; legacy native temperature
+  // overrides would replace the broker's persisted neutral input.
+  const providerOptions = privatelyResolvedModel
+    ? privateThinking?.enabled && privateReasoning === undefined
+      ? resolveVeryfrontCloudThinkingProviderOptions(resolvedModelString, privateThinking)
+      : undefined
+    : resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions);
   const languageModel = privatelyResolvedModel ?? transport?.model ??
     resolveModel(resolvedModelString);
   const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
@@ -238,7 +251,7 @@ export async function resolveAgentModelTransport(
     ...(providerOptionKey ? { providerOptionKey } : {}),
     headers: transport?.headers,
     providerOptions,
-    reasoning: resolveReasoningWithDefaults(
+    reasoning: privatelyResolvedModel ? privateReasoning : resolveReasoningWithDefaults(
       resolvedModelString,
       transport?.reasoning,
       providerOptions,

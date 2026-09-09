@@ -1,3 +1,16 @@
+import {
+  concatPrivateArrays,
+  everyPrivateArray,
+  filterPrivateArray,
+  flatMapPrivateArray,
+  joinPrivateArray,
+} from "#veryfront/security/private-array.ts";
+import {
+  privateTextIndexOf,
+  privateTextSlice,
+  privateTextTrimEnd,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { AgentConfig, AgentSystem, Message } from "../types.ts";
@@ -29,6 +42,7 @@ import { getProviderToolProfile } from "./provider-tool-compat.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
 
+const ArrayIsArray = Array.isArray;
 const IntrinsicSet = Set;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetAdd = Set.prototype.add;
@@ -122,20 +136,24 @@ const INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER = "End integration tool discovery
 function removeIntegrationToolDiscoveryStatusText(systemPrompt: string): string {
   let result = systemPrompt;
   while (true) {
-    const headerIndex = result.indexOf(INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER);
+    const headerIndex = privateTextIndexOf(result, INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER);
     if (headerIndex < 0) return result;
-    const footerIndex = result.indexOf(
+    const footerIndex = privateTextIndexOf(
+      result,
       INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER,
       headerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER.length,
     );
     if (footerIndex < 0) return result;
 
-    result = [
-      result.slice(0, headerIndex).trimEnd(),
-      result.slice(
-        footerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER.length,
-      ).trimStart(),
-    ].filter(Boolean).join("\n\n");
+    result = joinPrivateArray(
+      filterPrivateArray([
+        privateTextTrimEnd(privateTextSlice(result, 0, headerIndex)),
+        privateTextTrimStart(
+          privateTextSlice(result, footerIndex + INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER.length),
+        ),
+      ], (text) => text.length > 0),
+      "\n\n",
+    );
   }
 }
 
@@ -144,7 +162,7 @@ function removeIntegrationToolDiscoveryStatus(systemPrompt: AgentSystem): AgentS
     return removeIntegrationToolDiscoveryStatusText(systemPrompt);
   }
 
-  return systemPrompt.flatMap((message) => {
+  return flatMapPrivateArray(systemPrompt, (message) => {
     const content = removeIntegrationToolDiscoveryStatusText(message.content);
     return content.length > 0 ? [{ ...message, content }] : [];
   });
@@ -178,7 +196,10 @@ export function withIntegrationToolDiscoveryStatus(
     `${INTEGRATION_TOOL_DISCOVERY_STATUS_HEADER}\n\n${message}\n\n${INTEGRATION_TOOL_DISCOVERY_STATUS_FOOTER}`;
   return typeof basePrompt === "string"
     ? basePrompt.length > 0 ? `${basePrompt}\n\n${statusBlock}` : statusBlock
-    : [...basePrompt, { role: "system", content: statusBlock }];
+    : concatPrivateArrays<ChatSystemMessage>(basePrompt, [{
+      role: "system",
+      content: statusBlock,
+    }]);
 }
 
 /**
@@ -198,7 +219,8 @@ function getTrustedAllowedSkillIds(
   input: PrepareAgentRuntimeStepInput,
 ): readonly string[] | undefined {
   const value = input.toolContextBase?.allowedSkillIds ?? input.runtimeContext?.allowedSkillIds;
-  return Array.isArray(value) && value.every((entry): entry is string => typeof entry === "string")
+  return ArrayIsArray(value) &&
+      everyPrivateArray(value, (entry): entry is string => typeof entry === "string")
     ? value
     : undefined;
 }
@@ -331,7 +353,7 @@ export async function prepareAgentRuntimeStep(
     )
     : baseSystemPrompt;
   const systemPrompt = typeof baseSystemPrompt === "string" &&
-      Array.isArray(instructionsWithToolInventory)
+      ArrayIsArray(instructionsWithToolInventory)
     ? flattenSystemInstructions(instructionsWithToolInventory)
     : instructionsWithToolInventory;
 
