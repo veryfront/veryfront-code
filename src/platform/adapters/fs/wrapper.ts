@@ -7,6 +7,7 @@ import type {
   SourceSnapshotFreshnessOptions,
   WatchOptions,
 } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
 import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
 import {
   captureByteReadCapabilities,
@@ -128,6 +129,9 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   ) => Promise<Uint8Array>;
   readonly createFileBytesExclusive?: (path: string, content: Uint8Array) => Promise<void>;
   readOptionalTextFile(path: string): Promise<string>;
+  readonly readDependencyMetadataHistory?: (
+    signal?: AbortSignal,
+  ) => Promise<DependencyMetadataHistory>;
   readdir(path: string): Promise<DirectoryEntry[]>;
   shutdown(): Promise<void>;
 }
@@ -200,6 +204,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     | undefined
     | Promise<string | undefined>;
   readonly getSourceSnapshotIdentity?: () => string | undefined | Promise<string | undefined>;
+  readonly readDependencyMetadataHistory?: (
+    signal?: AbortSignal,
+  ) => Promise<DependencyMetadataHistory>;
   #textFileReader: CapturedTextFileReader;
   #contextRunner: CapturedContextRunner | undefined;
 
@@ -306,6 +313,16 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
           | undefined
           | Promise<string | undefined>;
     }
+    const dependencyMetadataHistory = captureOptionalMethod(
+      fsAdapter,
+      "readDependencyMetadataHistory",
+    );
+    if (dependencyMetadataHistory !== undefined) {
+      this.readDependencyMetadataHistory = (signal?: AbortSignal) =>
+        IntrinsicReflectApply(dependencyMetadataHistory, fsAdapter, [signal]) as Promise<
+          DependencyMetadataHistory
+        >;
+    }
     const runWithContext = captureOptionalMethod(fsAdapter, "runWithContext");
     if (runWithContext !== undefined) {
       const contextRunner: CapturedContextRunner = <T>(
@@ -350,6 +367,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
         "getSourceSnapshotVersion",
         "getSourceSnapshotFingerprint",
         "getSourceSnapshotIdentity",
+        "readDependencyMetadataHistory",
       ] as const
     ) {
       publishFrozen(this, key, this[key]);

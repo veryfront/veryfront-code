@@ -7,7 +7,7 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import { DENO_ONLY_TESTS } from "../../tests/deno-only-tests.mjs";
 import { discoverTests } from "./test-layout.ts";
-import { LEAF_TEST_SUITES } from "./suites.ts";
+import { LEAF_TEST_SUITES, UNIT_CWD_FILES } from "./suites.ts";
 
 export type SuitePlanId =
   | "unit:parallel"
@@ -70,11 +70,6 @@ const UNIT_ROOTS = (() => {
   }
   return unit.pathSelectors.filter((root) => !UNPLANNABLE_UNIT_ROOTS.has(root));
 })();
-const UNIT_CWD_FILES = [
-  "cli/commands/skills/validate.test.ts",
-  "src/platform/compat/process.test.ts",
-  "src/testing/cwd.test.ts",
-];
 // These tests own process-global lifecycle and require a quiet process.
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",

@@ -106,6 +106,17 @@ export function hashDependencyPins(
   }));
 }
 
+/** Reapply the captured renderer overrides to a raw package dependency map. */
+export function applyConfiguredDependencyOverrides(
+  dependencies: Readonly<Record<string, string>>,
+  configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
+): Record<string, string> {
+  const effective = copyRecord(dependencies) as Record<string, string>;
+  if (configuredVersions?.react) effective.react = configuredVersions.react.effective;
+  if (configuredVersions?.veryfront) effective.veryfront = configuredVersions.veryfront.effective;
+  return effective;
+}
+
 export function freezeConfiguredVersions(
   configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
 ): DependencyPinningSnapshot["configuredVersions"] {

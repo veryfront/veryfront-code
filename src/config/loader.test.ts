@@ -5889,13 +5889,11 @@ export default config as const;
         const control = await fastestLoad(
           "vf-config-dense-csi-control-",
           `throw new Error("aaaaa".repeat(${repeats}));\n`,
-          1,
         );
         const controlMs = Math.max(1, control.ms);
         const { ms: probeMs, error } = await fastestLoad(
           "vf-config-dense-csi-probe-",
           `throw new Error((String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
-          1,
         );
 
         assertEquals(
@@ -5912,13 +5910,11 @@ export default config as const;
         const control = await fastestLoad(
           "vf-config-spaced-csi-control-",
           `throw new Error("a".repeat(${gap + 5}).repeat(${repeats}));\n`,
-          1,
         );
         const controlMs = Math.max(1, control.ms);
         const { ms: probeMs, error } = await fastestLoad(
           "vf-config-spaced-csi-probe-",
           `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
-          1,
         );
 
         assertEquals(
@@ -5935,13 +5931,11 @@ export default config as const;
         const control = await fastestLoad(
           "vf-config-spaced-colon-csi-control-",
           `throw new Error("a".repeat(${gap + 4}).repeat(${repeats}));\n`,
-          1,
         );
         const controlMs = Math.max(1, control.ms);
         const { ms: probeMs, error } = await fastestLoad(
           "vf-config-spaced-colon-csi-probe-",
           `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[:H").repeat(${repeats}));\n`,
-          1,
         );
 
         assertEquals(

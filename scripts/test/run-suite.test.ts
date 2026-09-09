@@ -18,9 +18,12 @@ import {
   DENO_SUITE_PROFILES,
   LOOPBACK_ALLOW_NET,
   parseDenoSuiteArgs,
-  partitionDenoSuiteFiles,
 } from "./run-deno-suite.ts";
-import { LEAF_TEST_SUITES, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
+import {
+  LEAF_TEST_SUITES,
+  partitionDenoSuiteFiles,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 import { classifyTestPath } from "./test-layout.ts";
 import {
   formatSuitePlan,
@@ -30,6 +33,8 @@ import {
 } from "./run-suite.ts";
 
 const UNIT_CWD_FILES = [
+  "cli/auth/login.test.ts",
+  "cli/commands/build/embedded-preset-flags.test.ts",
   "cli/commands/skills/validate.test.ts",
   "src/platform/compat/process.test.ts",
   "src/testing/cwd.test.ts",
@@ -386,6 +391,31 @@ describe("migration command surface", () => {
     assert(cliIntegration.some((arg) => arg.startsWith("--deny-net=")));
     assert(cliIntegration.includes("--trace-leaks"));
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
+  });
+
+  it("gives cwd-mutating fixtures their own process without serializing peers", () => {
+    const mutators = [
+      ...UNIT_CWD_FILES,
+      "tests/integration/adapters/shell-adapter.test.ts",
+      "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
+      "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
+    ];
+    const peers = [
+      "cli/app/state.test.ts",
+      "tests/docs/error-docs-links.test.ts",
+    ];
+    for (const limit of [2, 50, null]) {
+      const batches = partitionDenoSuiteFiles([...peers, ...mutators], limit);
+      assertEquals(batches.flat().sort(), [...peers, ...mutators].sort());
+      for (const mutator of mutators) {
+        assertEquals(batches.find((batch) => batch.includes(mutator)), [
+          mutator,
+        ]);
+      }
+      assert(
+        batches.some((batch) => peers.every((peer) => batch.includes(peer))),
+      );
+    }
   });
 
   it("keeps the cross-file cwd exclusion probe concurrent", () => {

@@ -17,6 +17,7 @@ import type {
   DependencyArtifactContentType,
 } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import type { DependencyMetadataHistory } from "../dependency-metadata-history.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
 const IntrinsicObjectDefineProperty = Object.defineProperty;
@@ -295,6 +296,18 @@ export class VeryfrontApiClient {
 
   getProject(projectRef?: string) {
     return this.operations.getProject(projectRef ?? this.requireProjectSlug());
+  }
+
+  readDependencyMetadataHistory(
+    branch: string | null,
+    signal?: AbortSignal,
+  ): Promise<DependencyMetadataHistory> {
+    return this.operations.readDependencyMetadataHistory(
+      this.requireProjectSlug(),
+      this.getProjectId(),
+      branch,
+      signal,
+    );
   }
 
   // =============================================================================

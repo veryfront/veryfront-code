@@ -12,27 +12,37 @@ import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-bundler-esbuild";
 import { TailwindCSSProcessor } from "@veryfront/ext-css-tailwind";
 import { register } from "#veryfront/extensions/contracts.ts";
 import { installMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createPreparedRenderModuleLoader } from "#veryfront/rendering/prepared-module-loader.ts";
 
-const [moduleUrl, coordinator, projectDir] = process.argv.slice(2);
-if (!moduleUrl || !coordinator || !projectDir) throw new Error("Missing fixture arguments");
+const [moduleUrl, coordinator, projectDir, bindingData] = process.argv.slice(2);
+if (!moduleUrl || !coordinator || !projectDir || !bindingData) {
+  throw new Error("Missing fixture arguments");
+}
+const expected = JSON.parse(bindingData);
 const modules = await import(moduleUrl);
 const adapter = await runtime.get();
 const imports = new AsyncLocalStorage<string[]>();
+const loader = await createPreparedRenderModuleLoader({
+  binding: expected.binding,
+  projectDir,
+  sources: modules.sources,
+  packages: modules.packages,
+  maxEntries: 64,
+});
+if (
+  loader.identity.scopeId !== expected.identity.scopeId ||
+  loader.identity.generationId !== expected.identity.generationId
+) throw new Error("Prepared loader generation did not match its host binding");
 Object.defineProperty(adapter, "moduleLoader", {
   value: Object.freeze({
     importModule: async (reference: RuntimeModuleReference) => {
       const key = reference.kind === "package"
         ? reference.specifier
         : relative(projectDir, reference.path).replaceAll("\\", "/");
-      const table = reference.kind === "package" ? modules.packages : modules.sources;
-      const load = Object.getOwnPropertyDescriptor(table, key)?.value;
-      if (typeof load !== "function") {
-        throw new Error("Module was not prepared for this generation");
-      }
       const requestImports = imports.getStore();
       if (!requestImports) throw new Error("Prepared imports require a request scope");
       requestImports.push(key);
-      return await load();
+      return await loader.importModule(reference);
     },
   }),
 });
