@@ -5,6 +5,8 @@ import {
   mapPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   createProjectScopedRemoteToolCatalog,
   createRemoteMCPToolSource,
@@ -44,6 +46,8 @@ export const VERYFRONT_API_MCP_SOURCE_ID = "veryfront-platform-mcp";
 export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
+const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const stringReplace = String.prototype.replace;
@@ -149,7 +153,7 @@ export function constrainRuntimeRemoteToolSources(
     return sources;
   }
 
-  const policy = { allow: [...new Set(allowedToolNames)] };
+  const policy = { allow: [...createPrivateSet(allowedToolNames)] };
   const sourcesToConstrain = sources ?? getActiveRuntimeRemoteToolSources() ?? [];
   return mapPrivateArray(sourcesToConstrain, (source) => createMcpToolPolicySource(source, policy));
 }
@@ -231,7 +235,7 @@ function withServerProject(
 }
 
 function withoutProjectReference(args: unknown): Record<string, unknown> {
-  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+  if (typeof args !== "object" || args === null || isArray(args)) {
     return {};
   }
   const { project_reference: _untrustedProjectReference, ...toolInput } = args as Record<
@@ -341,7 +345,7 @@ export function getRuntimeRemoteToolSources(
   agentId = config.id,
 ): RemoteToolSource[] | undefined {
   const runtimeConfig = config as AgentConfig & RuntimeRemoteToolConfig;
-  const configuredInjectedSources = Object.hasOwn(runtimeConfig, "__vfRemoteToolSources")
+  const configuredInjectedSources = hasOwn(runtimeConfig, "__vfRemoteToolSources")
     ? runtimeConfig.__vfRemoteToolSources ?? []
     : undefined;
   const hasExplicitMcpServers = config.mcpServers !== undefined;
@@ -356,8 +360,12 @@ export function getRuntimeRemoteToolSources(
     (implicitToolNames.length > 0 && configuredInjectedSources === undefined
       ? [{ kind: "veryfront-api", toolPolicy: { allow: implicitToolNames } }]
       : []);
-  const configuredFirstPartyServersBySourceId = new Map<string, AgentVeryfrontMcpServerConfig>();
-  for (const server of configuredServers) {
+  const configuredFirstPartyServersBySourceId = createPrivateMap<
+    string,
+    AgentVeryfrontMcpServerConfig
+  >();
+  for (let index = 0; index < configuredServers.length; index++) {
+    const server = configuredServers[index]!;
     if (!isHttpMcpServerConfig(server)) {
       configuredFirstPartyServersBySourceId.set(getFirstPartyMcpSourceId(server), server);
     }
@@ -407,7 +415,10 @@ export function getRuntimeRemoteToolSources(
     }
     return [];
   });
-  const remoteToolSources = concatPrivateArrays(policyWrappedInjectedSources, configuredSources);
+  const remoteToolSources = concatPrivateArrays(
+    policyWrappedInjectedSources,
+    configuredSources,
+  );
 
   if (remoteToolSources.length > 0) {
     return remoteToolSources;

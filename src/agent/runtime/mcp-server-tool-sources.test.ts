@@ -11,6 +11,7 @@ import {
   constrainRuntimeRemoteToolSources,
   getRequestedUnresolvedBooleanToolNames,
   getRuntimeRemoteToolSources,
+  type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "./mcp-server-tool-sources.ts";
@@ -893,4 +894,46 @@ Deno.test("getRuntimeRemoteToolSources fails closed without Veryfront server ide
     "VERYFRONT_API_TOKEN",
   );
   assertEquals(error.slug, "config-invalid");
+});
+
+it("keeps injected remote facades out of source collection hooks", async () => {
+  let observations = 0;
+  let executions = 0;
+  const source: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool: () => {
+      executions++;
+      return Promise.resolve({ ok: true });
+    },
+  };
+  const sources = [source];
+  const prototype = Object.create(Array.prototype);
+  for (const key of ["map", "filter", "some", Symbol.iterator] as const) {
+    const original = Array.prototype[key];
+    Object.defineProperty(prototype, key, {
+      value: function (this: unknown[], ...args: unknown[]) {
+        observations++;
+        return Reflect.apply(original, this, args);
+      },
+    });
+  }
+  Object.setPrototypeOf(sources, prototype);
+  const config = {
+    system: "Use the selected remote tools.",
+    mcpServers: [{ kind: "veryfront-api" as const, toolPolicy: { allow: ["allowed"] } }],
+    __vfRemoteToolSources: sources,
+  } satisfies RuntimeRemoteToolConfig & Parameters<typeof getRuntimeRemoteToolSources>[0];
+  const selected = getRuntimeRemoteToolSources(config)!;
+  const constrained = constrainRuntimeRemoteToolSources(sources, ["allowed"])!;
+  const bound = bindRuntimeRemoteToolSourcesToCredentialOwner(sources, {
+    agentId: "synthetic-agent",
+  })!;
+  assertEquals(observations, 0);
+  assertEquals(selected.length, 1);
+  assertEquals(bound.length, 1);
+  assertThrows(() => selected[0]!.executeTool("blocked", {}), Error, "not allowed");
+  assertThrows(() => constrained[0]!.executeTool("blocked", {}), Error, "not allowed");
+  assertEquals(await selected[0]!.executeTool("allowed", {}), { ok: true });
+  assertEquals(executions, 1);
 });
