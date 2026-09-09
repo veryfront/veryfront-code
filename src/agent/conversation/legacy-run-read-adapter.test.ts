@@ -1596,6 +1596,33 @@ describe("conversation run lifecycle read adapter", () => {
       assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
     });
 
+    it("strips version 1 timing stamps from the rebuilt CUSTOM twin's value", () => {
+      // ConversationRunEventEncoder.stampElapsed() (run-events.ts), which also
+      // builds this native record in production, stamps elapsedMs/emittedAt
+      // onto every durable event's own top level -- native records included --
+      // whenever it has a real timing anchor. Mirror that shape here rather
+      // than relying on the builder's bare durable output.
+      //
+      // URL_CITED, not TOOL_CALL_STATUS_CHANGED: the version 1 reducer
+      // special-cases a "custom" signal named "tool-call-status"
+      // (reducer.ts's `case "custom":"), turning a "pending_input"/
+      // "streaming_input" status into a telemetry frame and swallowing every
+      // other status without emitting any semantic "custom" frame at all --
+      // so a tool-call-status case here would compare `[]` against `[]` on
+      // both sides and could never catch a value-leak regression.
+      const { native, customTwin } = cases.find((entry) => entry.description === "URL_CITED")!;
+      const stampedNative = { ...native, elapsedMs: 42, emittedAt: 1757400000000 };
+
+      const frames = customFramesFor(1, stampedNative);
+      assertEquals(frames.length > 0, true, "the case must exercise a real semantic custom frame");
+      assertEquals(frames, customFramesFor(1, customTwin));
+      for (const frame of frames) {
+        const data = (frame as { data: unknown }).data as Record<string, unknown>;
+        assertEquals(Object.hasOwn(data, "elapsedMs"), false);
+        assertEquals(Object.hasOwn(data, "emittedAt"), false);
+      }
+    });
+
     it("still rejects an unrelated unknown type for version 2", () => {
       const result = readConversationRunLifecycleFrames({
         streamProtocolVersion: 2,

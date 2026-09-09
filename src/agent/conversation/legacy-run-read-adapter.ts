@@ -14,14 +14,27 @@ const NATIVE_STORED_TYPE_TO_LEGACY: ReadonlyMap<string, NativeRunEventDefinition
   NATIVE_RUN_EVENTS.map((definition) => [definition.storedType as string, definition]),
 );
 
+// Which native events carry their CUSTOM twin's whole original chunk (type
+// field included) as the value, rather than a synthesized shape. That split
+// is a domain fact about each builder (buildUrlCitedEvent,
+// buildDocumentCitedEvent, and buildFileAttachedEvent all destructure a
+// source chunk), not something recorded on NativeRunEventDefinition itself,
+// so it cannot be derived from NATIVE_RUN_EVENTS without adding a field to
+// that module. Keep this trio in sync with those three builders if a new
+// citation- or file-shaped native event is ever added.
 const NATIVE_CITATION_AND_FILE_STORED_TYPES: ReadonlySet<string> = new Set([
   "URL_CITED",
   "DOCUMENT_CITED",
   "FILE_ATTACHED",
 ]);
 
-// The version 2 writer stamps these onto every durable record's own top
-// level, native records included. A CUSTOM record never leaks them into its
+// Stamped onto every durable event's own top level -- native records
+// included -- by both writers: the version 2 writer's `publish()`
+// (lifecycle-run-event-adapter.ts) adds the five protocol envelope fields,
+// and the version 1 `ConversationRunEventEncoder.stampElapsed()`
+// (run-events.ts), which also builds the native durable records for
+// TOOL_CALL_STATUS_CHANGED/URL_CITED/DOCUMENT_CITED/FILE_ATTACHED, adds
+// `elapsedMs`/`emittedAt`. A CUSTOM record never leaks any of these into its
 // `value` because that value is nested; a native record's payload sits at
 // the same level as these, so they must be stripped explicitly here or they
 // would leak into the rebuilt CUSTOM value.
@@ -32,6 +45,8 @@ const DURABLE_ENVELOPE_KEYS = [
   "attempt_index",
   "logical_sequence",
   "idempotency_key",
+  "elapsedMs",
+  "emittedAt",
 ] as const;
 
 /**
