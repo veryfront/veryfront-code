@@ -6,8 +6,7 @@
  *
  * This provider is incomplete for production shared storage. Unconditional
  * writes followed by verification cannot guarantee immutable publication across
- * replicas. Optional revision methods require the reserved revisioned key format,
- * and fail-soft backend reads cannot distinguish an outage from missing history.
+ * replicas. Fail-soft backend reads cannot distinguish an outage from missing history.
  * These paths must satisfy the DependencySnapshotStore contract before activation.
  *
  * Captured intrinsics protect the specific private-capability paths covered by
@@ -22,7 +21,7 @@ import {
 } from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
 import type { CacheBackend } from "./types.ts";
 import { createCacheBackend, createDistributedCacheAccessor } from "./backends/factory.ts";
-import { captureRevisionedCacheBackendMethods } from "./capabilities.ts";
+import { buildRevisionedCacheKey, captureRevisionedCacheBackendMethods } from "./capabilities.ts";
 import { assertCacheValueWithinLimit, captureBoundedCacheRead } from "./bounded-read.ts";
 
 const apply = Reflect.apply;
@@ -140,8 +139,9 @@ export function createCacheBackedDependencySnapshotStore(
       throwIfAborted(signal);
       assertCacheValueWithinLimit(value, MAX_SNAPSHOT_VALUE_BYTES);
       const backend = await requireBackend();
-      const cacheKey = recordKey(namespace, key);
       const revisioned = captureRevisionedCacheBackendMethods(backend);
+      const logicalKey = recordKey(namespace, key);
+      const cacheKey = revisioned === null ? logicalKey : buildRevisionedCacheKey(logicalKey);
 
       const existingRaw = revisioned === null ? await readRecordRaw(backend, cacheKey) : undefined;
       const observed = revisioned === null
@@ -201,7 +201,11 @@ export function createCacheBackedDependencySnapshotStore(
     read: async (namespace, key, signal) => {
       throwIfAborted(signal);
       const backend = await requireBackend();
-      const raw = await readRecordRaw(backend, recordKey(namespace, key));
+      const logicalKey = recordKey(namespace, key);
+      const cacheKey = captureRevisionedCacheBackendMethods(backend) === null
+        ? logicalKey
+        : buildRevisionedCacheKey(logicalKey);
+      const raw = await readRecordRaw(backend, cacheKey);
       if (raw === null) return null;
       const record = decodeRecord(raw);
       // The contract reserves null for missing or expired history; a backend

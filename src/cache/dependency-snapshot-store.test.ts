@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend, CacheRevisionMutation, CacheRevisionSnapshot } from "./types.ts";
+import { buildRevisionedCacheKey } from "./capabilities.ts";
 import { MemoryCacheBackend } from "./backends/memory.ts";
 import { createCacheBackedDependencySnapshotStore } from "./dependency-snapshot-store.ts";
 
@@ -14,6 +15,33 @@ const KEY = "on:54uvgwr2ih7p";
 
 describe("cache/dependency-snapshot-store", () => {
   describe("createCacheBackedDependencySnapshotStore", () => {
+    it("uses the reserved logical key for revisioned publication and subsequent reads", async () => {
+      const expected = buildRevisionedCacheKey(`${NAMESPACE}:${KEY}`);
+      let retained: string | null = null;
+      const backend: CacheBackend = {
+        type: "redis",
+        get: (key) => {
+          assertEquals(key, expected);
+          return Promise.resolve(retained);
+        },
+        set: () => Promise.reject(new Error("Unconditional publication is not allowed")),
+        del: () => Promise.resolve(),
+        getWithRevision: (key) => {
+          assertEquals(key, expected);
+          return Promise.resolve({ value: retained, revision: "synthetic-revision" });
+        },
+        compareExchange: (key, _revision, mutation) => {
+          assertEquals(key, expected);
+          retained = mutation.kind === "set" ? mutation.value : null;
+          return Promise.resolve(true);
+        },
+      };
+      const store = backedStore(backend);
+      const expiresAt = Date.now() + 60_000;
+      await store.publish(NAMESPACE, KEY, "snapshot-bytes", expiresAt);
+      assertEquals(await store.read(NAMESPACE, KEY), { value: "snapshot-bytes", expiresAt });
+    });
+
     it("round-trips a published snapshot record", async () => {
       const store = backedStore(new MemoryCacheBackend());
       const expiresAt = Date.now() + 60_000;
