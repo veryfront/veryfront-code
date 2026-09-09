@@ -9,6 +9,7 @@ import {
 import { getExecutorRuntimeGrantDataSchema } from "./executor-runtime-prepare-schema.ts";
 import { getExecutorPersistenceCapabilityIdsSchema } from "./executor-persistence-schema.ts";
 import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
+import { getExecutorToolIdSchema } from "./executor-tool-schema.ts";
 
 function artifactShape(v: SchemaValidator) {
   return {
@@ -29,12 +30,31 @@ export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
     ...artifactShape(v),
     binding: getExecutorBindingSchema(),
     grant: getExecutorRuntimeGrantDataSchema(),
+    /** Trusted ownership metadata for selected host tools, independent of source listings. */
+    hostToolAliases: v.array(
+      v.object({
+        sourceId: getExecutorToolIdSchema(),
+        toolName: getExecutorToolIdSchema(),
+        ownerAgentId: getExecutorDiscoveryIdSchema(),
+        shortName: getExecutorToolIdSchema(),
+      }).strict(),
+    ).max(4096).optional(),
     capabilities: v.object({
       persistence: getExecutorPersistenceCapabilityIdsSchema(),
       projectSteering: getExecutorDiscoveryIdSchema().optional(),
       conversationUserText: getExecutorDiscoveryIdSchema().optional(),
     }).strict(),
-  }).strict().refine(({ grant, capabilities }) => {
+  }).strict().refine(({ grant, capabilities, hostToolAliases }) => {
+    const aliases = new Set<string>();
+    for (const alias of hostToolAliases ?? []) {
+      const key = JSON.stringify([alias.sourceId, alias.toolName]);
+      if (
+        aliases.has(key) || alias.ownerAgentId !== grant.agentId ||
+        !grant.hostToolFacadeIds.includes(alias.sourceId) ||
+        !grant.allowedToolNames.includes(alias.toolName)
+      ) return false;
+      aliases.add(key);
+    }
     const execution = grant.execution;
     if (
       (execution.projectId !== null || grant.requiredCapabilities?.includes("project-steering")) &&

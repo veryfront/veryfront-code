@@ -21,6 +21,12 @@ import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
 import { executorStateOperations } from "./executor-state-schema.ts";
 import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
 import { FakeTime } from "#std/testing/time";
+import { agent } from "#veryfront/agent/factory.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
+import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
+import { createExecutorDiscovery } from "./executor-discovery.ts";
+import { createExecutorRuntimePreparation } from "./executor-runtime-prepare.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "project-test" };
@@ -334,6 +340,130 @@ function configureCanonical(
 }
 
 describe("managed executor broker", () => {
+  it("executes an owned host tool selected by its short alias through installed runtime facades", async () => {
+    const f = fixture();
+    const model = scriptedModel([
+      { toolCalls: [{ id: "call", name: "owned-paper", input: {} }] },
+      { text: "Complete" },
+    ], { only: "stream", modelId: "synthetic", provider: "openai" });
+    const executions: string[] = [];
+    f.input.model.resolver = () => model;
+    f.input.installation.grant.allowedToolNames = ["fetch-paper"];
+    f.input.installation.grant.hostToolFacadeIds = ["host"];
+    f.input.tools.catalog = new Map([
+      ["fetch-paper", {}],
+      ["owned-paper", { ownerAgentId: "coder", shortName: "fetch-paper" }],
+    ]);
+    f.input.tools.sources = new Map([["host", {
+      allowedToolNames: new Set(["owned-paper"]),
+      context: {},
+      source: {
+        id: "host",
+        listTools: () =>
+          Promise.resolve([{
+            name: "owned-paper",
+            description: "Read a synthetic paper",
+            parameters: { type: "object", properties: {} },
+          }]),
+        executeTool: (name) => {
+          executions.push(name);
+          return Promise.resolve({ text: "Synthetic paper" });
+        },
+      },
+    }]]);
+    f.input.session.connectTransport = ({ binding }) => {
+      const outbound = new TransformStream<Uint8Array, Uint8Array>();
+      const inbound = new TransformStream<Uint8Array, Uint8Array>();
+      const installation = createExecutorRuntimeInstallation({
+        binding,
+        artifact: { version: 1, owner, source, root: "project" },
+        async install(input, signal) {
+          const facades = await createExecutorRuntimeFacades({ input, channel: peer, signal });
+          const discovery = createExecutorDiscovery({
+            binding,
+            source,
+            projectDir: "/synthetic-project",
+            signal,
+            backend: {
+              load: () =>
+                Promise.resolve({
+                  agents: new Map([[
+                    "coder",
+                    agent({
+                      id: "coder",
+                      model: modelId,
+                      system: "Synthetic instructions",
+                      tools: { "fetch-paper": true },
+                    }),
+                  ]]),
+                  tools: new Map(),
+                  skills: new Map(),
+                  prompts: new Map(),
+                  resources: new Map(),
+                  workflows: new Map(),
+                  tasks: new Map(),
+                  schedules: new Map(),
+                  webhooks: new Map(),
+                  evals: new Map(),
+                  errors: [],
+                  sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+                }),
+              cleanup: () => Promise.resolve(),
+            },
+          });
+          return createExecutorRuntimePreparation({
+            binding,
+            source,
+            facades,
+            discovery,
+            grant: {
+              ...input.grant,
+              models: new Map(input.grant.models.map(({ id, ...policy }) => [id, policy])),
+            },
+          });
+        },
+      });
+      const peer = createExecutorChannel({
+        binding,
+        transport: { readable: outbound.readable, writable: inbound.writable },
+        operations: installation.operations,
+      });
+      return Promise.resolve({
+        readable: inbound.readable,
+        writable: outbound.writable,
+        async close() {
+          await installation.close();
+          peer.close();
+          await peer.settled;
+        },
+      });
+    };
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+    try {
+      runtime = await broker.start(f.input);
+      runtime.accept({ kind: "execution" });
+      const stream = await runtime.agent.stream({
+        messages: [{
+          id: "user",
+          role: "user",
+          parts: [{ type: "text", text: "Read" }],
+          timestamp: 1,
+        }],
+        abortSignal: new AbortController().signal,
+      });
+      const events = await Array.fromAsync(stream.toUIMessageStream());
+      assertEquals(model.toolNames(), ["owned-paper"]);
+      assertEquals(executions, ["owned-paper"]);
+      assertEquals(model.callCount, 2);
+      assert(events.some((event) => event.type === "finish"));
+    } finally {
+      await runtime?.close();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   for (const mismatch of ["output tokens", "provider tools", "tool allowlist", "tool source"]) {
     it(`rejects a broker ${mismatch} grant broader than its installation before allocation`, async () => {
       const f = fixture();

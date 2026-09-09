@@ -50,8 +50,12 @@ export async function createExecutorRuntimeFacades(options: {
       const definitions = await source.listTools({ abortSignal: signal });
       const tools: HostToolSet = Object.create(null);
       for (const definition of definitions) {
+        const alias = input.hostToolAliases?.find((entry) =>
+          entry.sourceId === source.id && entry.toolName === definition.name
+        );
         tools[definition.name] = {
           id: definition.name,
+          ...(alias ? { ownerAgentId: alias.ownerAgentId, shortName: alias.shortName } : {}),
           title: definition.title,
           description: definition.description,
           inputSchemaJson: definition.parameters,

@@ -497,3 +497,6 @@ including project-local tools that have no broker capability. The broker resolve
 owned tools first, then validates source capabilities against those exact IDs. Preparation and steering
 refreshes receive the same resolved grant. A shadowed global tool does not gain authority from an owned
 tool's short selector. The catalog must come from trusted source metadata before executor discovery.
+For selected host tools, the broker includes the catalog's owner and short-name mapping in the
+validated installation. Rebuilt executor facades retain that mapping, so an agent's short selector
+continues to select the same canonical tool. Remote source listings do not supply ownership authority.

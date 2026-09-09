@@ -128,7 +128,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
       generation: 1,
       invocationId: input.session.request.invocationId,
     };
-    const installation = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
+    let installation = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
       ...input.installation,
       binding: validationBinding,
     });
@@ -145,6 +145,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     const allowedModelIds = new Set(installation.grant.models.map((model) => model.id));
     const operationInput = snapshotOperationInput(input);
     constrainInstalledOperationGrants(operationInput, installation);
+    installation = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), installation);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
     if (
       installation.grant.execution.kind === "ephemeral" &&
@@ -327,6 +328,25 @@ function constrainInstalledOperationGrants(
     }
   }
   installation.grant.allowedToolNames = [...allowedTools];
+  // Source listings describe callable tools; only trusted ingress supplies ownership.
+  const hostToolAliases: NonNullable<ExecutorRuntimeInstall["hostToolAliases"]> = [];
+  for (const sourceId of installation.grant.hostToolFacadeIds) {
+    for (const toolName of input.tools.sources.get(sourceId)?.allowedToolNames ?? []) {
+      const metadata = input.tools.catalog.get(toolName);
+      if (
+        metadata?.ownerAgentId === installation.grant.agentId && metadata.shortName !== undefined
+      ) {
+        hostToolAliases.push({
+          sourceId,
+          toolName,
+          ownerAgentId: metadata.ownerAgentId,
+          shortName: metadata.shortName,
+        });
+      }
+    }
+  }
+  if (hostToolAliases.length) installation.hostToolAliases = hostToolAliases;
+  else delete installation.hostToolAliases;
 }
 
 function installedToolNames(

@@ -4,6 +4,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
+import {
+  getExecutorRuntimeInstallSchema,
+  parseExecutorInstallation,
+} from "./executor-runtime-install-schema.ts";
+import { assertThrows } from "#veryfront/testing/assert.ts";
 
 const binding = { allocationId: "allocation", invocationId: "invocation", generation: 1 };
 const artifact = {
@@ -68,6 +73,40 @@ function runtime() {
 }
 
 describe("executor runtime installation", () => {
+  it("accepts host aliases only for the installed owner, source, and canonical tool", () => {
+    const alias = {
+      sourceId: "host",
+      toolName: "owned-paper",
+      ownerAgentId: "coder",
+      shortName: "fetch-paper",
+    };
+    const input = {
+      ...artifact,
+      binding,
+      grant: { ...grant, allowedToolNames: ["owned-paper"], hostToolFacadeIds: ["host"] },
+      capabilities: { persistence: {} },
+      hostToolAliases: [alias],
+    };
+    const parsed = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), input);
+    assertEquals(parsed.hostToolAliases, [alias]);
+    for (
+      const aliases of [
+        [alias, alias],
+        [{ ...alias, sourceId: "other" }],
+        [{ ...alias, toolName: "fetch-paper" }],
+        [{ ...alias, ownerAgentId: "other" }],
+        [{ ...alias, shortName: "" }],
+      ]
+    ) {
+      assertThrows(() =>
+        parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
+          ...input,
+          hostToolAliases: aliases,
+        })
+      );
+    }
+  });
+
   it("registers fixed dispatch before bootstrap snapshots it, and imports only after authenticated installation", async () => {
     let imports = 0;
     const loaded = runtime();
