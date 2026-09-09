@@ -136,7 +136,14 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
     ToolCallStatusChanged: withTiming({
       toolCallId: v.string().min(1),
       status: v.string().min(1),
-      toolCallName: v.string().nullable(),
+      // Optional despite the API catalog declaring it a required
+      // `nullableString`: buildToolCallStatusChangedEvent always writes it
+      // as a string or null today, but this allow-list must not throw (and
+      // abort the run stream) on a frame that omits it -- an uncaught throw
+      // here is worse than a field the API rejects downstream, since the
+      // unvalidated pass-through this entry replaces never rejected a
+      // missing field either.
+      toolCallName: v.string().nullable().optional(),
     }).passthrough(),
     InputRequestCreated: withTiming({
       inputRequest: v.object({ id: v.string().min(1) }).passthrough(),

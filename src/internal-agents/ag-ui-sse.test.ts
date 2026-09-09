@@ -413,6 +413,31 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("does not throw when a ToolCallStatusChanged frame omits toolCallName", () => {
+    // N2: the API catalog declares toolCallName a required `nullableString`,
+    // and buildToolCallStatusChangedEvent always writes it as a string or
+    // null today, so a frame missing it entirely is unreachable from this
+    // producer. But this allow-list's job is to validate, not to newly
+    // reject what the unvalidated pass-through it replaces never rejected
+    // either -- a required-key throw here is uncaught by some callers and
+    // aborts the whole run stream over one missing field, worse than the
+    // dropped-field failure mode this file exists to prevent. Optional
+    // keeps a frame without it reaching the wire instead.
+    const payload = new TextDecoder().decode(
+      formatAgUiEvent("ToolCallStatusChanged", {
+        toolCallId: "tool-1",
+        status: "completed",
+        emittedAt: 8,
+      }),
+    );
+
+    assertEquals(
+      payload,
+      'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","status":"completed",' +
+        '"emittedAt":8}\n\n',
+    );
+  });
+
   it("carries elapsedMs through to the wire without widening the allow-list", () => {
     // These payload schemas are an allow-list and `parse` returns only what
     // they declare, so a stamped field missing from a schema is dropped

@@ -71,8 +71,9 @@ function readNativeAsLegacyCustom(
   ) {
     // `...value` first so a key smuggled inside the stored value (e.g. an
     // "action" field the native builders never write) cannot win over the
-    // action this reader derives from the stored type -- mirrors the chat
-    // decoder's `{ ...payload, type: "source-document" }` at ag-ui.ts:1039.
+    // action this reader derives from the stored type -- mirrors this same
+    // reader's `{ ...value, type: definition.legacyCustomName }` in the
+    // citation/file case below.
     return {
       name: definition.legacyCustomName,
       value: {
@@ -88,8 +89,8 @@ function readNativeAsLegacyCustom(
     // `...value` first for the same reason as the input-request case above.
     //
     // An empty title/filename/url never reaches this stored value in the
-    // first place (native-run-events.ts's omitEmptyStrings drops it from
-    // the one payload both the live frame and this durable record share,
+    // first place (native-run-events.ts's omitInvalidOptionalStrings drops
+    // it from the one payload both the live frame and this durable record share,
     // I1), so there is nothing to restore here: a replayed record renders
     // exactly the way the chat decoder's own fallback (source id for a
     // missing DOCUMENT_CITED title, a raw data chunk for a missing

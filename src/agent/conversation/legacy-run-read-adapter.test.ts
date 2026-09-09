@@ -1642,8 +1642,8 @@ describe("conversation run lifecycle read adapter", () => {
     // reader derived from the stored type. No native builder writes these
     // fields today, but a corrupted or hand-built durable record could still
     // carry one, so the reader must not trust it over its own derivation --
-    // the chat decoder at ag-ui.ts:1039 makes the same call for the wire
-    // payload's `type` field.
+    // the citation/file case in the same reader makes the same call for the
+    // stored `type` field.
     it("keeps the derived action instead of one smuggled inside a corrupted INPUT_REQUEST_CREATED value", () => {
       const frames = customFramesFor(2, {
         type: "INPUT_REQUEST_CREATED",
@@ -1678,12 +1678,13 @@ describe("conversation run lifecycle read adapter", () => {
 
     // Regression guard: a DOCUMENT_CITED chunk built with an empty title has
     // no title key at all in the durable record (native-run-events.ts's
-    // omitEmptyStrings drops it from the one payload both shapes share, I1),
-    // and there is nothing for this reader to restore -- the replayed CUSTOM
-    // twin must keep it just as absent, matching the live frame the encoder
-    // produced. Rendering a fallback title for a citation with no title is
-    // the chat decoder's job (src/chat/ag-ui.ts), exercised there against
-    // both the live and replayed shapes since they are now identical.
+    // omitInvalidOptionalStrings drops it from the one payload both shapes
+    // share, I1), and there is nothing for this reader to restore -- the
+    // replayed CUSTOM twin must keep it just as absent, matching the live
+    // frame the encoder produced. Rendering a fallback title for a citation
+    // with no title is the chat decoder's job (src/chat/ag-ui.ts), exercised
+    // there against both the live and replayed shapes since they are now
+    // identical.
     it("replays a DOCUMENT_CITED citation built with an empty title with no title key, matching the live frame", () => {
       const durable = buildDocumentCitedEvent({
         type: "source-document",

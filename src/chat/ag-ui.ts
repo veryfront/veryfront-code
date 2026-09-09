@@ -1068,7 +1068,17 @@ function mapWireEventToChatEvents(
     case "FileAttached": {
       const { mediaType, url, filename } = wireEvent.payload;
       if (typeof url !== "string") {
-        // See the matching comment in the DocumentCited fallback above.
+        // Unlike DocumentCited's title, url has no safe non-empty fallback
+        // here -- a placeholder would be an actively misleading, possibly
+        // broken link -- so a missing one still falls back to a raw data
+        // chunk instead of rendering, matching what the legacy `Custom`
+        // wrapper's `toRenderableCustomChunk` (ag-ui-helpers.ts) always did
+        // for a `file` value with no url. The encoder's `toFrame` strips the
+        // chunk's own `type` before it goes on the wire (native frames carry
+        // it as the AG-UI event name instead), but the legacy `Custom`
+        // twin's `value` never had it stripped, so its fallback `data` still
+        // carried `type: "file"`. Restore it so this fallback is
+        // byte-identical to what the twin produced.
         return [{
           type: "data-file",
           data: { ...stripAgUiTimingStamps(wireEvent.payload), type: "file" },

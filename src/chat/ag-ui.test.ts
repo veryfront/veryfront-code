@@ -772,8 +772,9 @@ describe("chat/ag-ui", () => {
   it("accepts empty-string title and filename like the legacy custom mapping", () => {
     ensureTestSchemaValidator();
     // The native builders drop an empty title/filename/url before either
-    // wire shape ever carries it (native-run-events.ts's omitEmptyStrings,
-    // I1), so this scenario is unreachable from this producer today -- but a
+    // wire shape ever carries it (native-run-events.ts's
+    // omitInvalidOptionalStrings, I1), so this scenario is unreachable from
+    // this producer today -- but a
     // replayed or hand-built frame could still carry a literal empty string,
     // and the legacy `Custom` twin only ever checked
     // `typeof value.title === "string"`, with no length requirement, so the
@@ -941,10 +942,12 @@ describe("chat/ag-ui", () => {
 
   it("tolerates a null optional field the way the legacy custom mapping did", () => {
     ensureTestSchemaValidator();
-    // `buildNativeRunEventFrame` preserves title/filename/url exactly as it
-    // received them, including an explicit null, and the legacy `Custom`
-    // twin's `typeof value.field === "string"` guard never rejected a null
-    // value outright — it just omitted the field. A renderable citation or
+    // This decoder must tolerate title/filename/url arriving on the wire as
+    // an explicit null, the way a replayed or hand-built frame still could
+    // even though the native builders now drop one (omitInvalidOptionalStrings,
+    // I1), because the legacy `Custom` twin's `typeof value.field === "string"`
+    // guard never rejected a null value outright — it just omitted the
+    // field. A renderable citation or
     // attachment with a null filename must still render, a null title on a
     // DocumentCited falls back to the source id the same way an absent one
     // does, and a null field on an otherwise-unrenderable FileAttached must
