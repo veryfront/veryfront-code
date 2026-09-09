@@ -77,7 +77,11 @@ describe("internal-agents/ag-ui-sse", () => {
         },
         {
           event: "ToolCallStart",
-          payload: { toolCallId: "tool-1", toolCallName: "studio_focus_component" },
+          payload: {
+            toolCallId: "tool-1",
+            toolCallName: "studio_focus_component",
+            parentMessageId: "assistant-1",
+          },
         },
       ],
     );
@@ -598,6 +602,7 @@ describe("internal-agents/ag-ui-sse", () => {
         payload: {
           toolCallId: CANONICAL_TOOL_CALL_ID,
           toolCallName: CANONICAL_TOOL_NAME,
+          parentMessageId: "assistant-msg-1",
         },
       },
       {

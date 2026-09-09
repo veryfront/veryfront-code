@@ -84,7 +84,11 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
     ReasoningMessageEnd: withTiming({ messageId: v.string().min(1) }),
     StepStarted: withTiming({ stepName: v.string().min(1) }),
     StepFinished: withTiming({ stepName: v.string().min(1) }),
-    ToolCallStart: withTiming({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
+    ToolCallStart: withTiming({
+      toolCallId: v.string().min(1),
+      toolCallName: v.string().min(1),
+      parentMessageId: v.string().min(1).optional(),
+    }),
     ToolCallArgs: withTiming({ toolCallId: v.string().min(1), delta: v.string() }),
     ToolCallEnd: withTiming({ toolCallId: v.string().min(1) }),
     ToolCallResult: withTiming({
