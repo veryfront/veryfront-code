@@ -624,6 +624,7 @@ describe("MDX cache shared-realm lifecycle", () => {
     const dir = await makeTempDir();
     const source = "export const value = 63;";
     const artifact = dir + "/" + buildMdxJsxCacheFileName("/project/Species.tsx", source);
+    const artifactUrl = pathToFileURL(artifact).href;
     const species = Object.getOwnPropertyDescriptor(Array, Symbol.species);
     let release: (() => void) | undefined;
     try {
@@ -638,7 +639,7 @@ describe("MDX cache shared-realm lifecycle", () => {
         },
       });
       release = await retainJsxArtifactsReferencedIn(
-        `export const load = () => import(${JSON.stringify("file://" + artifact)});`,
+        `export const load = () => import("${artifactUrl}");`,
         dir,
       );
       await __jsxCacheInternals.runLazyJsxArtifactHeartbeat();
