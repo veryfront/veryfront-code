@@ -489,4 +489,58 @@ describe("lifecycle AG-UI adapter", () => {
       },
     ]);
   });
+
+  it("emits native frames for tool status and custom lifecycle names", () => {
+    const adapter = createLifecycleAgUiAdapter({ messageId: "assistant-1" });
+
+    assertEquals(
+      adapter.encode({
+        class: "telemetry",
+        sequence: 1,
+        elapsedMs: 0,
+        event: {
+          type: "tool_input_status",
+          toolCallId: "tool-1",
+          toolCallName: "create_file",
+          status: "pending_input",
+        },
+      }),
+      [{
+        event: "ToolCallStatusChanged",
+        payload: {
+          toolCallId: "tool-1",
+          status: "pending_input",
+          toolCallName: "create_file",
+          parentMessageId: "assistant-1",
+        },
+      }],
+    );
+
+    assertEquals(
+      adapter.encode({
+        class: "semantic",
+        sequence: 2,
+        elapsedMs: 1,
+        event: {
+          type: "custom",
+          name: "source-url",
+          data: { type: "source-url", sourceId: "web-1", url: "https://example.com/a" },
+        },
+      }),
+      [{
+        event: "UrlCited",
+        payload: { sourceId: "web-1", url: "https://example.com/a" },
+      }],
+    );
+
+    assertEquals(
+      adapter.encode({
+        class: "semantic",
+        sequence: 3,
+        elapsedMs: 2,
+        event: { type: "custom", name: "state-delta", data: { ops: [] } },
+      }),
+      [{ event: "Custom", payload: { name: "state-delta", value: { ops: [] } } }],
+    );
+  });
 });

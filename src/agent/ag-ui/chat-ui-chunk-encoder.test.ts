@@ -228,7 +228,7 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
     );
   });
 
-  it("encodes source documents as renderable custom events", () => {
+  it("encodes source documents as native citation events", () => {
     const encoder = createAgUiChatUiChunkEncoder({ timing: { nowMs: null, epochMs: null } });
     const sourceDocument: ChatUiMessageChunk = {
       type: "source-document",
@@ -239,15 +239,17 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
     };
 
     assertEquals(encoder.encode(sourceDocument), [{
-      event: "Custom",
+      event: "DocumentCited",
       payload: {
-        name: "source-document",
-        value: sourceDocument,
+        sourceId: "knowledge/knowledge-ingest-20260723131451088-source.md",
+        mediaType: "text/markdown",
+        title: "knowledge/knowledge-ingest-20260723131451088-source.md",
+        filename: "knowledge/knowledge-ingest-20260723131451088-source.md",
       },
     }]);
   });
 
-  it("encodes source URLs as renderable custom events", () => {
+  it("encodes source URLs as native URL citation events", () => {
     const encoder = createAgUiChatUiChunkEncoder({ timing: { nowMs: null, epochMs: null } });
     const sourceUrl: ChatUiMessageChunk = {
       type: "source-url",
@@ -257,15 +259,16 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
     };
 
     assertEquals(encoder.encode(sourceUrl), [{
-      event: "Custom",
+      event: "UrlCited",
       payload: {
-        name: "source-url",
-        value: sourceUrl,
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
       },
     }]);
   });
 
-  it("encodes files as renderable custom events", () => {
+  it("encodes files as native file attachment events", () => {
     const encoder = createAgUiChatUiChunkEncoder({ timing: { nowMs: null, epochMs: null } });
     const file: ChatUiMessageChunk = {
       type: "file",
@@ -274,10 +277,10 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
     };
 
     assertEquals(encoder.encode(file), [{
-      event: "Custom",
+      event: "FileAttached",
       payload: {
-        name: "file",
-        value: file,
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
       },
     }]);
   });

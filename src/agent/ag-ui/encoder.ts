@@ -1,4 +1,5 @@
 import type { AgentResponse } from "../types.ts";
+import { buildNativeRunEventFrame } from "./native-run-events.ts";
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -786,15 +787,23 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     }
 
     state.sawVisibleOutput = true;
-    return [createCustomDataEvent(name, "data" in event ? event.data : null)];
+    const value = "data" in event ? event.data : null;
+    const native = buildNativeRunEventFrame({
+      name,
+      value,
+      parentMessageId: state.messageId,
+    });
+    return [native ? native.live : createCustomDataEvent(name, value)];
   }
 
   switch (event.type) {
     case "source-document":
     case "source-url":
-    case "file":
+    case "file": {
       state.sawVisibleOutput = true;
-      return [createCustomDataEvent(event.type, event)];
+      const native = buildNativeRunEventFrame({ name: event.type, value: event });
+      return [native ? native.live : createCustomDataEvent(event.type, event)];
+    }
 
     case "message-start":
       getMessageId(state, event);
@@ -892,6 +901,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         payload: {
           toolCallId: event.toolCallId,
           toolCallName: event.toolName,
+          ...(state.messageId ? { parentMessageId: state.messageId } : {}),
         },
       });
       return events;
@@ -1012,11 +1022,18 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         },
       ];
 
-    default:
+    default: {
       if (typeof event.type === "string" && event.type.startsWith("data-")) {
-        return [createCustomDataEvent(event.type.slice(5), event.data)];
+        const name = event.type.slice("data-".length);
+        const native = buildNativeRunEventFrame({
+          name,
+          value: event.data,
+          parentMessageId: state.messageId,
+        });
+        return [native ? native.live : createCustomDataEvent(name, event.data)];
       }
       return [];
+    }
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   StreamUsage,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import type { AgUiEncodedEvent, AgUiRunFinishedMetadata } from "./encoder.ts";
+import { buildNativeRunEventFrame, buildToolCallStatusChangedEvent } from "./native-run-events.ts";
 
 /** Formatting-only state kept by the lifecycle AG-UI adapter. */
 export interface LifecycleAgUiState {
@@ -227,6 +228,7 @@ export function createLifecycleAgUiAdapter(input: {
           payload: {
             toolCallId: event.toolCallId,
             toolCallName: event.toolName,
+            parentMessageId: state.messageId,
           },
         }];
       case "tool_input_content":
@@ -311,12 +313,21 @@ export function createLifecycleAgUiAdapter(input: {
             stepName: state.activeStepName ?? `step-${state.stepCount || 1}`,
           },
         }];
-      case "custom":
+      case "custom": {
         state.sawVisibleOutput = true;
-        return [{
-          event: "Custom",
-          payload: { name: event.name, value: safeJson(event.data) },
-        }];
+        const value = safeJson(event.data);
+        const native = buildNativeRunEventFrame({
+          name: event.name,
+          value,
+          parentMessageId: state.messageId,
+        });
+        return [
+          native ? native.live : {
+            event: "Custom",
+            payload: { name: event.name, value },
+          },
+        ];
+      }
       case "usage":
         state.metadata = mergeUsageMetadata(state.metadata, event.usage);
         return [];
@@ -328,16 +339,14 @@ export function createLifecycleAgUiAdapter(input: {
       if (frame.class === "diagnostic") return [];
       if (frame.class === "telemetry") {
         return frame.event.type === "tool_input_status"
-          ? [{
-            event: "Custom",
-            payload: {
-              name: "tool-call-status",
-              value: {
-                toolCallId: frame.event.toolCallId,
-                status: frame.event.status,
-              },
-            },
-          }]
+          ? [
+            buildToolCallStatusChangedEvent({
+              toolCallId: frame.event.toolCallId,
+              status: frame.event.status,
+              toolCallName: frame.event.toolCallName,
+              parentMessageId: state.messageId,
+            }).live,
+          ]
           : [];
       }
       return encodeSemantic(frame.event);
