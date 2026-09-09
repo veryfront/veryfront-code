@@ -5,6 +5,8 @@ const includes = String.prototype.includes;
 const endsWith = String.prototype.endsWith;
 const trimStart = String.prototype.trimStart;
 const trim = String.prototype.trim;
+const trimEnd = String.prototype.trimEnd;
+const lastIndexOf = String.prototype.lastIndexOf;
 const toLowerCase = String.prototype.toLowerCase;
 
 export function privateTextToLowerCase(value: string): string {
@@ -13,6 +15,14 @@ export function privateTextToLowerCase(value: string): string {
 
 export function privateTextTrim(value: string): string {
   return apply(trim, value, []) as string;
+}
+
+export function privateTextTrimEnd(value: string): string {
+  return apply(trimEnd, value, []) as string;
+}
+
+export function privateTextLastIndexOf(value: string, search: string): number {
+  return apply(lastIndexOf, value, [search]) as number;
 }
 
 export function privateTextEndsWith(value: string, search: string): boolean {

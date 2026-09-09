@@ -1,8 +1,18 @@
 import {
   appendPrivateArray,
+  concatPrivateArrays,
+  joinPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  privateTextIncludes,
+  privateTextStartsWith,
+  privateTextTrim,
+} from "#veryfront/security/private-text.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
@@ -16,6 +26,8 @@ import {
   type UploadedFileReference,
 } from "../../chat/types.ts";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
+
+const hasOwn = Object.hasOwn;
 
 type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[number];
 
@@ -149,7 +161,7 @@ export class AgentRuntimeMessageConversionError extends Error {
 }
 
 function hasTextContent(text: string): boolean {
-  return text.trim().length > 0;
+  return privateTextTrim(text).length > 0;
 }
 
 function getOptionalStringField(part: unknown, key: string): string | undefined {
@@ -254,7 +266,7 @@ function createAttachmentReference(part: StructuredProviderPart): UploadedFileRe
     return null;
   }
 
-  const normalizedUrl = url?.startsWith("data:") ? undefined : url;
+  const normalizedUrl = url !== undefined && privateTextStartsWith(url, "data:") ? undefined : url;
 
   return {
     name: filename ?? (part.type === "image" ? "image" : "file"),
@@ -281,7 +293,10 @@ function buildAttachmentContextPart(
 }
 
 function hasUploadedFilesAnnotation(parts: StructuredProviderPart[]): boolean {
-  return parts.some((part) => part.type === "text" && part.text.includes("<uploaded_files>"));
+  return somePrivateArray(
+    parts,
+    (part) => part.type === "text" && privateTextIncludes(part.text, "<uploaded_files>"),
+  );
 }
 
 function convertContentToAgentRuntimeParts(
@@ -295,7 +310,9 @@ function convertContentToAgentRuntimeParts(
   const parts: AgentRuntimeMessage["parts"] = [];
   const attachmentReferences: UploadedFileReference[] = [];
 
-  for (const part of message.content) {
+  for (let index = 0; index < message.content.length; index++) {
+    if (!hasOwn(message.content, index)) continue;
+    const part = message.content[index]!;
     const convertedPart = convertStructuredPart(part);
     if (convertedPart) {
       pushPrivateArray(parts, convertedPart);
@@ -383,7 +400,10 @@ export function getAgentRuntimeToolCallPart(
     return null;
   }
 
-  if (part.type !== "tool_call" && part.type !== "tool-call" && !part.type.startsWith("tool-")) {
+  if (
+    part.type !== "tool_call" && part.type !== "tool-call" &&
+    !privateTextStartsWith(part.type, "tool-")
+  ) {
     return null;
   }
 
@@ -426,11 +446,7 @@ export function getAgentRuntimeToolResultPart(
   return {
     toolCallId,
     toolName,
-    output: Object.hasOwn(part, "result")
-      ? part.result
-      : Object.hasOwn(part, "output")
-      ? part.output
-      : null,
+    output: hasOwn(part, "result") ? part.result : hasOwn(part, "output") ? part.output : null,
   };
 }
 
@@ -458,7 +474,7 @@ export function createToolResultPart(part: {
 }
 
 function joinTextParts(textParts: readonly ProviderTextPart[]): string {
-  return mapPrivateArray(textParts, (part) => part.text).join("\n\n");
+  return joinPrivateArray(mapPrivateArray(textParts, (part) => part.text), "\n\n");
 }
 
 function collectAgentRuntimeProviderContentParts(
@@ -469,9 +485,11 @@ function collectAgentRuntimeProviderContentParts(
   const toolCallParts: ProviderToolCallPart[] = [];
   const toolResultParts: ChatToolResultPart[] = [];
   const fileParts: ChatModelFilePart[] = [];
-  const toolNamesById = new Map<string, string>();
+  const toolNamesById = createPrivateMap<string, string>();
 
-  for (const part of parts) {
+  for (let index = 0; index < parts.length; index++) {
+    if (!hasOwn(parts, index)) continue;
+    const part = parts[index]!;
     if (part.type === "source-url" || part.type === "source-document") {
       continue;
     }
@@ -530,8 +548,8 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
     ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart
   > = [];
   const toolResults: ChatToolResultPart[] = [];
-  const pendingToolCallIds = new Set<string>();
-  const toolNamesById = new Map<string, string>();
+  const pendingToolCallIds = createPrivateSet<string>();
+  const toolNamesById = createPrivateMap<string, string>();
   const providerMessages: ProviderModelMessage[] = [];
 
   const flushAssistantMessage = (
@@ -541,7 +559,10 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       return;
     }
 
-    pushPrivateArray(providerMessages, { role: "assistant", content: [...content] });
+    pushPrivateArray(providerMessages, {
+      role: "assistant",
+      content: mapPrivateArray(content, (part) => part),
+    });
     content.length = 0;
   };
 
@@ -550,7 +571,10 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       return;
     }
 
-    pushPrivateArray(providerMessages, { role: "tool", content: [...toolResults] });
+    pushPrivateArray(providerMessages, {
+      role: "tool",
+      content: mapPrivateArray(toolResults, (part) => part),
+    });
     toolResults.length = 0;
   };
 
@@ -589,7 +613,9 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
     pendingToolCallIds.delete(part.toolCallId);
   };
 
-  for (const part of parts) {
+  for (let index = 0; index < parts.length; index++) {
+    if (!hasOwn(parts, index)) continue;
+    const part = parts[index]!;
     if (part.type === "source-url" || part.type === "source-document") {
       continue;
     }
@@ -670,7 +696,7 @@ function createProviderMessagesFromAgentRuntimeMessage(
         }];
       }
 
-      const content: ChatUserContentPart[] = [...textParts, ...fileParts];
+      const content = concatPrivateArrays<ChatUserContentPart>(textParts, fileParts);
       return [{
         role: "user",
         content,
@@ -719,7 +745,9 @@ export function convertAgentRuntimeMessagesToProviderMessages(
 ): ProviderModelMessage[] {
   const converted: ProviderModelMessage[] = [];
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index++) {
+    if (!hasOwn(messages, index)) continue;
+    const message = messages[index]!;
     appendPrivateArray(converted, createProviderMessagesFromAgentRuntimeMessage(message));
   }
 

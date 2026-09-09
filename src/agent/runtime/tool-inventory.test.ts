@@ -9,6 +9,18 @@ import {
 } from "./tool-inventory.ts";
 
 describe("runtime tool inventory instructions", () => {
+  it("flattens private instructions without calling a supplied map override", () => {
+    const instructions = [{ role: "system" as const, content: " synthetic instructions " }];
+    let observations = 0;
+    Object.defineProperty(instructions, "map", {
+      value: function (this: typeof instructions, ...args: unknown[]) {
+        observations++;
+        return Reflect.apply(Array.prototype.map, this, args);
+      },
+    });
+    assertEquals(flattenSystemInstructions(instructions), "synthetic instructions");
+    assertEquals(observations, 0);
+  });
   it("appends visible tool inventory to string instructions", () => {
     assertEquals(withRuntimeToolInventory("Base system", ["write_file", "read_file"]), [
       { role: "system", content: "Base system" },

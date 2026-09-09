@@ -1,9 +1,12 @@
-import { filterPrivateArray } from "#veryfront/security/private-array.ts";
+import { filterPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { privateTextStartsWith, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { isRecord } from "./part-field-access.ts";
 import type { ProviderModelMessage } from "./types.ts";
 
+const isArray = Array.isArray;
+
 function hasNonEmptyStringField(record: Record<string, unknown>, key: string): boolean {
-  return typeof record[key] === "string" && record[key].trim().length > 0;
+  return typeof record[key] === "string" && privateTextTrim(record[key]).length > 0;
 }
 
 function hasValidToolResultOutput(value: unknown): boolean {
@@ -64,7 +67,7 @@ function isKeepableModelPart(
       }
 
       const url = typeof part.url === "string" ? part.url : "";
-      if (url.startsWith("data:image/") && part.filename === "preview-screenshot.png") {
+      if (privateTextStartsWith(url, "data:image/") && part.filename === "preview-screenshot.png") {
         return false;
       }
       return true;
@@ -79,14 +82,17 @@ export function hasValidContent(message: ProviderModelMessage): boolean {
 
   if (content === undefined || content === null) return false;
   if (typeof content === "string") {
-    return message.role !== "tool" && content.trim().length > 0;
+    return message.role !== "tool" && privateTextTrim(content).length > 0;
   }
-  if (Array.isArray(content)) return cleanContent(content, message.role).length > 0;
+  if (isArray(content)) return cleanContent(content, message.role).length > 0;
   return false;
 }
 
 export function cleanContent<T>(content: T[], role: ProviderModelMessage["role"]): T[] {
-  const hasSubstantiveContent = content.some((part) => isKeepableModelPart(part, role, false));
+  const hasSubstantiveContent = somePrivateArray(
+    content,
+    (part) => isKeepableModelPart(part, role, false),
+  );
   return filterPrivateArray(
     content,
     (part) => isKeepableModelPart(part, role, hasSubstantiveContent),
