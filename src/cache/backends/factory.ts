@@ -162,7 +162,6 @@ const accessorMapKeys = AccessorMap.prototype.keys;
 const accessorMapSize = Object.getOwnPropertyDescriptor(AccessorMap.prototype, "size")!.get!;
 const accessorMapIteratorNext = Object.getPrototypeOf(new AccessorMap<string, unknown>().keys())
   .next as () => IteratorResult<string>;
-const accessorPromiseFinally = Promise.prototype.finally;
 const AccessorPromise = Promise;
 const accessorPromiseResolve = AccessorPromise.resolve;
 
@@ -218,33 +217,31 @@ export function createDistributedCacheAccessor(
 
     if (!state.inflight) {
       const settled = state;
-      state.inflight = accessorApply(
-        accessorPromiseFinally,
-        (async () => {
-          try {
-            const b = await factory();
-            if (!isDistributedBackend(b)) {
-              settled.backend = null;
-              settled.lastFailureTime = 0;
-              logger.debug(`[${name}] No distributed cache available (memory only)`);
-              return null;
-            }
-
-            settled.backend = b;
-            settled.lastFailureTime = 0;
-            logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
-            return b;
-          } catch (error) {
-            logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+      state.inflight = (async () => {
+        try {
+          const b = await factory();
+          if (!isDistributedBackend(b)) {
             settled.backend = null;
-            settled.lastFailureTime = Date.now();
+            settled.lastFailureTime = 0;
+            logger.debug(`[${name}] No distributed cache available (memory only)`);
             return null;
           }
-        })(),
-        [() => {
+
+          settled.backend = b;
+          settled.lastFailureTime = 0;
+          logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
+          return b;
+        } catch (error) {
+          logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+          settled.backend = null;
+          settled.lastFailureTime = Date.now();
+          return null;
+        } finally {
+          // A synchronous factory failure also yields until inflight is assigned.
+          await undefined;
           settled.inflight = null;
-        }],
-      ) as Promise<CacheBackend | null>;
+        }
+      })();
     }
 
     return state.inflight;

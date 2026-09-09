@@ -89,6 +89,76 @@ describe("host-configured dependency snapshot store", () => {
     );
   });
 
+  it("retries initialization after a synchronous factory failure", async () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    let calls = 0;
+    const backend: CacheBackend = {
+      type: "api",
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const accessor = createDistributedCacheAccessor(() => {
+      if (++calls === 1) throw new Error("Synthetic initialization failure");
+      return Promise.resolve(backend);
+    }, "SYNTHETIC");
+    try {
+      Date.now = () => now;
+      assertEquals(await accessor(), null);
+      now += 60_001;
+      assertEquals(await accessor(), backend);
+      assertEquals(calls, 2);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it("keeps initialized backends out of Promise species constructors", async () => {
+    const backend: CacheBackend = {
+      type: "api",
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const NativePromise = Promise;
+    const originalConstructor = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor")!;
+    let observations = 0;
+    class ObservedPromise<T> extends NativePromise<T> {
+      constructor(
+        executor: (
+          resolve: (value: T | PromiseLike<T>) => void,
+          reject: (reason?: unknown) => void,
+        ) => void,
+      ) {
+        super((resolve, reject) =>
+          executor((value) => {
+            if (value === backend) observations++;
+            resolve(value);
+          }, reject)
+        );
+      }
+    }
+    const accessor = createDistributedCacheAccessor(
+      () => NativePromise.resolve(backend),
+      "SYNTHETIC",
+    );
+    let resolved;
+    try {
+      Object.defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        writable: true,
+        value: { [Symbol.species]: ObservedPromise },
+      });
+      resolved = await accessor();
+      assertEquals(await accessor(), backend);
+    } finally {
+      Object.defineProperty(Promise.prototype, "constructor", originalConstructor);
+    }
+    assertEquals(resolved, backend);
+    assertEquals(observations, 0);
+  });
+
   it("keeps cached backends out of a replaced Promise.resolve", async () => {
     const backend = { type: "api" } as CacheBackend;
     const accessor = createDistributedCacheAccessor(() => Promise.resolve(backend), "SYNTHETIC");
