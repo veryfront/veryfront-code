@@ -1,14 +1,46 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { convertToTextGenerationRuntimeMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import { cleanContent } from "#veryfront/chat/provider-message-content.ts";
+import { normalizeInput } from "#veryfront/agent/runtime/input-utils.ts";
 import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import { getTurnProviderRequestValidator } from "#veryfront/agent/middleware/turn-validation.ts";
 import type { AgentContext, Message } from "#veryfront/agent/types.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 for (const hooks of [false, true]) {
   describe(`private provider optional fields ${hooks ? "hooks" : "baseline"}`, () => {
+    it("validates message ids without exposing them to a replaced trim method", () => {
+      const marker = " synthetic-private-message-id ";
+      const input: Message[] = [{
+        id: marker,
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+        timestamp: 1,
+      }];
+      const trim = String.prototype.trim;
+      const apply = Reflect.apply;
+      let observations = 0;
+      let normalized;
+      try {
+        if (hooks) {
+          String.prototype.trim = function () {
+            if (this === marker) observations++;
+            return apply(trim, this, []);
+          };
+        }
+        normalized = normalizeInput(input);
+        assertThrows(
+          () => normalizeInput([{ id: " \t ", role: "user", parts: [] }]),
+          Error,
+          "Message id cannot be empty",
+        );
+      } finally {
+        if (hooks) String.prototype.trim = trim;
+      }
+      assertEquals(normalized, input);
+      assertEquals(observations, 0);
+    });
     it("keeps attachment data out of inherited filename and data getters", () => {
       const marker = "synthetic-private-attachment-fields";
       const part = {
