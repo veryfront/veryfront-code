@@ -45,7 +45,7 @@ export function createRuntimeAgentFromMarkdownDefinition(
       !deniedToolNames.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`),
   );
 
-  const runtimeAgent = agent({
+  const runtimeAgent: Agent = agent({
     id: definition.id,
     name: definition.name,
     description: definition.description,
