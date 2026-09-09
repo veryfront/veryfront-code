@@ -1,3 +1,4 @@
+import { containsBrokerCredential } from "#veryfront/agent/service/broker-credentials.ts";
 import type { ControlPlaneClaims, ControlPlaneSurface } from "#veryfront/channels/control-plane.ts";
 import {
   CONTROL_PLANE_JWS_HEADER,
@@ -258,18 +259,15 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       input: toRuntimeRunAgentInput(parsedInbound.data),
     } satisfies BrokerRuntimeAgentExecutorInput,
   );
-  for (
-    const token of [
+  if (
+    containsBrokerCredential(executorValue, [
       inboundAuthorization,
-      /^Bearer\s+(.+)$/i.exec(inboundAuthorization)?.[1],
       apiAuthToken,
       runEventToken,
       invocation.credentials?.inferenceAuthToken,
-    ]
+    ])
   ) {
-    if (token && containsString(executorValue, token)) {
-      throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
-    }
+    throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
   }
   return {
     privateAuthority: Object.freeze({
@@ -303,14 +301,4 @@ function containsForwardedAuthority(value: unknown): boolean {
     if (containsForwardedAuthority(entry)) return true;
   }
   return false;
-}
-
-function containsString(value: unknown, expected: string): boolean {
-  if (typeof value === "string") return value.includes(expected);
-  if (!value || typeof value !== "object") return false;
-  return Array.isArray(value)
-    ? value.some((entry) => containsString(entry, expected))
-    : Object.entries(value).some(([key, entry]) =>
-      key.includes(expected) || containsString(entry, expected)
-    );
 }

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   parseManagedAgUiAgentIngress,
@@ -19,6 +19,66 @@ function verifyProjectAccess() {
 }
 
 describe("managed agent ingress", () => {
+  for (const kind of ["durable", "ag-ui"] as const) {
+    for (
+      const credential of [
+        "broker-auth-secret",
+        "request-auth-secret",
+        "run-event-secret",
+        "inference-secret",
+      ]
+    ) {
+      for (const placement of ["message", "url", "property name"] as const) {
+        it(`rejects ${credential} embedded in ${kind} ${placement}`, async () => {
+          const text = placement === "message" ? `Use ${credential} for this request` : "Hello";
+          const extra = placement === "url"
+            ? {
+              attachments: [{ url: `https://files.test/document?token=${credential}&download=1` }],
+            }
+            : placement === "property name"
+            ? { [`result-${credential}-metadata`]: "value" }
+            : {};
+          const payload = kind === "durable"
+            ? {
+              messages: [{ id: "m1", role: "user", parts: [{ type: "text", text }] }],
+              context: { conversationId, projectId, branchId: "branch-1" },
+              durableRootRun: { runId: "run_root_1", messageId },
+              forwardedProps: extra,
+            }
+            : {
+              threadId: conversationId,
+              runId: "run-1",
+              messages: [{ id: "m1", role: "user", content: text }],
+              tools: [],
+              context: [{ description: "veryfront.projectId", value: JSON.stringify(projectId) }],
+              state: extra,
+            };
+          const request = new Request(`https://agent.example.test/api/${kind}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: "Bearer request-auth-secret",
+              "X-Veryfront-Run-Event-Token": "run-event-secret",
+              "X-Veryfront-Inference-Token": "inference-secret",
+            },
+            body: JSON.stringify(payload),
+          });
+          const options = {
+            authenticate,
+            verifyProjectAccess,
+            verifyRunEventAppendToken: () => Promise.resolve(true),
+          };
+          const result = kind === "durable"
+            ? await parseManagedDurableAgentIngress(request, options)
+            : await parseManagedAgUiAgentIngress(request, options);
+          assert(result instanceof Response);
+          assertEquals(result.status, 403);
+          assertEquals(await result.json(), { errorCode: "BROKER_INGRESS_SCOPE_DENIED" });
+        });
+      }
+    }
+  }
+
   it("separates durable broker authority from a detached executor request", async () => {
     const request = new Request("https://agent.example.test/api/runs", {
       method: "POST",

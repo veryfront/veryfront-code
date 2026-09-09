@@ -1,3 +1,4 @@
+import { containsBrokerCredential } from "#veryfront/agent/service/broker-credentials.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import {
@@ -14,9 +15,11 @@ import {
   type HostedRunEventWriterCapability,
 } from "../hosted/child-run-event-writer-token.ts";
 import {
+  INFERENCE_TOKEN_HEADER,
   type ParsedHostedChatRequest,
   parseHostedChatRequestFromRequest,
   type ParseHostedChatRequestOptions,
+  RUN_EVENT_APPEND_TOKEN_HEADER,
 } from "../hosted/chat-request-parser.ts";
 import { createHostedInferenceModelResolver } from "../hosted/inference-credential.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -180,11 +183,20 @@ function createBrokerAuthority<TRequest extends ParsedHostedChatRequest>(
   return Object.freeze(authority);
 }
 
+function requestCredentials(request: Request): (string | null)[] {
+  return [
+    request.headers.get("authorization"),
+    request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER),
+    request.headers.get(INFERENCE_TOKEN_HEADER),
+  ];
+}
+
 function createExecutorRequest(
   kind: ManagedAgentIngressKind,
   parsedRequest: ParsedHostedChatRequest,
+  credentials: readonly (string | null)[],
   agUiInput?: ParsedHostedAgUiRequest["agUiInput"],
-): ManagedAgentExecutorRequest {
+): ManagedAgentExecutorRequest | Response {
   const request = {
     protocolVersion: 1,
     kind,
@@ -230,7 +242,11 @@ function createExecutorRequest(
       }
       : {}),
   };
-  return boundedExecutorRequest(request);
+  const executor = boundedExecutorRequest(request);
+  if (containsBrokerCredential(executor, [parsedRequest.authToken, ...credentials])) {
+    return Response.json({ errorCode: "BROKER_INGRESS_SCOPE_DENIED" }, { status: 403 });
+  }
+  return executor;
 }
 
 /** Parse the trusted broker's direct canonical durable-run ingress. */
@@ -238,12 +254,15 @@ export async function parseManagedDurableAgentIngress(
   request: Request,
   options: ParseHostedChatRequestOptions,
 ): Promise<ManagedDurableAgentIngressResult | Response> {
+  const credentials = requestCredentials(request);
   const parsedRequest = await parseHostedChatRequestFromRequest(request, options);
   if (isResponseLike(parsedRequest)) return parsedRequest;
+  const executor = createExecutorRequest("durable", parsedRequest, credentials);
+  if (isResponseLike(executor)) return executor;
   return Object.freeze({
     kind: "durable" as const,
     broker: createBrokerAuthority(parsedRequest),
-    executor: createExecutorRequest("durable", parsedRequest) as
+    executor: executor as
       & ManagedAgentExecutorRequest
       & { kind: "durable" },
   });
@@ -254,6 +273,7 @@ export async function parseManagedAgUiAgentIngress(
   request: Request,
   options: ParseManagedAgUiAgentIngressOptions,
 ): Promise<ManagedAgUiAgentIngressResult | Response> {
+  const credentials = requestCredentials(request);
   const applicationRequest = removeRetainedInfrastructureHeaders(
     createApplicationRequest(request),
   );
@@ -273,11 +293,13 @@ export async function parseManagedAgUiAgentIngress(
     verifyProjectAccess: options.verifyProjectAccess,
   });
   if (isResponseLike(parsedRequest)) return parsedRequest;
+  const executor = createExecutorRequest("ag-ui", parsedRequest, credentials, agUiInput);
+  if (isResponseLike(executor)) return executor;
 
   return Object.freeze({
     kind: "ag-ui" as const,
     broker: createBrokerAuthority(parsedRequest),
-    executor: createExecutorRequest("ag-ui", parsedRequest, agUiInput) as
+    executor: executor as
       & ManagedAgentExecutorRequest
       & { kind: "ag-ui"; agUi: ManagedAgentExecutorAgUiState },
   });
