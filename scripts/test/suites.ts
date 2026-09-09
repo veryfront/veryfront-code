@@ -157,6 +157,46 @@ export function buildTestProcessEnv(
   return env;
 }
 
+/** Tests that intentionally change the process working directory. */
+export const UNIT_CWD_FILES: readonly string[] = Object.freeze([
+  "cli/auth/login.test.ts",
+  "cli/commands/build/embedded-preset-flags.test.ts",
+  "cli/commands/skills/validate.test.ts",
+  "src/platform/compat/process.test.ts",
+  "src/testing/cwd.test.ts",
+]);
+
+const CWD_MUTATING_TEST_FILES = new Set([
+  ...UNIT_CWD_FILES,
+  "tests/integration/adapters/shell-adapter.test.ts",
+  "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
+  "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
+]);
+
+/** Keep cwd writers in their own process, including in coverage shards. */
+export function partitionDenoSuiteFiles(
+  files: readonly string[],
+  maxFilesPerProcess: number | null,
+): string[][] {
+  const batches: string[][] = [];
+  let parallel: string[] = [];
+  for (const file of files) {
+    if (CWD_MUTATING_TEST_FILES.has(file)) {
+      if (parallel.length > 0) batches.push(parallel);
+      parallel = [];
+      batches.push([file]);
+    } else {
+      parallel.push(file);
+      if (parallel.length === maxFilesPerProcess) {
+        batches.push(parallel);
+        parallel = [];
+      }
+    }
+  }
+  if (parallel.length > 0 || batches.length === 0) batches.push(parallel);
+  return batches;
+}
+
 export type TestLevel = "unit" | "integration" | "e2e";
 
 export type TestRunner = "deno" | "node" | "bun" | "playwright";

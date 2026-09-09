@@ -54,7 +54,7 @@ describe("ext-image-sharp", () => {
 
   it("keeps cache identity immutable and backend-specific", () => {
     const engine = new SharpImageOptimizationEngine();
-    assertStringIncludes(engine.cacheIdentity, "sharp@0.35.4");
+    assertStringIncludes(engine.cacheIdentity, "|sharp@0.35.4|");
     assertStringIncludes(engine.cacheIdentity, `vips@${sharp.versions.vips}`);
     assertEquals(Object.isFrozen(engine), true);
     assertThrows(

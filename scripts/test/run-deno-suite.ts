@@ -5,6 +5,7 @@ import {
   DENO_TEST_ENV,
   hasDenoPermissionFlag,
   LOOPBACK_TEST_PERMISSIONS,
+  partitionDenoSuiteFiles,
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
@@ -245,21 +246,6 @@ export function buildDenoSuiteCommandArgs(
     ...passthroughArgs,
     ...files,
   ];
-}
-
-export function partitionDenoSuiteFiles(
-  files: readonly string[],
-  maxFilesPerProcess: number | null,
-): string[][] {
-  if (maxFilesPerProcess === null || files.length <= maxFilesPerProcess) {
-    return [[...files]];
-  }
-
-  const batches: string[][] = [];
-  for (let start = 0; start < files.length; start += maxFilesPerProcess) {
-    batches.push(files.slice(start, start + maxFilesPerProcess));
-  }
-  return batches;
 }
 
 if (import.meta.main) {

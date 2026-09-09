@@ -16,6 +16,7 @@
  * - CACHE_TYPE: "memory" (default) or "extension"
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
  * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
+ * - VERYFRONT_PROXY_DENY_LEGACY_MANAGED_AGENT_ROUTES: Exact boolean cutover switch (default false)
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
@@ -24,6 +25,10 @@
  */
 
 import { createProxyHandler, type ProxyConfig } from "./handler.ts";
+import {
+  LEGACY_MANAGED_AGENT_ROUTE_DENY_ENV,
+  parseLegacyManagedAgentRouteDeny,
+} from "./legacy-managed-agent-route-denial.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { acquireExtensionTokenCacheStoreFromEnv } from "./cache/extension-store.ts";
 import {
@@ -128,6 +133,9 @@ const config: ProxyConfig = {
   previewApiClientId: apiClientId,
   previewApiClientSecret: apiClientSecret,
   localProjects: getLocalProjects(),
+  denyLegacyManagedAgentRoutes: parseLegacyManagedAgentRouteDeny(
+    getEnv(LEGACY_MANAGED_AGENT_ROUTE_DENY_ENV),
+  ),
 };
 
 function resolveProxyBinding(): { hostname: string; port: number } {

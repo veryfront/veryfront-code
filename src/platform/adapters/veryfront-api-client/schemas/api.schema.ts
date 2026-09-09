@@ -360,6 +360,11 @@ export const API_ENDPOINTS = {
     path: "/projects/{projectRef}",
     description: "Get project by UUID or slug",
   },
+  readDependencyMetadataHistory: {
+    method: "GET" as const,
+    path: "/projects/{projectRef}/dependencies/history?branch={branch}",
+    description: "Read bounded prior dependency metadata for a project branch",
+  },
   listBranchFiles: {
     method: "GET" as const,
     path: "/projects/{projectRef}/files?branch={branchRef}",

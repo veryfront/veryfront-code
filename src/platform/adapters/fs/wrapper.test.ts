@@ -113,6 +113,55 @@ describe("isExtendedFSAdapter", () => {
 });
 
 describe("FSAdapterWrapper", () => {
+  describe("readDependencyMetadataHistory", () => {
+    it("captures and forwards the optional reader as a frozen data-property method", async () => {
+      const expected = {
+        version: 1 as const,
+        projectId: "10000000-1000-4000-8000-100000000001",
+        branch: null,
+        entries: [] as const,
+      };
+      const controller = new AbortController();
+      let observedSignal: AbortSignal | undefined;
+      const fsAdapter = createMockFSAdapter({
+        readDependencyMetadataHistory(signal?: AbortSignal) {
+          observedSignal = signal;
+          return Promise.resolve(expected);
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(await wrapper.readDependencyMetadataHistory?.(controller.signal), expected);
+      assertEquals(observedSignal, controller.signal);
+      const descriptor = Object.getOwnPropertyDescriptor(
+        wrapper,
+        "readDependencyMetadataHistory",
+      );
+      assertEquals(typeof descriptor?.value, "function");
+      assertEquals(descriptor?.writable, false);
+      assertEquals(descriptor?.configurable, false);
+    });
+
+    it("rejects an accessor-valued reader without invoking its getter", () => {
+      let getterCalls = 0;
+      const fsAdapter = createMockFSAdapter();
+      Object.defineProperty(fsAdapter, "readDependencyMetadataHistory", {
+        configurable: true,
+        get() {
+          getterCalls++;
+          return () => Promise.resolve({ version: 1, projectId: "id", branch: null, entries: [] });
+        },
+      });
+
+      assertThrows(
+        () => new FSAdapterWrapper(fsAdapter),
+        TypeError,
+        "data-property method",
+      );
+      assertEquals(getterCalls, 0);
+    });
+  });
+
   describe("accessor methods", () => {
     it("getUnderlyingAdapter should return the wrapped FSAdapter", () => {
       const fsAdapter = createMockFSAdapter();

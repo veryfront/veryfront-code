@@ -21,6 +21,12 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
 import { createRequire } from "node:module";
+import process from "node:process";
+import React from "react";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
+import { resolveRenderGenerationIdentity } from "#veryfront/rendering/render-generation-binding.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { MdxContentProcessor } from "@veryfront/ext-content-mdx";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -344,13 +350,46 @@ export async function createPage() {
           ? ["run", "--no-config", "--allow-read", "--allow-net=127.0.0.1"]
           : [];
         const denoDir = isDeno ? getEnv("DENO_DIR") : undefined;
+        let bindingData: string | undefined;
+        if (pipeline) {
+          // Only these test-owned files form this fixture's immutable source view.
+          const sourceFiles = await Promise.all(
+            ["app/page/page.mdx", "app/layout.tsx", "app/page/child.tsx", "app/page/layout.mdx"]
+              .map(
+                async (path) => [path, await fs.readTextFile(join(project, path))],
+              ),
+          );
+          const binding = {
+            projectId: "generation-test",
+            environmentId: "production",
+            sourceSnapshotId: await computeHash(JSON.stringify(sourceFiles)),
+            configurationId: await computeHash(
+              JSON.stringify({ react: { version: React.version } }),
+            ),
+            dependencySnapshotId: "off",
+            artifactId: prepared.id,
+            frameworkId: RUNTIME_VERSION,
+            runtimeId: `${adapter.id}:${
+              isDeno
+                ? getDenoRuntime()!.version.deno
+                : isBun
+                ? process.versions.bun
+                : process.versions.node
+            }`,
+            executionPolicyId: "fixture-dedicated-process-v1",
+          };
+          bindingData = JSON.stringify({
+            binding,
+            identity: await resolveRenderGenerationIdentity(binding),
+          });
+        }
         processResult = runCommand(execPath(), {
           args: [
             ...runtimeArgs,
             fixture,
             prepared.entrypointUrls[0]!,
             `http://127.0.0.1:${coordinator.addr.port}`,
-            ...(pipeline ? [project] : []),
+            ...(pipeline ? [project, bindingData!] : []),
           ],
           clearEnv: true,
           env: {
