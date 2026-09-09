@@ -1612,9 +1612,11 @@ export function securityMiddleware(
         const trusted = createPrivateSet(systemMessages);
         const callers = createPrivateSet(callerSystemMessages);
         const providerRuns: ProviderValidationRun[] = [];
-        for (
-          const run of extractMergedSystemRuns(concatPrivateArrays(systemMessages, callerMessages))
-        ) {
+        const mergedSystemRuns = extractMergedSystemRuns(
+          concatPrivateArrays(systemMessages, callerMessages),
+        );
+        for (let runIndex = 0; runIndex < mergedSystemRuns.length; runIndex++) {
+          const run = mergedSystemRuns[runIndex]!;
           if (
             !somePrivateArray(run, (message) => trusted.has(message)) ||
             !somePrivateArray(run, (message) => callers.has(message))
