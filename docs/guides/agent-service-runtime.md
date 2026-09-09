@@ -491,3 +491,9 @@ broker authority before allocating an executor. Preparation uses the narrower br
 limits and provider-tool list, so its default model requests fit the broker policy. Source IDs must
 belong to the installed host-facade or remote-source grants. Owner-scoped tool selectors use the same
 canonical names for capability checks and steering refreshes.
+
+Trusted ingress must provide `tools.catalog` with the complete tool inventory and ownership metadata,
+including project-local tools that have no broker capability. The broker resolves short selectors to
+owned tools first, then validates source capabilities against those exact IDs. Preparation and steering
+refreshes receive the same resolved grant. A shadowed global tool does not gain authority from an owned
+tool's short selector. The catalog must come from trusted source metadata before executor discovery.

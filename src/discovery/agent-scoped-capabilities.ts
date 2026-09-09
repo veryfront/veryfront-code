@@ -1,9 +1,3 @@
-import { namespaceAgentCapability } from "./agent-capability-namespace.ts";
-export {
-  AGENT_CAPABILITY_NAMESPACE_SEPARATOR,
-  namespaceAgentCapability,
-  sanitizeCapabilityNamespace,
-} from "./agent-capability-namespace.ts";
 /**
  * Per-agent colocated capability registration.
  *
@@ -44,6 +38,8 @@ import type { DiscoveryResult, FileDiscoveryContext } from "./types.ts";
 
 const AGENT_TOOLS_SUBDIR = "tools";
 const AGENT_SKILLS_SUBDIR = "skills";
+/** Separator between the agent namespace and the capability short name. */
+export const AGENT_CAPABILITY_NAMESPACE_SEPARATOR = "--";
 /** Provider tool-call names allow only this charset, max 64 chars. */
 const PROVIDER_TOOL_NAME_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -61,6 +57,18 @@ const SAFE_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
  */
 export function isSafePathSegment(name: string): boolean {
   return name !== "." && name !== ".." && SAFE_PATH_SEGMENT_REGEX.test(name);
+}
+
+/** Sanitizes an agent id into a provider-safe namespace segment. */
+export function sanitizeCapabilityNamespace(agentId: string): string {
+  return agentId.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+/** Namespaces a capability short name under its owning agent. */
+export function namespaceAgentCapability(agentId: string, shortName: string): string {
+  return `${
+    sanitizeCapabilityNamespace(agentId)
+  }${AGENT_CAPABILITY_NAMESPACE_SEPARATOR}${shortName}`;
 }
 
 function isTool(value: unknown): value is Tool {

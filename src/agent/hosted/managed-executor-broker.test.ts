@@ -263,7 +263,7 @@ function fixture(
         models: new Map([[modelId, { maxOutputTokens: 100, providerTools: [] }]]),
       },
     },
-    tools: { sources: new Map(), maxCalls: 4, maxConcurrent: 1 },
+    tools: { catalog: new Map(), sources: new Map(), maxCalls: 4, maxConcurrent: 1 },
     persistence: {},
     state: {},
   };
@@ -349,6 +349,7 @@ describe("managed executor broker", () => {
       } else {
         if (mismatch === "tool source") f.input.installation.grant.allowedToolNames = ["ungranted"];
         else f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
+        f.input.tools.catalog = new Map([["ungranted", {}]]);
         f.input.tools.sources = new Map([["synthetic", {
           source: {
             id: "synthetic",
@@ -390,6 +391,7 @@ describe("managed executor broker", () => {
       args: {},
     }];
     f.input.installation.grant.allowedToolNames = ["inspect"];
+    f.input.tools.catalog = new Map([["inspect", {}]]);
     f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
     f.input.tools.sources = new Map([["synthetic", {
       source: {
@@ -424,6 +426,7 @@ describe("managed executor broker", () => {
   for (
     const [agentId, selector, capabilityName, accepted] of [
       ["coder", "fetch-paper", "coder--fetch-paper", true],
+      ["coder", "fetch-paper", "owned-paper", true],
       ["research.coder", "fetch-paper", "research_coder--fetch-paper", true],
       ["coder", "fetch-paper", "writer--fetch-paper", false],
       ["coder", "coder--fetch-paper", "writer--fetch-paper", false],
@@ -435,6 +438,21 @@ describe("managed executor broker", () => {
       f.input.installation.grant.agentId = agentId;
       f.input.prepare.agentId = agentId;
       f.input.installation.grant.allowedToolNames = [selector];
+      f.input.tools.catalog = new Map([
+        ["fetch-paper", {}],
+        ["coder--fetch-paper", { ownerAgentId: "coder", shortName: "fetch-paper" }],
+        ["research_coder--fetch-paper", {
+          ownerAgentId: "research.coder",
+          shortName: "fetch-paper",
+        }],
+        ["writer--fetch-paper", { ownerAgentId: "writer", shortName: "fetch-paper" }],
+      ]);
+      if (capabilityName === "owned-paper") {
+        f.input.tools.catalog = new Map([
+          ["fetch-paper", {}],
+          ["owned-paper", { ownerAgentId: "coder", shortName: "fetch-paper" }],
+        ]);
+      }
       f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
       f.input.tools.sources = new Map([["synthetic", {
         source: {
@@ -451,6 +469,7 @@ describe("managed executor broker", () => {
         if (accepted) {
           runtime = await broker.start(f.input);
           assertEquals(f.calls.includes("allocate"), true);
+          assertEquals(f.installed!.grant.allowedToolNames, [capabilityName]);
         } else {
           await assertRejects(
             async () => {
@@ -469,9 +488,48 @@ describe("managed executor broker", () => {
     });
   }
 
+  it("rejects a global broker capability shadowed by an owned project-local tool", async () => {
+    const f = fixture();
+    f.input.installation.grant.allowedToolNames = ["fetch-paper"];
+    f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
+    f.input.tools.catalog = new Map([
+      ["fetch-paper", {}],
+      ["owned-paper", { ownerAgentId: "coder", shortName: "fetch-paper" }],
+    ]);
+    f.input.tools.sources = new Map([["synthetic", {
+      source: {
+        id: "synthetic",
+        listTools: () => Promise.resolve([]),
+        executeTool: () => Promise.resolve({ result: "unexpected" }),
+      },
+      allowedToolNames: new Set(["fetch-paper"]),
+      context: {},
+    }]]);
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+    try {
+      await assertRejects(
+        async () => {
+          runtime = await broker.start(f.input);
+        },
+        TypeError,
+        "exceeds the installed",
+      );
+      assertEquals(f.calls, []);
+    } finally {
+      await runtime?.close();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("uses owner-scoped tool grants for steering refresh authorization", async () => {
     const f = fixture();
     f.input.installation.grant.allowedToolNames = ["fetch-paper"];
+    f.input.tools.catalog = new Map([
+      ["fetch-paper", {}],
+      ["coder--fetch-paper", { ownerAgentId: "coder", shortName: "fetch-paper" }],
+    ]);
     f.input.installation.capabilities.projectSteering = "steering";
     f.input.state.prepareProjectSteering = ({ definition }) =>
       Promise.resolve({ agent: definition });
@@ -492,6 +550,13 @@ describe("managed executor broker", () => {
         "Refreshed",
       );
       assertEquals(selection, ["coder--fetch-paper"]);
+      assertEquals(f.installed!.grant.allowedToolNames, ["coder--fetch-paper"]);
+      await assertRejects(() =>
+        f.peer!.request(executorStateOperations.refreshProjectSteering, {
+          capabilityId: "steering",
+          availableToolNames: ["fetch-paper"],
+        })
+      );
       await assertRejects(() =>
         f.peer!.request(executorStateOperations.refreshProjectSteering, {
           capabilityId: "steering",

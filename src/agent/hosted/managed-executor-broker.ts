@@ -1,4 +1,3 @@
-import { namespaceAgentCapability } from "#veryfront/discovery/agent-capability-namespace.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -93,6 +92,8 @@ export interface ManagedExecutorStartInput {
     runEventSink?: AgentRunEventSink;
   };
   tools: {
+    /** Complete trusted inventory, including project-local tools, before selector resolution. */
+    catalog: ReadonlyMap<string, { readonly ownerAgentId?: string; readonly shortName?: string }>;
     sources: ReadonlyMap<string, ExecutorToolCapability>;
     maxCalls: number;
     maxConcurrent: number;
@@ -310,7 +311,7 @@ function constrainInstalledOperationGrants(
     installed.maxOutputTokens = policy.maxOutputTokens;
     installed.providerToolNames = policy.providerTools.map((tool) => tool.name);
   }
-  const allowedTools = installedToolNames(installation);
+  const allowedTools = installedToolNames(installation, input.tools.catalog);
   const allowedSources = new Set([
     ...installation.grant.hostToolFacadeIds,
     ...installation.grant.remoteToolSourceIds,
@@ -325,16 +326,31 @@ function constrainInstalledOperationGrants(
       }
     }
   }
+  installation.grant.allowedToolNames = [...allowedTools];
 }
 
-function installedToolNames(installation: ExecutorRuntimeInstall): Set<string> {
-  const allowedTools = new Set(installation.grant.allowedToolNames);
-  // Trusted source capabilities carry canonical IDs, while an installed selector
-  // can name a tool relative to the owning agent's namespace.
+function installedToolNames(
+  installation: ExecutorRuntimeInstall,
+  catalog: ManagedExecutorStartInput["tools"]["catalog"],
+): Set<string> {
+  const allowed = new Set<string>();
+  const agentId = installation.grant.agentId;
   for (const selector of installation.grant.allowedToolNames) {
-    allowedTools.add(namespaceAgentCapability(installation.grant.agentId, selector));
+    let owned: string | undefined;
+    for (const [id, tool] of catalog) {
+      if (tool.ownerAgentId !== agentId || tool.shortName !== selector) continue;
+      if (owned !== undefined && owned !== id) {
+        throw new TypeError("Managed executor tool catalog has an ambiguous owned selector");
+      }
+      owned = id;
+    }
+    const resolved = owned ?? selector;
+    const tool = catalog.get(resolved);
+    if (tool && (tool.ownerAgentId === undefined || tool.ownerAgentId === agentId)) {
+      allowed.add(resolved);
+    }
   }
-  return allowedTools;
+  return allowed;
 }
 
 function buildBrokerOperations(
@@ -377,7 +393,7 @@ function buildBrokerOperations(
     projectId: execution.projectId,
     branchId: execution.branchId,
     ...input.state,
-    allowedToolNames: [...installedToolNames(installation)],
+    allowedToolNames: installation.grant.allowedToolNames,
   });
   const combined = new Map<string, ExecutorOperation>();
   for (const operations of [model, tools, persistence, state]) {
@@ -390,6 +406,16 @@ function buildBrokerOperations(
 }
 
 function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecutorOperationInput {
+  if (input.tools.catalog === undefined) {
+    throw new TypeError("Managed executor tool catalog is required");
+  }
+  const catalog = new Map([...input.tools.catalog].map(([id, tool]) => [
+    id,
+    Object.freeze({
+      ownerAgentId: tool.ownerAgentId,
+      shortName: tool.shortName,
+    }),
+  ]));
   const sources = new Map<string, ExecutorToolCapability>();
   for (const [id, capability] of input.tools.sources) {
     const source = capability.source;
@@ -423,6 +449,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
       ...(input.model.runEventSink ? { runEventSink: input.model.runEventSink } : {}),
     },
     tools: {
+      catalog,
       sources,
       maxCalls: input.tools.maxCalls,
       maxConcurrent: input.tools.maxConcurrent,
