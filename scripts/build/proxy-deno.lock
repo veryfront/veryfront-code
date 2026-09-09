@@ -1652,7 +1652,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
-          "npm:sharp@0.35.3"
+          "npm:sharp@0.35.4"
         ]
       },
       "extensions/ext-llm-anthropic": {
