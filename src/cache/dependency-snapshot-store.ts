@@ -45,6 +45,7 @@ const MAX_SNAPSHOT_VALUE_BYTES = 1_048_576;
  * Twice the payload bound plus envelope room admits every valid payload.
  */
 const MAX_SNAPSHOT_RECORD_BYTES = 2 * MAX_SNAPSHOT_VALUE_BYTES + 4_096;
+const MAX_PUBLICATION_ATTEMPTS = 8;
 
 /** Reject promptly on an aborted operation; backend calls are not cancelable. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -157,20 +158,30 @@ export function createCacheBackedDependencySnapshotStore(
       const encoded = jsonStringify({ __proto__: null, value, expiresAt });
 
       if (revisioned !== null) {
-        const accepted = await apply(revisioned.compareExchange, backend, [
-          cacheKey,
-          observed!.revision,
-          { kind: "set", value: encoded, expiresAtMs: expiresAt },
-        ]);
-        if (accepted) return;
-        // Lost the race: acknowledge only if the winner published the same
-        // bytes with a deadline that still covers this request.
-        const currentRaw = await readRecordRaw(backend, cacheKey);
-        const current = currentRaw === null ? null : decodeRecord(currentRaw);
-        if (current?.value === value && retainedDeadlineCovers(current.expiresAt, expiresAt)) {
-          return;
+        let expectedRevision = observed!.revision;
+        for (let attempt = 0; attempt < MAX_PUBLICATION_ATTEMPTS; attempt++) {
+          throwIfAborted(signal);
+          const accepted = await apply(revisioned.compareExchange, backend, [
+            cacheKey,
+            expectedRevision,
+            { kind: "set", value: encoded, expiresAtMs: expiresAt },
+          ]);
+          if (accepted) return;
+          throwIfAborted(signal);
+          // An identical winner with a shorter deadline needs a renewal from
+          // its current revision, never an unconditional overwrite or a short acknowledgement.
+          const current = await apply(revisioned.getWithRevision, backend, [cacheKey]);
+          if (current.value !== null) {
+            assertCacheValueWithinLimit(current.value, MAX_SNAPSHOT_RECORD_BYTES);
+            const retained = decodeRecord(current.value);
+            if (retained.value !== value) {
+              throw new Error("Dependency snapshot publication lost a conflicting race");
+            }
+            if (retainedDeadlineCovers(retained.expiresAt, expiresAt)) return;
+          }
+          expectedRevision = current.revision;
         }
-        throw new Error("Dependency snapshot publication lost a conflicting race");
+        throw new Error("Dependency snapshot publication exceeded its retry limit");
       }
 
       // Without the revision capability the write itself is unconditional, and
@@ -243,7 +254,9 @@ export async function _createSharedDependencySnapshotCacheBackend(): Promise<Cac
  *
  * The handle's operations reject while no qualifying shared backend (API cache
  * or Redis) is resolvable, and the underlying accessor retries resolution on
- * its normal failure-backoff schedule.
+ * its normal failure-backoff schedule. Revision-capable backends retry contested
+ * identical publications to extend retention, within a bounded retry budget.
+ * Different bytes and exhausted retries reject publication.
  */
 export function createCacheDependencySnapshotStoreHandle(): DependencySnapshotStoreHandle {
   const accessor = createDistributedCacheAccessor(

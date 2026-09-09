@@ -199,6 +199,77 @@ describe("cache/dependency-snapshot-store", () => {
       );
     });
 
+    for (const shortfall of [1, 60_000]) {
+      it(`extends a concurrent identical publication retained ${shortfall}ms short`, async () => {
+        const expiresAt = Date.now() + 120_000;
+        let retained: string | null = null;
+        let revision = "empty";
+        let attempts = 0;
+        const backend: CacheBackend = {
+          type: "memory",
+          get: () => Promise.resolve(retained),
+          set: () => Promise.reject(new Error("Unconditional publication is not allowed")),
+          del: () => Promise.resolve(),
+          getWithRevision: () => Promise.resolve({ value: retained, revision }),
+          compareExchange: (_key, expectedRevision, mutation) => {
+            attempts++;
+            if (attempts === 1) {
+              retained = JSON.stringify({
+                value: "snapshot-bytes",
+                expiresAt: expiresAt - shortfall,
+              });
+              revision = "winner";
+              return Promise.resolve(false);
+            }
+            assertEquals(expectedRevision, "winner");
+            assertEquals(mutation.kind, "set");
+            if (mutation.kind === "set") retained = mutation.value;
+            revision = "extended";
+            return Promise.resolve(true);
+          },
+        };
+        const store = backedStore(backend);
+        await store.publish(NAMESPACE, KEY, "snapshot-bytes", expiresAt);
+        assertEquals(attempts, 2);
+        assertEquals(await store.read(NAMESPACE, KEY), { value: "snapshot-bytes", expiresAt });
+      });
+    }
+
+    it("stops revision retries when publication is aborted", async () => {
+      const controller = new AbortController();
+      let attempts = 0;
+      let reads = 0;
+      const backend: CacheBackend = {
+        type: "memory",
+        get: () => Promise.resolve(null),
+        set: () => Promise.reject(new Error("Unconditional publication is not allowed")),
+        del: () => Promise.resolve(),
+        getWithRevision: () => {
+          reads++;
+          return Promise.resolve({ value: null, revision: "empty" });
+        },
+        compareExchange: () => {
+          attempts++;
+          controller.abort();
+          return Promise.resolve(false);
+        },
+      };
+      await assertRejects(
+        () =>
+          backedStore(backend).publish(
+            NAMESPACE,
+            KEY,
+            "snapshot-bytes",
+            Date.now() + 60_000,
+            controller.signal,
+          ),
+        Error,
+        "aborted",
+      );
+      assertEquals(attempts, 1);
+      assertEquals(reads, 1);
+    });
+
     for (const offset of [-1, 0, 1]) {
       it(`requires a concurrent same-value winner to cover the exact deadline (${offset}ms)`, async () => {
         const expiresAt = Date.now() + 60_000;
@@ -208,7 +279,11 @@ describe("cache/dependency-snapshot-store", () => {
           get: () => Promise.resolve(retained),
           set: () => Promise.reject(new Error("Unconditional publication is not allowed")),
           del: () => Promise.resolve(),
-          getWithRevision: () => Promise.resolve({ value: null, revision: "before-winner" }),
+          getWithRevision: () =>
+            Promise.resolve({
+              value: retained,
+              revision: retained === null ? "before-winner" : "winner",
+            }),
           compareExchange: () => {
             retained = JSON.stringify({ value: "snapshot-bytes", expiresAt: expiresAt + offset });
             return Promise.resolve(false);
