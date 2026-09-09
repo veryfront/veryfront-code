@@ -1,5 +1,11 @@
-import { privateTextTrim, privateTextTrimStart } from "#veryfront/security/private-text.ts";
+import {
+  privateTextSlice,
+  privateTextTrim,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   appendPrivateArray,
@@ -139,6 +145,8 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
 
 const RegExpConstructor = RegExp;
 const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
+const objectEntries = Object.entries;
 const regexpExec = RegExp.prototype.exec;
 const regexpReplace = RegExp.prototype[Symbol.replace];
 const applyRegExp = Reflect.apply;
@@ -184,7 +192,7 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
     match;
     match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null
   ) {
-    redacted += `${input.slice(cursor, match.index)}[REDACTED]`;
+    redacted += `${privateTextSlice(input, cursor, match.index)}[REDACTED]`;
     cursor = match.index + match[0].length;
     matched = true;
     if (!matcher.global) break;
@@ -197,7 +205,7 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
     }
   }
 
-  return matched ? redacted + input.slice(cursor) : input;
+  return matched ? redacted + privateTextSlice(input, cursor) : input;
 }
 
 /**
@@ -245,7 +253,7 @@ export class InputValidator {
       pushPrivateArray(violations, {
         type: "input",
         reason: `Input exceeds maximum length of ${maxLength}`,
-        content: `${input.substring(0, 100)}...`,
+        content: `${privateTextSlice(input, 0, 100)}...`,
       });
     }
 
@@ -384,7 +392,9 @@ function reportViolations(
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
   if (!onViolation) return;
-  for (const violation of violations) onViolation(violation);
+  for (let index = 0; index < violations.length; index++) {
+    if (hasOwn(violations, index)) onViolation(violations[index]!);
+  }
 }
 
 async function filterStructuredOutputValue(
@@ -399,10 +409,11 @@ async function filterStructuredOutputValue(
     return { value: result.filtered, violations: result.violations };
   }
 
-  if (Array.isArray(value)) {
+  if (isArray(value)) {
     const filteredItems: unknown[] = [];
     const violations: SecurityViolation[] = [];
-    for (const item of value) {
+    for (let itemIndex = 0; itemIndex < value.length; itemIndex++) {
+      const item = hasOwn(value, itemIndex) ? value[itemIndex] : undefined;
       const result = await filterStructuredOutputValue(item, outputFilter);
       pushPrivateArray(filteredItems, result.value);
       appendPrivateArray(violations, result.violations);
@@ -413,9 +424,16 @@ async function filterStructuredOutputValue(
   if (isRecord(value)) {
     const filteredObject: Record<string, unknown> = {};
     const violations: SecurityViolation[] = [];
-    for (const [key, item] of Object.entries(value)) {
+    const entries = objectEntries(value);
+    for (let index = 0; index < entries.length; index++) {
+      const key = entries[index]![0];
+      const item = entries[index]![1];
       const result = await filterStructuredOutputValue(item, outputFilter);
-      filteredObject[key] = result.value;
+      defineOwnDataProperty(filteredObject, key, result.value, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
       appendPrivateArray(violations, result.violations);
     }
     return { value: filteredObject, violations };
@@ -425,7 +443,7 @@ async function filterStructuredOutputValue(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 function extractPartInputText(part: unknown): string[] {
@@ -437,11 +455,13 @@ function extractPartInputText(part: unknown): string[] {
   const appendSerialized = (value: unknown) => {
     if (!isRecord(value)) return;
     try {
-      const serialized = JSON.stringify(value);
+      const serialized = privateJsonStringify(value);
       if (typeof serialized === "string") pushPrivateArray(values, serialized);
     } catch {
-      // Provider converters ignore non-text input on caller-authored user and
-      // system messages. Unsupported JSON values must not fail the turn here.
+      throw toError(createError({
+        type: "agent",
+        message: "Input validation failed: Structured input cannot be safely inspected",
+      }));
     }
   };
   appendSerialized(part.args);
@@ -458,7 +478,7 @@ function extractPartInputText(part: unknown): string[] {
  * tool messages remain exempt for replay compatibility. The host must supply
  * trusted replay: this role-based filter does not authenticate message origin.
  */
-const VALIDATED_INPUT_ROLES: ReadonlySet<Message["role"]> = new Set(["user", "system"]);
+const VALIDATED_INPUT_ROLES: ReadonlySet<Message["role"]> = createPrivateSet(["user", "system"]);
 
 function isTextPart(part: unknown): part is { type: "text"; text: string } {
   return isRecord(part) && part.type === "text" && typeof part.text === "string";
@@ -513,21 +533,19 @@ function extractMessageAssembledTextsRegardlessOfRole(message: Message): string[
     ? getProviderAttachmentMetadata(message.parts)
     : [];
   if (textParts.length < 2) {
-    return [
-      ...(message.role === "user" && buildAttachmentContextFromParts(message.parts)
-        ? textParts
-        : []),
-      ...attachmentMetadata,
-    ];
+    return concatPrivateArrays(
+      message.role === "user" && buildAttachmentContextFromParts(message.parts) ? textParts : [],
+      attachmentMetadata,
+    );
   }
 
-  const assembled = [
-    ...mapPrivateArray(
+  const assembled = concatPrivateArrays(
+    mapPrivateArray(
       ASSEMBLED_TEXT_SEPARATORS,
       (separator) => joinPrivateArray(textParts, separator),
     ),
-    ...attachmentMetadata,
-  ];
+    attachmentMetadata,
+  );
   if (message.role === "user" && buildAttachmentContextFromParts(message.parts)) {
     pushPrivateArray(assembled, getUserTextWithAttachmentContext(message.parts));
   }
@@ -669,7 +687,9 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   // merging the remaining adjacent system layers. Anthropic retains those
   // layers, so keep the original runs above and validate this alternate view
   // in addition.
-  for (const run of extractAdjacentRuns(messages, "system", true)) {
+  const alternateRuns = extractAdjacentRuns(messages, "system", true);
+  for (let index = 0; index < alternateRuns.length; index++) {
+    const run = alternateRuns[index]!;
     const alreadyCovered = somePrivateArray(runs, (candidate) =>
       candidate.length === run.length &&
       everyPrivateArray(candidate, (message, index) => message === run[index]));
@@ -688,7 +708,7 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   const alreadyCovered = somePrivateArray(runs, (run) =>
     run.length === hoisted.length &&
     everyPrivateArray(run, (message, index) => message === hoisted[index]));
-  return alreadyCovered ? runs : [...runs, hoisted];
+  return alreadyCovered ? runs : concatPrivateArrays(runs, [hoisted]);
 }
 
 /**
@@ -698,7 +718,10 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
  * turn.
  */
 function extractMergedRuns(messages: Message[]): Message[][] {
-  return [...extractMergedSystemRuns(messages), ...extractAdjacentRuns(messages, "user")];
+  return concatPrivateArrays(
+    extractMergedSystemRuns(messages),
+    extractAdjacentRuns(messages, "user"),
+  );
 }
 
 function sameProviderMessageContent(previous: Message, projected: Message): boolean {
@@ -707,8 +730,10 @@ function sameProviderMessageContent(previous: Message, projected: Message): bool
 
 function createMessageOccurrenceMatcher(previousMessages: Message[], messages: Message[]) {
   const uniqueById = (values: Message[]): Map<string, Message | undefined> => {
-    const unique = new Map<string, Message | undefined>();
-    for (const message of values) {
+    const unique = createPrivateMap<string, Message | undefined>();
+    for (let messageIndex = 0; messageIndex < values.length; messageIndex++) {
+      if (!hasOwn(values, messageIndex)) continue;
+      const message = values[messageIndex]!;
       unique.set(message.id, unique.has(message.id) ? undefined : message);
     }
     return unique;
@@ -754,7 +779,9 @@ function extractMergedRunTexts(
     ? createMessageOccurrenceMatcher(previousMessages, messages)
     : undefined;
   const runTexts = createPrivateSet<string>();
-  for (const run of extractMergedRuns(messages)) {
+  const mergedRuns = extractMergedRuns(messages);
+  for (let runIndex = 0; runIndex < mergedRuns.length; runIndex++) {
+    const run = mergedRuns[runIndex]!;
     // Only an identical grouping keeps its provenance. Comparing text alone
     // would also exempt a newly joined boundary that happens to duplicate a
     // different historical run, or a run shortened by trimming.
@@ -806,10 +833,10 @@ function extractInputValidationTexts(input: AgentContext["input"]): InputValidat
   if (typeof input === "string") return { texts: [input], assembled: [] };
   return {
     texts: flatMapPrivateArray(input, extractMessageInputText),
-    assembled: [
-      ...flatMapPrivateArray(input, extractMessageAssembledTexts),
-      ...extractMergedRunTexts(input),
-    ],
+    assembled: concatPrivateArrays(
+      flatMapPrivateArray(input, extractMessageAssembledTexts),
+      extractMergedRunTexts(input),
+    ),
   };
 }
 
@@ -840,7 +867,9 @@ function sanitizeTextToFixpoint(validator: InputValidator, text: string): string
 function collapseTextParts(parts: Message["parts"], text: string | undefined): Message["parts"] {
   const collapsed: Message["parts"] = [];
   let replaced = false;
-  for (const part of parts) {
+  for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+    if (!hasOwn(parts, partIndex)) continue;
+    const part = parts[partIndex]!;
     if (!isTextPart(part)) {
       pushPrivateArray(collapsed, part);
     } else if (!replaced && text !== undefined) {
@@ -941,9 +970,11 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
  * occurs for caller text that already required a security rewrite.
  */
 function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Message[] {
-  const rewrites = new Map<Message, Message["parts"]>();
+  const rewrites = createPrivateMap<Message, Message["parts"]>();
 
-  for (const run of extractMergedRuns(messages)) {
+  const mergedRuns = extractMergedRuns(messages);
+  for (let runIndex = 0; runIndex < mergedRuns.length; runIndex++) {
+    const run = mergedRuns[runIndex]!;
     // The run-level join is "\n\n" on OpenAI-compatible providers and the
     // Anthropic builder, but the Google builder ships each system message as
     // a separate `systemInstruction` part whose server-side concatenation
@@ -971,12 +1002,14 @@ function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Mes
     // Keep the triggering assembly: introducing a newline before sanitizing
     // can hide a script body from a pattern whose dot does not span lines.
     const collapsedText = sanitizeTextToFixpoint(validator, unsafeAssembly);
-    run.forEach((message, index) => {
+    for (let index = 0; index < run.length; index++) {
+      if (!hasOwn(run, index)) continue;
+      const message = run[index]!;
       rewrites.set(
         message,
         collapseTextParts(message.parts, index === 0 ? collapsedText : undefined),
       );
-    });
+    }
   }
 
   if (rewrites.size === 0) return messages;
@@ -994,9 +1027,9 @@ async function validateInputTexts(
   values: InputValidationTexts,
   options?: InputValidationOptions,
 ): Promise<{ valid: boolean; violations: SecurityViolation[] }> {
-  const results = await Promise.all([
-    ...mapPrivateArray(values.texts, (value) => validator.validate(value, options)),
-    ...mapPrivateArray(
+  const results = await Promise.all(concatPrivateArrays(
+    mapPrivateArray(values.texts, (value) => validator.validate(value, options)),
+    mapPrivateArray(
       values.assembled,
       (value) =>
         validator.validate(value, {
@@ -1005,7 +1038,7 @@ async function validateInputTexts(
           checkCustomValidation: false,
         }),
     ),
-  ]);
+  ));
   return {
     valid: everyPrivateArray(results, (result) => result.valid),
     violations: flatMapPrivateArray(results, (result) => result.violations),
@@ -1365,9 +1398,13 @@ async function assertProviderRunsValid(
   if (providerRuns.length === 0) return;
   const patternOnly = { checkCustomValidation: false } as const;
   const introducedViolations: SecurityViolation[] = [];
-  for (const { text, trustedSegments } of providerRuns) {
+  for (let runIndex = 0; runIndex < providerRuns.length; runIndex++) {
+    if (!hasOwn(providerRuns, runIndex)) continue;
+    const { text, trustedSegments } = providerRuns[runIndex]!;
     const validation = await validator.validate(text, { ...patternOnly, checkMaxLength: false });
-    for (const violation of validation.violations) {
+    for (let violationIndex = 0; violationIndex < validation.violations.length; violationIndex++) {
+      if (!hasOwn(validation.violations, violationIndex)) continue;
+      const violation = validation.violations[violationIndex]!;
       const pattern = violation.pattern;
       if (pattern === undefined) {
         pushPrivateArray(introducedViolations, violation);
@@ -1408,15 +1445,19 @@ async function assertProviderRunsValid(
     );
   }
 
-  for (const { text, trustedSegments } of providerRuns) {
+  for (let runIndex = 0; runIndex < providerRuns.length; runIndex++) {
+    if (!hasOwn(providerRuns, runIndex)) continue;
+    const { text, trustedSegments } = providerRuns[runIndex]!;
     let expected = "";
     let cursor = 0;
-    for (const segment of trustedSegments) {
-      expected += text.slice(cursor, segment.start) +
+    for (let segmentIndex = 0; segmentIndex < trustedSegments.length; segmentIndex++) {
+      if (!hasOwn(trustedSegments, segmentIndex)) continue;
+      const segment = trustedSegments[segmentIndex]!;
+      expected += privateTextSlice(text, cursor, segment.start) +
         (validator.sanitize(segment.text) ?? segment.text);
       cursor = segment.start + segment.text.length;
     }
-    expected += text.slice(cursor);
+    expected += privateTextSlice(text, cursor);
     if ((validator.sanitize(text) ?? text) === expected) continue;
     const violation: SecurityViolation = {
       type: "input",
@@ -1475,7 +1516,9 @@ function assertTextsNeedNoSanitization(
   reason: string,
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
-  for (const value of values) {
+  for (let valueIndex = 0; valueIndex < values.length; valueIndex++) {
+    if (!hasOwn(values, valueIndex)) continue;
+    const value = values[valueIndex]!;
     if ((validator.sanitize(value) ?? value) === value) continue;
 
     const violation: SecurityViolation = {
@@ -1624,13 +1667,13 @@ export function securityMiddleware(
               ),
               extractMessageInputText,
             ),
-            assembled: [
-              ...flatMapPrivateArray(
+            assembled: concatPrivateArrays(
+              flatMapPrivateArray(
                 filterPrivateArray(turnInput, isSummaryMemoryProjectionMessage),
                 extractMessageInputText,
               ),
-              ...flatMapPrivateArray(turnInput, extractMessageAssembledTexts),
-            ],
+              flatMapPrivateArray(turnInput, extractMessageAssembledTexts),
+            ),
           }
           : { texts: [], assembled: [] };
         const runTexts = extractMergedRunTexts(
@@ -1643,13 +1686,16 @@ export function securityMiddleware(
           inputValidator,
           {
             texts: individualValues.texts,
-            assembled: [...individualValues.assembled, ...runTexts],
+            assembled: concatPrivateArrays(individualValues.assembled, runTexts),
           },
           onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
-          [...individualValues.texts, ...individualValues.assembled, ...runTexts],
+          concatPrivateArrays(
+            concatPrivateArrays(individualValues.texts, individualValues.assembled),
+            runTexts,
+          ),
           "Provider-visible messages contain content sanitization removes",
           onProviderViolation,
         );
@@ -1670,13 +1716,13 @@ export function securityMiddleware(
           filterPrivateArray(changed, (message) => !isSummaryMemoryProjectionMessage(message)),
           extractMessageInputText,
         );
-        const assembled = [
-          ...flatMapPrivateArray(
+        const assembled = concatPrivateArrays(
+          flatMapPrivateArray(
             filterPrivateArray(changed, isSummaryMemoryProjectionMessage),
             extractMessageInputText,
           ),
-          ...flatMapPrivateArray(changed, extractMessageAssembledTexts),
-        ];
+          flatMapPrivateArray(changed, extractMessageAssembledTexts),
+        );
         const runTexts = extractMergedRunTexts(
           messages,
           undefined,
@@ -1685,12 +1731,12 @@ export function securityMiddleware(
         );
         await assertInputTextsValid(
           inputValidator,
-          { texts, assembled: [...assembled, ...runTexts] },
+          { texts, assembled: concatPrivateArrays(assembled, runTexts) },
           onProviderViolation,
         );
         assertTextsNeedNoSanitization(
           inputValidator,
-          [...texts, ...assembled, ...runTexts],
+          concatPrivateArrays(concatPrivateArrays(texts, assembled), runTexts),
           "Provider-visible messages contain content sanitization removes",
           onProviderViolation,
         );
@@ -1709,10 +1755,11 @@ export function securityMiddleware(
             filterPrivateArray(context.input, (message) => message.role === "user"),
             (
               message,
-            ) => [
-              buildAttachmentContextFromParts(message.parts),
-              ...getProviderAttachmentMetadata(message.parts),
-            ],
+            ) =>
+              concatPrivateArrays(
+                [buildAttachmentContextFromParts(message.parts)],
+                getProviderAttachmentMetadata(message.parts),
+              ),
           ),
           "Attachment annotations contain content sanitization removes",
           config.onViolation,
@@ -1772,14 +1819,14 @@ export function securityMiddleware(
           ),
         };
         const completeResolvedTexts: InputValidationTexts = {
-          texts: [...resolvedTexts.texts, ...rewrittenRoleTexts.texts],
-          assembled: [...resolvedTexts.assembled, ...rewrittenRoleTexts.assembled],
+          texts: concatPrivateArrays(resolvedTexts.texts, rewrittenRoleTexts.texts),
+          assembled: concatPrivateArrays(resolvedTexts.assembled, rewrittenRoleTexts.assembled),
         };
         if (sameTexts(completeResolvedTexts, approvedInputTexts)) return;
         await assertInputTextsValid(inputValidator, completeResolvedTexts, config.onViolation);
         assertTextsNeedNoSanitization(
           inputValidator,
-          [...completeResolvedTexts.texts, ...completeResolvedTexts.assembled],
+          concatPrivateArrays(completeResolvedTexts.texts, completeResolvedTexts.assembled),
           "Middleware-rewritten input contains content sanitization removes",
           config.onViolation,
         );

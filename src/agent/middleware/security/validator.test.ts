@@ -228,6 +228,91 @@ describe("OutputFilter", () => {
 });
 
 describe("securityMiddleware", () => {
+  it("rejects structured input that cannot be inspected without hiding readable blocked fields", async () => {
+    let reads = 0;
+    const accessorInput = { query: "synthetic-blocked-input" };
+    Object.defineProperty(accessorInput, "unrelated", {
+      enumerable: true,
+      get() {
+        reads++;
+        return "harmless";
+      },
+    });
+    for (
+      const args of [accessorInput, {
+        query: "synthetic-blocked-input",
+        values: new Array(100_001),
+      }]
+    ) {
+      const context = createContext({
+        input: [{
+          id: "user",
+          role: "user",
+          parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args }],
+        }],
+      });
+      await assertRejects(
+        () =>
+          securityMiddleware({ input: { blockedPatterns: [/synthetic-blocked-input/] } })(
+            context,
+            () => Promise.resolve(createResponse("ok")),
+          ),
+        Error,
+        "Input validation failed",
+      );
+    }
+    assertEquals(reads, 0);
+  });
+
+  it("preserves sparse structured output positions without inherited reads", async () => {
+    const object = ["first", , "last"];
+    let reads = 0;
+    Object.setPrototypeOf(
+      object,
+      Object.create(Array.prototype, {
+        1: {
+          get() {
+            reads++;
+            return "inherited";
+          },
+        },
+      }),
+    );
+    const result = await securityMiddleware({})(createContext(), () =>
+      Promise.resolve({
+        ...createResponse("ok"),
+        object,
+      }));
+    assertEquals(result.object, ["first", undefined, "last"]);
+    assertEquals(reads, 0);
+  });
+  it("validates own structured input without invoking its custom JSON serializer", async () => {
+    let observations = 0;
+    const args = { query: "synthetic-blocked-input" };
+    Object.defineProperty(args, "toJSON", {
+      value() {
+        observations++;
+        return { query: "harmless" };
+      },
+    });
+    const context = createContext({
+      input: [{
+        id: "user",
+        role: "user",
+        parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args }],
+      }],
+    });
+    await assertRejects(
+      () =>
+        securityMiddleware({ input: { blockedPatterns: [/synthetic-blocked-input/] } })(
+          context,
+          () => Promise.resolve(createResponse("ok")),
+        ),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(observations, 0);
+  });
   it("validates second-turn membership without consulting the input iterator", async () => {
     const context = createContext();
     await securityMiddleware({ input: { blockedPatterns: [/blocked phrase/] } })(
