@@ -54,6 +54,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
+function requireLiveRetention(expiresAt: number): void {
+  if (expiresAt <= dateNow()) {
+    throw new Error("Dependency snapshot retention window has already passed");
+  }
+}
+
 function recordKey(namespace: string, key: string): string {
   return `${namespace}:${key}`;
 }
@@ -119,6 +125,7 @@ export function createCacheBackedDependencySnapshotStore(
     expiresAt: number,
   ): Promise<void> {
     const writtenRaw = await readRecordRaw(backend, cacheKey);
+    requireLiveRetention(expiresAt);
     const written = writtenRaw === null ? null : decodeRecord(writtenRaw);
     if (written?.value !== value || !retainedDeadlineCovers(written.expiresAt, expiresAt)) {
       throw new Error("Dependency snapshot publication was not retained");
@@ -138,6 +145,7 @@ export function createCacheBackedDependencySnapshotStore(
       const observed = revisioned === null
         ? undefined
         : await apply(revisioned.getWithRevision, backend, [cacheKey]);
+      requireLiveRetention(expiresAt);
       const observedRaw = revisioned === null ? existingRaw : observed!.value;
       if (observedRaw !== null && observedRaw !== undefined) {
         assertCacheValueWithinLimit(observedRaw, MAX_SNAPSHOT_RECORD_BYTES);
@@ -161,16 +169,19 @@ export function createCacheBackedDependencySnapshotStore(
         let expectedRevision = observed!.revision;
         for (let attempt = 0; attempt < MAX_PUBLICATION_ATTEMPTS; attempt++) {
           throwIfAborted(signal);
+          requireLiveRetention(expiresAt);
           const accepted = await apply(revisioned.compareExchange, backend, [
             cacheKey,
             expectedRevision,
             { kind: "set", value: encoded, expiresAtMs: expiresAt },
           ]);
+          requireLiveRetention(expiresAt);
           if (accepted) return;
           throwIfAborted(signal);
           // An identical winner with a shorter deadline needs a renewal from
           // its current revision, never an unconditional overwrite or a short acknowledgement.
           const current = await apply(revisioned.getWithRevision, backend, [cacheKey]);
+          requireLiveRetention(expiresAt);
           if (current.value !== null) {
             assertCacheValueWithinLimit(current.value, MAX_SNAPSHOT_RECORD_BYTES);
             const retained = decodeRecord(current.value);
