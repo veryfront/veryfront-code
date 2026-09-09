@@ -122,27 +122,28 @@ describe("cache/dependency-snapshot-store", () => {
       await assertRejects(() => store.read(NAMESPACE, KEY));
     });
 
-    it("rejects a renewal whose new deadline the backend silently dropped", async () => {
-      const backend = new MemoryCacheBackend();
-      const store = backedStore(backend);
-      const firstDeadline = Date.now() + 60_000;
-      await store.publish(NAMESPACE, KEY, "snapshot-bytes", firstDeadline);
+    for (const extension of [1, 60_000, 3_600_000]) {
+      it(`rejects a renewal whose deadline is ${extension}ms short`, async () => {
+        const backend = new MemoryCacheBackend();
+        const store = backedStore(backend);
+        const firstDeadline = Date.now() + 60_000;
+        await store.publish(NAMESPACE, KEY, "snapshot-bytes", firstDeadline);
 
-      const droppingBackend = Object.create(backend) as CacheBackend;
-      Object.defineProperty(droppingBackend, "set", {
-        value: () => Promise.resolve(),
-        enumerable: true,
+        const droppingBackend = Object.create(backend) as CacheBackend;
+        Object.defineProperty(droppingBackend, "set", {
+          value: () => Promise.resolve(),
+          enumerable: true,
+        });
+        await assertRejects(() =>
+          backedStore(droppingBackend).publish(
+            NAMESPACE,
+            KEY,
+            "snapshot-bytes",
+            firstDeadline + extension,
+          )
+        );
       });
-      // Well past the small concurrency slack, as a real renewal would be.
-      await assertRejects(() =>
-        backedStore(droppingBackend).publish(
-          NAMESPACE,
-          KEY,
-          "snapshot-bytes",
-          firstDeadline + 3_600_000,
-        )
-      );
-    });
+    }
 
     it("rejects oversized stored records instead of materializing them", async () => {
       const backend = new MemoryCacheBackend(10, { maxSizeBytes: 8 * 1024 * 1024 });
@@ -197,6 +198,32 @@ describe("cache/dependency-snapshot-store", () => {
         )
       );
     });
+
+    for (const offset of [-1, 0, 1]) {
+      it(`requires a concurrent same-value winner to cover the exact deadline (${offset}ms)`, async () => {
+        const expiresAt = Date.now() + 60_000;
+        let retained: string | null = null;
+        const backend: CacheBackend = {
+          type: "memory",
+          get: () => Promise.resolve(retained),
+          set: () => Promise.reject(new Error("Unconditional publication is not allowed")),
+          del: () => Promise.resolve(),
+          getWithRevision: () => Promise.resolve({ value: null, revision: "before-winner" }),
+          compareExchange: () => {
+            retained = JSON.stringify({ value: "snapshot-bytes", expiresAt: expiresAt + offset });
+            return Promise.resolve(false);
+          },
+        };
+        const store = backedStore(backend);
+        const publish = () => store.publish(NAMESPACE, KEY, "snapshot-bytes", expiresAt);
+        if (offset < 0) await assertRejects(publish);
+        else await publish();
+        assertEquals(await store.read(NAMESPACE, KEY), {
+          value: "snapshot-bytes",
+          expiresAt: expiresAt + offset,
+        });
+      });
+    }
 
     it("acknowledges at most one of two conflicting concurrent publications", async () => {
       // A revisioned backend where both publishers observe the key absent

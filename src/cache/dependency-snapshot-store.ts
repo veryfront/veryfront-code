@@ -46,18 +46,6 @@ const MAX_SNAPSHOT_VALUE_BYTES = 1_048_576;
  */
 const MAX_SNAPSHOT_RECORD_BYTES = 2 * MAX_SNAPSHOT_VALUE_BYTES + 4_096;
 
-/**
- * Deadline tolerance for concurrent same-value publications. Two replicas
- * publishing an identical snapshot stamp deadlines milliseconds apart, and
- * either write order must acknowledge both. A silently dropped renewal keeps a
- * deadline hours short of the requested one, far outside this slack. The
- * residual cost of the tolerance is bounded by its size: shared history can
- * expire at most this much earlier than an acknowledged deadline, and the
- * registry renews snapshots half a retention period (hours) before expiry, so
- * a sub-minute shortfall never outlives the next renewal.
- */
-const RENEWAL_DEADLINE_SLACK_MS = 60_000;
-
 /** Reject promptly on an aborted operation; backend calls are not cancelable. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -106,7 +94,7 @@ async function readRecordRaw(backend: CacheBackend, cacheKey: string): Promise<s
 }
 
 function retainedDeadlineCovers(retained: number, requested: number): boolean {
-  return retained + RENEWAL_DEADLINE_SLACK_MS >= requested;
+  return retained >= requested;
 }
 
 /**
