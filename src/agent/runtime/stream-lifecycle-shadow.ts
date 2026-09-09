@@ -1,3 +1,11 @@
+import {
+  everyPrivateArray,
+  filterPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import {
@@ -15,6 +23,16 @@ import type {
   StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+
+const hasOwn = Object.hasOwn;
+const mapGet = Map.prototype.get;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const isArray = Array.isArray;
+const objectIs = Object.is;
+const objectKeys = Object.keys;
+const arraySort = Array.prototype.sort;
+const apply = Reflect.apply;
+const sortStrings = (values: string[]): string[] => apply(arraySort, values, [compareStrings]);
 
 export type StreamLifecycleShadowDivergence =
   | "text"
@@ -45,28 +63,25 @@ export function createStreamLifecycleShadow(options: {
   const decodeOptions = {
     availableToolNames: options.availableToolNames === null
       ? null
-      : new Set(options.availableToolNames),
-    providerExecutedToolNames: new Set(options.providerExecutedToolNames),
+      : createPrivateSet(options.availableToolNames),
+    providerExecutedToolNames: createPrivateSet(options.providerExecutedToolNames),
   };
   return {
     observePart(part: unknown) {
       if (failed) return;
       try {
-        for (
-          const signal of decodeRuntimeStreamPart(
-            part,
-            reducer.snapshot,
-            decodeOptions,
-          )
-        ) {
-          reducer = reduceStreamSignal(reducer, signal, 0).state;
+        const signals = decodeRuntimeStreamPart(part, reducer.snapshot, decodeOptions);
+        for (let index = 0; index < signals.length; index++) {
+          if (hasOwn(signals, index)) {
+            reducer = reduceStreamSignal(reducer, signals[index]!, 0).state;
+          }
         }
       } catch {
         failed = true;
       }
     },
     compareLegacySnapshot(state: ChatStreamState): StreamLifecycleShadowReport {
-      const categories = new Set<StreamLifecycleShadowDivergence>();
+      const categories = createPrivateSet<StreamLifecycleShadowDivergence>();
       if (failed) categories.add("shadow_error");
       if (state.accumulatedText !== reducer.snapshot.accumulatedText) {
         categories.add("text");
@@ -88,7 +103,7 @@ export function createStreamLifecycleShadow(options: {
       }
       const report: StreamLifecycleShadowReport = {
         count: categories.size,
-        categories: [...categories].sort(compareStrings),
+        categories: apply(arraySort, [...categories], [compareStrings]),
       };
       try {
         recordStreamLifecycleShadowReport({ report, mode: "shadow" });
@@ -104,8 +119,8 @@ function equalReasoning(
   legacy: readonly StreamingReasoningPart[],
   lifecycle: readonly { id: string; text: string }[],
 ): boolean {
-  return legacy.map((part) => part.text).join("\0") ===
-    lifecycle.map((part) => part.text).join("\0");
+  return joinPrivateArray(mapPrivateArray(legacy, (part) => part.text), "\0") ===
+    joinPrivateArray(mapPrivateArray(lifecycle, (part) => part.text), "\0");
 }
 
 function normalizeArgumentText(raw: string): string {
@@ -122,10 +137,14 @@ function equalToolInputs(
   legacy: ReadonlyMap<string, StreamingToolCall>,
   tools: readonly StreamToolSnapshot[],
 ): boolean {
-  const lifecycleTools = tools.filter((tool) => tool.rejectionReason !== "unavailable");
-  if (legacy.size !== lifecycleTools.length) return false;
-  for (const tool of lifecycleTools) {
-    const match = legacy.get(tool.id);
+  const lifecycleTools = filterPrivateArray(
+    tools,
+    (tool) => tool.rejectionReason !== "unavailable",
+  );
+  if (apply(mapSize, legacy, []) !== lifecycleTools.length) return false;
+  for (let index = 0; index < lifecycleTools.length; index++) {
+    const tool = lifecycleTools[index]!;
+    const match = apply(mapGet, legacy, [tool.id]) as StreamingToolCall | undefined;
     if (!match || match.name !== tool.name) return false;
     if (
       normalizeArgumentText(match.arguments ?? "") !==
@@ -137,7 +156,7 @@ function equalToolInputs(
   return true;
 }
 
-const PROVIDER_TERMINAL_TOOL_PHASES = new Set([
+const PROVIDER_TERMINAL_TOOL_PHASES = createPrivateSet([
   "succeeded",
   "failed",
   "denied",
@@ -148,13 +167,15 @@ function equalToolResults(
   legacy: readonly StreamingToolResult[],
   tools: readonly StreamToolSnapshot[],
 ): boolean {
-  const terminal = tools.filter((tool) =>
+  const terminal = filterPrivateArray(tools, (tool) =>
     tool.providerExecuted === true &&
-    PROVIDER_TERMINAL_TOOL_PHASES.has(tool.phase)
-  );
+    PROVIDER_TERMINAL_TOOL_PHASES.has(tool.phase));
   if (legacy.length !== terminal.length) return false;
-  const legacyById = new Map(legacy.map((result) => [result.toolCallId, result]));
-  return terminal.every((tool) => {
+  const legacyById = createPrivateMap<string, StreamingToolResult>();
+  for (let index = 0; index < legacy.length; index++) {
+    if (hasOwn(legacy, index)) legacyById.set(legacy[index]!.toolCallId, legacy[index]!);
+  }
+  return everyPrivateArray(terminal, (tool) => {
     const result = legacyById.get(tool.id);
     return result !== undefined && equalToolResult(result, tool);
   });
@@ -181,22 +202,22 @@ function equalToolResult(
 }
 
 function deepEqualUnknown(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
+  if (objectIs(a, b)) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return false;
   if (typeof a !== "object" || typeof b !== "object") return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+  if (isArray(a) || isArray(b)) {
+    if (!isArray(a) || !isArray(b) || a.length !== b.length) {
       return false;
     }
-    return a.every((value, index) => deepEqualUnknown(value, b[index]));
+    return everyPrivateArray(a, (value, index) => deepEqualUnknown(value, b[index]));
   }
   const aRecord = a as Record<string, unknown>;
   const bRecord = b as Record<string, unknown>;
-  const aKeys = Object.keys(aRecord).sort(compareStrings);
-  const bKeys = Object.keys(bRecord).sort(compareStrings);
+  const aKeys = sortStrings(objectKeys(aRecord));
+  const bKeys = sortStrings(objectKeys(bRecord));
   if (!deepEqualUnknown(aKeys, bKeys)) return false;
-  return aKeys.every((key) => deepEqualUnknown(aRecord[key], bRecord[key]));
+  return everyPrivateArray(aKeys, (key) => deepEqualUnknown(aRecord[key], bRecord[key]));
 }
 
 function equalUsage(
