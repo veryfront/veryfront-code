@@ -1470,6 +1470,106 @@ function githubFixture(options: {
 }
 
 describe("automated review publication", () => {
+  it("reads complete review timelines beyond 500 items before accepting evidence", async () => {
+    const history = Array.from(
+      { length: 500 },
+      (_, index) => ({ event: "commented", id: 1000 + index }),
+    );
+    const verdict = codexComment(HEAD.slice(0, 10), { id: 101 });
+    const fixture = githubFixture({
+      pages: {
+        comments: [[verdict]],
+        timeline: [
+          history.slice(0, 100),
+          history.slice(100, 200),
+          history.slice(200, 300),
+          history.slice(300, 400),
+          history.slice(400),
+          [{ event: "commented", id: 101 }],
+        ],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "success");
+    assertEquals(result.review?.source, "codex-comment");
+  });
+
+  it("keeps later same-second findings from being hidden beyond the first 500 timeline items", async () => {
+    const request = reviewRequestComment();
+    const verdict = codexComment(HEAD.slice(0, 10), {
+      id: 101,
+      created_at: request.created_at,
+    });
+    const finding = codexFindingComment(HEAD.slice(0, 10), {
+      id: 102,
+      created_at: request.created_at,
+    });
+    const history = Array.from(
+      { length: 498 },
+      (_, index) => ({ event: "commented", id: 1000 + index }),
+    );
+    const fixture = githubFixture({
+      pages: {
+        comments: [[request, verdict, finding]],
+        timeline: [[{ event: "commented", id: request.id }, {
+          event: "commented",
+          id: 101,
+        }, ...history], [{ event: "commented", id: 102 }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(result.failure, undefined);
+    assertEquals(
+      fixture.published.some((status) => status.state === "success"),
+      false,
+    );
+  });
+
+  it("finalizes bounded review failures when their timeline exceeds 500 items", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment()]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [
+          Array.from(
+            { length: 500 },
+            (_, index) => ({ event: "commented", id: 1000 + index }),
+          ),
+          [{ event: "committed", sha: HEAD }, { event: "commented", id: 103 }],
+        ],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(result.description, "PR#1 automated review rate limited");
+  });
+
   it("retries a completed summary until its connector reaction is visible", async () => {
     let waits = 0;
     const fixture = githubFixture({
@@ -3449,7 +3549,7 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
   });
 
-  it("fails closed on partial pagination and the 500-item cap", async () => {
+  it("fails closed on partial pagination and source-specific item caps", async () => {
     const partialPages = [
       "reviews",
       "comments",
@@ -3468,6 +3568,14 @@ describe("automated review publication", () => {
         ...partialPages,
         githubFixture({
           pages: { reviews: [Array.from({ length: 501 }, () => review())] },
+        }),
+        githubFixture({
+          pages: {
+            timeline: Array.from({ length: 51 }, (_, page) =>
+              Array.from({ length: page === 50 ? 1 : 100 }, (_, index) => ({
+                event: "commented", id: 1000 + page * 100 + index,
+              }))),
+          },
         }),
       ]
     ) {

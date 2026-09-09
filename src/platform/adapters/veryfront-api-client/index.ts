@@ -5,6 +5,10 @@
  */
 
 export { type FileContext, VeryfrontApiClient } from "./client.ts";
+export type {
+  DependencyMetadataHistory,
+  DependencyMetadataHistoryEntry,
+} from "../dependency-metadata-history.ts";
 export {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,

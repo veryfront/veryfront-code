@@ -556,14 +556,17 @@ describe("ProxyFSAdapterManager", () => {
     it("disposes idle adapters and keeps adapters inside their idle window", async () => {
       const idleDisposedSlugs: string[] = [];
       const retainedDisposedSlugs: string[] = [];
+      let clock = 1_000_000;
       const idleManager = createManager({
         cleanupIntervalMs: 5,
         maxIdleMs: 0,
+        now: () => clock,
         adapterFactory: createRecordingAdapterFactory(idleDisposedSlugs),
       });
       const retainingManager = createManager({
         cleanupIntervalMs: 5,
         maxIdleMs: 60_000,
+        now: () => clock,
         adapterFactory: createRecordingAdapterFactory(retainedDisposedSlugs),
       });
 
@@ -581,6 +584,7 @@ describe("ProxyFSAdapterManager", () => {
         assertEquals(idleManager.getStats().adapters, 1, "the idle adapter starts cached");
         assertEquals(retainingManager.getStats().adapters, 1, "the fresh adapter starts cached");
 
+        clock += 1;
         await waitFor(() => idleManager.getStats().adapters === 0, {
           message: "an idle adapter must be removed by the cleanup timer",
         });

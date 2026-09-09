@@ -15,6 +15,7 @@ import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import {
+  InvalidResponseBodyUtf8Error,
   JsonStringValueTooLargeError,
   maximumJsonStringDocumentBytes,
   readResponseJsonStringBytesWithinLimit,
@@ -463,24 +464,6 @@ function cancelResponseReader(
   }
 }
 
-async function readResponseChunk(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  signal?: AbortSignal,
-): Promise<ReadableStreamReadResult<Uint8Array>> {
-  if (!signal) return await reader.read();
-  signal.throwIfAborted();
-
-  return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) onAbort();
-
-    reader.read().then(resolve, reject).finally(() => {
-      signal.removeEventListener("abort", onAbort);
-    });
-  });
-}
-
 async function readSuccessfulResponseText(
   response: Response,
   maxResponseBytes: number,
@@ -513,59 +496,28 @@ async function readSuccessfulResponseText(
     }
   }
 
-  signal?.throwIfAborted();
-  const body = response.body;
-  if (!body) return "";
-
-  const reader = body.getReader();
-  let bytes = new Uint8Array(Math.min(8 * 1024, maxResponseBytes));
-  let byteLength = 0;
-  let completed = false;
-  let failure: unknown;
-
   try {
-    while (true) {
-      const { done, value } = await readResponseChunk(reader, signal);
-      if (done) {
-        completed = true;
-        break;
-      }
-
-      if (value.byteLength > maxResponseBytes - byteLength) {
-        throw successfulResponseProtocolError(
-          `Veryfront API successful response exceeded ${maxResponseBytes} bytes`,
-          url,
-        );
-      }
-
-      const requiredLength = byteLength + value.byteLength;
-      if (requiredLength > bytes.byteLength) {
-        let capacity = bytes.byteLength;
-        while (capacity < requiredLength) {
-          capacity = Math.min(maxResponseBytes, Math.max(requiredLength, capacity * 2));
-        }
-        const grown = new Uint8Array(capacity);
-        grown.set(bytes.subarray(0, byteLength));
-        bytes = grown;
-      }
-      bytes.set(value, byteLength);
-      byteLength = requiredLength;
+    // One lookahead byte distinguishes an exact-limit body from overflow. The
+    // shared reader captures byte-view and decoder intrinsics before project
+    // modules can replace them, and cancels without awaiting untrusted cleanup.
+    const { text, truncated } = await readResponseTextPrefix(
+      response,
+      maxResponseBytes + 1,
+      signal,
+      { fatalUtf8: true },
+    );
+    if (truncated) {
+      throw successfulResponseProtocolError(
+        `Veryfront API successful response exceeded ${maxResponseBytes} bytes`,
+        url,
+      );
     }
-  } catch (error) {
-    failure = error;
-    throw error;
-  } finally {
-    if (!completed) cancelResponseReader(reader, failure);
-    reader.releaseLock();
-  }
-
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, byteLength));
+    return text;
   } catch (cause) {
+    if (!(cause instanceof InvalidResponseBodyUtf8Error)) throw cause;
     throw successfulResponseProtocolError(
       "Veryfront API successful response body is not valid UTF-8",
       url,
-      cause,
     );
   }
 }

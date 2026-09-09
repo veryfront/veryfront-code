@@ -2,6 +2,7 @@ import { walk } from "#std/fs/walk";
 import {
   buildTestProcessEnv,
   LOOPBACK_TEST_PERMISSIONS,
+  partitionDenoSuiteFiles,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
@@ -150,10 +151,12 @@ async function runShard(args: string[]): Promise<void> {
   const { planSuiteFiles } = await import("./run-suite.ts");
   const { files } = await planSuiteFiles({ suite: "coverage:unit", shard });
 
-  await runDeno(
-    buildDenoTestCommandArgs({ coverageDir, files }),
-    { ...UNIT_COVERAGE_ENV },
-  );
+  for (const batch of partitionDenoSuiteFiles(files, null)) {
+    await runDeno(
+      buildDenoTestCommandArgs({ coverageDir, files: batch }),
+      { ...UNIT_COVERAGE_ENV },
+    );
+  }
 
   await clearEmptyCoverageProfileJson(coverageDir);
   const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));

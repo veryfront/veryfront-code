@@ -13,13 +13,14 @@ import { escapeMdxText } from "../../scripts/docs/generate-error-reference.ts";
 
 /** Prefix under which veryfront-code's docs/ tree is published. */
 const PUBLISHED_DOCS_PREFIX = "https://veryfront.com/docs/code/";
+const REPOSITORY_ROOT = new URL("../../", import.meta.url);
 
 /**
  * Resolve the published error-docs URL back to the repository file that has to
  * carry its anchors. Deriving the path (instead of hardcoding it) means moving
  * the page without moving ERROR_DOCS_BASE_URL fails this test.
  */
-function localFileForDocsBaseUrl(baseUrl: string): string {
+function localFileForDocsBaseUrl(baseUrl: string): URL {
   const withoutFragment = baseUrl.split("#")[0];
   assert(
     withoutFragment.startsWith(PUBLISHED_DOCS_PREFIX),
@@ -27,7 +28,7 @@ function localFileForDocsBaseUrl(baseUrl: string): string {
       `(${PUBLISHED_DOCS_PREFIX}...), got: ${baseUrl}`,
   );
   const docPath = withoutFragment.slice(PUBLISHED_DOCS_PREFIX.length);
-  return `docs/${docPath}.md`;
+  return new URL(`docs/${docPath}.md`, REPOSITORY_ROOT);
 }
 
 /**
@@ -45,7 +46,7 @@ function anchorsIn(markdown: string): Set<string> {
 }
 
 async function* walkTypeScript(dir: string): AsyncGenerator<string> {
-  for await (const entry of Deno.readDir(dir)) {
+  for await (const entry of Deno.readDir(new URL(dir, REPOSITORY_ROOT))) {
     const path = `${dir}/${entry.name}`;
     if (entry.isDirectory) yield* walkTypeScript(path);
     else if (entry.isFile && (path.endsWith(".ts") || path.endsWith(".tsx"))) yield path;
@@ -133,7 +134,7 @@ describe("error docs links", () => {
     for (const root of roots) {
       for await (const entry of walkTypeScript(root)) {
         if (entry.endsWith(".test.ts") || entry.includes(".generated.")) continue;
-        const source = await Deno.readTextFile(entry);
+        const source = await Deno.readTextFile(new URL(entry, REPOSITORY_ROOT));
         for (const line of source.split("\n")) {
           // The constant itself and doc comments describing the shape are fine.
           if (entry.endsWith("src/errors/diagnostic-policy.ts")) continue;

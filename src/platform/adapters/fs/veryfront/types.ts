@@ -3,6 +3,7 @@ import type {
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
+import type { DependencyMetadataHistory } from "../../dependency-metadata-history.ts";
 import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
 
@@ -69,6 +70,7 @@ export interface FSAdapter {
    * `#veryfront/platform/adapters/base.ts` for the contract.
    */
   getSourceSnapshotIdentity?(): string | undefined | Promise<string | undefined>;
+  readDependencyMetadataHistory?(signal?: AbortSignal): Promise<DependencyMetadataHistory>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {
