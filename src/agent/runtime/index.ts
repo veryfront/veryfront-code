@@ -1778,6 +1778,17 @@ export class AgentRuntime {
     config: AgentConfig,
     internalOptions: AgentRuntimeInternalOptions = {},
   ) {
+    // TypeScript private methods remain writable prototype properties at runtime.
+    // Own captured operations keep project prototype hooks out of private turns,
+    // while preserving public dispatch and existing custom memory behavior.
+    for (let index = 0; index < agentRuntimePrivateMethodNames.length; index++) {
+      const name = agentRuntimePrivateMethodNames[index]!;
+      const descriptor = {
+        __proto__: null,
+        value: agentRuntimePrivateMethods[name]!.value,
+      };
+      ObjectDefineProperty(this, name, descriptor);
+    }
     this.#modelCallThinking = internalOptions.modelCallThinking;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
     this.#modelResolverState = internalOptions.resolveModelRuntime
@@ -4559,6 +4570,22 @@ export class AgentRuntime {
     await this.memory.clear();
   }
 }
+
+const agentRuntimePrivateMethodNames = [
+  "restoreInputReplayMetadata",
+  "prepareTurnMessages",
+  "createTurnPersistence",
+  "resolveRuntimeState",
+  "notifyToolResult",
+  "createGenerateReplacementTools",
+  "resolveOutputSchema",
+  "recordToolError",
+  "resolveSystemPrompt",
+  "computeMaxSteps",
+  "resolveTemperature",
+  "resolveMaxOutputTokens",
+] as const;
+const agentRuntimePrivateMethods = ObjectGetOwnPropertyDescriptors(AgentRuntime.prototype);
 
 type ProviderMetadataReconciler = (input: {
   providerMetadata: Record<string, unknown>;

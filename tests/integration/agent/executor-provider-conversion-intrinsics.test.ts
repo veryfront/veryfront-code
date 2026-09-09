@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Message } from "#veryfront/agent/types.ts";
-import { convertToTextGenerationRuntimeMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import {
+  convertToTextGenerationRuntimeMessages,
+  convertToTextGenerationRuntimeRequestMessages,
+} from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 
 for (const replaceMethods of [false, true]) {
   describe(`private provider conversion ${replaceMethods ? "hooks" : "baseline"}`, () => {
@@ -96,3 +99,39 @@ for (const replaceMethods of [false, true]) {
     });
   });
 }
+
+describe("private provider request tails", () => {
+  for (const method of ["at", "pop"] as const) {
+    it(`trims trailing assistant messages without observable ${method} calls`, () => {
+      const marker = "synthetic-private-provider-tail";
+      const messages: Message[] = [
+        { id: "user", role: "user", parts: [{ type: "text", text: marker }] },
+        { id: "assistant", role: "assistant", parts: [{ type: "text", text: marker }] },
+      ];
+      const expected = convertToTextGenerationRuntimeRequestMessages(messages);
+      const original = Array.prototype[method];
+      let exposures = 0;
+      let actual: typeof expected = [];
+      Object.defineProperty(Array.prototype, method, {
+        configurable: true,
+        writable: true,
+        value: function (this: unknown[], ...args: unknown[]) {
+          if (JSON.stringify(this).includes(marker)) exposures++;
+          return Reflect.apply(original, this, args);
+        },
+      });
+      try {
+        actual = convertToTextGenerationRuntimeRequestMessages(messages);
+      } finally {
+        Object.defineProperty(Array.prototype, method, {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+      }
+      assertEquals(actual, expected);
+      assertEquals(actual, [{ role: "user", content: marker }]);
+      assertEquals(exposures, 0);
+    });
+  }
+});

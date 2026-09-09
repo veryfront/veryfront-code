@@ -1,5 +1,17 @@
-import { somePrivateArray } from "#veryfront/security/private-array.ts";
+import { flatMapPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
+
+const regexpExec = RegExp.prototype.exec;
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectValues = Object.values;
+const parseJson = JSON.parse;
+const stringTrim = String.prototype.trim;
+
+function matches(pattern: RegExp, value: string): boolean {
+  return apply(regexpExec, pattern, [value]) !== null;
+}
 
 const SLASH_COMMAND_PATTERN = /(?:^|<span\s+data-command="[^"]+">)\s*\/[a-z0-9_-]+/i;
 const EXACT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])\/?[\w./-]+\.(?:md|mdx|txt|json|ya?ml)\b/i;
@@ -51,7 +63,7 @@ function isToolRoleMessage(message: unknown): message is {
 
 function parseJsonString(value: string): unknown {
   try {
-    return JSON.parse(value);
+    return parseJson(value);
   } catch {
     return value;
   }
@@ -59,36 +71,39 @@ function parseJsonString(value: string): unknown {
 
 function extractArtifactPathsFromUnknown(value: unknown): string[] {
   if (typeof value === "string") {
-    return EXACT_ARTIFACT_PATH_PATTERN.test(value) ? [value] : [];
+    return matches(EXACT_ARTIFACT_PATH_PATTERN, value) ? [value] : [];
   }
 
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => extractArtifactPathsFromUnknown(item));
+  if (arrayIsArray(value)) {
+    return flatMapPrivateArray(value, (item) => extractArtifactPathsFromUnknown(item));
   }
 
   if (!isRecord(value)) {
     return [];
   }
 
-  return Object.values(value).flatMap((nestedValue) =>
-    extractArtifactPathsFromUnknown(nestedValue)
+  return flatMapPrivateArray(
+    objectValues(value),
+    (nestedValue) => extractArtifactPathsFromUnknown(nestedValue),
   );
 }
 
 function extractMessageTexts(content: unknown): string[] {
-  if (typeof content === "string" && content.trim().length > 0) {
+  if (typeof content === "string" && apply(stringTrim, content, []).length > 0) {
     return [content];
   }
 
-  if (!Array.isArray(content)) {
+  if (!arrayIsArray(content)) {
     return [];
   }
 
-  return content.flatMap((part) =>
-    isRecord(part) && part.type === "text" && typeof part.text === "string" &&
-      part.text.trim().length > 0
-      ? [part.text]
-      : []
+  return flatMapPrivateArray(
+    content,
+    (part) =>
+      isRecord(part) && part.type === "text" && typeof part.text === "string" &&
+        apply(stringTrim, part.text, []).length > 0
+        ? [part.text]
+        : [],
   );
 }
 
@@ -105,7 +120,7 @@ function resolveToolName(
 
 function hasToolCallOrResult(messages: readonly unknown[], toolName: string): boolean {
   return somePrivateArray(messages, (message) => {
-    if (!isRecord(message) || !Array.isArray(message.content)) {
+    if (!isRecord(message) || !arrayIsArray(message.content)) {
       return false;
     }
 
@@ -128,21 +143,22 @@ function containsSlashCommand(messages: readonly unknown[]): boolean {
 
     return somePrivateArray(
       extractMessageTexts(message.content),
-      (text) => SLASH_COMMAND_PATTERN.test(text),
+      (text) => matches(SLASH_COMMAND_PATTERN, text),
     );
   });
 }
 
 function containsExactArtifactPath(messages: readonly unknown[]): boolean {
-  const toolCallNamesById = new Map<string, string>();
+  const toolCallNamesById = createPrivateMap<string, string>();
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
-    if (!isRecord(message) || !Array.isArray(message.content)) {
+    if (!isRecord(message) || !arrayIsArray(message.content)) {
       continue;
     }
 
-    for (const part of message.content) {
+    for (let partIndex = 0; partIndex < message.content.length; partIndex++) {
+      const part = message.content[partIndex];
       if (!isToolCallPart(part)) {
         continue;
       }
@@ -159,11 +175,11 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
     if (message.role === "user") {
       return somePrivateArray(
         extractMessageTexts(message.content),
-        (text) => EXACT_ARTIFACT_PATH_PATTERN.test(text),
+        (text) => matches(EXACT_ARTIFACT_PATH_PATTERN, text),
       );
     }
 
-    if (isToolRoleMessage(message) && !Array.isArray(message.content)) {
+    if (isToolRoleMessage(message) && !arrayIsArray(message.content)) {
       const resolvedToolName = resolveToolName(toolCallNamesById, message);
 
       if (resolvedToolName !== "form_input") {
@@ -176,7 +192,7 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
       return containsExactArtifactPathValue(parsedContent);
     }
 
-    if (!Array.isArray(message.content)) {
+    if (!arrayIsArray(message.content)) {
       return false;
     }
 

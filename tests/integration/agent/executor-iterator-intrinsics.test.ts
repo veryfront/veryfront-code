@@ -1,3 +1,4 @@
+import { AgentRuntime } from "veryfront/agent";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -27,6 +28,7 @@ describe("prepared executor private iteration", () => {
       "regexp execution",
       "reasoning scans",
       "reasoning signatures",
+      "private runtime methods",
     ]
   ) {
     it(`keeps stream requests and model output out of replaced ${probe}`, async () => {
@@ -122,6 +124,10 @@ describe("prepared executor private iteration", () => {
       const originalFlatMap = Array.prototype.flatMap;
       const originalJoin = Array.prototype.join;
       const originalThen = Promise.prototype.then;
+      const originalTurnPreparation = Object.getOwnPropertyDescriptor(
+        AgentRuntime.prototype,
+        "prepareTurnMessages",
+      );
       const originalTest = RegExp.prototype.test;
       const originalExec = RegExp.prototype.exec;
       const originalSome = Array.prototype.some;
@@ -173,7 +179,17 @@ describe("prepared executor private iteration", () => {
         };
       try {
         await Promise.all([broker.ready, executor.ready]);
-        if (probe === "regexp testing") {
+        if (probe === "private runtime methods") {
+          Object.defineProperty(AgentRuntime.prototype, "prepareTurnMessages", {
+            configurable: true,
+            writable: true,
+            value: function (this: unknown, ...args: unknown[]) {
+              observeMessages(args[0]);
+              if (!originalTurnPreparation) throw new Error("Private runtime called a public hook");
+              return Reflect.apply(originalTurnPreparation.value, this, args);
+            },
+          });
+        } else if (probe === "regexp testing") {
           RegExp.prototype.test = function (input) {
             if (input.includes(marker)) observations++;
             return Reflect.apply(originalTest, this, [input]);
@@ -298,6 +314,13 @@ describe("prepared executor private iteration", () => {
         Array.prototype.flatMap = originalFlatMap;
         Array.prototype.join = originalJoin;
         Promise.prototype.then = originalThen;
+        if (originalTurnPreparation) {
+          Object.defineProperty(
+            AgentRuntime.prototype,
+            "prepareTurnMessages",
+            originalTurnPreparation,
+          );
+        } else Reflect.deleteProperty(AgentRuntime.prototype, "prepareTurnMessages");
         RegExp.prototype.test = originalTest;
         RegExp.prototype.exec = originalExec;
         Array.prototype.some = originalSome;
