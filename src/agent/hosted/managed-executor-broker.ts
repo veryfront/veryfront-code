@@ -1,3 +1,4 @@
+import { namespaceAgentCapability } from "#veryfront/discovery/agent-capability-namespace.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -307,6 +308,11 @@ function assertInstalledOperationGrants(
     }
   }
   const allowedTools = new Set(installation.grant.allowedToolNames);
+  // Trusted source capabilities carry canonical IDs, while an installed selector
+  // can name a tool relative to the owning agent's namespace.
+  for (const selector of installation.grant.allowedToolNames) {
+    allowedTools.add(namespaceAgentCapability(installation.grant.agentId, selector));
+  }
   for (const capability of input.tools.sources.values()) {
     for (const name of capability.allowedToolNames) {
       if (!allowedTools.has(name)) {

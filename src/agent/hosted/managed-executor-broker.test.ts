@@ -42,6 +42,7 @@ function runtimeModel(): ModelRuntime {
 
 function fixture(
   options: {
+    agentId?: string;
     prepareFailure?: boolean;
     prepareModelId?: string;
     brokerReadWait?: boolean;
@@ -161,7 +162,7 @@ function fixture(
               value: {
                 source,
                 definition: {
-                  id: "coder",
+                  id: options.agentId ?? "coder",
                   name: "Coder",
                   description: "Codes",
                   instructions: "Work",
@@ -393,6 +394,53 @@ describe("managed executor broker", () => {
       await broker.settled;
     }
   });
+
+  for (
+    const [agentId, selector, capabilityName, accepted] of [
+      ["coder", "fetch-paper", "coder--fetch-paper", true],
+      ["research.coder", "fetch-paper", "research_coder--fetch-paper", true],
+      ["coder", "fetch-paper", "writer--fetch-paper", false],
+      ["coder", "coder--fetch-paper", "writer--fetch-paper", false],
+      ["coder", "coder--fetch-paper", "fetch-paper", false],
+    ] as const
+  ) {
+    it(`${accepted ? "accepts" : "rejects"} capability ${capabilityName} for ${agentId}'s ${selector} grant`, async () => {
+      const f = fixture({ agentId });
+      f.input.installation.grant.agentId = agentId;
+      f.input.prepare.agentId = agentId;
+      f.input.installation.grant.allowedToolNames = [selector];
+      f.input.tools.sources = new Map([["synthetic", {
+        source: {
+          id: "synthetic",
+          listTools: () => Promise.resolve([]),
+          executeTool: () => Promise.resolve({ result: "done" }),
+        },
+        allowedToolNames: new Set([capabilityName]),
+        context: {},
+      }]]);
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        if (accepted) {
+          runtime = await broker.start(f.input);
+          assertEquals(f.calls.includes("allocate"), true);
+        } else {
+          await assertRejects(
+            async () => {
+              runtime = await broker.start(f.input);
+            },
+            TypeError,
+            "exceeds the installed",
+          );
+          assertEquals(f.calls, []);
+        }
+      } finally {
+        await runtime?.close();
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
 
   it("installs, discovers, prepares, accepts, and begins execution in exact order", async () => {
     const f = fixture({ initialCheckpoint: true });
