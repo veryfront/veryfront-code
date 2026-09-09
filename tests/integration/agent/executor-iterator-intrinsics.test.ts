@@ -21,6 +21,10 @@ describe("prepared executor private iteration", () => {
       "array flattening",
       "array joining",
       "promise chaining",
+      "regexp testing",
+      "regexp execution",
+      "reasoning scans",
+      "reasoning signatures",
     ]
   ) {
     it(`keeps stream requests and model output out of replaced ${probe}`, async () => {
@@ -37,7 +41,15 @@ describe("prepared executor private iteration", () => {
       let facadeCleanups = 0;
       let discoveryCleanups = 0;
       const marker = "synthetic-private-iterator-marker";
-      const model = scriptedModel([{ text: marker }]);
+      const model = scriptedModel([{
+        parts: [
+          { type: "reasoning-start", id: "synthetic-reasoning" },
+          { type: "reasoning-delta", id: "synthetic-reasoning", delta: marker },
+          { type: "reasoning-end", id: "synthetic-reasoning" },
+          { type: "text-delta", text: marker },
+          { type: "finish", finishReason: "stop" },
+        ],
+      }]);
       const discovery = createExecutorDiscovery({
         binding,
         source,
@@ -108,6 +120,10 @@ describe("prepared executor private iteration", () => {
       const originalFlatMap = Array.prototype.flatMap;
       const originalJoin = Array.prototype.join;
       const originalThen = Promise.prototype.then;
+      const originalTest = RegExp.prototype.test;
+      const originalExec = RegExp.prototype.exec;
+      const originalSome = Array.prototype.some;
+      const originalSignature = Object.getOwnPropertyDescriptor(Object.prototype, "signature");
       const originalMetadata = Object.getOwnPropertyDescriptor(Object.prototype, "metadata");
       const originalNext = prototype.next;
       const originalReturn = prototype.return;
@@ -153,7 +169,30 @@ describe("prepared executor private iteration", () => {
         };
       try {
         await Promise.all([broker.ready, executor.ready]);
-        if (probe === "async generators") {
+        if (probe === "regexp testing") {
+          RegExp.prototype.test = function (input) {
+            if (input.includes(marker)) observations++;
+            return Reflect.apply(originalTest, this, [input]);
+          };
+        } else if (probe === "regexp execution") {
+          RegExp.prototype.exec = function (input) {
+            if (input.includes(marker)) observations++;
+            return Reflect.apply(originalExec, this, [input]);
+          };
+        } else if (probe === "reasoning scans") {
+          Array.prototype.some = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalSome, this, args);
+          }) as typeof originalSome;
+        } else if (probe === "reasoning signatures") {
+          Object.defineProperty(Object.prototype, "signature", {
+            configurable: true,
+            get() {
+              if (Object.getOwnPropertyDescriptor(this, "text")?.value === marker) observations++;
+              return undefined;
+            },
+          });
+        } else if (probe === "async generators") {
           prototype.next = hook(originalNext);
           prototype.return = hook(originalReturn);
         } else if (probe === "array iteration") {
@@ -245,6 +284,12 @@ describe("prepared executor private iteration", () => {
         Array.prototype.flatMap = originalFlatMap;
         Array.prototype.join = originalJoin;
         Promise.prototype.then = originalThen;
+        RegExp.prototype.test = originalTest;
+        RegExp.prototype.exec = originalExec;
+        Array.prototype.some = originalSome;
+        if (originalSignature) {
+          Object.defineProperty(Object.prototype, "signature", originalSignature);
+        } else Reflect.deleteProperty(Object.prototype, "signature");
         if (originalMetadata) Object.defineProperty(Object.prototype, "metadata", originalMetadata);
         else Reflect.deleteProperty(Object.prototype, "metadata");
         prototype.next = originalNext;

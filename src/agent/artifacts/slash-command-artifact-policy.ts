@@ -1,3 +1,4 @@
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
 
 const SLASH_COMMAND_PATTERN = /(?:^|<span\s+data-command="[^"]+">)\s*\/[a-z0-9_-]+/i;
@@ -103,12 +104,12 @@ function resolveToolName(
 }
 
 function hasToolCallOrResult(messages: readonly unknown[], toolName: string): boolean {
-  return messages.some((message) => {
+  return somePrivateArray(messages, (message) => {
     if (!isRecord(message) || !Array.isArray(message.content)) {
       return false;
     }
 
-    return message.content.some((part) => {
+    return somePrivateArray(message.content, (part) => {
       if (!isRecord(part) || typeof part.toolName !== "string") {
         return false;
       }
@@ -120,12 +121,15 @@ function hasToolCallOrResult(messages: readonly unknown[], toolName: string): bo
 }
 
 function containsSlashCommand(messages: readonly unknown[]): boolean {
-  return messages.some((message) => {
+  return somePrivateArray(messages, (message) => {
     if (!isRecord(message) || message.role !== "user") {
       return false;
     }
 
-    return extractMessageTexts(message.content).some((text) => SLASH_COMMAND_PATTERN.test(text));
+    return somePrivateArray(
+      extractMessageTexts(message.content),
+      (text) => SLASH_COMMAND_PATTERN.test(text),
+    );
   });
 }
 
@@ -147,14 +151,15 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
     }
   }
 
-  return messages.some((message) => {
+  return somePrivateArray(messages, (message) => {
     if (!isRecord(message)) {
       return false;
     }
 
     if (message.role === "user") {
-      return extractMessageTexts(message.content).some((text) =>
-        EXACT_ARTIFACT_PATH_PATTERN.test(text)
+      return somePrivateArray(
+        extractMessageTexts(message.content),
+        (text) => EXACT_ARTIFACT_PATH_PATTERN.test(text),
       );
     }
 
@@ -175,7 +180,7 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
       return false;
     }
 
-    return message.content.some((part) => {
+    return somePrivateArray(message.content, (part) => {
       if (!isToolResultPart(part) || !isRecord(part)) {
         return false;
       }

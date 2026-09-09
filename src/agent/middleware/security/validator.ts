@@ -1,3 +1,4 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   concatPrivateArrays,
@@ -132,7 +133,15 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
 
 const RegExpConstructor = RegExp;
 const regexpExec = RegExp.prototype.exec;
+const regexpReplace = RegExp.prototype[Symbol.replace];
 const applyRegExp = Reflect.apply;
+
+function replacePrivatePattern(input: string, pattern: RegExp, replacement: string): string {
+  const matcher = new RegExpConstructor(pattern.source, pattern.flags);
+  matcher.lastIndex = pattern.lastIndex;
+  defineOwnDataProperty(matcher, "exec", regexpExec);
+  return applyRegExp(regexpReplace, matcher, [input, replacement]) as string;
+}
 
 function testBlockedPattern(pattern: RegExp, input: string): boolean {
   return applyRegExp(regexpExec, freshStatefulPattern(pattern), [input]) !== null;
@@ -153,7 +162,7 @@ function advanceStringIndex(input: string, index: number, unicode: boolean): num
 
 function redactBlockedPattern(input: string, pattern: RegExp): string {
   const matcher = freshStatefulPattern(pattern);
-  if (!matcher.sticky) return input.replace(matcher, "[REDACTED]");
+  if (!matcher.sticky) return replacePrivatePattern(input, matcher, "[REDACTED]");
 
   // replace() resets global sticky regexes to index 0, and Bun does not
   // currently honor lastIndex for non-global sticky replacements. Use exec and
@@ -163,7 +172,11 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
   let cursor = 0;
   let matched = false;
 
-  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
+  for (
+    let match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null;
+    match;
+    match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null
+  ) {
     redacted += `${input.slice(cursor, match.index)}[REDACTED]`;
     cursor = match.index + match[0].length;
     matched = true;
@@ -288,10 +301,11 @@ export class InputValidator {
    * Sanitize input (remove potentially harmful content)
    */
   private sanitizeInput(input: string): string {
-    return InputValidator.SANITIZE_PATTERNS.reduce(
-      (text, pattern) => text.replace(pattern, ""),
-      input,
-    );
+    let sanitized = input;
+    for (let index = 0; index < InputValidator.SANITIZE_PATTERNS.length; index++) {
+      sanitized = replacePrivatePattern(sanitized, InputValidator.SANITIZE_PATTERNS[index]!, "");
+    }
+    return sanitized;
   }
 }
 
@@ -346,10 +360,12 @@ export class OutputFilter {
    * Filter PII from output
    */
   private filterPII(output: string): string {
-    return PII_REPLACEMENTS.reduce(
-      (text, { pattern, label }) => text.replace(pattern, label),
-      output,
-    );
+    let filtered = output;
+    for (let index = 0; index < PII_REPLACEMENTS.length; index++) {
+      const { pattern, label } = PII_REPLACEMENTS[index]!;
+      filtered = replacePrivatePattern(filtered, pattern, label);
+    }
+    return filtered;
   }
 }
 
@@ -1403,7 +1419,11 @@ function patternOccurrences(input: string, pattern: RegExp): { index: number; te
   const matcher = new RegExp(pattern.source, pattern.global ? pattern.flags : `${pattern.flags}g`);
   if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
   const matches: { index: number; text: string }[] = [];
-  for (let match = matcher.exec(input); match; match = matcher.exec(input)) {
+  for (
+    let match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null;
+    match;
+    match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null
+  ) {
     matches.push({ index: match.index, text: match[0] });
     if (match[0].length === 0) {
       matcher.lastIndex = advanceStringIndex(

@@ -4,6 +4,18 @@ const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const apply = Reflect.apply;
 
+/** Test private array elements without exposing the receiver to writable methods. */
+export function somePrivateArray<T>(
+  values: readonly T[],
+  predicate: (value: T, index: number, values: readonly T[]) => unknown,
+): boolean {
+  const length = values.length;
+  for (let index = 0; index < length; index++) {
+    if (hasOwn(values, index) && predicate(values[index]!, index, values)) return true;
+  }
+  return false;
+}
+
 /** Filter private arrays through own elements without consulting array species. */
 export function filterPrivateArray<T, S extends T>(
   values: readonly T[],

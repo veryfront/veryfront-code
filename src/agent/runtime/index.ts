@@ -561,12 +561,25 @@ const PROVIDER_VISIBLE_MESSAGE_PART_FIELDS = [
   "upload_path",
 ] as const;
 
+function avoidsAmbientMessagePartField(part: MessagePart, key: string): boolean {
+  // Keep structural proxy fields and custom prototype fields compatible while
+  // excluding accessors installed on the shared Object prototype.
+  if (!ObjectHasOwn(ObjectPrototype, key)) return true;
+  let current: object | null = part;
+  while (current !== null && current !== ObjectPrototype) {
+    if (ObjectHasOwn(current, key)) return true;
+    current = ObjectGetPrototypeOf(current);
+  }
+  return false;
+}
+
 function cloneKnownMessagePartFields(part: MessagePart): MessagePart {
   const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
   const source = part as Record<string, unknown>;
   for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
     let value: unknown;
     try {
+      if (!avoidsAmbientMessagePartField(part, key)) continue;
       value = source[key];
     } catch {
       continue;
@@ -623,6 +636,7 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
     if (ObjectHasOwn(descriptors, key)) continue;
     let value: unknown;
     try {
+      if (!avoidsAmbientMessagePartField(part, key)) continue;
       value = source[key];
     } catch {
       continue;
