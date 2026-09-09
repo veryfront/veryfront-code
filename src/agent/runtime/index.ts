@@ -34,6 +34,7 @@ import {
 } from "#veryfront/security/private-stream.ts";
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   enterSerializedTurn,
   withRuntimeTurnLineage,
@@ -3462,7 +3463,7 @@ export class AgentRuntime {
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
       sendSSE(controller, encoder, { type: "step-start" });
-      const currentStepToolResults = new Map<string, ToolResultPart>();
+      const currentStepToolResults = createPrivateMap<string, ToolResultPart>();
       const stepRuntimeContext = skillState.hasSubmittedFormInput
         ? markSubmittedFormInputRuntimeContext(currentRuntimeContext)
         : currentRuntimeContext;

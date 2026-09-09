@@ -1,5 +1,6 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
@@ -520,13 +521,15 @@ async function readNextStreamPartWithTimeout(
   abortSignal?: AbortSignal,
 ): Promise<IteratorResult<unknown> | "timeout"> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const pending = createPrivateDeferred<IteratorResult<unknown> | "timeout">();
   try {
-    return await Promise.race([
+    void chainPrivatePromise(
       readNextStreamPart(iterator, state, abortSignal),
-      new Promise<"timeout">((resolve) => {
-        timeoutId = setTimeoutFn(() => resolve("timeout"), timeoutMs);
-      }),
-    ]);
+      pending.resolve,
+      pending.reject,
+    );
+    timeoutId = setTimeoutFn(() => pending.resolve("timeout"), timeoutMs);
+    return await pending.promise;
   } finally {
     if (timeoutId !== undefined) {
       clearTimeoutFn(timeoutId);
