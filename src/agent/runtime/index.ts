@@ -3793,7 +3793,10 @@ export class AgentRuntime {
       }
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
-      const streamedToolCalls = Array.from(state.toolCalls.values());
+      const streamedToolCalls: StreamingToolCall[] = [];
+      for (const toolCall of state.toolCalls.values()) {
+        pushPrivateArray(streamedToolCalls, toolCall);
+      }
       const finalToolResults = collectFinalStreamToolResults(state);
       // Recovery replays the whole step, so it also re-emits this step's
       // reasoning — duplicating it in the live stream and in history, with a

@@ -1,3 +1,4 @@
+import { joinPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import type {
   ChatMessageMetadata,
   ChatMessageMetadataUsage,
@@ -647,30 +648,45 @@ export function normalizeInlineAttachmentMediaType(
 }
 
 function escapeXmlAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(
-    />/g,
-    "&gt;",
-  );
+  let escaped = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    switch (character) {
+      case "&":
+        escaped += "&amp;";
+        break;
+      case '"':
+        escaped += "&quot;";
+        break;
+      case "<":
+        escaped += "&lt;";
+        break;
+      case ">":
+        escaped += "&gt;";
+        break;
+      default:
+        escaped += character;
+    }
+  }
+  return escaped;
 }
 
 /** Builds data file annotation. */
 export function buildDataFileAnnotation(refs: UploadedFileReference[]): string {
   if (refs.length === 0) return "";
 
-  const fileTags = refs
-    .map((ref) => {
-      const attrs = [`name="${escapeXmlAttr(ref.name)}"`];
-
-      if (ref.uploadId) attrs.push(`upload_id="${escapeXmlAttr(ref.uploadId)}"`);
-      if (ref.path) attrs.push(`path="${escapeXmlAttr(ref.path)}"`);
-      if (typeof ref.size === "number") attrs.push(`size="${ref.size}"`);
-      if (ref.url) attrs.push(`url="${escapeXmlAttr(ref.url)}"`);
-
-      attrs.push(`type="${escapeXmlAttr(ref.mediaType)}"`);
-
-      return `<file ${attrs.join(" ")} />`;
-    })
-    .join("\n");
+  const fileTags = joinPrivateArray(
+    mapPrivateArray(refs, (ref) => {
+      let attrs = `name="${escapeXmlAttr(ref.name)}"`;
+      if (ref.uploadId) attrs += ` upload_id="${escapeXmlAttr(ref.uploadId)}"`;
+      if (ref.path) attrs += ` path="${escapeXmlAttr(ref.path)}"`;
+      if (typeof ref.size === "number") attrs += ` size="${ref.size}"`;
+      if (ref.url) attrs += ` url="${escapeXmlAttr(ref.url)}"`;
+      attrs += ` type="${escapeXmlAttr(ref.mediaType)}"`;
+      return `<file ${attrs} />`;
+    }),
+    "\n",
+  );
 
   return `\n\n<uploaded_files>\n${fileTags}\n</uploaded_files>`;
 }

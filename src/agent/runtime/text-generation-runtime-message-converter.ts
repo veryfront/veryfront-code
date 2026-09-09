@@ -1,4 +1,9 @@
-import { privateTextIncludes, privateTextStartsWith } from "#veryfront/security/private-text.ts";
+import {
+  privateTextEndsWith,
+  privateTextIncludes,
+  privateTextStartsWith,
+  privateTextTrimStart,
+} from "#veryfront/security/private-text.ts";
 import {
   appendPrivateArray,
   flatMapPrivateArray,
@@ -214,6 +219,7 @@ export function buildAttachmentContextFromParts(parts: Message["parts"]): string
     const url = getStringPartField(part, "url");
 
     return [{
+      __proto__: null,
       name: getStringPartField(part, "filename") ?? (type === "image" ? "image" : "file"),
       mediaType,
       ...(uploadId ? { uploadId } : {}),
@@ -228,7 +234,7 @@ export function buildAttachmentContextFromParts(parts: Message["parts"]): string
 }
 
 function appendReadableAttachmentContext(text: string, attachmentContext: string): string {
-  const normalizedContext = attachmentContext.trimStart();
+  const normalizedContext = privateTextTrimStart(attachmentContext);
   if (!normalizedContext) {
     return text;
   }
@@ -237,7 +243,11 @@ function appendReadableAttachmentContext(text: string, attachmentContext: string
     return normalizedContext;
   }
 
-  const separator = text.endsWith("\n\n") ? "" : text.endsWith("\n") ? "\n" : "\n\n";
+  const separator = privateTextEndsWith(text, "\n\n")
+    ? ""
+    : privateTextEndsWith(text, "\n")
+    ? "\n"
+    : "\n\n";
   return `${text}${separator}${normalizedContext}`;
 }
 
@@ -343,7 +353,7 @@ export function convertToTextGenerationRuntimeMessage(
       if (text.length > 0) pushPrivateArray(content, { type: "text", text });
       appendPrivateArray(content, fileParts);
       if (attachmentContext.length > 0) {
-        pushPrivateArray(content, { type: "text", text: attachmentContext.trimStart() });
+        pushPrivateArray(content, { type: "text", text: privateTextTrimStart(attachmentContext) });
       }
       return { role: "user", content };
     }
@@ -832,11 +842,11 @@ export function convertToTextGenerationRuntimeRequestMessages(
   // Only a delivered replay checkpoint may keep a trailing assistant message:
   // live in-run metadata also reaches converted messages, and providers reject
   // or misread an unexpected trailing prefill on ordinary resumes.
-  while (
-    requestMessages.at(-1)?.role === "assistant" &&
-    !isProviderReplayDelivered(requestMessages.at(-1))
-  ) {
-    requestMessages.pop();
+  while (requestMessages.length > 0) {
+    const lastIndex = requestMessages.length - 1;
+    const tail = hasOwn(requestMessages, lastIndex) ? requestMessages[lastIndex] : undefined;
+    if (tail?.role !== "assistant" || isProviderReplayDelivered(tail)) break;
+    requestMessages.length = lastIndex;
   }
 
   return requestMessages;

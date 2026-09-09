@@ -2,6 +2,16 @@ const apply = Reflect.apply;
 const startsWith = String.prototype.startsWith;
 const slice = String.prototype.slice;
 const includes = String.prototype.includes;
+const endsWith = String.prototype.endsWith;
+const trimStart = String.prototype.trimStart;
+
+export function privateTextEndsWith(value: string, search: string): boolean {
+  return apply(endsWith, value, [search]) as boolean;
+}
+
+export function privateTextTrimStart(value: string): string {
+  return apply(trimStart, value, []) as string;
+}
 
 export function privateTextIncludes(value: string, search: string): boolean {
   return apply(includes, value, [search]) as boolean;

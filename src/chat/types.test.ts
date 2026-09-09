@@ -16,6 +16,25 @@ const chatUiMessageSchema = getChatUiMessageSchema();
 const messageMetadataSchema = getMessageMetadataSchema();
 
 describe("chat/types", () => {
+  it("builds escaped attachment annotations without consulting an array map override", () => {
+    const refs = [{
+      name: 'report"<&>.pdf',
+      mediaType: "application/pdf",
+      url: "https://example.test/a?x=1&y=2",
+    }];
+    let observations = 0;
+    Object.defineProperty(refs, "map", {
+      get() {
+        observations++;
+        return Array.prototype.map;
+      },
+    });
+    assertEquals(
+      buildDataFileAnnotation(refs),
+      '\n\n<uploaded_files>\n<file name="report&quot;&lt;&amp;&gt;.pdf" url="https://example.test/a?x=1&amp;y=2" type="application/pdf" />\n</uploaded_files>',
+    );
+    assertEquals(observations, 0);
+  });
   it("exports hosted chat schema factories through veryfront/chat/types", () => {
     assertEquals(
       chatRequestContextSchema.parse({
