@@ -17,6 +17,8 @@ import type {
   StreamUsage,
 } from "./types.ts";
 
+const hasOwn = Object.hasOwn;
+
 export interface RuntimeStreamProviderOptions {
   availableToolNames: ReadonlySet<string> | null;
   providerExecutedToolNames: ReadonlySet<string>;
@@ -174,7 +176,12 @@ function findTool(
   snapshot: Readonly<StreamSnapshot>,
   toolCallId: string,
 ): StreamToolSnapshot | undefined {
-  return snapshot.tools.find((tool) => tool.id === toolCallId);
+  for (let index = 0; index < snapshot.tools.length; index++) {
+    if (!hasOwn(snapshot.tools, index)) continue;
+    const tool = snapshot.tools[index]!;
+    if (tool.id === toolCallId) return tool;
+  }
+  return undefined;
 }
 
 function isToolAvailable(

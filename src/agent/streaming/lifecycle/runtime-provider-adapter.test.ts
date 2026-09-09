@@ -14,6 +14,29 @@ const options = {
 };
 
 describe("runtime stream Provider Adapter", () => {
+  it("looks up existing private tools without consulting an own find override", () => {
+    let reads = 0;
+    const tools = [{
+      id: "call",
+      name: "create_file",
+      phase: "input_streaming" as const,
+      inputText: "synthetic private input",
+      inputDeltas: [],
+    }];
+    Object.defineProperty(tools, "find", {
+      get() {
+        reads++;
+        return Array.prototype.find;
+      },
+    });
+    const signals = decodeRuntimeStreamPart(
+      { type: "tool-input-delta", id: "call", delta: "next" },
+      { ...snapshot, tools },
+      options,
+    );
+    assertEquals(signals.length, 1);
+    assertEquals(reads, 0);
+  });
   it("maps runtime parts to provider-neutral signals", () => {
     assertEquals(
       decodeRuntimeStreamPart(
