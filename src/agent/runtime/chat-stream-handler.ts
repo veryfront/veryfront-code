@@ -81,6 +81,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
 
 const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -382,7 +383,7 @@ export interface ChatStreamCallbacks {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 function normalizeToolInputString(input: unknown): string {
