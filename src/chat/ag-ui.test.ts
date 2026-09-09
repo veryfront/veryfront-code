@@ -759,4 +759,209 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
       ensureTestSchemaValidator();
     }
   });
+
+  it("decodes native run event frames into the chunks their custom twins produced", () => {
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = [
+      'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","toolCallName":"create_file",' +
+      '"status":"pending_input"}\n\n',
+      'event: UrlCited\ndata: {"sourceId":"web-1","url":"https://example.com/a","title":"A"}\n\n',
+      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
+      '"title":"Report"}\n\n',
+      'event: FileAttached\ndata: {"url":"https://cdn.example.com/a.pdf",' +
+      '"mediaType":"application/pdf"}\n\n',
+      'event: InputRequestCreated\ndata: {"inputRequest":{"id":"req-1"}}\n\n',
+      'event: InputRequestUpdated\ndata: {"inputRequest":{"id":"req-1"}}\n\n',
+      'event: ChildRunStatusChanged\ndata: {"toolCallId":"t","childRunId":"r",' +
+      '"status":"running"}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", toolCallName: "create_file", status: "pending_input" },
+      },
+      { type: "source-url", sourceId: "web-1", url: "https://example.com/a", title: "A" },
+      { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "Report" },
+      { type: "file", url: "https://cdn.example.com/a.pdf", mediaType: "application/pdf" },
+      {
+        type: "data-veryfront.input_request.lifecycle",
+        data: { action: "created", inputRequest: { id: "req-1" } },
+      },
+      {
+        type: "data-veryfront.input_request.lifecycle",
+        data: { action: "updated", inputRequest: { id: "req-1" } },
+      },
+      {
+        type: "data-veryfront.invoke_agent.lifecycle",
+        data: { toolCallId: "t", childRunId: "r", status: "running" },
+      },
+    ]);
+  });
+
+  it("falls back to a data chunk when a citation or attachment cannot render", () => {
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    // toRenderableCustomChunk returned null for these two, and the Custom arm
+    // fell through to a data chunk. The native arms must do the same, or the
+    // renderer gets a part with a field it requires missing.
+    //
+    // The Custom twin's fallback `data` is the whole original chunk object,
+    // which still carries its own `type` (e.g. "source-document") because
+    // that object is what toRenderableCustomChunk received as `value` before
+    // it returned null. The native wire payload never carries that field —
+    // the encoder's `toFrame` strips it, since the AG-UI event name already
+    // names the chunk type — so the fallback here restores it to stay
+    // byte-identical to the twin's fallback chunk.
+    const frames = [
+      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown"}\n\n',
+      'event: FileAttached\ndata: {"mediaType":"application/pdf","filename":"a.pdf"}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      {
+        type: "data-source-document",
+        data: { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown" },
+      },
+      {
+        type: "data-file",
+        data: { type: "file", mediaType: "application/pdf", filename: "a.pdf" },
+      },
+    ]);
+  });
+
+  it("accepts empty-string title and filename like the legacy custom mapping", () => {
+    ensureTestSchemaValidator();
+    // The native builders pass title/filename through unguarded, so an empty
+    // string is a value the wire can legitimately carry. The legacy `Custom`
+    // twin only ever checked `typeof value.title === "string"`, with no
+    // length requirement, so the native decoder must accept it too instead
+    // of dropping the whole frame.
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = [
+      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
+      '"title":"","filename":""}\n\n',
+      'event: FileAttached\ndata: {"mediaType":"application/pdf","url":"","filename":""}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      {
+        type: "source-document",
+        sourceId: "doc-1",
+        mediaType: "text/markdown",
+        title: "",
+        filename: "",
+      },
+      { type: "file", url: "", mediaType: "application/pdf", filename: "" },
+    ]);
+  });
+
+  it("tolerates a null optional field the way the legacy custom mapping did", () => {
+    ensureTestSchemaValidator();
+    // `buildNativeRunEventFrame` preserves title/filename/url exactly as it
+    // received them, including an explicit null, and the legacy `Custom`
+    // twin's `typeof value.field === "string"` guard never rejected a null
+    // value outright — it just omitted the field. A renderable citation or
+    // attachment with a null filename must still render, and a null field
+    // on an otherwise-unrenderable one must not be dropped from the fallback
+    // data either.
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = [
+      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
+      '"title":"Report","filename":null}\n\n',
+      'event: FileAttached\ndata: {"url":"https://cdn.example.com/a.pdf",' +
+      '"mediaType":"application/pdf","filename":null}\n\n',
+      'event: DocumentCited\ndata: {"sourceId":"doc-2","mediaType":"text/markdown",' +
+      '"filename":null}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "Report" },
+      { type: "file", url: "https://cdn.example.com/a.pdf", mediaType: "application/pdf" },
+      {
+        type: "data-source-document",
+        data: {
+          type: "source-document",
+          sourceId: "doc-2",
+          mediaType: "text/markdown",
+          filename: null,
+        },
+      },
+    ]);
+  });
+
+  it("drops a non-string URL citation title instead of leaking it into the chat event", () => {
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const result = decodeAgUiSseChunk(
+      state,
+      'event: UrlCited\ndata: {"sourceId":"web-1","url":"https://example.com/a",' +
+        '"title":{"unexpected":true}}\n\n',
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "source-url", sourceId: "web-1", url: "https://example.com/a" },
+    ]);
+  });
+
+  it("renders or falls back on a wrong-typed optional field instead of rejecting the frame", () => {
+    ensureTestSchemaValidator();
+    // The encoder never type-checks title/filename/url before sending them,
+    // so a wrong-typed value (not just null) must not reject the whole
+    // frame either: the legacy `Custom` twin only ever asked
+    // `typeof value.field === "string"` when deciding how to render.
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = [
+      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
+      '"title":"Report","filename":42}\n\n',
+      'event: FileAttached\ndata: {"url":"https://cdn.example.com/a.pdf",' +
+      '"mediaType":"application/pdf","filename":42}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "Report" },
+      { type: "file", url: "https://cdn.example.com/a.pdf", mediaType: "application/pdf" },
+    ]);
+  });
+
+  it("strips live encoder timing stamps out of reconstructed legacy data payloads", () => {
+    ensureTestSchemaValidator();
+    // stampAgUiEventTiming (encoder.ts) stamps elapsedMs/emittedAt onto a
+    // native frame's own flat payload once a real clock is configured. A
+    // Custom frame's payload is `{ name, value }`, so the stamp lands beside
+    // `value` and the twin's decoded chunk never carried these two fields --
+    // reusing a native frame's whole payload as legacy `data` must not leak
+    // them in either.
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = [
+      'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","toolCallName":"create_file",' +
+      '"status":"pending_input","elapsedMs":42,"emittedAt":1757400000000}\n\n',
+      'event: ChildRunStatusChanged\ndata: {"toolCallId":"t","childRunId":"r",' +
+      '"status":"running","elapsedMs":42,"emittedAt":1757400000000}\n\n',
+      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
+      '"elapsedMs":42,"emittedAt":1757400000000}\n\n',
+      'event: FileAttached\ndata: {"mediaType":"application/pdf","elapsedMs":42,' +
+      '"emittedAt":1757400000000}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      {
+        type: "data-tool-call-status",
+        data: { toolCallId: "tool-1", toolCallName: "create_file", status: "pending_input" },
+      },
+      {
+        type: "data-veryfront.invoke_agent.lifecycle",
+        data: { toolCallId: "t", childRunId: "r", status: "running" },
+      },
+      {
+        type: "data-source-document",
+        data: { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown" },
+      },
+      {
+        type: "data-file",
+        data: { type: "file", mediaType: "application/pdf" },
+      },
+    ]);
+  });
 });

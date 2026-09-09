@@ -116,12 +116,19 @@ const AG_UI_WIRE_EVENT_NAMES = [
   "ToolCallChunk",
   "ToolCallEnd",
   "ToolCallResult",
+  "ToolCallStatusChanged",
   "StateSnapshot",
   "MessagesSnapshot",
   "ReasoningMessageStart",
   "ReasoningMessageContent",
   "ReasoningMessageEnd",
   "StateDelta",
+  "InputRequestCreated",
+  "InputRequestUpdated",
+  "ChildRunStatusChanged",
+  "UrlCited",
+  "DocumentCited",
+  "FileAttached",
   "RunFinished",
   "RunError",
 ] as const;
@@ -519,6 +526,67 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       }),
     }),
     v.object({
+      eventName: v.literal("ToolCallStatusChanged"),
+      payload: v.object({
+        toolCallId: v.string().min(1),
+        status: v.string().min(1),
+        toolCallName: v.string().nullable(),
+      }).passthrough(),
+    }),
+    v.object({
+      eventName: v.literal("InputRequestCreated"),
+      payload: v.object({
+        inputRequest: v.object({ id: v.string().min(1) }).passthrough(),
+      }).passthrough(),
+    }),
+    v.object({
+      eventName: v.literal("InputRequestUpdated"),
+      payload: v.object({
+        inputRequest: v.object({ id: v.string().min(1) }).passthrough(),
+      }).passthrough(),
+    }),
+    v.object({
+      eventName: v.literal("ChildRunStatusChanged"),
+      payload: v.object({
+        toolCallId: v.string().min(1),
+        childRunId: v.string().min(1),
+        status: v.string().min(1),
+      }).passthrough(),
+    }),
+    v.object({
+      eventName: v.literal("UrlCited"),
+      payload: v.object({
+        sourceId: v.string().min(1),
+        url: v.string().min(1),
+      }).passthrough(),
+    }),
+    v.object({
+      eventName: v.literal("DocumentCited"),
+      payload: v.object({
+        sourceId: v.string().min(1),
+        mediaType: v.string().min(1),
+        // The builders pass title/filename through unguarded, so these can
+        // legitimately arrive as anything: an empty string, null, or even a
+        // wrong-typed value the producer never meant to send. The legacy
+        // `Custom` twin never rejected a frame over their type either — it
+        // just checked `typeof value.title === "string"` when deciding
+        // whether to render, and dropped the field otherwise. Constraining
+        // the type here would reject a whole frame the twin would have
+        // rendered (or gracefully fallen back on); the mapping arm below
+        // makes the same typeof decision the twin made.
+        title: v.unknown().optional(),
+        filename: v.unknown().optional(),
+      }).passthrough(),
+    }),
+    v.object({
+      eventName: v.literal("FileAttached"),
+      payload: v.object({
+        mediaType: v.string().min(1),
+        url: v.unknown().optional(),
+        filename: v.unknown().optional(),
+      }).passthrough(),
+    }),
+    v.object({
       eventName: v.literal("RunFinished"),
       payload: v.object({ metadata: getAgUiRunFinishedMetadataSchema().optional() }),
     }),
@@ -617,6 +685,35 @@ function isValidAgUiPayload(
     case "ToolCallEnd":
       return hasStringField(payload, "toolCallId");
 
+    case "ToolCallStatusChanged":
+      // toolCallName is required and nullable in the API variant, so the two
+      // decode paths agree only if this one checks that it is present.
+      return hasStringField(payload, "toolCallId") &&
+        hasStringField(payload, "status") &&
+        (payload.toolCallName === null || typeof payload.toolCallName === "string");
+
+    case "InputRequestCreated":
+    case "InputRequestUpdated":
+      return isRecord(payload.inputRequest) && hasStringField(payload.inputRequest, "id");
+
+    case "ChildRunStatusChanged":
+      return hasStringField(payload, "toolCallId") &&
+        hasStringField(payload, "childRunId") &&
+        hasStringField(payload, "status");
+
+    case "UrlCited":
+      return hasStringField(payload, "sourceId") && hasStringField(payload, "url");
+
+    case "DocumentCited":
+      // title/filename are read but never type-checked here: the mapping
+      // arm decides renderability with the same `typeof value === "string"`
+      // test the legacy `Custom` twin used, so a wrong-typed or absent value
+      // falls back gracefully instead of rejecting the whole frame.
+      return hasStringField(payload, "sourceId") && hasStringField(payload, "mediaType");
+
+    case "FileAttached":
+      return hasStringField(payload, "mediaType");
+
     case "ToolCallResult":
       return hasStringField(payload, "toolCallId") &&
         (payload.messageId === undefined || hasStringField(payload, "messageId")) &&
@@ -712,6 +809,19 @@ function parseAgUiWireEvent(
   }
 
   return parseAgUiWireEventWithoutSchema(frame.event, payload, input.validationMode);
+}
+
+// `stampAgUiEventTiming` (encoder.ts) stamps `elapsedMs`/`emittedAt` onto
+// every event's own flat payload once the encoder has a real clock. A
+// `Custom` frame's payload is `{ name, value }`, so the stamp lands beside
+// `value` and never leaks into it -- the same fix already applied to the
+// durable-record reader (legacy-run-read-adapter.ts). A native frame's
+// payload carries its semantic fields at that same top level, so reusing it
+// wholesale as legacy `data` would leak these two transport fields into a
+// chunk the twin never put them in. Strip them before reuse.
+function stripAgUiTimingStamps(payload: Record<string, unknown>): Record<string, unknown> {
+  const { elapsedMs: _elapsedMs, emittedAt: _emittedAt, ...rest } = payload;
+  return rest;
 }
 
 function mapWireEventToChatEvents(
@@ -873,6 +983,84 @@ function mapWireEventToChatEvents(
       return [{
         type: `data-${wireEvent.payload.name}`,
         data: wireEvent.payload.value,
+      }];
+    }
+
+    case "ToolCallStatusChanged":
+      return [{
+        type: "data-tool-call-status",
+        data: stripAgUiTimingStamps(wireEvent.payload),
+      }];
+
+    case "InputRequestCreated":
+    case "InputRequestUpdated":
+      return [{
+        type: "data-veryfront.input_request.lifecycle",
+        data: {
+          action: wireEvent.eventName === "InputRequestCreated" ? "created" : "updated",
+          inputRequest: wireEvent.payload.inputRequest,
+        },
+      }];
+
+    case "ChildRunStatusChanged":
+      return [{
+        type: "data-veryfront.invoke_agent.lifecycle",
+        data: stripAgUiTimingStamps(wireEvent.payload),
+      }];
+
+    case "UrlCited": {
+      // Only sourceId and url are declared: title is passed through
+      // unvalidated (schema and schemaless paths both leave it unchecked),
+      // so guard its type the way toRenderableCustomChunk does rather than
+      // spreading it straight into the chat event.
+      const { sourceId, url } = wireEvent.payload;
+      const rawTitle = (wireEvent.payload as Record<string, unknown>).title;
+      return [{
+        type: "source-url",
+        sourceId,
+        url,
+        ...(typeof rawTitle === "string" ? { title: rawTitle } : {}),
+      }];
+    }
+
+    case "DocumentCited": {
+      const { sourceId, mediaType, title, filename } = wireEvent.payload;
+      if (typeof title !== "string") {
+        // The encoder's `toFrame` strips the chunk's own `type` before it
+        // goes on the wire (native frames carry it as the AG-UI event name
+        // instead), but the legacy `Custom` twin's `value` never had it
+        // stripped, so its fallback `data` still carried `type:
+        // "source-document"`. Restore it so this fallback is byte-identical
+        // to what the twin produced, and later `type` wins over anything a
+        // crafted payload smuggled in under that key.
+        return [{
+          type: "data-source-document",
+          data: { ...stripAgUiTimingStamps(wireEvent.payload), type: "source-document" },
+        }];
+      }
+      return [{
+        type: "source-document",
+        sourceId,
+        mediaType,
+        title,
+        ...(typeof filename === "string" ? { filename } : {}),
+      }];
+    }
+
+    case "FileAttached": {
+      const { mediaType, url, filename } = wireEvent.payload;
+      if (typeof url !== "string") {
+        // See the matching comment in the DocumentCited fallback above.
+        return [{
+          type: "data-file",
+          data: { ...stripAgUiTimingStamps(wireEvent.payload), type: "file" },
+        }];
+      }
+      return [{
+        type: "file",
+        url,
+        mediaType,
+        ...(typeof filename === "string" ? { filename } : {}),
       }];
     }
 
