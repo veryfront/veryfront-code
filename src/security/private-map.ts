@@ -4,6 +4,7 @@ const MapConstructor = Map;
 const apply = Reflect.apply;
 const defineProperty = Object.defineProperty;
 const freeze = Object.freeze;
+const hasOwn = Object.hasOwn;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapHas = Map.prototype.has;
@@ -17,14 +18,44 @@ const iteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
 const iteratorNext = Object.getPrototypeOf(new MapConstructor().values()).next;
 const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 
+function protectEntry<K, V>(entry: [K, V]): [K, V] {
+  defineOwnDataProperty(entry, iteratorSymbol, () => {
+    let index = 0;
+    let done = false;
+    return freeze({
+      __proto__: null,
+      next: () => {
+        if (done || index >= entry.length) {
+          done = true;
+          return { __proto__: null, done: true, value: undefined };
+        }
+        const value = hasOwn(entry, index) ? entry[index] : undefined;
+        index++;
+        return { __proto__: null, done: false, value };
+      },
+      [iteratorSymbol]() {
+        return this;
+      },
+    });
+  });
+  return entry;
+}
+
 /** A private map with captured construction, operations, and iterator advancement. */
 export function createPrivateMap<K, V>(): Map<K, V> {
   const map = new MapConstructor<K, V>();
-  const iterate = <T>(method: (this: Map<K, V>) => IterableIterator<T>) => {
+  const iterate = <T>(
+    method: (this: Map<K, V>) => IterableIterator<T>,
+    protect?: (value: T) => T,
+  ) => {
     const iterator = apply(method, map, []);
     return freeze({
       __proto__: null,
-      next: () => apply(iteratorNext, iterator, []) as IteratorResult<T>,
+      next: () => {
+        const result = apply(iteratorNext, iterator, []) as IteratorResult<T>;
+        if (!result.done && protect) result.value = protect(result.value);
+        return result;
+      },
       [iteratorSymbol]() {
         return this;
       },
@@ -42,8 +73,8 @@ export function createPrivateMap<K, V>(): Map<K, V> {
   });
   defineOwnDataProperty(map, "values", () => iterate(mapValues));
   defineOwnDataProperty(map, "keys", () => iterate(mapKeys));
-  defineOwnDataProperty(map, "entries", () => iterate(mapEntries));
-  defineOwnDataProperty(map, iteratorSymbol, () => iterate(mapEntries));
+  defineOwnDataProperty(map, "entries", () => iterate(mapEntries, protectEntry));
+  defineOwnDataProperty(map, iteratorSymbol, () => iterate(mapEntries, protectEntry));
   defineOwnDataProperty(
     map,
     "forEach",
