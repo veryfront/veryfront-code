@@ -8,7 +8,10 @@ import {
   normalizeEncodedConversationRunEvents,
   serializeConversationToolResultContent,
 } from "./run-events.ts";
-import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-normalization.ts";
+import {
+  getConversationRunEventJsonByteLength,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "./run-event-normalization.ts";
 
 describe("agent/conversation-run-events", () => {
   it("stores a textual rendering for tool output JSON cannot encode", () => {
@@ -214,6 +217,39 @@ describe("agent/conversation-run-events", () => {
           toolCallId: "tc-1",
           status: "pending_input",
           toolCallName: "create_file",
+        },
+      ],
+    );
+  });
+
+  it("carries tool result, error, and argument fields through a native tool-call-status record", () => {
+    // The legacy `Custom` wrapper passed the whole value through unchanged, and
+    // src/eval/agent-service.ts's applyToolCallStatusEvent still reads these
+    // fields off the native record when a standard tool result is absent.
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "data-tool-call-status",
+        data: {
+          toolCallId: "tc-1",
+          toolCallName: "write",
+          status: "completed",
+          arguments: { path: "file.txt" },
+          result: { ok: false },
+          error: { message: "write denied" },
+          exitCode: 1,
+        },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStatusChanged,
+          toolCallId: "tc-1",
+          status: "completed",
+          toolCallName: "write",
+          arguments: { path: "file.txt" },
+          result: { ok: false },
+          error: { message: "write denied" },
+          exitCode: 1,
         },
       ],
     );
@@ -591,6 +627,30 @@ describe("agent/conversation-run-events", () => {
       contentParts.every((event) => event.elapsedMs === 250),
       true,
       "every split part keeps the elapsed of the event it came from",
+    );
+  });
+
+  it("keeps an oversized native file record valid by truncating its url, not its required fields", () => {
+    // An inline `data:` url can push a FILE_ATTACHED record over the byte
+    // budget. The generic summary this used to fall through to drops
+    // `mediaType`, which the API catalog requires, and fails append.
+    const events = [{
+      type: "file",
+      url: "data:image/png;base64," + "A".repeat(250 * 1024),
+      mediaType: "image/png",
+    }];
+    const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+
+    assertEquals(normalized.type, conversationRunEventTypes.fileAttached);
+    assertEquals(normalized.mediaType, "image/png");
+    assertEquals(
+      typeof normalized.url === "string" && (normalized.url as string).length < 250 * 1024,
+      true,
+      "the oversized url must be truncated",
+    );
+    assertEquals(
+      getConversationRunEventJsonByteLength(normalized) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
     );
   });
 });

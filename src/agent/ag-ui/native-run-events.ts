@@ -93,6 +93,20 @@ export function isNativeRunEventName(name: string): name is NativeRunEventLegacy
   return NATIVE_LEGACY_NAMES.has(name);
 }
 
+const NATIVE_STORED_TYPES: ReadonlySet<string> = new Set(
+  NATIVE_RUN_EVENTS.map((entry) => entry.storedType),
+);
+
+/**
+ * Reports whether a durable event's `type` is one of the seven native record
+ * types, each of which carries API-catalog-required fields beyond `type`.
+ * Unlike `CUSTOM`, a native type cannot be summarized down to a generic
+ * `{ type, note, summary }` shape without failing that validation.
+ */
+export function isNativeRunEventStoredType(type: string): type is NativeRunEventStoredType {
+  return NATIVE_STORED_TYPES.has(type);
+}
+
 /** Live SSE frame: the AG-UI wire name and its payload. */
 export interface NativeRunEventLiveShape {
   event: NativeRunEventWireName;
@@ -140,8 +154,15 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** Fields the tool input status telemetry carries into a status change. */
-export interface ToolCallStatusChangedInput {
+/**
+ * Fields the tool input status telemetry carries into a status change. The
+ * index signature lets a legacy `tool-call-status` custom value's other
+ * fields (`arguments`, `result`, `error`, `exitCode`, and the like) ride
+ * through unchanged, the way `ChildRunStatusChangedInput` carries its value
+ * through -- `applyToolCallStatusEvent` in `src/eval/agent-service.ts` still
+ * reads those fields from this event.
+ */
+export interface ToolCallStatusChangedInput extends Record<string, unknown> {
   toolCallId: string;
   status: string;
   toolCallName?: string | null;
@@ -152,12 +173,14 @@ export interface ToolCallStatusChangedInput {
 export function buildToolCallStatusChangedEvent(
   input: ToolCallStatusChangedInput,
 ): NativeRunEventFrame {
-  const parentMessageId = readString(input.parentMessageId);
+  const { toolCallId, status, toolCallName, parentMessageId, ...rest } = input;
+  const readParentMessageId = readString(parentMessageId);
   return toFrame(TOOL_CALL_STATUS_CHANGED, {
-    toolCallId: input.toolCallId,
-    status: input.status,
-    toolCallName: readString(input.toolCallName),
-    ...(parentMessageId ? { parentMessageId } : {}),
+    ...rest,
+    toolCallId,
+    status,
+    toolCallName: readString(toolCallName),
+    ...(readParentMessageId ? { parentMessageId: readParentMessageId } : {}),
   });
 }
 
@@ -257,6 +280,7 @@ export function buildNativeRunEventFrame(
       const status = readString(record.status);
       if (!toolCallId || !status) return null;
       return buildToolCallStatusChangedEvent({
+        ...record,
         toolCallId,
         status,
         toolCallName: readString(record.toolCallName),

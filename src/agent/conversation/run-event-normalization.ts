@@ -5,6 +5,7 @@ import {
   isPrivateConversationRunEvent,
 } from "./private-run-event.ts";
 import { AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE } from "#veryfront/agent/runtime/provider-replay.ts";
+import { isNativeRunEventStoredType } from "#veryfront/agent/ag-ui/native-run-events.ts";
 
 export { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
@@ -73,8 +74,29 @@ function summarizeOversizedEvent(
     case "TOOL_CALL_RESULT":
       return [summarizeToolResultEvent(event)];
 
+    // The `url` field is where these three carry an oversized value (typically
+    // an inline `data:` URL); truncating it keeps every API-catalog-required
+    // field (`mediaType`, `sourceId`, ...) intact, unlike the generic summary.
+    case "URL_CITED":
+    case "DOCUMENT_CITED":
+    case "FILE_ATTACHED": {
+      if (typeof event.url === "string") {
+        const truncated = truncateEventStringFieldToLimit(event, "url", " [truncated]");
+        if (truncated) return [truncated];
+      }
+      return [buildOmittedEvent(event)];
+    }
+
     default:
-      return [summarizeGenericEvent(event)];
+      // A native record type (TOOL_CALL_STATUS_CHANGED, INPUT_REQUEST_*,
+      // CHILD_RUN_STATUS_CHANGED) carries API-catalog-required fields beyond
+      // `type`. summarizeGenericEvent's `{ type, truncated, note, summary }`
+      // shape drops those and fails validation, unlike the permissive legacy
+      // `CUSTOM` wrapper it replaced -- so a native type falls back to the
+      // always-valid omission event instead.
+      return isNativeRunEventStoredType(event.type)
+        ? [buildOmittedEvent(event)]
+        : [summarizeGenericEvent(event)];
   }
 }
 
