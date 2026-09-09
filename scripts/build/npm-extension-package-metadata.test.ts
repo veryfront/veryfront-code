@@ -67,7 +67,7 @@ describe("manifestDependencies", () => {
       veryfront?: { npm?: { nodeEngine?: string } };
     };
 
-    assertEquals(manifestDependencies(manifest), { sharp: "0.35.3" });
+    assertEquals(manifestDependencies(manifest), { sharp: "0.35.4" });
   });
 
   it("pins SQLite to a release that ships prebuilt binaries", async () => {
