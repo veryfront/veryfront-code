@@ -43,6 +43,36 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
 }
 
 describe("executor state bridge", () => {
+  it("forwards a narrowed tool selection and rejects names outside the installed grant", async () => {
+    const seen: unknown[] = [];
+    const channels = pair(createExecutorStateBroker({
+      expectedBinding: binding,
+      ...scope,
+      capabilityIds: { projectSteering: capabilityIds.projectSteering },
+      allowedToolNames: ["read_file", "load_skill"],
+      prepareProjectSteering: async (input) => ({ agent: input.definition }),
+      refreshProjectSteering: async (_signal, availableToolNames) => {
+        seen.push(availableToolNames);
+        return "refresh";
+      },
+    }));
+    try {
+      const facades = createExecutorStateFacades({
+        channel: channels.executor,
+        ...scope,
+        capabilityIds: { projectSteering: capabilityIds.projectSteering },
+      });
+      const signal = new AbortController().signal;
+      await facades.projectSteering!.refresh(signal, ["read_file"]);
+      await facades.projectSteering!.refresh(signal, ["load_skill"]);
+      await facades.projectSteering!.refresh(signal);
+      await assertRejects(() => facades.projectSteering!.refresh(signal, ["write_file"]));
+      assertEquals(seen, [["read_file"], ["load_skill"], []]);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("uses broker-owned scope and returns bounded steering and conversation state", async () => {
     const seen: unknown[] = [];
     const channels = pair(createExecutorStateBroker({

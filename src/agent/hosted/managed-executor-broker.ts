@@ -58,7 +58,7 @@ type PersistenceInput = Omit<
 >;
 type StateInput = Omit<
   Parameters<typeof createExecutorStateBroker>[0],
-  "expectedBinding" | "capabilityIds" | "agentId" | "projectId" | "branchId"
+  "expectedBinding" | "capabilityIds" | "agentId" | "projectId" | "branchId" | "allowedToolNames"
 >;
 
 /** Prepared executor handle with broker-owned execution and retirement. */
@@ -325,6 +325,7 @@ function buildBrokerOperations(
     projectId: execution.projectId,
     branchId: execution.branchId,
     ...input.state,
+    allowedToolNames: installation.grant.allowedToolNames,
   });
   const combined = new Map<string, ExecutorOperation>();
   for (const operations of [model, tools, persistence, state]) {

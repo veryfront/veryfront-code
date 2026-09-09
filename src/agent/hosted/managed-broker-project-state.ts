@@ -23,6 +23,10 @@ import type { HostedChatRuntimeProjectSteering } from "./chat-runtime-contract.t
 
 type Scope = { projectId: string | null; branchId?: string | null };
 
+/**
+ * Create broker-owned project steering. Refreshes show skills only when the
+ * broker-validated effective tool selection includes `load_skill`.
+ */
 export function createManagedBrokerProjectState(
   options: Scope & {
     apiUrl: string | URL;
@@ -117,7 +121,10 @@ export function createManagedBrokerProjectState(
         ...(selected.definitions.length ? { initialSkills: selected.definitions } : {}),
       };
     },
-    async refreshProjectSteering(signal: AbortSignal): Promise<AgentSystem> {
+    async refreshProjectSteering(
+      signal: AbortSignal,
+      availableToolNames: readonly string[] = [],
+    ): Promise<AgentSystem> {
       if (!definition) throw new TypeError("Managed broker project state is not prepared");
       const loaded = await load(signal);
       const selected = select(definition, loaded.skills);
@@ -126,7 +133,8 @@ export function createManagedBrokerProjectState(
         projectId,
         branchId,
         instructions: loaded.instructions,
-        skills: selected.definitions,
+        skills: availableToolNames.includes("load_skill") ? selected.definitions : [],
+        availableToolNames,
         environmentContext: options.environmentContext,
       });
     },

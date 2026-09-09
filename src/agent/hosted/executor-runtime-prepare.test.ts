@@ -1544,6 +1544,7 @@ Synthetic source instructions.`,
     it(`refreshes steering after ${path} only on a successful steering change (${success})`, async () => {
       let calls = 0;
       let refreshes = 0;
+      let refreshedTools: readonly string[] | undefined;
       const systems: string[] = [];
       const f = fixture({
         grant: {
@@ -1555,8 +1556,9 @@ Synthetic source instructions.`,
         facades: {
           projectSteering: {
             prepare: ({ definition }) => Promise.resolve({ agent: definition }),
-            refresh: () => {
+            refresh: (_signal, availableToolNames) => {
               refreshes++;
+              refreshedTools = availableToolNames;
               return "Updated synthetic steering";
             },
           },
@@ -1586,6 +1588,7 @@ Synthetic source instructions.`,
         await Array.fromAsync(await preparedStream(f));
         assertEquals(calls, 2);
         assertEquals(refreshes, expectedRefreshes);
+        assertEquals(refreshedTools, expectedRefreshes === 1 ? ["update_file"] : undefined);
         assertEquals(systems[1]?.includes("Updated synthetic steering"), expectedRefreshes === 1);
       } finally {
         await f.owner.close();

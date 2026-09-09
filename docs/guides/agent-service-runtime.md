@@ -299,6 +299,13 @@ Services that use Veryfront Cloud project steering can reuse
 `fetchDefaultAgentServiceProjectSteering()` for the initial fetch and
 `createDefaultAgentServiceProjectSteeringRefresh()` for step-boundary refresh.
 
+Managed brokers can use `createManagedBrokerProjectState()` from
+`veryfront/agent/managed-broker` for project instructions and skill catalogs.
+The executor sends its effective tool selection on each steering refresh. The
+broker validates that selection against the installed grant before constructing
+instructions, and includes skills only when `load_skill` remains available.
+Refreshes without a tool selection omit the skill catalog.
+
 ## Keep inference authority separate
 
 Signed runtime invocations may include an optional

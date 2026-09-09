@@ -57,6 +57,11 @@ export const getExecutorProjectSteeringPrepareRequestSchema = defineSchema((_v) 
   getCapabilityRequestSchema().extend({ definition: getExecutorAgentDefinitionSchema() }).strict()
 );
 export const getExecutorStateReadRequestSchema = getCapabilityRequestSchema;
+export const getExecutorProjectSteeringRefreshRequestSchema = defineSchema((v) =>
+  getCapabilityRequestSchema().extend({
+    availableToolNames: v.array(getExecutorDiscoveryIdSchema()).max(1_000).optional(),
+  }).strict()
+);
 
 const getSkillSelectorPolicySchema = defineSchema((v) =>
   v.discriminatedUnion("kind", [

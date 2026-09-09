@@ -15,6 +15,7 @@ import {
   getExecutorAgentSystemSchema,
   getExecutorConversationUserTextResultSchema,
   getExecutorProjectSteeringPrepareRequestSchema,
+  getExecutorProjectSteeringRefreshRequestSchema,
   getExecutorProjectSteeringResultSchema,
   getExecutorStateCapabilityIdsSchema,
   getExecutorStateReadRequestSchema,
@@ -36,7 +37,7 @@ export interface ExecutorStateFacades {
     prepare(input: ProjectSteeringPrepareInput): Promise<
       HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>
     >;
-    refresh(signal: AbortSignal): Promise<AgentSystem>;
+    refresh(signal: AbortSignal, availableToolNames?: readonly string[]): Promise<AgentSystem>;
   };
   latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
 }
@@ -73,15 +74,21 @@ export function createExecutorStateBroker(
   options: Scope & {
     expectedBinding: ExecutorBinding;
     capabilityIds: ExecutorStateCapabilityIds;
+    /** Installed tool grant used to authorize the executor's narrowed refresh selection. */
+    allowedToolNames?: readonly string[];
     prepareProjectSteering?: (
       input: ProjectSteeringPrepareInput,
     ) => Promise<HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>>;
-    refreshProjectSteering?: (signal: AbortSignal) => Promise<AgentSystem> | AgentSystem;
+    refreshProjectSteering?: (
+      signal: AbortSignal,
+      availableToolNames?: readonly string[],
+    ) => Promise<AgentSystem> | AgentSystem;
     latestConversationUserText?: NonNullable<ExecutorStateFacades["latestConversationUserText"]>;
   },
 ): ReadonlyMap<string, ExecutorOperation> {
   const expectedBinding = Object.freeze(getExecutorBindingSchema().parse(options.expectedBinding));
   const scope = parseScope(options);
+  const allowedToolNames = new Set(options.allowedToolNames ?? []);
   const capabilityIds = Object.freeze(
     parseExecutorStateData(getExecutorStateCapabilityIdsSchema(), options.capabilityIds),
   );
@@ -143,9 +150,19 @@ export function createExecutorStateBroker(
     operations.set(executorStateOperations.refreshProjectSteering, {
       mode: "unary",
       async handle(value, context) {
-        const request = parseExecutorStateData(getExecutorStateReadRequestSchema(), value);
+        const request = parseExecutorStateData(
+          getExecutorProjectSteeringRefreshRequestSchema(),
+          value,
+        );
         authorize(context, expectedBinding, request.capabilityId, capabilityId);
-        const result = await scheduleSteering(context, () => refresh(context.signal));
+        const availableToolNames = request.availableToolNames ?? [];
+        if (availableToolNames.some((name) => !allowedToolNames.has(name))) {
+          throw new TypeError("Managed state tool selection is not authorized");
+        }
+        const result = await scheduleSteering(
+          context,
+          () => refresh(context.signal, availableToolNames),
+        );
         return executorStateJson(
           parseExecutorStateData(getExecutorAgentSystemSchema(), executorStateJson(result)),
         );
@@ -213,11 +230,14 @@ export function createExecutorStateFacades(
             }
             return parsed;
           },
-          async refresh(signal: AbortSignal) {
+          async refresh(signal: AbortSignal, availableToolNames?: readonly string[]) {
             const combined = options.signal ? AbortSignal.any([options.signal, signal]) : signal;
             const result = await options.channel.request(
               executorStateOperations.refreshProjectSteering,
-              { capabilityId: capabilityIds.projectSteering! },
+              {
+                capabilityId: capabilityIds.projectSteering!,
+                availableToolNames: [...availableToolNames ?? []],
+              },
               { signal: combined },
             );
             return parseExecutorStateData(getExecutorAgentSystemSchema(), result);

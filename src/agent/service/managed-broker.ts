@@ -9,6 +9,7 @@ export {
   createManagedBrokerPersistence,
   type ManagedBrokerOutput,
 } from "../hosted/managed-broker-persistence.ts";
+export { createManagedBrokerProjectState } from "../hosted/managed-broker-project-state.ts";
 export { createHostedExecutorAllocatorClient } from "../hosted/executor-allocator-client.ts";
 export {
   connectExecutorTransport,

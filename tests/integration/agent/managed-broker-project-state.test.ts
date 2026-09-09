@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createManagedBrokerProjectState } from "#veryfront/agent/hosted/managed-broker-project-state.ts";
+import { createManagedBrokerProjectState } from "veryfront/agent/managed-broker";
 
 const definition = {
   id: "coder",
@@ -12,6 +12,46 @@ const definition = {
 };
 
 describe("managed broker project state", () => {
+  for (const availableToolNames of [undefined, [], ["read_file"], ["load_skill"]]) {
+    it(`keeps refreshed skills gated by the effective tool selection: ${availableToolNames}`, async () => {
+      const marker = "Synthetic selected skill catalog marker";
+      const state = createManagedBrokerProjectState({
+        apiUrl: "https://api.example.test",
+        authToken: "broker-token",
+        agentId: "coder",
+        projectId: "project-1",
+        builtinSkills: [{
+          id: "guide",
+          name: "Guide",
+          description: marker,
+          instructions: "Help.",
+          allowedTools: [],
+        }],
+        fetch: (value) =>
+          Promise.resolve(
+            new URL(value).pathname.endsWith("/AGENTS.md")
+              ? Response.json({ path: "AGENTS.md", content: "Current project instructions" })
+              : Response.json({ data: [], page_info: { next: null } }),
+          ),
+      });
+      const prepared = await state.prepareProjectSteering({
+        definition: { ...definition, skills: true },
+        projectId: "project-1",
+        signal: new AbortController().signal,
+      });
+      assertEquals(prepared.initialSkills?.length, 1);
+      const refreshed = await state.refreshProjectSteering(
+        new AbortController().signal,
+        availableToolNames,
+      );
+      assertEquals(JSON.stringify(refreshed).includes("Current project instructions"), true);
+      assertEquals(
+        JSON.stringify(refreshed).includes(marker),
+        availableToolNames?.includes("load_skill") ?? false,
+      );
+    });
+  }
+
   it("joins the original catalog lookup before propagating an instruction failure", async () => {
     const failure = new Error("synthetic instruction failure");
     const catalog = Promise.withResolvers<Response>();
