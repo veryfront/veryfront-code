@@ -28,9 +28,7 @@ export function getStringField(value: unknown, field: string, fallback: string):
 
 /** Return a string field when present, else undefined. */
 export function getOptionalStringField(value: unknown, key: string): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
+  if (!isRecord(value)) return undefined;
 
   const field = value[key];
   return typeof field === "string" ? field : undefined;

@@ -1,3 +1,4 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
@@ -75,9 +76,10 @@ export function getProviderExecutedToolNames(runtimeTools: RuntimeToolSet | unde
 export function collectFinalStreamToolResults(
   state: Pick<ChatStreamState, "toolResults">,
 ): Map<string, StreamingToolResult> {
-  const finalToolResults = new Map<string, StreamingToolResult>();
+  const finalToolResults = createPrivateMap<string, StreamingToolResult>();
 
-  for (const toolResult of state.toolResults) {
+  for (let index = 0; index < state.toolResults.length; index++) {
+    const toolResult = state.toolResults[index]!;
     if (toolResult.preliminary === true) {
       continue;
     }
@@ -91,14 +93,16 @@ export function collectFinalStreamToolResults(
 export function collectPersistedToolResults(
   messages: Message[],
 ): Map<string, ToolResultPart> {
-  const persistedToolResults = new Map<string, ToolResultPart>();
+  const persistedToolResults = createPrivateMap<string, ToolResultPart>();
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!;
     if (message.role !== "tool") {
       continue;
     }
 
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      const part = message.parts[partIndex]!;
       if (!isToolResultPart(part)) {
         continue;
       }
@@ -113,9 +117,10 @@ export function collectPersistedToolResults(
 export function collectGeneratedToolResults(
   toolResults: RuntimeGenerateToolResult[] | undefined,
 ): Map<string, RuntimeGenerateToolResult> {
-  const generatedToolResults = new Map<string, RuntimeGenerateToolResult>();
+  const generatedToolResults = createPrivateMap<string, RuntimeGenerateToolResult>();
 
-  for (const toolResult of toolResults ?? []) {
+  for (let index = 0; index < (toolResults?.length ?? 0); index++) {
+    const toolResult = toolResults![index]!;
     generatedToolResults.set(toolResult.toolCallId, toolResult);
   }
 

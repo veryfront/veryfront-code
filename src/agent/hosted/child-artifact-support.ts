@@ -1,3 +1,5 @@
+import { privateArtifactText } from "../artifacts/private-artifact-text.ts";
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 
@@ -164,7 +166,8 @@ function isHostedChildCreateFileAlreadyExistsResultAtDepth(
   }
 
   if (
-    typeof result.message === "string" && CREATE_FILE_ALREADY_EXISTS_PATTERN.test(result.message)
+    typeof result.message === "string" &&
+    privateArtifactText.match(result.message, CREATE_FILE_ALREADY_EXISTS_PATTERN) !== null
   ) {
     return true;
   }
@@ -184,12 +187,13 @@ function hasAlreadyExistsContentPart(content: unknown): boolean {
     return false;
   }
 
-  return content.some((part) => {
+  return somePrivateArray(content, (part) => {
     if (!isRecord(part)) {
       return false;
     }
 
-    return typeof part.text === "string" && CREATE_FILE_ALREADY_EXISTS_PATTERN.test(part.text);
+    return typeof part.text === "string" &&
+      privateArtifactText.match(part.text, CREATE_FILE_ALREADY_EXISTS_PATTERN) !== null;
   });
 }
 

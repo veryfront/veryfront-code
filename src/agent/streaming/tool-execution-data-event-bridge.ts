@@ -1,3 +1,4 @@
+const hasOwn = Object.hasOwn;
 import { toPrivateUint8Array } from "#veryfront/security/private-bytes.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import {
@@ -22,7 +23,7 @@ export type ToolExecutionDataEventBridgeStreamInput = {
 
 function serializeToolExecutionDataEvent(event: ToolExecutionDataEvent): Uint8Array {
   if (typeof event.name === "string" && event.name.length > 0) {
-    const data = Object.hasOwn(event, "value") ? event.value : event.data;
+    const data = hasOwn(event, "value") ? event.value : event.data;
     return encodePrivateText(
       `data: ${privateJsonStringify({ type: `data-${event.name}`, data })}\n\n`,
     );

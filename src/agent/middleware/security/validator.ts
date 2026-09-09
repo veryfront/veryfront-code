@@ -1,3 +1,4 @@
+import { privateTextTrimStart } from "#veryfront/security/private-text.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
@@ -628,7 +629,7 @@ function extractAdjacentRuns(
 function messageTextParts(message: Message, includeAttachments = true): string[] {
   const texts = mapPrivateArray(filterPrivateArray(message.parts, isTextPart), (part) => part.text);
   const attachmentContext = includeAttachments && message.role === "user"
-    ? buildAttachmentContextFromParts(message.parts).trimStart()
+    ? privateTextTrimStart(buildAttachmentContextFromParts(message.parts))
     : "";
   if (attachmentContext) texts.push(attachmentContext);
   return texts;

@@ -1,3 +1,4 @@
+import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
  *
@@ -42,27 +43,6 @@ function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
 export interface ParsedToolArgs {
   args: Record<string, unknown>;
   error?: string;
-}
-
-function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
-  let normalized = rawArgs.trim();
-
-  while (normalized.startsWith("{}")) {
-    const remainder = normalized.slice(2).trimStart();
-    if (remainder.startsWith("{")) {
-      normalized = remainder;
-      continue;
-    }
-
-    if (remainder.startsWith('"')) {
-      normalized = `{${remainder}`;
-      continue;
-    }
-
-    break;
-  }
-
-  return normalized;
 }
 
 /**

@@ -1,3 +1,11 @@
+import { privateArtifactText as privateText } from "./private-artifact-text.ts";
+import {
+  filterPrivateArray,
+  flatMapPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { isErroredToolExecutionResult, type RemoteToolSource } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
@@ -34,11 +42,11 @@ function extractToolResultPath(result: unknown): string | null {
     return null;
   }
 
-  return result.path.replace(/^\/+/, "");
+  return privateText.replace(result.path, /^\/+/, "");
 }
 
 function isReportPath(path: string | null): path is string {
-  return path !== null && (path === "report.md" || path.endsWith("/report.md"));
+  return path !== null && (path === "report.md" || privateText.endsWith(path, "/report.md"));
 }
 
 function currentReportPathMatches(
@@ -49,7 +57,7 @@ function currentReportPathMatches(
     return false;
   }
 
-  return artifacts.currentReportPath.replace(/^\/+/, "") === path;
+  return privateText.replace(artifacts.currentReportPath, /^\/+/, "") === path;
 }
 
 function buildDefaultArtifactsFromResultPath(input: {
@@ -73,7 +81,7 @@ export function extractLatestUserText(messages: readonly unknown[]): string | nu
     }
 
     const content = message.content;
-    if (typeof content === "string" && content.trim().length > 0) {
+    if (typeof content === "string" && privateText.trim(content).length > 0) {
       return content;
     }
 
@@ -81,14 +89,19 @@ export function extractLatestUserText(messages: readonly unknown[]): string | nu
       continue;
     }
 
-    const text = content
-      .flatMap((part) =>
-        isRecord(part) && part.type === "text" && typeof part.text === "string"
-          ? [part.text.trim()]
-          : []
-      )
-      .filter((value) => value.length > 0)
-      .join("\n");
+    const text = joinPrivateArray(
+      filterPrivateArray(
+        flatMapPrivateArray(
+          content,
+          (part) =>
+            isRecord(part) && part.type === "text" && typeof part.text === "string"
+              ? [privateText.trim(part.text)]
+              : [],
+        ),
+        (value) => value.length > 0,
+      ),
+      "\n",
+    );
 
     if (text.length > 0) {
       return text;
@@ -99,13 +112,18 @@ export function extractLatestUserText(messages: readonly unknown[]): string | nu
 }
 
 function extractLatestUserDescription(text: string): string {
-  const withoutCommandSpan = text.replace(
+  const withoutCommandSpan = privateText.replace(
+    text,
     /<span\s+data-command="[^"]+">\s*(\/[a-z0-9_-]+)\s*<\/span>/gi,
     "$1",
   );
-  const withoutLeadingSlashCommand = withoutCommandSpan.replace(/^\s*\/[a-z0-9_-]+\s*/i, "");
+  const withoutLeadingSlashCommand = privateText.replace(
+    withoutCommandSpan,
+    /^\s*\/[a-z0-9_-]+\s*/i,
+    "",
+  );
 
-  return withoutLeadingSlashCommand.trim();
+  return privateText.trim(withoutLeadingSlashCommand);
 }
 
 /** Fetch latest conversation user text helper. */
@@ -143,7 +161,7 @@ export async function fetchLatestConversationUserText(input: {
     const payload = await response.json();
     const data = isRecord(payload) ? payload.data : undefined;
     const messages = Array.isArray(data)
-      ? data.map((message) => ({
+      ? mapPrivateArray(data, (message) => ({
         role: isRecord(message) ? message.role : undefined,
         content: isRecord(message) && Array.isArray(message.parts) ? message.parts : [],
       }))
@@ -198,20 +216,24 @@ function appendSystemReminder(
   reminder: string,
 ): string | ChatSystemMessage[] {
   if (typeof instructions === "string") {
-    return instructions.includes(reminder) ? instructions : `${instructions}\n\n${reminder}`;
+    return privateText.includes(instructions, reminder)
+      ? instructions
+      : `${instructions}\n\n${reminder}`;
   }
 
-  if (instructions.some((message) => message.content.includes(reminder))) {
+  if (
+    somePrivateArray(instructions, (message) => privateText.includes(message.content, reminder))
+  ) {
     return instructions;
   }
 
-  return [
-    ...instructions,
-    {
-      role: "system",
-      content: reminder,
-    },
-  ];
+  const output: ChatSystemMessage[] = [];
+  for (let index = 0; index < instructions.length; index++) output[index] = instructions[index]!;
+  output[output.length] = {
+    role: "system",
+    content: reminder,
+  };
+  return output;
 }
 
 /** Apply default research artifact path helper. */
@@ -225,16 +247,18 @@ export function applyDefaultResearchArtifactPath(
     return toolInput;
   }
 
-  const path = typeof toolInput.path === "string" ? toolInput.path.replace(/^\/+/, "") : null;
+  const path = typeof toolInput.path === "string"
+    ? privateText.replace(toolInput.path, /^\/+/, "")
+    : null;
   if (!path) {
     return toolInput;
   }
 
-  const canonicalCurrentPath = defaultArtifacts.currentReportPath.replace(/^\/+/, "");
-  const canonicalRunPath = defaultArtifacts.runReportPath.replace(/^\/+/, "");
-  const canonicalFindingsPath = defaultArtifacts.findingsPath.replace(/^\/+/, "");
-  const canonicalSourcesPath = defaultArtifacts.sourcesPath.replace(/^\/+/, "");
-  const canonicalTopicRootPath = canonicalCurrentPath.replace(/\/report\.md$/, "");
+  const canonicalCurrentPath = privateText.replace(defaultArtifacts.currentReportPath, /^\/+/, "");
+  const canonicalRunPath = privateText.replace(defaultArtifacts.runReportPath, /^\/+/, "");
+  const canonicalFindingsPath = privateText.replace(defaultArtifacts.findingsPath, /^\/+/, "");
+  const canonicalSourcesPath = privateText.replace(defaultArtifacts.sourcesPath, /^\/+/, "");
+  const canonicalTopicRootPath = privateText.replace(canonicalCurrentPath, /\/report\.md$/, "");
 
   if (
     path === canonicalCurrentPath || path === canonicalRunPath || path === canonicalFindingsPath ||
@@ -250,7 +274,7 @@ export function applyDefaultResearchArtifactPath(
     };
   }
 
-  if (!path.endsWith("/report.md") && path !== "report.md") {
+  if (!privateText.endsWith(path, "/report.md") && path !== "report.md") {
     return toolInput;
   }
 
@@ -277,7 +301,7 @@ export function shouldRetryCreateResearchArtifactAsUpdate(input: {
   }
 
   const path = typeof input.toolInput.path === "string"
-    ? input.toolInput.path.replace(/^\/+/, "")
+    ? privateText.replace(input.toolInput.path, /^\/+/, "")
     : null;
   const content = typeof input.toolInput.content === "string" ? input.toolInput.content : null;
   if (!path || !content) {
@@ -285,14 +309,15 @@ export function shouldRetryCreateResearchArtifactAsUpdate(input: {
   }
 
   if (!defaultArtifacts) {
-    return path.startsWith("research/") && path.endsWith(".md");
+    return privateText.startsWith(path, "research/") && privateText.endsWith(path, ".md");
   }
 
-  const topicRootPath = defaultArtifacts.currentReportPath.replace(/^\/+/, "").replace(
+  const topicRootPath = privateText.replace(
+    privateText.replace(defaultArtifacts.currentReportPath, /^\/+/, ""),
     /\/report\.md$/,
     "",
   );
-  return path === topicRootPath || path.startsWith(`${topicRootPath}/`);
+  return path === topicRootPath || privateText.startsWith(path, `${topicRootPath}/`);
 }
 
 /** Mirror default research run artifact helper. */
@@ -315,7 +340,7 @@ export async function mirrorDefaultResearchRunArtifact(input: {
 
   const content = typeof input.toolInput.content === "string" ? input.toolInput.content : null;
   const path = typeof input.toolInput.path === "string"
-    ? input.toolInput.path.replace(/^\/+/, "")
+    ? privateText.replace(input.toolInput.path, /^\/+/, "")
     : null;
   const resultPath = extractToolResultPath(input.toolResult);
   const contextArtifacts = input.taskContext.defaultResearchArtifacts;
@@ -331,8 +356,8 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     return;
   }
 
-  const canonicalCurrentPath = defaultArtifacts.currentReportPath.replace(/^\/+/, "");
-  const canonicalRunPath = defaultArtifacts.runReportPath.replace(/^\/+/, "");
+  const canonicalCurrentPath = privateText.replace(defaultArtifacts.currentReportPath, /^\/+/, "");
+  const canonicalRunPath = privateText.replace(defaultArtifacts.runReportPath, /^\/+/, "");
 
   if (!content || (path !== canonicalCurrentPath && resultPath !== canonicalCurrentPath)) {
     return;

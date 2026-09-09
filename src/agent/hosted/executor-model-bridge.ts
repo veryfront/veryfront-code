@@ -1,3 +1,4 @@
+const hasOwn = Object.hasOwn;
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { createPrivateReadableStream } from "#veryfront/security/private-stream.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -301,7 +302,7 @@ function throwProviderStreamError(value: unknown, rawEnvelope = false): void {
 function rejectReceivedStreamError(value: JsonValue, rawEnvelope = false): void {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return;
   if (value.type === "tool-error" && !rawEnvelope) return;
-  if (value.type === "error" || Object.hasOwn(value, "error")) {
+  if (value.type === "error" || hasOwn(value, "error")) {
     throw new TypeError("Invalid managed model stream chunk");
   }
   if (value.type === "raw" && value.rawValue !== undefined) {

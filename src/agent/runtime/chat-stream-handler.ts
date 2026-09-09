@@ -1,5 +1,6 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
-import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
   closePrivateStream,
@@ -618,16 +619,21 @@ function readTraceAttributeString(
   return typeof value === "string" ? value : undefined;
 }
 
+function finalToolResultIds(state: ChatStreamState): Set<string> {
+  const ids = createPrivateSet<string>();
+  for (let index = 0; index < state.toolResults.length; index++) {
+    const result = state.toolResults[index]!;
+    if (result.preliminary !== true) ids.add(result.toolCallId);
+  }
+  return ids;
+}
+
 function finalizeActiveUnresolvedProviderToolCalls(
   state: ChatStreamState,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
 ): void {
-  const terminalToolCallIds = new Set(
-    state.toolResults
-      .filter((result) => result.preliminary !== true)
-      .map((result) => result.toolCallId),
-  );
+  const terminalToolCallIds = finalToolResultIds(state);
 
   for (const toolCall of state.toolCalls.values()) {
     if (
@@ -901,11 +907,7 @@ export function processStreamInternal(
 
       // Ignore any preliminary entries carried in from an older stream state.
       // They are progress, not proof that the provider answered.
-      const terminalToolCallIds = new Set(
-        state.toolResults
-          .filter((result) => result.preliminary !== true)
-          .map((result) => result.toolCallId),
-      );
+      const terminalToolCallIds = finalToolResultIds(state);
 
       for (const toolCall of state.toolCalls.values()) {
         if (!pendingProviderExecutedToolCallIds.has(toolCall.id)) continue;
@@ -1465,8 +1467,10 @@ export function processStreamInternal(
             );
             if (
               typedPart.preliminary !== true && providerExecuted === true &&
-              state.toolResults.some((result) =>
-                result.toolCallId === typedPart.toolCallId && result.preliminary !== true
+              somePrivateArray(
+                state.toolResults,
+                (result) =>
+                  result.toolCallId === typedPart.toolCallId && result.preliminary !== true,
               )
             ) {
               break;
@@ -1557,8 +1561,10 @@ export function processStreamInternal(
             );
             if (
               providerExecuted === true &&
-              state.toolResults.some((result) =>
-                result.toolCallId === typedPart.toolCallId && result.preliminary !== true
+              somePrivateArray(
+                state.toolResults,
+                (result) =>
+                  result.toolCallId === typedPart.toolCallId && result.preliminary !== true,
               )
             ) {
               break;

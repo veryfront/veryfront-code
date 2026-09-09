@@ -1186,11 +1186,17 @@ function resolveRuntimeProviderReplayCheckpointEmission(
   config: AgentConfig,
 ): RuntimeProviderReplayCheckpointEmission {
   const messageId = getRuntimeProviderReplayCheckpointMessageId(config);
-  const existingCheckpoint = messageId
-    ? getRuntimeProviderReplayCheckpoints(config)?.find((checkpoint) =>
-      checkpoint.messageId === messageId
-    )
-    : undefined;
+  const checkpoints = getRuntimeProviderReplayCheckpoints(config);
+  let existingCheckpoint: ProviderReplayCheckpoint | undefined;
+  if (messageId && checkpoints) {
+    for (let index = 0; index < checkpoints.length; index++) {
+      const checkpoint = checkpoints[index];
+      if (checkpoint?.messageId === messageId) {
+        existingCheckpoint = checkpoint;
+        break;
+      }
+    }
+  }
   return {
     state: messageId
       ? createProviderReplayCheckpointEmissionState({ messageId, existingCheckpoint })
