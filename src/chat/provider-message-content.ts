@@ -4,6 +4,8 @@ import { isRecord } from "./part-field-access.ts";
 import type { ProviderModelMessage } from "./types.ts";
 
 const isArray = Array.isArray;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 
 function hasNonEmptyStringField(record: Record<string, unknown>, key: string): boolean {
   return typeof record[key] === "string" && privateTextTrim(record[key]).length > 0;
@@ -31,6 +33,8 @@ function isKeepableModelPart(
   includeReasoning: boolean,
 ): boolean {
   if (!isRecord(part) || typeof part.type !== "string") return false;
+  const descriptor = getOwnPropertyDescriptor(part, "providerExecuted");
+  const providerExecuted = descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
 
   switch (part.type) {
     case "text":
@@ -48,13 +52,13 @@ function isKeepableModelPart(
         hasNonEmptyStringField(part, "toolCallId") &&
         hasNonEmptyStringField(part, "toolName") &&
         isRecord(part.input) &&
-        (part.providerExecuted === undefined || typeof part.providerExecuted === "boolean");
+        (providerExecuted === undefined || typeof providerExecuted === "boolean");
     case "tool-result":
       return (role === "assistant" || role === "tool") &&
         hasNonEmptyStringField(part, "toolCallId") &&
         hasNonEmptyStringField(part, "toolName") &&
         hasValidToolResultOutput(part.output) &&
-        (part.providerExecuted === undefined || typeof part.providerExecuted === "boolean");
+        (providerExecuted === undefined || typeof providerExecuted === "boolean");
     case "image":
     case "file": {
       if (

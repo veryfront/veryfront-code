@@ -46,16 +46,18 @@ import {
 } from "./anthropic-provider-replay-block.ts";
 
 const hasOwn = Object.hasOwn;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isArray = Array.isArray;
 
 function getStringPartField(part: unknown, key: string): string | undefined {
-  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
+  if (!part || typeof part !== "object" || isArray(part)) return undefined;
 
   const value = (part as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !isArray(value);
 }
 
 function getRecordPartField(part: unknown, key: string): Record<string, unknown> | undefined {
@@ -66,11 +68,12 @@ function getRecordPartField(part: unknown, key: string): Record<string, unknown>
 }
 
 function hasOwnField(part: Record<string, unknown>, key: string): boolean {
-  return Object.hasOwn(part, key);
+  return hasOwn(part, key);
 }
 
 function isProviderExecutedToolPart(part: Record<string, unknown>): boolean {
-  return part.providerExecuted === true;
+  const descriptor = getOwnPropertyDescriptor(part, "providerExecuted");
+  return descriptor !== undefined && hasOwn(descriptor, "value") && descriptor.value === true;
 }
 
 function getToolCallId(part: unknown): string | undefined {

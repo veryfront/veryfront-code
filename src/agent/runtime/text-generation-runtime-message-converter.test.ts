@@ -17,6 +17,42 @@ import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
+  it("reads provider execution only from own data without invoking optional flag getters", () => {
+    for (const own of [false, true]) {
+      let observations = 0;
+      const part = {
+        type: "tool-call" as const,
+        toolCallId: "call",
+        toolName: "inspect",
+        args: { text: "synthetic private arguments" },
+      };
+      const target = own ? part : Object.create(Object.prototype);
+      Object.defineProperty(target, "providerExecuted", {
+        get() {
+          observations++;
+          return undefined;
+        },
+      });
+      if (!own) Object.setPrototypeOf(part, target);
+      assertEquals(
+        convertToTextGenerationRuntimeMessages([{
+          id: "assistant",
+          role: "assistant",
+          parts: [part],
+        }]),
+        [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "call",
+            toolName: "inspect",
+            input: part.args,
+          }],
+        }],
+      );
+      assertEquals(observations, 0);
+    }
+  });
   it("compacts completed historical tool rounds without consulting the input reverse scan", () => {
     const messages: Message[] = [
       {

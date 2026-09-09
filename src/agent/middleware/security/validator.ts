@@ -138,6 +138,7 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
 ];
 
 const RegExpConstructor = RegExp;
+const hasOwn = Object.hasOwn;
 const regexpExec = RegExp.prototype.exec;
 const regexpReplace = RegExp.prototype[Symbol.replace];
 const applyRegExp = Reflect.apply;
@@ -1581,7 +1582,9 @@ export function securityMiddleware(
             for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
               const assembled: ProviderValidationRun = { text: "", trustedSegments: [] };
               let previousKind: "runtime" | "history" | "current" | undefined;
-              for (const [index, message] of run.entries()) {
+              for (let index = 0; index < run.length; index++) {
+                if (!hasOwn(run, index)) continue;
+                const message = run[index]!;
                 if (index > 0) assembled.text += runSeparator;
                 const start = assembled.text.length;
                 const text = joinPrivateArray(messageTextParts(message), partSeparator);
@@ -1592,7 +1595,10 @@ export function securityMiddleware(
                   ? "current"
                   : "history";
                 if (kind !== "current") {
-                  const previous = assembled.trustedSegments.at(-1);
+                  const last = assembled.trustedSegments.length - 1;
+                  const previous = hasOwn(assembled.trustedSegments, last)
+                    ? assembled.trustedSegments[last]
+                    : undefined;
                   if (previous && kind === previousKind) previous.text += runSeparator + text;
                   else pushPrivateArray(assembled.trustedSegments, { start, text });
                 }
