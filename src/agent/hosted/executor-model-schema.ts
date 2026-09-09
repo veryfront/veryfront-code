@@ -2,6 +2,15 @@ import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts"
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getExecutorModelFailureSchema } from "./executor-model-errors.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+
+const isArray = Array.isArray;
+const getPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
+const ownKeys = Reflect.ownKeys;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 
 const MAX_MODELS = 128;
 const MAX_ITEMS = 1000;
@@ -274,40 +283,42 @@ export function executorModelIds(ids: ReadonlySet<string>): Set<string> {
  */
 export function executorModelJson(value: unknown): JsonValue {
   let nodes = 0;
-  const ancestors = new Set<object>();
+  const ancestors = createPrivateSet<object>();
   function copy(input: unknown, depth: number): unknown {
     if (++nodes > 100_000 || depth > 128) throw new TypeError("Invalid managed model data");
     if (input === null || typeof input !== "object") return input;
     if (ancestors.has(input)) throw new TypeError("Invalid managed model data");
-    const array = Array.isArray(input);
+    const array = isArray(input);
     if (
-      !array && Object.getPrototypeOf(input) !== Object.prototype &&
-      Object.getPrototypeOf(input) !== null
+      !array && getPrototypeOf(input) !== objectPrototype &&
+      getPrototypeOf(input) !== null
     ) throw new TypeError("Invalid managed model data");
     ancestors.add(input);
     const output: Record<string, unknown> | unknown[] = array ? [] : {};
-    const keys = Reflect.ownKeys(input);
+    const keys = ownKeys(input);
     if (keys.length > 100_000) throw new TypeError("Invalid managed model data");
     // First-party provider snapshots pin an inert own toJSON value on arrays.
     // Copy only their indexed data; never invoke or transport a serialization hook.
-    const guard = array ? Object.getOwnPropertyDescriptor(input, "toJSON") : undefined;
-    const guardedArray = guard !== undefined && "value" in guard && guard.value === undefined &&
+    const guard = array ? getOwnPropertyDescriptor(input, "toJSON") : undefined;
+    const guardedArray = guard !== undefined && hasOwn(guard, "value") &&
+      guard.value === undefined &&
       guard.enumerable === false && guard.configurable === false && guard.writable === false;
     if (
       array && (keys.length !== input.length + 1 + (guardedArray ? 1 : 0) || input.length > 100_000)
     ) {
       throw new TypeError("Invalid managed model data");
     }
-    for (const key of keys) {
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
       if (array && key === "length") continue;
       if (guardedArray && key === "toJSON") continue;
-      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      const descriptor = getOwnPropertyDescriptor(input, key);
       if (
-        typeof key !== "string" || !descriptor || !("value" in descriptor) || !descriptor.enumerable
+        typeof key !== "string" || !descriptor || !hasOwn(descriptor, "value") ||
+        !descriptor.enumerable
       ) throw new TypeError("Invalid managed model data");
       if (!array && descriptor.value === undefined) continue;
-      Object.defineProperty(output, key, {
-        value: copy(descriptor.value, depth + 1),
+      defineOwnDataProperty(output, key, copy(descriptor.value, depth + 1), {
         enumerable: true,
         writable: true,
         configurable: true,
