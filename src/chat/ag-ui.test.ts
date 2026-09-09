@@ -6,10 +6,17 @@ import {
   createAgUiRunErrorEvent,
   createAgUiSseErrorResponse,
 } from "#veryfront/agent/ag-ui/host-support.ts";
+// Test-only imports from the agent tree: this file is not part of the
+// client bundle graph that `deno task lint:client-bundle` audits, so these
+// pin the decoder's copied wire-name and timing-stamp-field lists against
+// their sources of truth without widening the browser bundle.
+import { NATIVE_RUN_EVENTS } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import { AG_UI_EVENT_TIMING_STAMP_FIELDS } from "#veryfront/agent/ag-ui/encoder.ts";
 import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
+  getAgUiWireEventNameSchema,
   mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
@@ -682,84 +689,6 @@ describe("chat/ag-ui", () => {
       },
     ]);
   });
-});
-
-describe("chat/ag-ui without a registered SchemaValidator", () => {
-  // The browser chat client decodes AG-UI frames before any schema adapter is
-  // registered, so the hand-rolled validator has to reach the same canonical
-  // events the zod-backed schema produces.
-  it("decodes the same canonical events through the hand-rolled validator", () => {
-    unregister("SchemaValidator");
-    try {
-      const state = createAgUiChatEventDecoderState();
-      const result = decodeAgUiSseChunk(
-        state,
-        [
-          "event: RunStarted",
-          'data: {"runId":"run-1","threadId":"thread-1","agentId":"veryfront","agentName":"Veryfront","agent_avatar_url":"https://cdn.example.com/agents/veryfront.svg"}',
-          "",
-          "event: TextMessageStart",
-          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
-          "",
-          "event: TextMessageContent",
-          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Hello"}',
-          "",
-          "event: ToolCallStart",
-          'data: {"toolCallId":"tool-1","toolCallName":"load_skill"}',
-          "",
-          "event: ToolCallArgs",
-          'data: {"toolCallId":"tool-1","delta":"{}"}',
-          "",
-          "",
-        ].join("\n"),
-      );
-
-      assertEquals(
-        result.events.flatMap((entry) => entry.chatEvents),
-        [
-          {
-            type: "start",
-            messageMetadata: {
-              agentId: "veryfront",
-              agentName: "Veryfront",
-              agent_avatar_url: "https://cdn.example.com/agents/veryfront.svg",
-              runId: "run-1",
-              threadId: "thread-1",
-            },
-          },
-          { type: "text-start", id: "msg-1", contentId: "text:0" },
-          { type: "text-delta", id: "msg-1", contentId: "text:0", delta: "Hello" },
-          {
-            type: "tool-input-start",
-            toolCallId: "tool-1",
-            toolName: "load_skill",
-            providerExecuted: true,
-          },
-          { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: "{}" },
-        ],
-        "schemaless decoding must produce the same canonical events",
-      );
-    } finally {
-      ensureTestSchemaValidator();
-    }
-  });
-
-  it("rejects a Custom frame that carries no value", () => {
-    unregister("SchemaValidator");
-    try {
-      const state = createAgUiChatEventDecoderState();
-      const result = decodeAgUiSseChunk(state, 'event: Custom\ndata: {"name":"progress"}\n\n');
-
-      assertEquals(
-        result.events,
-        [],
-        "Custom without value must be rejected by the hand-rolled validator",
-      );
-    } finally {
-      ensureTestSchemaValidator();
-    }
-  });
-
   it("decodes native run event frames into the chunks their custom twins produced", () => {
     ensureTestSchemaValidator();
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
@@ -905,6 +834,24 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
     ]);
   });
 
+  it("falls back to the url as sourceId for a URL citation missing one", () => {
+    ensureTestSchemaValidator();
+    // toRenderableCustomChunk falls back to url when sourceId is absent or
+    // empty. This producer's buildUrlCitedEvent always sets sourceId, so
+    // this is unreachable today, but a replayed or hand-built frame must
+    // still match the twin instead of throwing in strict mode.
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = [
+      'event: UrlCited\ndata: {"url":"https://example.com/a"}\n\n',
+      'event: UrlCited\ndata: {"sourceId":"","url":"https://example.com/b"}\n\n',
+    ].join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      { type: "source-url", sourceId: "https://example.com/a", url: "https://example.com/a" },
+      { type: "source-url", sourceId: "https://example.com/b", url: "https://example.com/b" },
+    ]);
+  });
+
   it("renders or falls back on a wrong-typed optional field instead of rejecting the frame", () => {
     ensureTestSchemaValidator();
     // The encoder never type-checks title/filename/url before sending them,
@@ -963,5 +910,195 @@ describe("chat/ag-ui without a registered SchemaValidator", () => {
         data: { type: "file", mediaType: "application/pdf" },
       },
     ]);
+  });
+
+  it("decodes every native run event wire name NATIVE_RUN_EVENTS defines", () => {
+    ensureTestSchemaValidator();
+    // NATIVE_RUN_EVENTS (src/agent/ag-ui/native-run-events.ts) is the
+    // producer's source of truth for the seven native wire names; this
+    // decoder keeps its own copy in AG_UI_WIRE_EVENT_NAMES rather than
+    // importing that module, to keep the agent tree off the client bundle
+    // graph. Nothing else catches the two lists drifting apart: an eighth
+    // native type added there would be silently dropped here, which is the
+    // exact failure P9 exists to prevent.
+    for (const { wireName } of NATIVE_RUN_EVENTS) {
+      const parsed = getAgUiWireEventNameSchema().safeParse(wireName);
+      assertEquals(
+        parsed.success,
+        true,
+        `AG_UI_WIRE_EVENT_NAMES in src/chat/ag-ui.ts is missing native wire name "${wireName}"; ` +
+          "add it there or this decoder silently drops the frame",
+      );
+    }
+  });
+
+  it("keeps its timing-stamp strip list in sync with the encoder's stamped fields", () => {
+    ensureTestSchemaValidator();
+    // AG_UI_EVENT_TIMING_STAMP_FIELDS (src/agent/ag-ui/encoder.ts) names
+    // every field stampAgUiEventTiming stamps onto a live event's flat
+    // payload. The decoder's stripAgUiTimingStamps re-hardcodes that same
+    // list so it can strip them from a reconstructed legacy data chunk; this
+    // drives every stamped field through the decoder and asserts none of
+    // them survive, so a third stamped field added later fails a test
+    // instead of leaking into `data` the way elapsedMs/emittedAt already
+    // did once on the durable-record read path (commit 3ee902fb12).
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const stampedFields = Object.fromEntries(
+      AG_UI_EVENT_TIMING_STAMP_FIELDS.map((field) => [field, 1]),
+    );
+    const payload = JSON.stringify({
+      toolCallId: "tool-1",
+      toolCallName: "create_file",
+      status: "pending_input",
+      ...stampedFields,
+    });
+    const result = decodeAgUiSseChunk(
+      state,
+      `event: ToolCallStatusChanged\ndata: ${payload}\n\n`,
+    );
+
+    const [event] = result.events.flatMap((entry) => entry.chatEvents);
+    assertExists(event);
+    const data = (event as { data: Record<string, unknown> }).data;
+    for (const field of AG_UI_EVENT_TIMING_STAMP_FIELDS) {
+      assertEquals(
+        Object.hasOwn(data, field),
+        false,
+        `stripAgUiTimingStamps in src/chat/ag-ui.ts must also strip "${field}"`,
+      );
+    }
+  });
+});
+
+describe("chat/ag-ui without a registered SchemaValidator", () => {
+  // The browser chat client decodes AG-UI frames before any schema adapter is
+  // registered, so the hand-rolled validator has to reach the same canonical
+  // events the zod-backed schema produces.
+  it("decodes the same canonical events through the hand-rolled validator", () => {
+    unregister("SchemaValidator");
+    try {
+      const state = createAgUiChatEventDecoderState();
+      const result = decodeAgUiSseChunk(
+        state,
+        [
+          "event: RunStarted",
+          'data: {"runId":"run-1","threadId":"thread-1","agentId":"veryfront","agentName":"Veryfront","agent_avatar_url":"https://cdn.example.com/agents/veryfront.svg"}',
+          "",
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Hello"}',
+          "",
+          "event: ToolCallStart",
+          'data: {"toolCallId":"tool-1","toolCallName":"load_skill"}',
+          "",
+          "event: ToolCallArgs",
+          'data: {"toolCallId":"tool-1","delta":"{}"}',
+          "",
+          "",
+        ].join("\n"),
+      );
+
+      assertEquals(
+        result.events.flatMap((entry) => entry.chatEvents),
+        [
+          {
+            type: "start",
+            messageMetadata: {
+              agentId: "veryfront",
+              agentName: "Veryfront",
+              agent_avatar_url: "https://cdn.example.com/agents/veryfront.svg",
+              runId: "run-1",
+              threadId: "thread-1",
+            },
+          },
+          { type: "text-start", id: "msg-1", contentId: "text:0" },
+          { type: "text-delta", id: "msg-1", contentId: "text:0", delta: "Hello" },
+          {
+            type: "tool-input-start",
+            toolCallId: "tool-1",
+            toolName: "load_skill",
+            providerExecuted: true,
+          },
+          { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: "{}" },
+        ],
+        "schemaless decoding must produce the same canonical events",
+      );
+    } finally {
+      ensureTestSchemaValidator();
+    }
+  });
+
+  it("rejects a Custom frame that carries no value", () => {
+    unregister("SchemaValidator");
+    try {
+      const state = createAgUiChatEventDecoderState();
+      const result = decodeAgUiSseChunk(state, 'event: Custom\ndata: {"name":"progress"}\n\n');
+
+      assertEquals(
+        result.events,
+        [],
+        "Custom without value must be rejected by the hand-rolled validator",
+      );
+    } finally {
+      ensureTestSchemaValidator();
+    }
+  });
+
+  it("decodes native run event frames through the hand-rolled validator too", () => {
+    // The seven native arms in isValidAgUiPayload only run on this path, so
+    // the zod-backed coverage above does not exercise them at all. Reuse the
+    // same seven-frame string the schema-validated twin-equality test uses.
+    unregister("SchemaValidator");
+    try {
+      const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+      const frames = [
+        'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","toolCallName":"create_file",' +
+        '"status":"pending_input"}\n\n',
+        'event: UrlCited\ndata: {"sourceId":"web-1","url":"https://example.com/a","title":"A"}\n\n',
+        'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
+        '"title":"Report"}\n\n',
+        'event: FileAttached\ndata: {"url":"https://cdn.example.com/a.pdf",' +
+        '"mediaType":"application/pdf"}\n\n',
+        'event: InputRequestCreated\ndata: {"inputRequest":{"id":"req-1"}}\n\n',
+        'event: InputRequestUpdated\ndata: {"inputRequest":{"id":"req-1"}}\n\n',
+        'event: ChildRunStatusChanged\ndata: {"toolCallId":"t","childRunId":"r",' +
+        '"status":"running"}\n\n',
+      ].join("");
+
+      assertEquals(
+        decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents),
+        [
+          {
+            type: "data-tool-call-status",
+            data: { toolCallId: "tool-1", toolCallName: "create_file", status: "pending_input" },
+          },
+          { type: "source-url", sourceId: "web-1", url: "https://example.com/a", title: "A" },
+          {
+            type: "source-document",
+            sourceId: "doc-1",
+            mediaType: "text/markdown",
+            title: "Report",
+          },
+          { type: "file", url: "https://cdn.example.com/a.pdf", mediaType: "application/pdf" },
+          {
+            type: "data-veryfront.input_request.lifecycle",
+            data: { action: "created", inputRequest: { id: "req-1" } },
+          },
+          {
+            type: "data-veryfront.input_request.lifecycle",
+            data: { action: "updated", inputRequest: { id: "req-1" } },
+          },
+          {
+            type: "data-veryfront.invoke_agent.lifecycle",
+            data: { toolCallId: "t", childRunId: "r", status: "running" },
+          },
+        ],
+        "the hand-rolled validator must decode native frames the same way the zod schema does",
+      );
+    } finally {
+      ensureTestSchemaValidator();
+    }
   });
 });

@@ -556,8 +556,16 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
     v.object({
       eventName: v.literal("UrlCited"),
       payload: v.object({
-        sourceId: v.string().min(1),
+        // toRenderableCustomChunk falls back to url when sourceId is absent
+        // or empty, so sourceId is optional here too (unreachable from this
+        // producer today -- buildUrlCitedEvent always sets it -- but the
+        // mapping arm still needs to make the same call the twin did for a
+        // replayed or hand-built frame). title is undeclared in the API
+        // catalog and passed through unguarded like its DocumentCited and
+        // FileAttached siblings, so it is unknown here too.
+        sourceId: v.string().optional(),
         url: v.string().min(1),
+        title: v.unknown().optional(),
       }).passthrough(),
     }),
     v.object({
@@ -702,7 +710,10 @@ function isValidAgUiPayload(
         hasStringField(payload, "status");
 
     case "UrlCited":
-      return hasStringField(payload, "sourceId") && hasStringField(payload, "url");
+      // sourceId is optional, like the schema variant: the mapping arm
+      // falls back to url the way toRenderableCustomChunk did, so its type
+      // (when present) is the only thing checked here.
+      return hasOptionalStringField(payload, "sourceId") && hasStringField(payload, "url");
 
     case "DocumentCited":
       // title/filename are read but never type-checked here: the mapping
@@ -1009,17 +1020,18 @@ function mapWireEventToChatEvents(
       }];
 
     case "UrlCited": {
-      // Only sourceId and url are declared: title is passed through
-      // unvalidated (schema and schemaless paths both leave it unchecked),
-      // so guard its type the way toRenderableCustomChunk does rather than
-      // spreading it straight into the chat event.
-      const { sourceId, url } = wireEvent.payload;
-      const rawTitle = (wireEvent.payload as Record<string, unknown>).title;
+      // title is never type-checked by either validator (like its
+      // DocumentCited and FileAttached siblings), so guard it here the way
+      // toRenderableCustomChunk does rather than spreading it straight into
+      // the chat event. sourceId mirrors that same twin: fall back to url
+      // when it is absent or empty instead of requiring it.
+      const { sourceId, url, title } = wireEvent.payload;
+      const resolvedSourceId = typeof sourceId === "string" && sourceId.length > 0 ? sourceId : url;
       return [{
         type: "source-url",
-        sourceId,
+        sourceId: resolvedSourceId,
         url,
-        ...(typeof rawTitle === "string" ? { title: rawTitle } : {}),
+        ...(typeof title === "string" ? { title } : {}),
       }];
     }
 

@@ -718,6 +718,20 @@ export function mapRuntimeStreamEventToAgUiEvents(
   );
 }
 
+/**
+ * The transport timing fields `stampAgUiEventTiming` writes onto a live
+ * event's own flat payload. Exported only so a reader that reconstructs a
+ * native frame's whole payload as legacy data -- e.g. the chat client's
+ * `stripAgUiTimingStamps` in `ag-ui.ts` -- can assert its strip list still
+ * covers every stamped field, instead of a third stamped field silently
+ * leaking into legacy `data` the way `elapsedMs`/`emittedAt` already did
+ * once on the durable-record read path (fixed in `legacy-run-read-adapter.ts`,
+ * commit 3ee902fb12) before this export existed to catch it in a test.
+ * `stampAgUiEventTiming` below keeps its own literals; this export adds no
+ * dependency to the runtime stamping path.
+ */
+export const AG_UI_EVENT_TIMING_STAMP_FIELDS = ["elapsedMs", "emittedAt"] as const;
+
 export function stampAgUiEventTiming(
   state: AgUiEncoderState,
   events: AgUiEncodedEvent[],
