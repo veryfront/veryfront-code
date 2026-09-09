@@ -1582,7 +1582,7 @@ export function securityMiddleware(
       // would brick the conversation on every later turn (`extractMergedRunTexts`).
       registerTurnProviderRequestValidator(context, async (providerSystem, messages) => {
         const systemMessages = providerSystemMessages(providerSystem);
-        const pendingCurrent = typeof context.input === "string"
+        let pendingCurrent = typeof context.input === "string"
           ? []
           : filterPrivateArray(context.input, (message) => message.role === "system");
         // Separate occurrences even when a memory adapter returns the same
@@ -1604,7 +1604,7 @@ export function securityMiddleware(
               input === message || input.id === message.id && isDeepStrictEqual(input, message),
           );
           if (current < 0) continue;
-          pendingCurrent.splice(current, 1);
+          pendingCurrent = filterPrivateArray(pendingCurrent, (_, index) => index !== current);
           currentSystemMessages.add(callerMessages[index]!);
         }
         const callerSystemMessages = filterPrivateArray(
@@ -1707,13 +1707,21 @@ export function securityMiddleware(
       registerTurnMessageProjectionValidator(context, async (messages, previousMessages) => {
         // Consume occurrences, rather than IDs, so duplicate IDs and freshly
         // deserialized messages retain their individual validation provenance.
-        const remainingPrevious = previousMessages?.slice() ?? [];
+        let remainingPrevious = previousMessages
+          ? mapPrivateArray(previousMessages, (message) => message)
+          : [];
         const changed = filterPrivateArray(messages, (message) => {
-          const index = remainingPrevious.findIndex((previous) =>
-            previous.id === message.id && sameProviderMessageContent(previous, message)
+          let index = 0;
+          while (index < remainingPrevious.length) {
+            const previous = remainingPrevious[index]!;
+            if (previous.id === message.id && sameProviderMessageContent(previous, message)) break;
+            index++;
+          }
+          if (index === remainingPrevious.length) return true;
+          remainingPrevious = filterPrivateArray(
+            remainingPrevious,
+            (_, candidate) => candidate !== index,
           );
-          if (index < 0) return true;
-          remainingPrevious.splice(index, 1);
           return false;
         });
         const texts = flatMapPrivateArray(
