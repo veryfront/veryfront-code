@@ -1281,7 +1281,13 @@ function getMessageSegmentForTarget(
   messages: readonly Message[],
   target: Message,
 ): readonly Message[] {
-  const targetIndex = messages.indexOf(target);
+  let targetIndex = -1;
+  for (let index = 0; index < messages.length; index++) {
+    if (hasOwn(messages, index) && messages[index] === target) {
+      targetIndex = index;
+      break;
+    }
+  }
   if (targetIndex === -1) return [target];
   let start = targetIndex;
   while (start > 0) {
