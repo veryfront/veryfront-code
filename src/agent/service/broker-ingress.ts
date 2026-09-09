@@ -261,6 +261,7 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   for (
     const token of [
       inboundAuthorization,
+      /^Bearer\s+(.+)$/i.exec(inboundAuthorization)?.[1],
       apiAuthToken,
       runEventToken,
       invocation.credentials?.inferenceAuthToken,
@@ -305,9 +306,11 @@ function containsForwardedAuthority(value: unknown): boolean {
 }
 
 function containsString(value: unknown, expected: string): boolean {
-  if (value === expected) return true;
+  if (typeof value === "string") return value.includes(expected);
   if (!value || typeof value !== "object") return false;
   return Array.isArray(value)
     ? value.some((entry) => containsString(entry, expected))
-    : Object.values(value).some((entry) => containsString(entry, expected));
+    : Object.entries(value).some(([key, entry]) =>
+      key.includes(expected) || containsString(entry, expected)
+    );
 }

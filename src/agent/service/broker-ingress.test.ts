@@ -103,6 +103,63 @@ describe("managed broker ingress", () => {
     assertEquals(signed.request.bodyUsed, true);
   });
 
+  for (
+    const credential of [
+      "api-auth-token",
+      "inference-token",
+      "run-event-token",
+      "Bearer broker-token",
+      "broker-token",
+    ]
+  ) {
+    it(`rejects embedded ${credential} in application messages`, async () => {
+      const signed = await signedRequest(invocation({
+        messages: [{
+          id: "message-1",
+          role: "user",
+          content: `Use ${credential} for this request`,
+        }],
+      }));
+      await assertIngressError(
+        () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
+        403,
+        "BROKER_INGRESS_SCOPE_DENIED",
+      );
+    });
+  }
+
+  it("rejects credentials inside nested attachment URLs and property names", async () => {
+    for (
+      const forwardedProps of [
+        { attachments: [{ url: "https://files.test/document?token=api-auth-token&download=1" }] },
+        { attachments: [{ "result-inference-token-metadata": "value" }] },
+      ]
+    ) {
+      const signed = await signedRequest(invocation({ forwardedProps }));
+      await assertIngressError(
+        () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
+        403,
+        "BROKER_INGRESS_SCOPE_DENIED",
+      );
+    }
+  });
+
+  it("preserves application strings that do not contain a credential", async () => {
+    const messages = [{
+      id: "message-1",
+      role: "user" as const,
+      content: "Explain Bearer authentication",
+    }];
+    const forwardedProps = { attachments: [{ url: "https://files.test/document?download=1" }] };
+    const signed = await signedRequest(invocation({ messages, forwardedProps }));
+    const result = await parseBrokerRuntimeAgentIngress(
+      signed.request,
+      options(signed.publicKeyPem),
+    );
+    assertEquals(result.executor.input.messages, messages);
+    assertEquals(result.executor.input.forwardedProps, forwardedProps);
+  });
+
   it("rejects invalid signatures and signed method, path, or run mismatches", async () => {
     const signed = await signedRequest();
     const invalid = new Request(signed.request.url, {

@@ -452,6 +452,8 @@ control-plane HTTP adapter. The broker installs invocation grants, describes
 the selected agent, and prepares the executor before accepting a run. It keeps
 model and tool execution unavailable during preparation. Configure detached
 202 responses or request-owned SSE responses in trusted service configuration.
+Signed invocations reject application strings or property names containing a known
+broker credential, including credentials embedded in messages or attachment URLs.
 Detached runs require output persistence callbacks; their finalization remains
 part of the session's owned work until all writes settle.
 
