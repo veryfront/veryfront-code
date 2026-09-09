@@ -79,6 +79,8 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
 
+const hasOwn = Object.hasOwn;
+
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
@@ -622,6 +624,7 @@ function readTraceAttributeString(
 function finalToolResultIds(state: ChatStreamState): Set<string> {
   const ids = createPrivateSet<string>();
   for (let index = 0; index < state.toolResults.length; index++) {
+    if (!hasOwn(state.toolResults, index)) continue;
     const result = state.toolResults[index]!;
     if (result.preliminary !== true) ids.add(result.toolCallId);
   }
@@ -666,9 +669,9 @@ async function processActiveStream(
     open: (signal) => source.open(signal).fullStream,
     options: {
       availableToolNames: callbacks?.availableToolNames
-        ? new Set(callbacks.availableToolNames)
+        ? createPrivateSet(callbacks.availableToolNames)
         : null,
-      providerExecutedToolNames: new Set(
+      providerExecutedToolNames: createPrivateSet(
         callbacks?.providerExecutedToolNames ?? [],
       ),
     },
@@ -841,16 +844,16 @@ export function processStreamInternal(
     const reasoningParts = createPrivateMap<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
-    const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
+    const providerExecutedToolNames = createPrivateSet(callbacks?.providerExecutedToolNames ?? []);
     const availableToolNames = callbacks?.availableToolNames
-      ? new Set(callbacks.availableToolNames)
+      ? createPrivateSet(callbacks.availableToolNames)
       : null;
-    const suppressedToolCallIds = new Set<string>();
+    const suppressedToolCallIds = createPrivateSet<string>();
     // Provider-executed calls whose input completed but whose result has not
     // arrived yet. While any is outstanding the local-tool commit grace must not
     // truncate the stream: the provider result can arrive after a separate HTTP
     // continuation.
-    const pendingProviderExecutedToolCallIds = new Set<string>();
+    const pendingProviderExecutedToolCallIds = createPrivateSet<string>();
 
     const isUnavailableTool = (toolName: string) =>
       availableToolNames !== null && !availableToolNames.has(toolName);
@@ -1706,7 +1709,7 @@ export function processStreamInternal(
         } catch {
           shadowLifecycleFailed = true;
         }
-        const categories = new Set<StreamLifecycleShadowDivergence>(
+        const categories = createPrivateSet<StreamLifecycleShadowDivergence>(
           observed.categories,
         );
         if (shadowLifecycleFailed) categories.add("shadow_error");

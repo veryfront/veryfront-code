@@ -1,4 +1,4 @@
-import { privateTextTrimStart } from "#veryfront/security/private-text.ts";
+import { privateTextTrim, privateTextTrimStart } from "#veryfront/security/private-text.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
@@ -9,6 +9,7 @@ import {
   flatMapPrivateArray,
   joinPrivateArray,
   mapPrivateArray,
+  pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -616,7 +617,10 @@ function extractAdjacentRuns(
       continue;
     }
     if (isEmptyText(message)) continue;
-    if (dropWhitespaceOnly && joinPrivateArray(messageTextParts(message), "").trim().length === 0) {
+    if (
+      dropWhitespaceOnly &&
+      privateTextTrim(joinPrivateArray(messageTextParts(message), "")).length === 0
+    ) {
       continue;
     }
     run.push(message);
@@ -631,7 +635,7 @@ function messageTextParts(message: Message, includeAttachments = true): string[]
   const attachmentContext = includeAttachments && message.role === "user"
     ? privateTextTrimStart(buildAttachmentContextFromParts(message.parts))
     : "";
-  if (attachmentContext) texts.push(attachmentContext);
+  if (attachmentContext) pushPrivateArray(texts, attachmentContext);
   return texts;
 }
 

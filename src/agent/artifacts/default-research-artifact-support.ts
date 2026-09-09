@@ -4,6 +4,7 @@ import {
   flatMapPrivateArray,
   joinPrivateArray,
   mapPrivateArray,
+  pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -33,8 +34,11 @@ export interface DefaultResearchArtifactLogger {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+const isArray = Array.isArray;
+const hasOwn = Object.hasOwn;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 function extractToolResultPath(result: unknown): string | null {
@@ -75,6 +79,7 @@ function buildDefaultArtifactsFromResultPath(input: {
 /** Extract latest user text. */
 export function extractLatestUserText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (!hasOwn(messages, index)) continue;
     const message = messages[index];
     if (!isRecord(message) || message.role !== "user") {
       continue;
@@ -85,7 +90,7 @@ export function extractLatestUserText(messages: readonly unknown[]): string | nu
       return content;
     }
 
-    if (!Array.isArray(content)) {
+    if (!isArray(content)) {
       continue;
     }
 
@@ -160,10 +165,10 @@ export async function fetchLatestConversationUserText(input: {
 
     const payload = await response.json();
     const data = isRecord(payload) ? payload.data : undefined;
-    const messages = Array.isArray(data)
+    const messages = isArray(data)
       ? mapPrivateArray(data, (message) => ({
         role: isRecord(message) ? message.role : undefined,
-        content: isRecord(message) && Array.isArray(message.parts) ? message.parts : [],
+        content: isRecord(message) && isArray(message.parts) ? message.parts : [],
       }))
       : [];
 
@@ -227,12 +232,8 @@ function appendSystemReminder(
     return instructions;
   }
 
-  const output: ChatSystemMessage[] = [];
-  for (let index = 0; index < instructions.length; index++) output[index] = instructions[index]!;
-  output[output.length] = {
-    role: "system",
-    content: reminder,
-  };
+  const output = mapPrivateArray(instructions, (message) => message);
+  pushPrivateArray(output, { role: "system", content: reminder });
   return output;
 }
 

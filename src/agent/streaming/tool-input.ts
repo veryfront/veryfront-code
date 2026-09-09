@@ -2,19 +2,18 @@ import {
   privateTextEndsWith as endsWith,
   privateTextSlice as slice,
   privateTextStartsWith as startsWith,
+  privateTextTrim as trim,
   privateTextTrimStart as trimStart,
 } from "#veryfront/security/private-text.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = serverLogger.component("agent-tool-input");
-const apply = Reflect.apply;
-const stringTrim = String.prototype.trim;
+const isArray = Array.isArray;
 const min = Math.min;
-const trim = (value: string): string => apply(stringTrim, value, []);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 /** Normalize provider tool input by removing transient empty-object prefixes. */
@@ -157,7 +156,7 @@ export function parseToolInputObject(input: unknown): Record<string, unknown> {
         return parsed;
       }
       logger.warn("Tool input decoded to a non-record value; using empty object", {
-        parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
+        parsedType: isArray(parsed) ? "array" : typeof parsed,
         inputLength: input.length,
       });
     } catch (error) {

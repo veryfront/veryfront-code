@@ -1190,6 +1190,7 @@ function resolveRuntimeProviderReplayCheckpointEmission(
   let existingCheckpoint: ProviderReplayCheckpoint | undefined;
   if (messageId && checkpoints) {
     for (let index = 0; index < checkpoints.length; index++) {
+      if (!ObjectHasOwn(checkpoints, index)) continue;
       const checkpoint = checkpoints[index];
       if (checkpoint?.messageId === messageId) {
         existingCheckpoint = checkpoint;

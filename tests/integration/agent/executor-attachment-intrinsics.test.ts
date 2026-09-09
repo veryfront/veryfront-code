@@ -1,3 +1,4 @@
+import { securityMiddleware } from "#veryfront/agent/middleware/security/validator.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -6,7 +7,7 @@ import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/
 
 for (const replaceMethods of [false, true]) {
   describe(`private attachment conversion ${replaceMethods ? "hooks" : "baseline"}`, () => {
-    it("escapes annotations and trims assistant tails without exposing private contents", () => {
+    it("escapes annotations and trims assistant tails without exposing private contents", async () => {
       const marker = "synthetic-private-attachment";
       const messages: Message[] = [
         {
@@ -69,6 +70,13 @@ for (const replaceMethods of [false, true]) {
           };
         }
         converted = convertToTextGenerationRuntimeRequestMessages(messages);
+        await securityMiddleware({ input: { maxLength: 8192 } })({
+          agentId: "synthetic",
+          model: "veryfront-cloud/openai/gpt-5.4",
+          input: messages,
+          data: {},
+          platform: {},
+        }, () => Promise.resolve({ text: "ok", messages: [], toolCalls: [], status: "completed" }));
       } finally {
         if (replaceMethods) {
           Array.prototype.map = map;

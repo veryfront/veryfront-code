@@ -4,6 +4,16 @@ const slice = String.prototype.slice;
 const includes = String.prototype.includes;
 const endsWith = String.prototype.endsWith;
 const trimStart = String.prototype.trimStart;
+const trim = String.prototype.trim;
+const toLowerCase = String.prototype.toLowerCase;
+
+export function privateTextToLowerCase(value: string): string {
+  return apply(toLowerCase, value, []) as string;
+}
+
+export function privateTextTrim(value: string): string {
+  return apply(trim, value, []) as string;
+}
 
 export function privateTextEndsWith(value: string, search: string): boolean {
   return apply(endsWith, value, [search]) as boolean;

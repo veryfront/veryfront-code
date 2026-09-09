@@ -1,3 +1,5 @@
+import { filterPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import type {
   ChatStreamState,
   StreamingToolResult,
@@ -223,25 +225,29 @@ export function applyLifecycleSnapshotToChatStreamState(
   snapshot: Readonly<StreamSnapshot>,
 ): void {
   state.accumulatedText = snapshot.accumulatedText;
-  state.reasoningParts = snapshot.reasoning.map((part) => ({ ...part }));
+  state.reasoningParts = mapPrivateArray(
+    snapshot.reasoning,
+    (part) => ({ __proto__: null, ...part }),
+  );
   state.finishReason = snapshot.finishReason;
   state.providerMetadata = snapshot.providerMetadata;
-  state.toolCalls = new Map(
-    snapshot.tools.filter(isAvailableTool).map((tool) => [
-      tool.id,
-      {
-        id: tool.id,
-        name: tool.name,
-        arguments: tool.inputText,
-        inputDeltas: [...tool.inputDeltas],
-        inputAnnounced: isInputAvailable(tool),
-        inputAvailable: isInputAvailable(tool),
-        ...(tool.providerExecuted !== undefined ? { providerExecuted: tool.providerExecuted } : {}),
-        ...(tool.dynamic !== undefined ? { dynamic: tool.dynamic } : {}),
-      },
-    ]),
-  );
-  state.toolResults = snapshot.tools.filter(isProviderToolTerminal).map(
+  state.toolCalls = createPrivateMap();
+  const availableTools = filterPrivateArray(snapshot.tools, isAvailableTool);
+  for (let index = 0; index < availableTools.length; index++) {
+    const tool = availableTools[index]!;
+    state.toolCalls.set(tool.id, {
+      id: tool.id,
+      name: tool.name,
+      arguments: tool.inputText,
+      inputDeltas: mapPrivateArray(tool.inputDeltas, (delta) => delta),
+      inputAnnounced: isInputAvailable(tool),
+      inputAvailable: isInputAvailable(tool),
+      ...(tool.providerExecuted !== undefined ? { providerExecuted: tool.providerExecuted } : {}),
+      ...(tool.dynamic !== undefined ? { dynamic: tool.dynamic } : {}),
+    });
+  }
+  state.toolResults = mapPrivateArray(
+    filterPrivateArray(snapshot.tools, isProviderToolTerminal),
     (tool): StreamingToolResult => ({
       toolCallId: tool.id,
       toolName: tool.name,
@@ -252,8 +258,9 @@ export function applyLifecycleSnapshotToChatStreamState(
       ...(tool.preliminary !== undefined ? { preliminary: tool.preliminary } : {}),
     }),
   );
-  state.suppressedToolCalls = snapshot.tools
-    .filter((tool) => tool.rejectionReason === "unavailable")
-    .map((tool) => ({ id: tool.id, name: tool.name }));
+  state.suppressedToolCalls = mapPrivateArray(
+    filterPrivateArray(snapshot.tools, (tool) => tool.rejectionReason === "unavailable"),
+    (tool) => ({ id: tool.id, name: tool.name }),
+  );
   state.usage = toLegacyRuntimeUsage(snapshot.usage);
 }

@@ -10,6 +10,8 @@ import type {
 import { parseToolArgs } from "./tool-helpers.ts";
 import type { RuntimeGenerateToolResult, RuntimeToolSet } from "./runtime-tool-types.ts";
 
+const hasOwn = Object.hasOwn;
+
 export { getToolResultError } from "#veryfront/tool/result.ts";
 
 export function createToolResultMessage(
@@ -79,6 +81,7 @@ export function collectFinalStreamToolResults(
   const finalToolResults = createPrivateMap<string, StreamingToolResult>();
 
   for (let index = 0; index < state.toolResults.length; index++) {
+    if (!hasOwn(state.toolResults, index)) continue;
     const toolResult = state.toolResults[index]!;
     if (toolResult.preliminary === true) {
       continue;
@@ -96,12 +99,14 @@ export function collectPersistedToolResults(
   const persistedToolResults = createPrivateMap<string, ToolResultPart>();
 
   for (let index = 0; index < messages.length; index++) {
+    if (!hasOwn(messages, index)) continue;
     const message = messages[index]!;
     if (message.role !== "tool") {
       continue;
     }
 
     for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
       const part = message.parts[partIndex]!;
       if (!isToolResultPart(part)) {
         continue;
@@ -120,6 +125,7 @@ export function collectGeneratedToolResults(
   const generatedToolResults = createPrivateMap<string, RuntimeGenerateToolResult>();
 
   for (let index = 0; index < (toolResults?.length ?? 0); index++) {
+    if (!hasOwn(toolResults!, index)) continue;
     const toolResult = toolResults![index]!;
     generatedToolResults.set(toolResult.toolCallId, toolResult);
   }

@@ -39,6 +39,61 @@ function lookupTool(onExecute: () => void = () => {}) {
 }
 
 describe("provider replay checkpoint emission", () => {
+  it("restores an existing checkpoint without consulting its array find method", async () => {
+    const prior: ProviderReplayCheckpoint = {
+      version: 1,
+      messageId: MESSAGE_ID,
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "prior-signature" },
+      }],
+      providerBlockPositions: [0],
+      providerMessageBlockCounts: [1],
+      totalPartCount: 1,
+    };
+    const checkpoints = [prior];
+    let observations = 0;
+    Object.defineProperty(checkpoints, "find", {
+      get() {
+        observations++;
+        return Array.prototype.find;
+      },
+    });
+    const persisted: ProviderReplayCheckpoint[] = [];
+    const model = scriptedModel([{
+      text: "continued",
+      providerMetadata: metadata([{ type: "text", text: "continued" }]),
+    }], {
+      modelId: "anthropic/private-checkpoint-selection",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "private-checkpoint-selection",
+      model: "anthropic/private-checkpoint-selection",
+      system: "Continue.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpoints: checkpoints,
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) => {
+        persisted.push(checkpoint);
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+    await agent(config).generate({
+      input: [
+        { id: MESSAGE_ID, role: "assistant", parts: [] },
+        { id: "current-user", role: "user", parts: [{ type: "text", text: "Continue" }] },
+      ],
+    });
+    assertEquals(persisted[0]?.providerBlocks[0]?.block, prior.providerBlocks[0]?.block);
+    assertEquals(persisted[0]?.providerMessageBlockCounts, [1, 1]);
+    assertEquals(observations, 0);
+  });
+
   it("retains pre-signature groups and appends to the delivered run checkpoint", () => {
     const prior: ProviderReplayCheckpoint = {
       version: 1,
