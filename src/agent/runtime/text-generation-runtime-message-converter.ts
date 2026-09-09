@@ -811,7 +811,10 @@ export function convertToTextGenerationRuntimeMessages(
         continue;
       }
 
-      const previousMessage = textGenerationRuntimeMessages.at(-1);
+      const previousIndex = textGenerationRuntimeMessages.length - 1;
+      const previousMessage = hasOwn(textGenerationRuntimeMessages, previousIndex)
+        ? textGenerationRuntimeMessages[previousIndex]
+        : undefined;
 
       if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
         appendPrivateArray(previousMessage.content, convertedMessage.content);

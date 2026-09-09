@@ -1,3 +1,4 @@
+import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { type Message, type MessagePart, type ToolResultPart } from "../types.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
 import type {
@@ -151,16 +152,22 @@ export function shouldContinueAfterStreamStep(
     return state.finishReason === "tool-calls" && Boolean(state.suppressedToolCalls?.length);
   }
 
-  const streamedToolCalls = Array.from(state.toolCalls.values());
-  const hasIncompleteToolCall = streamedToolCalls.some(isStreamedToolCallIncomplete);
-  const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.inputAvailable === true && toolCall.providerExecuted !== true
+  const streamedToolCalls: StreamingToolCall[] = [];
+  for (const toolCall of state.toolCalls.values()) pushPrivateArray(streamedToolCalls, toolCall);
+  const hasIncompleteToolCall = somePrivateArray(streamedToolCalls, isStreamedToolCallIncomplete);
+  const hasFinalizedClientToolCall = somePrivateArray(
+    streamedToolCalls,
+    (toolCall) => toolCall.inputAvailable === true && toolCall.providerExecuted !== true,
   );
-  const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
-    toolCall.providerExecuted === true
+  const hasProviderExecutedToolCall = somePrivateArray(
+    streamedToolCalls,
+    (toolCall) => toolCall.providerExecuted === true,
   );
   const finalToolResults = collectFinalStreamToolResults(state);
-  const hasInterruptedClientToolCall = streamedToolCalls.some(isInterruptedClientToolCall);
+  const hasInterruptedClientToolCall = somePrivateArray(
+    streamedToolCalls,
+    isInterruptedClientToolCall,
+  );
   // A finalized local call has already emitted tool-input-available. Client
   // callbacks may have applied its side effect, so reconstructing the batch
   // could repeat that mutation even when no result reached this stream.

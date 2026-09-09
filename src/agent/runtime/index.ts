@@ -4,6 +4,7 @@ import {
   filterPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import {
@@ -3818,12 +3819,12 @@ export class AgentRuntime {
       });
       const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
         shouldContinue &&
-        streamedToolCalls.some(isInterruptedClientToolCall);
+        somePrivateArray(streamedToolCalls, isInterruptedClientToolCall);
       const exhaustedStepBudgetDuringInterruptedLocalToolRecovery =
         !recoveredInterruptedLocalToolBatch &&
         step + 1 >= maxSteps &&
         !hasExposedReasoning &&
-        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        somePrivateArray(streamedToolCalls, isInterruptedClientToolCall) &&
         shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
       // Exactly `shouldRecoverInterruptedLocalToolBatch` with the reasoning
       // gate lifted: the batch this step would have replayed had it not
@@ -3834,12 +3835,12 @@ export class AgentRuntime {
       const declinedRecoveryForExposedReasoning = hasExposedReasoning &&
         !recoveredInterruptedLocalToolBatch &&
         step + 1 < maxSteps &&
-        streamedToolCalls.some(isInterruptedClientToolCall) &&
+        somePrivateArray(streamedToolCalls, isInterruptedClientToolCall) &&
         shouldContinueAfterStreamStep(state, { recoverInterruptedToolCalls: true });
       if (declinedRecoveryForExposedReasoning) {
         logger.warn("Declined interrupted local tool batch recovery after exposed reasoning", {
           step,
-          toolName: streamedToolCalls.find(isInterruptedClientToolCall)?.name,
+          toolName: filterPrivateArray(streamedToolCalls, isInterruptedClientToolCall)[0]?.name,
           reasoningPartCount: persistedReasoningParts.length,
         });
       }
