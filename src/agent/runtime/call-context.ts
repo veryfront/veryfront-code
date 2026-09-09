@@ -7,6 +7,7 @@ import {
   mapPrivateArray,
   pushPrivateArray,
   slicePrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import {
   privateTextIndexOf,
@@ -531,8 +532,9 @@ function hasStructuredCacheControl(
       "Structured system message providerOptions",
     );
     if (
-      getStructuredCacheProviderBuckets(providerOptions, anthropicProviderAlias).some((bucket) =>
-        bucket.cacheControl !== undefined
+      somePrivateArray(
+        getStructuredCacheProviderBuckets(providerOptions, anthropicProviderAlias),
+        (bucket) => bucket.cacheControl !== undefined,
       )
     ) {
       return true;

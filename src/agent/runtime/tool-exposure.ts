@@ -1,4 +1,23 @@
-import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
+import {
+  encodePrivateText,
+  privateTextCharCodeAt,
+  PrivateTextEncoder,
+  privateTextIncludes,
+  privateTextIndexOf,
+  privateTextSlice,
+  privateTextToLowerCase,
+  privateTextTrim,
+} from "#veryfront/security/private-text.ts";
+import {
+  everyPrivateArray,
+  filterPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  slicePrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { replacePrivateRegExp, testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
@@ -6,6 +25,13 @@ import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
 const ArraySort = Array.prototype.sort;
+const hasOwn = Object.hasOwn;
+const fromCharCode = String.fromCharCode;
+const RegExpConstructor = RegExp;
+function sortSearchItems<T>(items: T[], compare: (a: T, b: T) => number): T[] {
+  ReflectApply(ArraySort, items, [compare]);
+  return items;
+}
 const SetAdd = Set.prototype.add;
 const SetHas = Set.prototype.has;
 
@@ -16,7 +42,7 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
-const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["load_skill"]);
+const DEFAULT_BOOTSTRAP_TOOL_NAMES = createPrivateSet(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 /** Which field a query term matched on, strongest evidence first. */
 type ToolSearchMatchField = "exactName" | "name" | "description" | "parameterDescription";
@@ -110,8 +136,12 @@ type SchemaSearchBudget = {
 };
 
 function normalizeSearchText(value: string): string {
-  return value.replace(/[A-Z]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 32))
-    .replaceAll("_", " ").trim().replace(/\s+/g, " ");
+  let lower = "";
+  for (let index = 0; index < value.length; index++) {
+    const code = privateTextCharCodeAt(value, index);
+    lower += code >= 65 && code <= 90 ? fromCharCode(code + 32) : value[index];
+  }
+  return replacePrivateRegExp(/\s+/g, privateTextTrim(replacePrivateRegExp(/_/g, lower, " ")), " ");
 }
 
 /**
@@ -125,8 +155,8 @@ function normalizeSearchText(value: string): string {
 function parseCanonicalIntegrationQuery(
   query: string,
 ): { namespace: string; canonicalName: string | null } | null {
-  const trimmed = query.trim().toLowerCase();
-  const separator = trimmed.indexOf("__");
+  const trimmed = privateTextToLowerCase(privateTextTrim(query));
+  const separator = privateTextIndexOf(trimmed, "__");
   if (separator <= 0) return null;
 
   const identity = parseIntegrationToolIdentity(trimmed);
@@ -142,7 +172,7 @@ function parseCanonicalIntegrationQuery(
   // tool even when the rest is malformed (`jira__list__projects`). Keep such a
   // query on the namespace path: otherwise normalization collapses it onto a
   // local id like `jira_list_projects`, which then wins the phrase match.
-  const namespace = trimmed.slice(0, separator);
+  const namespace = privateTextSlice(trimmed, 0, separator);
   return parseIntegrationToolIdentity(`${namespace}__placeholder`) === null
     ? null
     : { namespace, canonicalName: null };
@@ -157,8 +187,8 @@ function parseCanonicalIntegrationQuery(
  * that is not alphanumeric.
  */
 function createNamespaceTokenPattern(namespaceTerm: string): RegExp {
-  const escaped = namespaceTerm.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
-  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`);
+  const escaped = replacePrivateRegExp(/[.*+?^${}()|[\]\\-]/g, namespaceTerm, "\\$&");
+  return new RegExpConstructor(`(?<![a-z0-9])${escaped}(?![a-z0-9])`);
 }
 
 function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
@@ -220,7 +250,8 @@ function snapshotSchemaDescriptions(
 
   try {
     while (stack.length > 0) {
-      const current = stack.pop();
+      const current = stack[stack.length - 1];
+      stack.length--;
       if (!current || current.depth > TOOL_SEARCH_SCHEMA_MAX_DEPTH) return null;
       nodes += 1;
       aggregate.nodes += 1;
@@ -257,7 +288,9 @@ function snapshotSchemaDescriptions(
         arrayLength = length;
       }
 
-      for (const key of keys) {
+      for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+        if (!hasOwn(keys, keyIndex)) continue;
+        const key = keys[keyIndex]!;
         if (isArray && key === "length") continue;
         if (typeof key !== "string" || !debitBytes(key)) return null;
         if (isArray) {
@@ -273,9 +306,9 @@ function snapshotSchemaDescriptions(
         ]) as PropertyDescriptor | undefined;
         if (!isOwnDataPropertyDescriptor(descriptor) || !descriptor.enumerable) return null;
         if (key === "description" && typeof descriptor.value === "string") {
-          descriptions.push(normalizeSearchText(descriptor.value));
+          pushPrivateArray(descriptions, normalizeSearchText(descriptor.value));
         }
-        stack.push({ value: descriptor.value, depth: current.depth + 1 });
+        pushPrivateArray(stack, { value: descriptor.value, depth: current.depth + 1 });
       }
     }
   } catch {
@@ -332,9 +365,12 @@ function getMatchedField(
   tool: SearchableTool,
 ): ToolSearchMatchField | null {
   if (tool.normalizedName === query) return "exactName";
-  if (tool.normalizedName.includes(query)) return "name";
-  if (tool.normalizedDescription.includes(query)) return "description";
-  return tool.parameterDescriptions.some((description) => description.includes(query))
+  if (privateTextIncludes(tool.normalizedName, query)) return "name";
+  if (privateTextIncludes(tool.normalizedDescription, query)) return "description";
+  return somePrivateArray(
+      tool.parameterDescriptions,
+      (description) => privateTextIncludes(description, query),
+    )
     ? "parameterDescription"
     : null;
 }
@@ -347,11 +383,13 @@ function collectSearchCandidates(input: {
   const candidates: SearchableTool[] = [];
   let examinedCandidates = 0;
   const append = (tools: readonly ToolDefinition[], status: ToolSearchMatch["status"]): void => {
-    for (const tool of tools) {
+    for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
+      if (!hasOwn(tools, toolIndex)) continue;
+      const tool = tools[toolIndex]!;
       if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
       examinedCandidates += 1;
       const snapshot = snapshotSearchableTool(tool, status, budget);
-      if (snapshot) candidates.push(snapshot);
+      if (snapshot) pushPrivateArray(candidates, snapshot);
     }
   };
   append(input.available, "available");
@@ -365,19 +403,24 @@ function rankWholeQueryMatches(
   candidates: readonly SearchableTool[],
 ): ToolSearchMatch[] {
   const ranked: { precedence: number; match: ToolSearchMatch }[] = [];
-  for (const candidate of candidates) {
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+    if (!hasOwn(candidates, candidateIndex)) continue;
+    const candidate = candidates[candidateIndex]!;
     const field = getMatchedField(query, candidate);
     if (field === null) continue;
-    ranked.push({
+    pushPrivateArray(ranked, {
       precedence: TOOL_SEARCH_FIELD_PRECEDENCE[field],
       match: toSearchMatch(candidate),
     });
   }
-  return ranked
-    .sort((left, right) =>
-      left.precedence - right.precedence || compareToolSearchMatches(left.match, right.match)
-    )
-    .map(({ match }) => match);
+  return mapPrivateArray(
+    sortSearchItems(
+      ranked,
+      (left, right) =>
+        left.precedence - right.precedence || compareToolSearchMatches(left.match, right.match),
+    ),
+    ({ match }) => match,
+  );
 }
 
 /**
@@ -397,9 +440,11 @@ function scoreToolExposureTerms(
   const total = candidates.length;
   if (total === 0 || terms.length === 0) return [];
 
-  const weightedTerms = terms.map((term) => {
+  const weightedTerms = mapPrivateArray(terms, (term) => {
     let documentFrequency = 0;
-    for (const candidate of candidates) {
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+      if (!hasOwn(candidates, candidateIndex)) continue;
+      const candidate = candidates[candidateIndex]!;
       if (getMatchedField(term, candidate) !== null) documentFrequency += 1;
     }
     return {
@@ -410,17 +455,21 @@ function scoreToolExposureTerms(
         : Math.log((total + 1) / (documentFrequency + 0.5)),
     };
   });
-  const averageDocumentFrequency = weightedTerms.reduce(
-    (sum, { documentFrequency }) => sum + documentFrequency,
-    0,
-  ) / weightedTerms.length;
+  let documentFrequencyTotal = 0;
+  for (let index = 0; index < weightedTerms.length; index++) {
+    documentFrequencyTotal += weightedTerms[index]!.documentFrequency;
+  }
+  const averageDocumentFrequency = documentFrequencyTotal / weightedTerms.length;
 
   const scored: { score: number; match: ToolSearchMatch }[] = [];
-  for (const candidate of candidates) {
+  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+    if (!hasOwn(candidates, candidateIndex)) continue;
+    const candidate = candidates[candidateIndex]!;
     let score = 0;
     let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
-    for (const { term, documentFrequency, inverseDocumentFrequency } of weightedTerms) {
+    for (let index = 0; index < weightedTerms.length; index++) {
+      const { term, documentFrequency, inverseDocumentFrequency } = weightedTerms[index]!;
       const field = getMatchedField(term, candidate);
       if (field === null) continue;
       matchedTermCount += 1;
@@ -432,14 +481,17 @@ function scoreToolExposureTerms(
     // however common those terms are: in a one-tool catalog every term matches
     // everything, so the floor alone would report a certain match as a miss.
     if (!matchedSelectiveTerm && matchedTermCount < terms.length) continue;
-    scored.push({ score, match: toSearchMatch(candidate) });
+    pushPrivateArray(scored, { score, match: toSearchMatch(candidate) });
   }
 
-  return scored
-    .sort((left, right) =>
-      right.score - left.score || compareToolSearchMatches(left.match, right.match)
-    )
-    .map(({ match }) => match);
+  return mapPrivateArray(
+    sortSearchItems(
+      scored,
+      (left, right) =>
+        right.score - left.score || compareToolSearchMatches(left.match, right.match),
+    ),
+    ({ match }) => match,
+  );
 }
 
 function rankToolExposureMatches(input: {
@@ -460,10 +512,16 @@ function rankToolExposureMatches(input: {
   const canonical = parseCanonicalIntegrationQuery(input.query);
   if (canonical !== null) {
     const canonicalName = canonical.canonicalName;
-    const exact = canonicalName === null ? [] : candidates
-      .filter((candidate) => candidate.name.toLowerCase() === canonicalName)
-      .map(toSearchMatch)
-      .sort(compareToolSearchMatches);
+    const exact = canonicalName === null ? [] : sortSearchItems(
+      mapPrivateArray(
+        filterPrivateArray(
+          candidates,
+          (candidate) => privateTextToLowerCase(candidate.name) === canonicalName,
+        ),
+        toSearchMatch,
+      ),
+      compareToolSearchMatches,
+    );
     if (exact.length > 0) return exact;
 
     // Namespace discovery accepts two kinds of evidence, and a coincidental name
@@ -476,15 +534,18 @@ function rankToolExposureMatches(input: {
     // candidate's text has already had underscores rewritten to spaces.
     const namespaceTerm = normalizeSearchText(canonical.namespace);
     const namespacePattern = createNamespaceTokenPattern(namespaceTerm);
-    const namespaceCandidates = candidates.filter((candidate) => {
-      const identity = parseIntegrationToolIdentity(candidate.name.toLowerCase());
+    const namespaceCandidates = filterPrivateArray(candidates, (candidate) => {
+      const identity = parseIntegrationToolIdentity(privateTextToLowerCase(candidate.name));
       if (identity !== null) return identity.integration === canonical.namespace;
       // A non-canonical tool carrying the namespace in its *name* is a
       // normalization coincidence, not the integration, whatever its description
       // happens to mention: `jira_list_projects` is a local tool, not Jira.
-      if (namespacePattern.test(candidate.normalizedName)) return false;
-      return namespacePattern.test(candidate.normalizedDescription) ||
-        candidate.parameterDescriptions.some((description) => namespacePattern.test(description));
+      if (testPrivateRegExp(namespacePattern, candidate.normalizedName)) return false;
+      return testPrivateRegExp(namespacePattern, candidate.normalizedDescription) ||
+        somePrivateArray(
+          candidate.parameterDescriptions,
+          (description) => testPrivateRegExp(namespacePattern, description),
+        );
     });
     return rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
   }
@@ -493,7 +554,14 @@ function rankToolExposureMatches(input: {
   const wholeQueryMatches = rankWholeQueryMatches(query, candidates);
   if (wholeQueryMatches.length > 0) return wholeQueryMatches;
 
-  const terms = [...new Set(query.split(/\s+/).filter(Boolean))];
+  const uniqueTerms = createPrivateSet<string>();
+  let start = 0;
+  for (let index = 0; index <= query.length; index++) {
+    if (index !== query.length && query[index] !== " ") continue;
+    if (index > start) uniqueTerms.add(privateTextSlice(query, start, index));
+    start = index + 1;
+  }
+  const terms = [...uniqueTerms];
   return terms.length >= 2 ? scoreToolExposureTerms(terms, candidates) : [];
 }
 
@@ -501,7 +569,7 @@ function rankToolExposureMatches(input: {
 export function createToolExposureState(
   loadedToolNames: Iterable<string> = [],
 ): ToolExposureState {
-  return { loadedToolNames: new Set(loadedToolNames) };
+  return { loadedToolNames: createPrivateSet(loadedToolNames) };
 }
 
 function retainNewestLoadedToolNames(state: ToolExposureState, limit: number | undefined): void {
@@ -573,7 +641,7 @@ export function createToolExposurePlan(input: {
   const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
   let bootstrapCount = 0;
   const loadable: ToolDefinition[] = [];
-  const loadableNames = new Set<string>();
+  const loadableNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
     if (setHas(bootstrap, tool.name)) bootstrapCount += 1;
@@ -591,7 +659,7 @@ export function createToolExposurePlan(input: {
   pruneLoadedToolNames(input.state, loadableNames);
   retainNewestLoadedToolNames(input.state, maxLoadedTools);
   const visible: ToolDefinition[] = [];
-  const visibleNames = new Set<string>();
+  const visibleNames = createPrivateSet<string>();
   for (let index = 0; index < authorized.length; index++) {
     const tool = authorized[index]!;
     if (setHas(bootstrap, tool.name) || setHas(input.state.loadedToolNames, tool.name)) {
@@ -637,9 +705,11 @@ export function searchToolExposure(input: {
     authorized: input.authorized,
   });
   if (ranked[0]?.status === "available") {
-    const matches = ranked
-      .filter((match) => match.status === "available")
-      .slice(0, TOOL_SEARCH_RESULT_LIMIT);
+    const matches = slicePrivateArray(
+      filterPrivateArray(ranked, (match) => match.status === "available"),
+      0,
+      TOOL_SEARCH_RESULT_LIMIT,
+    );
     return {
       matches,
       resultCount: matches.length,
@@ -648,21 +718,25 @@ export function searchToolExposure(input: {
     };
   }
 
-  const matches = ranked
-    .filter((match) => match.status === "loaded")
-    .slice(
-      0,
-      input.maxLoadedTools === undefined
-        ? TOOL_SEARCH_RESULT_LIMIT
-        : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools),
-    );
+  const matches = slicePrivateArray(
+    filterPrivateArray(ranked, (match) => match.status === "loaded"),
+    0,
+    input.maxLoadedTools === undefined
+      ? TOOL_SEARCH_RESULT_LIMIT
+      : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools),
+  );
 
-  for (const match of matches) {
+  for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
+    if (!hasOwn(matches, matchIndex)) continue;
+    const match = matches[matchIndex]!;
     input.state.loadedToolNames.delete(match.name);
     input.state.loadedToolNames.add(match.name);
   }
   retainNewestLoadedToolNames(input.state, input.maxLoadedTools);
-  const loadedMatches = matches.filter((match) => input.state.loadedToolNames.has(match.name));
+  const loadedMatches = filterPrivateArray(
+    matches,
+    (match) => input.state.loadedToolNames.has(match.name),
+  );
 
   return {
     matches: loadedMatches,
@@ -677,11 +751,13 @@ export function createToolExposureCheckpoint(
   authorized: readonly ToolDefinition[],
   state: ToolExposureState,
 ): ToolExposureCheckpoint {
-  const authorizedNames = new Set(authorized.map((tool) => tool.name));
+  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
   return {
     version: 2,
-    loadedToolNames: [...state.loadedToolNames]
-      .filter((name) => authorizedNames.has(name)),
+    loadedToolNames: filterPrivateArray(
+      [...state.loadedToolNames],
+      (name) => authorizedNames.has(name),
+    ),
   };
 }
 
@@ -709,13 +785,16 @@ export function restoreToolExposureState(
   if (
     !isSupportedToolExposureCheckpointVersion(checkpoint?.version) ||
     !ArrayIsArray(checkpoint.loadedToolNames) ||
-    !checkpoint.loadedToolNames.every(isValidToolExposureCheckpointName)
+    !everyPrivateArray(checkpoint.loadedToolNames, isValidToolExposureCheckpointName)
   ) {
     return createToolExposureState();
   }
 
-  const authorizedNames = new Set(authorized.map((tool) => tool.name));
-  const loadedToolNames = checkpoint.loadedToolNames.filter((name) => authorizedNames.has(name));
-  if (checkpoint.version === 1) loadedToolNames.sort(compareAscii);
+  const authorizedNames = createPrivateSet(mapPrivateArray(authorized, (tool) => tool.name));
+  const loadedToolNames = filterPrivateArray(
+    checkpoint.loadedToolNames,
+    (name) => authorizedNames.has(name),
+  );
+  if (checkpoint.version === 1) sortSearchItems(loadedToolNames, compareAscii);
   return createToolExposureState(loadedToolNames);
 }

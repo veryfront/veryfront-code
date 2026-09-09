@@ -13,6 +13,7 @@ import {
   PrivateTextEncoder,
   privateTextSlice,
   privateTextStartsWith,
+  privateTextTrim,
 } from "#veryfront/security/private-text.ts";
 /**
  * Agent Runtime - Core execution engine
@@ -1135,18 +1136,22 @@ function executeFrameworkToolSearch(input: {
   result: ReturnType<typeof searchToolExposure> & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
 } {
-  const query = typeof input.args.query === "string" ? input.args.query.trim() : "";
+  const query = typeof input.args.query === "string" ? privateTextTrim(input.args.query) : "";
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }
   const result: ToolSearchResult = searchToolExposure({
     query,
     authorized: input.plan.deferred,
-    available: input.plan.visible.filter((tool) => tool.name !== TOOL_SEARCH_TOOL_NAME),
+    available: filterPrivateArray(
+      input.plan.visible,
+      (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
+    ),
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
   });
-  const alreadyVisible = result.matches.find((match) => match.status === "available");
+  const alreadyVisible =
+    filterPrivateArray(result.matches, (match) => match.status === "available")[0];
   return {
     result: {
       ...result,
