@@ -1,6 +1,11 @@
 const apply = Reflect.apply;
 const startsWith = String.prototype.startsWith;
 const slice = String.prototype.slice;
+const includes = String.prototype.includes;
+
+export function privateTextIncludes(value: string, search: string): boolean {
+  return apply(includes, value, [search]) as boolean;
+}
 
 export function privateTextStartsWith(value: string, search: string): boolean {
   return apply(startsWith, value, [search]) as boolean;

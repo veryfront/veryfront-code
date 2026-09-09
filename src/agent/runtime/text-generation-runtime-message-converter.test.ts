@@ -16,6 +16,26 @@ import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
+  it("converts history without consulting caller-owned part iterators", () => {
+    const parts: Message["parts"] = [{ type: "text", text: "Synthetic model text" }];
+    let observations = 0;
+    Object.defineProperty(parts, Symbol.iterator, {
+      get() {
+        observations++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const messages: Message[] = [
+      { id: "user", role: "user", parts: [{ type: "text", text: "Synthetic prompt" }] },
+      { id: "assistant", role: "assistant", parts },
+    ];
+    assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+      { role: "user", content: "Synthetic prompt" },
+      { role: "assistant", content: [{ type: "text", text: "Synthetic model text" }] },
+    ]);
+    assertEquals(observations, 0);
+  });
+
   describe("convertToTextGenerationRuntimeMessage", () => {
     it("converts a system message", () => {
       const msg: Message = {

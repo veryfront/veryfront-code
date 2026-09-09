@@ -1,6 +1,8 @@
+import { privateTextIncludes, privateTextStartsWith } from "#veryfront/security/private-text.ts";
 import {
   appendPrivateArray,
   flatMapPrivateArray,
+  mapPrivateArray,
   pushPrivateArray,
 } from "#veryfront/security/private-array.ts";
 /**
@@ -33,6 +35,8 @@ import {
   collectAnthropicProviderToolCallIds,
   groupAnthropicRawAssistantMessagesByAnchor,
 } from "./anthropic-provider-replay-block.ts";
+
+const hasOwn = Object.hasOwn;
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -103,7 +107,9 @@ function consumeProviderExecutedToolResults(
   message: Message,
   providerExecutedToolCallIds: Set<string>,
 ): void {
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
   }
 }
@@ -123,7 +129,7 @@ function getTextGenerationToolCallPart(
   if (
     part.type !== "tool_call" &&
     part.type !== "tool-call" &&
-    !(part.type.startsWith("tool-") && part.type !== "tool-result")
+    !(privateTextStartsWith(part.type, "tool-") && part.type !== "tool-result")
   ) {
     return null;
   }
@@ -131,7 +137,7 @@ function getTextGenerationToolCallPart(
   const toolName = getStringPartField(part, "toolName") ??
     getStringPartField(part, "tool_name") ??
     getStringPartField(part, "name") ??
-    (part.type.startsWith("tool-") && part.type !== "tool-call"
+    (privateTextStartsWith(part.type, "tool-") && part.type !== "tool-call"
       ? part.type.replace(/^tool-/, "")
       : undefined);
 
@@ -195,7 +201,7 @@ function getTextGenerationToolResultPart(
 
 /** @internal Provider-visible text annotation shared with input validation. */
 export function buildAttachmentContextFromParts(parts: Message["parts"]): string {
-  if (getTextFromParts(parts).includes("<uploaded_files>")) return "";
+  if (privateTextIncludes(getTextFromParts(parts), "<uploaded_files>")) return "";
   const refs = flatMapPrivateArray(parts, (part) => {
     const type = getStringPartField(part, "type");
     if (type !== "file" && type !== "image") return [];
@@ -214,7 +220,7 @@ export function buildAttachmentContextFromParts(parts: Message["parts"]): string
       ...(uploadPath ? { path: uploadPath } : {}),
       // Never inline a `data:` URL here — it would dump the whole base64 blob
       // into the prompt as text. The bytes ride in the native file part below.
-      ...(url && !url.startsWith("data:") ? { url } : {}),
+      ...(url && !privateTextStartsWith(url, "data:") ? { url } : {}),
     }];
   });
 
@@ -238,18 +244,19 @@ function appendReadableAttachmentContext(text: string, attachmentContext: string
 /** @internal Exact text projection shared with input validation. */
 export function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
   const text = getTextFromParts(parts);
-  return text.includes("<uploaded_files>")
+  return privateTextIncludes(text, "<uploaded_files>")
     ? text
     : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
 }
 
 /** @internal Text metadata sent in native attachment parts, independent of annotations. */
 export function getProviderAttachmentMetadata(parts: Message["parts"]): string[] {
-  return getUserFileParts(parts, false).flatMap((part) => [
-    part.mediaType,
-    ...(part.filename ? [part.filename] : []),
-    ...(part.url.startsWith("data:") ? [] : [part.url]),
-  ]);
+  return flatMapPrivateArray(getUserFileParts(parts, false), (part) => {
+    const metadata = [part.mediaType];
+    if (part.filename) pushPrivateArray(metadata, part.filename);
+    if (!privateTextStartsWith(part.url, "data:")) pushPrivateArray(metadata, part.url);
+    return metadata;
+  });
 }
 
 function getUserFileParts(
@@ -329,25 +336,24 @@ export function convertToTextGenerationRuntimeMessage(
       }
 
       const text = getTextFromParts(msg.parts);
-      const attachmentContext = text.includes("<uploaded_files>")
+      const attachmentContext = privateTextIncludes(text, "<uploaded_files>")
         ? ""
         : buildAttachmentContextFromParts(msg.parts);
-      return {
-        role: "user",
-        content: [
-          ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
-          ...fileParts,
-          ...(attachmentContext.length > 0
-            ? [{ type: "text" as const, text: attachmentContext.trimStart() }]
-            : []),
-        ],
-      };
+      const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeFilePart> = [];
+      if (text.length > 0) pushPrivateArray(content, { type: "text", text });
+      appendPrivateArray(content, fileParts);
+      if (attachmentContext.length > 0) {
+        pushPrivateArray(content, { type: "text", text: attachmentContext.trimStart() });
+      }
+      return { role: "user", content };
     }
 
     case "assistant": {
       const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart> = [];
 
-      for (const part of msg.parts) {
+      for (let partIndex = 0; partIndex < msg.parts.length; partIndex++) {
+        if (!hasOwn(msg.parts, partIndex)) continue;
+        const part = msg.parts[partIndex]!;
         if (part.type === "text" && "text" in part) {
           pushPrivateArray(content, { type: "text", text: (part as { text: string }).text });
           continue;
@@ -384,7 +390,9 @@ export function convertToTextGenerationRuntimeMessage(
       const content: TextGenerationRuntimeToolMessage["content"] = [];
       const toolNamesById = new Map<string, string>();
 
-      for (const part of msg.parts) {
+      for (let partIndex = 0; partIndex < msg.parts.length; partIndex++) {
+        if (!hasOwn(msg.parts, partIndex)) continue;
+        const part = msg.parts[partIndex]!;
         if (
           shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)
         ) {
@@ -430,12 +438,16 @@ export function hasProviderSendableAssistantContent(
   // duplicate ID cannot make the predicate claim content that conversion will
   // remove.
   const providerExecutedToolCallIds = new Set(priorProviderExecutedToolCallIds);
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     const toolCallId = getProviderExecutedToolCallId(part);
     if (toolCallId) providerExecutedToolCallIds.add(toolCallId);
   }
 
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     if (part.type === "text" && "text" in part) {
       if (
         typeof (part as { text?: unknown }).text === "string" &&
@@ -462,7 +474,9 @@ export function getProviderSendableAssistantMessages(
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
@@ -479,7 +493,9 @@ export function getProviderSendableAssistantMessages(
       continue;
     }
     if (message.role === "tool") {
-      for (const part of message.parts) {
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        if (!hasOwn(message.parts, partIndex)) continue;
+        const part = message.parts[partIndex]!;
         shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
       }
     }
@@ -499,7 +515,9 @@ export function getProviderSendableToolMessages(
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
@@ -540,7 +558,9 @@ export function getAnthropicCompactedAssistantMessages(
       providerExecutedToolCallIds.clear();
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) providerExecutedToolCallIds.add(providerExecutedToolCallId);
     }
@@ -559,7 +579,9 @@ export function getAnthropicCompactedAssistantMessages(
       compacted.add(message);
     }
     if (message.role === "tool") {
-      for (const part of message.parts) {
+      for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+        if (!hasOwn(message.parts, partIndex)) continue;
+        const part = message.parts[partIndex]!;
         shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
       }
     }
@@ -600,7 +622,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    pushPrivateArray(messages, { role: "assistant", content: [...content] });
+    pushPrivateArray(messages, {
+      role: "assistant",
+      content: mapPrivateArray(content, (part) => part),
+    });
     content.length = 0;
   };
 
@@ -609,7 +634,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       return;
     }
 
-    pushPrivateArray(messages, { role: "tool", content: [...toolResults] });
+    pushPrivateArray(messages, {
+      role: "tool",
+      content: mapPrivateArray(toolResults, (part) => part),
+    });
     toolResults.length = 0;
   };
 
@@ -654,7 +682,9 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     pendingToolCallIds.delete(part.toolCallId);
   };
 
-  for (const part of message.parts) {
+  for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+    if (!hasOwn(message.parts, partIndex)) continue;
+    const part = message.parts[partIndex]!;
     const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
     if (providerExecutedToolCallId) {
       providerExecutedToolCallIds.add(providerExecutedToolCallId);
@@ -743,7 +773,9 @@ export function convertToTextGenerationRuntimeMessages(
     }
     addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
 
-    for (const part of message.parts) {
+    for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
+      if (!hasOwn(message.parts, partIndex)) continue;
+      const part = message.parts[partIndex]!;
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
       if (providerExecutedToolCallId) {
         providerExecutedToolCallIds.add(providerExecutedToolCallId);
@@ -762,7 +794,9 @@ export function convertToTextGenerationRuntimeMessages(
         ...options,
       })];
 
-    for (const convertedMessage of convertedMessages) {
+    for (let convertedIndex = 0; convertedIndex < convertedMessages.length; convertedIndex++) {
+      if (!hasOwn(convertedMessages, convertedIndex)) continue;
+      const convertedMessage = convertedMessages[convertedIndex]!;
       if (convertedMessage.role === "tool" && convertedMessage.content.length === 0) {
         continue;
       }
