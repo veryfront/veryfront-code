@@ -1,4 +1,8 @@
-import { filterPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  filterPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import type {
   ChatStreamState,
@@ -23,7 +27,7 @@ interface LiveAdapterToolState {
 export function createStreamLifecycleLiveAdapter(
   input: { textPartId?: string },
 ) {
-  const tools = new Map<string, LiveAdapterToolState>();
+  const tools = createPrivateMap<string, LiveAdapterToolState>();
   let activeTextPartId: string | undefined;
   let nextTextSegmentIndex = 0;
   const openTextPartId = (eventId: string | undefined): string => {
@@ -94,7 +98,7 @@ export function createStreamLifecycleLiveAdapter(
         }
         case "tool_input_content": {
           const tool = tools.get(event.toolCallId);
-          if (tool) tool.deltas.push(event.delta);
+          if (tool) pushPrivateArray(tool.deltas, event.delta);
           return [];
         }
         case "tool_input_ready": {
@@ -102,17 +106,17 @@ export function createStreamLifecycleLiveAdapter(
           const dynamic = event.dynamic ?? tool?.dynamic;
           const events: ChatStreamEvent[] = [];
           if (!tool?.announced && event.announced !== true) {
-            events.push({
+            pushPrivateArray(events, {
               type: "tool-input-start",
               toolCallId: event.toolCallId,
               toolName: event.toolName,
               ...(dynamic ? { dynamic: true } : {}),
             });
-            for (const delta of tool?.deltas ?? []) {
-              events.push({
+            for (let index = 0; tool && index < tool.deltas.length; index++) {
+              pushPrivateArray(events, {
                 type: "tool-input-delta",
                 toolCallId: event.toolCallId,
-                inputTextDelta: delta,
+                inputTextDelta: tool.deltas[index]!,
               });
             }
             if (tool) tool.announced = true;
@@ -125,7 +129,7 @@ export function createStreamLifecycleLiveAdapter(
               });
             }
           }
-          events.push({
+          pushPrivateArray(events, {
             type: "tool-input-available",
             toolCallId: event.toolCallId,
             toolName: event.toolName,

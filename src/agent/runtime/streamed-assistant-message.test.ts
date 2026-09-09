@@ -8,6 +8,40 @@ import {
 } from "./streamed-assistant-message.ts";
 
 describe("agent/streamed-assistant-message", () => {
+  it("assembles reasoning without invoking an own array iterator", () => {
+    const reasoningParts: ChatStreamState["reasoningParts"] = [
+      { id: "reasoning_empty", text: "" },
+      { id: "reasoning_text", text: "synthetic-private-reasoning", signature: "sig_1" },
+      { id: "reasoning_redacted", text: "", redactedData: "redacted_1" },
+    ];
+    const iterator = reasoningParts[Symbol.iterator];
+    let iteratorCalls = 0;
+    Object.defineProperty(reasoningParts, Symbol.iterator, {
+      value() {
+        iteratorCalls++;
+        return iterator.call(reasoningParts);
+      },
+    });
+
+    const message = buildStreamedAssistantMessage({
+      accumulatedText: "Final answer",
+      reasoningParts,
+      toolCalls: new Map(),
+    }, { id: "msg_private", timestamp: 123 });
+
+    assertEquals(message, {
+      id: "msg_private",
+      role: "assistant",
+      timestamp: 123,
+      parts: [
+        { type: "reasoning", text: "synthetic-private-reasoning", signature: "sig_1" },
+        { type: "reasoning", redactedData: "redacted_1" },
+        { type: "text", text: "Final answer" },
+      ],
+    });
+    assertEquals(iteratorCalls, 0);
+  });
+
   it("builds an assistant message from completed stream state", () => {
     const state: ChatStreamState = {
       accumulatedText: "Final answer",

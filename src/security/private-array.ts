@@ -3,6 +3,31 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const apply = Reflect.apply;
+const truncate = Math.trunc;
+const minimum = Math.min;
+const maximum = Math.max;
+
+/** Copy an array range without consulting slice, species, or inherited entries. */
+export function slicePrivateArray<T>(values: readonly T[], start = 0, end = values.length): T[] {
+  const length = values.length;
+  const normalize = (offset: number) => {
+    const index = truncate(offset) || 0;
+    return index < 0 ? maximum(length + index, 0) : minimum(index, length);
+  };
+  const first = normalize(start);
+  const last = normalize(end);
+  const output: T[] = [];
+  output.length = maximum(last - first, 0);
+  for (let index = first; index < last; index++) {
+    if (!hasOwn(values, index)) continue;
+    defineOwnDataProperty(output, index - first, values[index], {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return output;
+}
 
 /** Require every own entry to pass, without consulting mutable array methods. */
 export function everyPrivateArray<T>(

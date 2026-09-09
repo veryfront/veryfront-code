@@ -39,6 +39,26 @@ function lookupTool(onExecute: () => void = () => {}) {
 }
 
 describe("provider replay checkpoint emission", () => {
+  it("accumulates private provider blocks without consulting the buffer append method", () => {
+    const state = createProviderReplayCheckpointEmissionState({ messageId: MESSAGE_ID });
+    let observations = 0;
+    Object.defineProperty(state.rawAssistantMessages, "push", {
+      value: function (this: unknown[], ...items: unknown[]) {
+        observations++;
+        return Reflect.apply(Array.prototype.push, this, items);
+      },
+    });
+    const checkpoint = captureProviderReplayCheckpoint(
+      state,
+      metadata([{
+        type: "thinking",
+        thinking: "synthetic private reasoning",
+        signature: SIGNATURE,
+      }]),
+    );
+    assertEquals(checkpoint?.providerBlocks[0]?.block.thinking, "synthetic private reasoning");
+    assertEquals(observations, 0);
+  });
   it("restores an existing checkpoint without consulting its array find method", async () => {
     const prior: ProviderReplayCheckpoint = {
       version: 1,

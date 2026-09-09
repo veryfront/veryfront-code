@@ -388,6 +388,12 @@ describe("agent/runtime/provider-replay", () => {
   });
 
   describe("parseServerResolvedProviderReplayCheckpoints", () => {
+    it("rejects sparse deliveries before applying any checkpoint", () => {
+      const delivery = new Array<ProviderReplayCheckpoint>(2);
+      delivery[1] = createValidCheckpoint();
+      assertProviderReplayError(() => parseServerResolvedProviderReplayCheckpoints(delivery));
+      assertProviderReplayError(() => applyProviderReplayCheckpointsToMessages([], delivery));
+    });
     it("should parse a valid checkpoint array", () => {
       const checkpoint = createValidCheckpoint();
       assertEquals(

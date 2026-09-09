@@ -3,6 +3,21 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { stringifyChatJson, toChatJsonValue } from "./json-value.ts";
 
 describe("chat JSON normalization", () => {
+  it("serializes within caller-selected limits without changing the input graph", () => {
+    const values = Array.from({ length: 100_001 }, (_, index) => index);
+    const options = { maxNodes: 100_002, maxContainerEntries: 100_001 };
+    const parsed = JSON.parse(stringifyChatJson(values, options));
+    assertEquals(parsed.length, values.length);
+    assertEquals(parsed[100_000], 100_000);
+    assertEquals(Object.getPrototypeOf(values), Array.prototype);
+    const nested: Record<string, unknown> = {};
+    let cursor = nested;
+    for (let index = 0; index < 130; index++) {
+      cursor.child = {};
+      cursor = cursor.child as Record<string, unknown>;
+    }
+    assertEquals(stringifyChatJson(nested, { maxDepth: 140 }), JSON.stringify(nested));
+  });
   it("is cycle-safe and does not invoke accessors", () => {
     let getterCalls = 0;
     const value: Record<string, unknown> = {

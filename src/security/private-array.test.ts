@@ -9,9 +9,38 @@ import {
   flatMapPrivateArray,
   joinPrivateArray,
   pushPrivateArray,
+  slicePrivateArray,
 } from "./private-array.ts";
 
 describe("private array concatenation", () => {
+  it("copies ranges and holes without invoking slice or inherited index getters", () => {
+    const value = { text: "private range" };
+    const values = [value, , value];
+    let observations = 0;
+    Object.setPrototypeOf(
+      values,
+      Object.create(Array.prototype, {
+        1: {
+          get() {
+            observations++;
+            return value;
+          },
+        },
+        slice: {
+          get() {
+            observations++;
+            return Array.prototype.slice;
+          },
+        },
+      }),
+    );
+    assertEquals(slicePrivateArray(values, -2), [, value]);
+    assertEquals(slicePrivateArray(values, 1, 1), []);
+    assertEquals(slicePrivateArray(values, -Infinity, Infinity), [value, , value]);
+    assertEquals(slicePrivateArray(values, NaN, 1.9), [value]);
+    assertStrictEquals(slicePrivateArray(values)[0], value);
+    assertEquals(observations, 0);
+  });
   it("checks and reverse-scans own entries with early termination", () => {
     const values = [1, , 3];
     let observations = 0;
