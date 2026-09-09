@@ -6,6 +6,7 @@ const regexpExec = RegExp.prototype.exec;
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const objectValues = Object.values;
+const hasOwn = Object.hasOwn;
 const parseJson = JSON.parse;
 const stringTrim = String.prototype.trim;
 
@@ -152,12 +153,14 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
   const toolCallNamesById = createPrivateMap<string, string>();
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    if (!hasOwn(messages, messageIndex)) continue;
     const message = messages[messageIndex]!;
     if (!isRecord(message) || !arrayIsArray(message.content)) {
       continue;
     }
 
     for (let partIndex = 0; partIndex < message.content.length; partIndex++) {
+      if (!hasOwn(message.content, partIndex)) continue;
       const part = message.content[partIndex];
       if (!isToolCallPart(part)) {
         continue;

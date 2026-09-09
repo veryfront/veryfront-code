@@ -10,9 +10,11 @@ import { type ChatJsonValue, stringifyChatJson, toChatJsonValue } from "./json-v
 /** JSON-compatible value. Re-exported from `json-value.ts` so both agree by construction. */
 export type JsonValue = ChatJsonValue;
 
+const isArray = Array.isArray;
+
 /** Check whether a value is a non-array object. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !isArray(value);
 }
 
 /** Return string field. */
