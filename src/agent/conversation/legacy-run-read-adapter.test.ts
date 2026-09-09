@@ -13,6 +13,14 @@ import { createLifecycleRunEventAdapter } from "./lifecycle-run-event-adapter.ts
 import { readConversationRunLifecycleFrames } from "./legacy-run-read-adapter.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { type ConversationRunEvent, normalizeEncodedConversationRunEvents } from "./run-events.ts";
+import {
+  buildChildRunStatusChangedEvent,
+  buildDocumentCitedEvent,
+  buildFileAttachedEvent,
+  buildInputRequestLifecycleEvent,
+  buildToolCallStatusChangedEvent,
+  buildUrlCitedEvent,
+} from "../ag-ui/native-run-events.ts";
 
 function frames(
   entries: readonly {
@@ -1426,5 +1434,180 @@ describe("conversation run lifecycle read adapter", () => {
         },
       }],
     );
+  });
+
+  describe("native stored types read back as their CUSTOM twin", () => {
+    function v2Envelope(sequence: number, key: string) {
+      return { stream_protocol_version: 2, logical_sequence: sequence, idempotency_key: key };
+    }
+
+    function customFramesFor(
+      streamProtocolVersion: 1 | 2,
+      event: Record<string, unknown>,
+    ) {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion,
+        events: [event],
+      });
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") return [];
+      return result.frames
+        .filter((frame) => frame.class === "semantic" && frame.event.type === "custom")
+        .map((frame) => frame.event);
+    }
+
+    const cases: Array<{
+      description: string;
+      native: Record<string, unknown>;
+      customTwin: Record<string, unknown>;
+    }> = [
+      {
+        description: "TOOL_CALL_STATUS_CHANGED",
+        native: buildToolCallStatusChangedEvent({
+          toolCallId: "tool-1",
+          status: "completed",
+          toolCallName: "web_search",
+          parentMessageId: "message-1",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "tool-call-status",
+          value: {
+            toolCallId: "tool-1",
+            status: "completed",
+            toolCallName: "web_search",
+            parentMessageId: "message-1",
+          },
+        },
+      },
+      {
+        description: "INPUT_REQUEST_CREATED",
+        native: buildInputRequestLifecycleEvent({
+          action: "created",
+          inputRequest: { id: "req-1", kind: "form" },
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.input_request.lifecycle",
+          value: { action: "created", inputRequest: { id: "req-1", kind: "form" } },
+        },
+      },
+      {
+        description: "INPUT_REQUEST_UPDATED",
+        native: buildInputRequestLifecycleEvent({
+          action: "updated",
+          inputRequest: { id: "req-1", kind: "form" },
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.input_request.lifecycle",
+          value: { action: "updated", inputRequest: { id: "req-1", kind: "form" } },
+        },
+      },
+      {
+        description: "CHILD_RUN_STATUS_CHANGED",
+        native: buildChildRunStatusChangedEvent({
+          toolCallId: "tool-2",
+          childRunId: "run-2",
+          status: "running",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.invoke_agent.lifecycle",
+          value: { toolCallId: "tool-2", childRunId: "run-2", status: "running" },
+        },
+      },
+      {
+        description: "URL_CITED",
+        native: buildUrlCitedEvent({
+          type: "source-url",
+          sourceId: "web-1",
+          url: "https://example.com/a",
+          title: "Example",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/a",
+            title: "Example",
+          },
+        },
+      },
+      {
+        description: "DOCUMENT_CITED",
+        native: buildDocumentCitedEvent({
+          type: "source-document",
+          sourceId: "doc-1",
+          mediaType: "application/pdf",
+          title: "Doc",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "source-document",
+          value: {
+            type: "source-document",
+            sourceId: "doc-1",
+            mediaType: "application/pdf",
+            title: "Doc",
+          },
+        },
+      },
+      {
+        description: "FILE_ATTACHED",
+        native: buildFileAttachedEvent({
+          type: "file",
+          mediaType: "text/plain",
+          path: "notes.txt",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "file",
+          value: { type: "file", mediaType: "text/plain", path: "notes.txt" },
+        },
+      },
+    ];
+
+    for (const { description, native, customTwin } of cases) {
+      it(`reads a ${description} durable record as its CUSTOM twin on the version 2 reader`, () => {
+        const nativeFrames = customFramesFor(2, {
+          ...native,
+          ...v2Envelope(1, `native:${description}`),
+        });
+        const twinFrames = customFramesFor(2, {
+          ...customTwin,
+          ...v2Envelope(1, `twin:${description}`),
+        });
+        assertEquals(nativeFrames, twinFrames);
+      });
+    }
+
+    it("reads a URL_CITED durable record as its CUSTOM twin on the version 1 reader", () => {
+      const { native, customTwin } = cases.find((entry) => entry.description === "URL_CITED")!;
+      assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
+    });
+
+    it("reads a TOOL_CALL_STATUS_CHANGED durable record as its CUSTOM twin on the version 1 reader", () => {
+      const { native, customTwin } = cases.find((entry) =>
+        entry.description === "TOOL_CALL_STATUS_CHANGED"
+      )!;
+      assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
+    });
+
+    it("still rejects an unrelated unknown type for version 2", () => {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 2,
+        events: [{
+          type: "SOME_UNRELATED_UNKNOWN_TYPE",
+          ...v2Envelope(1, "unrelated:1"),
+        }],
+      });
+      assertEquals(result.status, "invalid");
+      if (result.status === "invalid") {
+        assertEquals(result.code, "UNSUPPORTED_DURABLE_EVENT");
+      }
+    });
   });
 });

@@ -129,4 +129,23 @@ describe("agent/ag-ui-sse-parser", () => {
     );
     assertEquals(run.responseStatus, 502, "the non-OK status must still be recorded");
   });
+
+  it("normalizes native run event frames to their stored types", async () => {
+    const run = await parseAgUiSseResponse(
+      createSseResponse([
+        'id: 1\nevent: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1",' +
+        '"toolCallName":"create_file","status":"pending_input"}\n\n',
+        'id: 2\nevent: UrlCited\ndata: {"sourceId":"web-1","url":"https://example.com/a"}\n\n',
+        'id: 3\nevent: ChildRunStatusChanged\ndata: {"toolCallId":"t","childRunId":"r",' +
+        '"status":"running"}\n\n',
+      ]),
+    );
+
+    assertEquals(run.eventTypes, [
+      "TOOL_CALL_STATUS_CHANGED",
+      "URL_CITED",
+      "CHILD_RUN_STATUS_CHANGED",
+    ]);
+    assertEquals(run.events[0]?.toolCallName, "create_file");
+  });
 });

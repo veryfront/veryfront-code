@@ -7,7 +7,72 @@ import {
   type StreamProtocolEvent,
   type StreamReducerState,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import { NATIVE_RUN_EVENTS, type NativeRunEventDefinition } from "../ag-ui/native-run-events.ts";
 import type { StreamProtocolVersion } from "./durable-contracts.ts";
+
+const NATIVE_STORED_TYPE_TO_LEGACY: ReadonlyMap<string, NativeRunEventDefinition> = new Map(
+  NATIVE_RUN_EVENTS.map((definition) => [definition.storedType as string, definition]),
+);
+
+const NATIVE_CITATION_AND_FILE_STORED_TYPES: ReadonlySet<string> = new Set([
+  "URL_CITED",
+  "DOCUMENT_CITED",
+  "FILE_ATTACHED",
+]);
+
+// The version 2 writer stamps these onto every durable record's own top
+// level, native records included. A CUSTOM record never leaks them into its
+// `value` because that value is nested; a native record's payload sits at
+// the same level as these, so they must be stripped explicitly here or they
+// would leak into the rebuilt CUSTOM value.
+const DURABLE_ENVELOPE_KEYS = [
+  "type",
+  "stream_protocol_version",
+  "attempt_id",
+  "attempt_index",
+  "logical_sequence",
+  "idempotency_key",
+] as const;
+
+/**
+ * Reads a natively stored extension record back as the custom lifecycle event
+ * its CUSTOM twin produced, so consumers of this adapter see one shape.
+ * legacy: removed in Phase F - consumers then read the native types directly.
+ */
+function readNativeAsLegacyCustom(
+  event: Record<string, unknown>,
+): { name: string; value: Record<string, unknown> } | null {
+  const definition = typeof event.type === "string"
+    ? NATIVE_STORED_TYPE_TO_LEGACY.get(event.type)
+    : undefined;
+  if (!definition) return null;
+  const value = { ...event };
+  for (const key of DURABLE_ENVELOPE_KEYS) {
+    delete value[key];
+  }
+  if (
+    definition.storedType === "INPUT_REQUEST_CREATED" ||
+    definition.storedType === "INPUT_REQUEST_UPDATED"
+  ) {
+    return {
+      name: definition.legacyCustomName,
+      value: {
+        action: definition.storedType === "INPUT_REQUEST_CREATED" ? "created" : "updated",
+        ...value,
+      },
+    };
+  }
+  if (NATIVE_CITATION_AND_FILE_STORED_TYPES.has(definition.storedType)) {
+    // The citation and file twins carried the whole chunk, type field
+    // included, as their CUSTOM value. The native builders strip that field
+    // before storing, so it must be reinstated here to make the twin exact.
+    return {
+      name: definition.legacyCustomName,
+      value: { type: definition.legacyCustomName, ...value },
+    };
+  }
+  return { name: definition.legacyCustomName, value };
+}
 
 /** Projection-only repairs applied while reading historical run events. */
 export type ConversationRunLifecycleRepair =
@@ -211,9 +276,15 @@ function readVersion1(
           data: event.value,
         });
         break;
-      default:
+      default: {
+        const native = readNativeAsLegacyCustom(event);
+        if (native) {
+          reduce({ type: "custom", name: native.name, data: native.value });
+          break;
+        }
         rejectUnknown();
         break;
+      }
     }
   }
 
@@ -511,8 +582,14 @@ function readVersion2(
           data: event.value,
         });
         break;
-      default:
+      default: {
+        const native = readNativeAsLegacyCustom(event);
+        if (native) {
+          push({ type: "custom", name: native.name, data: native.value });
+          break;
+        }
         return invalid("UNSUPPORTED_DURABLE_EVENT");
+      }
     }
   }
 
