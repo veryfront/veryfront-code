@@ -8,6 +8,7 @@ import {
 } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   privateTextIncludes,
   privateTextStartsWith,
@@ -28,6 +29,8 @@ import {
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 
 const hasOwn = Object.hasOwn;
+const isArray = Array.isArray;
+const objectEntries = Object.entries;
 
 type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[number];
 
@@ -346,14 +349,22 @@ function toJsonValue(value: unknown): JsonValue {
     return value;
   }
 
-  if (Array.isArray(value)) {
+  if (isArray(value)) {
     return mapPrivateArray(value, (item) => toJsonValue(item));
   }
 
   if (isRecord(value)) {
-    return Object.fromEntries(
-      mapPrivateArray(Object.entries(value), ([key, entry]) => [key, toJsonValue(entry)]),
-    );
+    const result: Record<string, JsonValue> = {};
+    const entries = objectEntries(value);
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index]!;
+      defineOwnDataProperty(result, entry[0], toJsonValue(entry[1]), {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return result;
   }
 
   return privateJsonStringify(value);

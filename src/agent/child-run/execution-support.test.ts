@@ -29,6 +29,16 @@ describe("child-run-execution-support", () => {
       assertEquals(toChildRunToolInputRecord({ a: 1, b: "two" }), { a: 1, b: "two" });
     });
 
+    it("preserves own prototype keys and nested value identity without copying inherited fields", () => {
+      const nested = { text: "synthetic child input" };
+      const input = Object.create({ inherited: true });
+      Object.defineProperty(input, "__proto__", { enumerable: true, value: nested });
+      const result = toChildRunToolInputRecord(input);
+      assertEquals(Object.keys(result), ["__proto__"]);
+      assertEquals(Object.getPrototypeOf(result), Object.prototype);
+      assertStrictEquals(result["__proto__"], nested);
+    });
+
     it("returns an empty record for nullish, array, and primitive inputs", () => {
       assertEquals(toChildRunToolInputRecord(null), {});
       assertEquals(toChildRunToolInputRecord(undefined), {});

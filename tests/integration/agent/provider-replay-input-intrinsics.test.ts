@@ -9,7 +9,16 @@ import {
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-for (const probe of ["baseline", "array methods", "text methods", "array iterator", "array type"]) {
+for (
+  const probe of [
+    "baseline",
+    "array methods",
+    "text methods",
+    "array iterator",
+    "array type",
+    "reflection",
+  ]
+) {
   describe(`private provider replay inputs ${probe}`, () => {
     it("preserves provider content, instructions and replay without mutable lookups", () => {
       const marker = "synthetic-private-replay-input";
@@ -71,6 +80,9 @@ for (const probe of ["baseline", "array methods", "text methods", "array iterato
           replace(Array.prototype, Symbol.iterator);
         } else if (probe === "array type") {
           replace(Array, "isArray", true);
+        } else if (probe === "reflection") {
+          replace(Object, "entries", true);
+          replace(Object, "fromEntries", true);
         }
         cleaned = cleanContent(content, "user");
         validText = hasValidContent({ role: "user", content: marker });
