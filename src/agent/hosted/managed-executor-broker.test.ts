@@ -318,7 +318,7 @@ function configureCanonical(
 }
 
 describe("managed executor broker", () => {
-  for (const mismatch of ["output tokens", "provider tools", "tool allowlist"]) {
+  for (const mismatch of ["output tokens", "provider tools", "tool allowlist", "tool source"]) {
     it(`rejects a broker ${mismatch} grant broader than its installation before allocation`, async () => {
       const f = fixture();
       if (mismatch === "output tokens") {
@@ -331,6 +331,8 @@ describe("managed executor broker", () => {
           args: {},
         }];
       } else {
+        if (mismatch === "tool source") f.input.installation.grant.allowedToolNames = ["ungranted"];
+        else f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
         f.input.tools.sources = new Map([["synthetic", {
           source: {
             id: "synthetic",
@@ -372,6 +374,7 @@ describe("managed executor broker", () => {
       args: {},
     }];
     f.input.installation.grant.allowedToolNames = ["inspect"];
+    f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
     f.input.tools.sources = new Map([["synthetic", {
       source: {
         id: "synthetic",
@@ -409,6 +412,7 @@ describe("managed executor broker", () => {
       f.input.installation.grant.agentId = agentId;
       f.input.prepare.agentId = agentId;
       f.input.installation.grant.allowedToolNames = [selector];
+      f.input.installation.grant.remoteToolSourceIds = ["synthetic"];
       f.input.tools.sources = new Map([["synthetic", {
         source: {
           id: "synthetic",
@@ -441,6 +445,43 @@ describe("managed executor broker", () => {
       }
     });
   }
+
+  it("uses owner-scoped tool grants for steering refresh authorization", async () => {
+    const f = fixture();
+    f.input.installation.grant.allowedToolNames = ["fetch-paper"];
+    f.input.installation.capabilities.projectSteering = "steering";
+    f.input.state.prepareProjectSteering = ({ definition }) =>
+      Promise.resolve({ agent: definition });
+    let selection: readonly string[] | undefined;
+    f.input.state.refreshProjectSteering = (_signal, names) => {
+      selection = names;
+      return Promise.resolve("Refreshed");
+    };
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    const runtime = await broker.start(f.input);
+    try {
+      runtime.accept({ kind: "execution" });
+      assertEquals(
+        await f.peer!.request(executorStateOperations.refreshProjectSteering, {
+          capabilityId: "steering",
+          availableToolNames: ["coder--fetch-paper"],
+        }),
+        "Refreshed",
+      );
+      assertEquals(selection, ["coder--fetch-paper"]);
+      await assertRejects(() =>
+        f.peer!.request(executorStateOperations.refreshProjectSteering, {
+          capabilityId: "steering",
+          availableToolNames: ["writer--fetch-paper"],
+        })
+      );
+      assertEquals(selection, ["coder--fetch-paper"]);
+    } finally {
+      await runtime.close();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
 
   it("installs, discovers, prepares, accepts, and begins execution in exact order", async () => {
     const f = fixture({ initialCheckpoint: true });

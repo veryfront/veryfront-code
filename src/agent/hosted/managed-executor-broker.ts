@@ -307,19 +307,31 @@ function assertInstalledOperationGrants(
       throw new TypeError("Broker provider tool policy exceeds the installed model grant");
     }
   }
-  const allowedTools = new Set(installation.grant.allowedToolNames);
-  // Trusted source capabilities carry canonical IDs, while an installed selector
-  // can name a tool relative to the owning agent's namespace.
-  for (const selector of installation.grant.allowedToolNames) {
-    allowedTools.add(namespaceAgentCapability(installation.grant.agentId, selector));
-  }
-  for (const capability of input.tools.sources.values()) {
+  const allowedTools = installedToolNames(installation);
+  const allowedSources = new Set([
+    ...installation.grant.hostToolFacadeIds,
+    ...installation.grant.remoteToolSourceIds,
+  ]);
+  for (const [sourceId, capability] of input.tools.sources) {
+    if (!allowedSources.has(sourceId)) {
+      throw new TypeError("Broker tool source exceeds the installed source grant");
+    }
     for (const name of capability.allowedToolNames) {
       if (!allowedTools.has(name)) {
         throw new TypeError("Broker tool capability exceeds the installed tool grant");
       }
     }
   }
+}
+
+function installedToolNames(installation: ExecutorRuntimeInstall): Set<string> {
+  const allowedTools = new Set(installation.grant.allowedToolNames);
+  // Trusted source capabilities carry canonical IDs, while an installed selector
+  // can name a tool relative to the owning agent's namespace.
+  for (const selector of installation.grant.allowedToolNames) {
+    allowedTools.add(namespaceAgentCapability(installation.grant.agentId, selector));
+  }
+  return allowedTools;
 }
 
 function buildBrokerOperations(
@@ -362,7 +374,7 @@ function buildBrokerOperations(
     projectId: execution.projectId,
     branchId: execution.branchId,
     ...input.state,
-    allowedToolNames: installation.grant.allowedToolNames,
+    allowedToolNames: [...installedToolNames(installation)],
   });
   const combined = new Map<string, ExecutorOperation>();
   for (const operations of [model, tools, persistence, state]) {
