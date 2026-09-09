@@ -2754,7 +2754,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
-  it("exposes Veryfront API MCP tools requested through mcpServers policy", async () => {
+  it("preserves legacy stream policy identities with canonical-default API discovery", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
     let capturedToolArguments: Record<string, unknown> | undefined;
@@ -2773,9 +2773,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
           id: string;
           method: string;
-          params?: { arguments?: Record<string, unknown> };
+          params?: { arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
         };
         if (request.method === "tools/call") {
+          assertEquals(request.params?._meta, undefined);
           capturedToolArguments = request.params?.arguments;
           return Promise.resolve(
             new Response(
@@ -2792,7 +2793,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
               result: {
                 tools: [
                   {
-                    name: "list_uploads",
+                    name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
+                      ? "list_uploads"
+                      : "veryfront__list_uploads",
                     description: "List uploads",
                     inputSchema: {
                       type: "object",
@@ -2804,7 +2807,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
                     },
                   },
                   {
-                    name: "delete_upload",
+                    name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
+                      ? "delete_upload"
+                      : "veryfront__delete_upload",
                     description: "Delete upload",
                     inputSchema: { type: "object", properties: {} },
                   },

@@ -90,6 +90,8 @@ export interface RemoteMCPToolSourceConfig {
   endpoint: ResolvableValue<string>;
   headers?: ResolvableValue<HeadersInit | undefined>;
   listMethod?: string;
+  /** Metadata sent on every tools/list page. */
+  listMeta?: Record<string, unknown>;
   callMethod?: string;
 }
 
@@ -1023,7 +1025,14 @@ function createRemoteMCPToolSourceWithFetch(
             jsonrpc: "2.0",
             id: requestId,
             method: listMethod,
-            ...(cursor !== undefined ? { params: { cursor } } : {}),
+            ...(cursor !== undefined || config.listMeta !== undefined
+              ? {
+                params: {
+                  ...(cursor !== undefined ? { cursor } : {}),
+                  ...(config.listMeta !== undefined ? { _meta: config.listMeta } : {}),
+                },
+              }
+              : {}),
           },
           getRequestFetch(endpoint),
           context?.abortSignal,
