@@ -1113,7 +1113,10 @@ function buildGeneratedAssistantMessage(
 ): Message {
   const parts: MessagePart[] = [];
   if (response.text) pushPrivateArray(parts, { type: "text", text: response.text });
-  for (const toolCall of response.toolCalls ?? []) {
+  const responseToolCalls = response.toolCalls ?? [];
+  for (let index = 0; index < responseToolCalls.length; index++) {
+    if (!ObjectHasOwn(responseToolCalls, index)) continue;
+    const toolCall = responseToolCalls[index]!;
     pushPrivateArray(parts, {
       type: `tool-${toolCall.toolName}`,
       toolCallId: toolCall.toolCallId,
@@ -3041,7 +3044,9 @@ export class AgentRuntime {
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
 
-        for (const tc of response.toolCalls) {
+        for (let toolCallIndex = 0; toolCallIndex < response.toolCalls.length; toolCallIndex++) {
+          if (!ObjectHasOwn(response.toolCalls, toolCallIndex)) continue;
+          const tc = response.toolCalls[toolCallIndex]!;
           throwIfAborted(abortSignal);
           const toolCall: ToolCall = {
             id: tc.toolCallId,
@@ -4041,7 +4046,9 @@ export class AgentRuntime {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
         }
-        for (const toolCall of streamedToolCalls) {
+        for (let toolCallIndex = 0; toolCallIndex < streamedToolCalls.length; toolCallIndex++) {
+          if (!ObjectHasOwn(streamedToolCalls, toolCallIndex)) continue;
+          const toolCall = streamedToolCalls[toolCallIndex]!;
           // Terminal. Every incomplete local call recorded here is also
           // terminalized into history, so announce unconditionally and let the
           // wire carry the same failure. `recordIncompleteLocalToolError`
@@ -4067,7 +4074,9 @@ export class AgentRuntime {
           : undefined;
       }
 
-      for (const tc of streamedToolCalls) {
+      for (let toolCallIndex = 0; toolCallIndex < streamedToolCalls.length; toolCallIndex++) {
+        if (!ObjectHasOwn(streamedToolCalls, toolCallIndex)) continue;
+        const tc = streamedToolCalls[toolCallIndex]!;
         throwIfAborted(abortSignal);
         if (shouldRecoverInterruptedLocalToolBatch && tc.providerExecuted !== true) {
           if (await recordIncompleteLocalToolError(tc, { includeInResponse: false })) {
