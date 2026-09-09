@@ -1,3 +1,6 @@
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
+import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/encoder.ts";
 
@@ -32,7 +35,7 @@ export function parseDataStreamSseEvents(chunk: string): {
     }
 
     try {
-      return [JSON.parse(payload) as AgUiRuntimeStreamEvent];
+      return [privateJsonParse(payload) as AgUiRuntimeStreamEvent];
     } catch (error) {
       logger.warn("Dropped malformed SSE data block", {
         errorName: error instanceof Error ? error.name : typeof error,
@@ -49,8 +52,8 @@ export function parseDataStreamSseEvents(chunk: string): {
 export async function* streamDataStreamEvents(
   stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<AgUiRuntimeStreamEvent> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
+  const reader = getPrivateStreamReader(stream);
+  const decoder = createPrivateTextDecoder();
   let remainder = "";
   let completed = false;
 

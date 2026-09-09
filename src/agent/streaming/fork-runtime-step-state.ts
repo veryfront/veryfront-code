@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
@@ -181,7 +182,7 @@ function buildFallbackAgentRuntimeMessages(
   baseMessages: readonly AgentMessage[],
   state: StreamedStepState,
 ): AgentMessage[] {
-  const messages: AgentMessage[] = baseMessages.map((message) => ({
+  const messages: AgentMessage[] = mapPrivateArray(baseMessages, (message) => ({
     ...message,
     parts: [...message.parts],
   }));

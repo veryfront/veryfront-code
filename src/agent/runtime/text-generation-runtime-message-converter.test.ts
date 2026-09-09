@@ -5,6 +5,7 @@ import {
   convertToTextGenerationRuntimeMessage,
   convertToTextGenerationRuntimeMessages,
   convertToTextGenerationRuntimeRequestMessages,
+  getAnthropicCompactedAssistantMessages,
 } from "./text-generation-runtime-message-converter.ts";
 import type {
   TextGenerationRuntimeAssistantMessage,
@@ -16,6 +17,96 @@ import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
+  it("reads provider execution only from own data without invoking optional flag getters", () => {
+    for (const own of [false, true]) {
+      let observations = 0;
+      const part = {
+        type: "tool-call" as const,
+        toolCallId: "call",
+        toolName: "inspect",
+        args: { text: "synthetic private arguments" },
+      };
+      const target = own ? part : Object.create(Object.prototype);
+      Object.defineProperty(target, "providerExecuted", {
+        get() {
+          observations++;
+          return undefined;
+        },
+      });
+      if (!own) Object.setPrototypeOf(part, target);
+      assertEquals(
+        convertToTextGenerationRuntimeMessages([{
+          id: "assistant",
+          role: "assistant",
+          parts: [part],
+        }]),
+        [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "call",
+            toolName: "inspect",
+            input: part.args,
+          }],
+        }],
+      );
+      assertEquals(observations, 0);
+    }
+  });
+  it("compacts completed historical tool rounds without consulting the input reverse scan", () => {
+    const messages: Message[] = [
+      {
+        id: "user-first",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic first request" }],
+      },
+      {
+        id: "tool-round",
+        role: "assistant",
+        parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
+      },
+      {
+        id: "answer",
+        role: "assistant",
+        parts: [{ type: "text", text: "Synthetic historical answer" }],
+      },
+      {
+        id: "user-current",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic current request" }],
+      },
+    ];
+    let observations = 0;
+    Object.defineProperty(messages, "findLastIndex", {
+      get() {
+        observations++;
+        return Array.prototype.findLastIndex;
+      },
+    });
+    assertEquals([...getAnthropicCompactedAssistantMessages(messages)], [messages[1]]);
+    assertEquals(observations, 0);
+  });
+
+  it("converts history without consulting caller-owned part iterators", () => {
+    const parts: Message["parts"] = [{ type: "text", text: "Synthetic model text" }];
+    let observations = 0;
+    Object.defineProperty(parts, Symbol.iterator, {
+      get() {
+        observations++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const messages: Message[] = [
+      { id: "user", role: "user", parts: [{ type: "text", text: "Synthetic prompt" }] },
+      { id: "assistant", role: "assistant", parts },
+    ];
+    assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+      { role: "user", content: "Synthetic prompt" },
+      { role: "assistant", content: [{ type: "text", text: "Synthetic model text" }] },
+    ]);
+    assertEquals(observations, 0);
+  });
+
   describe("convertToTextGenerationRuntimeMessage", () => {
     it("converts a system message", () => {
       const msg: Message = {

@@ -6,7 +6,7 @@ import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import type { Memory } from "./memory/memory-interface.ts";
+import { getTextFromMemoryParts, type Memory } from "#veryfront/agent/memory/memory-interface.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 
 // Re-export schema-based types
@@ -396,10 +396,7 @@ export type AgentMiddleware = (
 // Utility functions for working with message parts and tool calls
 /** Return text from parts. */
 export function getTextFromParts(parts: MessagePart[]): string {
-  return parts
-    .filter((p): p is { type: "text"; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join("");
+  return getTextFromMemoryParts(parts);
 }
 
 /** Check whether args is present. */

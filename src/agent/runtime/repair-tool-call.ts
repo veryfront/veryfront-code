@@ -1,7 +1,10 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { isInvalidToolInputError, isNoSuchToolError } from "./runtime-tool-errors.ts";
 import type { RuntimeToolCallRepairFunction } from "./runtime-tool-types.ts";
 
-const REPAIRABLE_PROVIDER_TOOL_NAMES = new Set(["web_search"]);
+const REPAIRABLE_PROVIDER_TOOL_NAMES = createPrivateSet(["web_search"]);
 
 export const repairToolCall: RuntimeToolCallRepairFunction = async ({
   toolCall,
@@ -23,7 +26,7 @@ export const repairToolCall: RuntimeToolCallRepairFunction = async ({
     return null;
   }
 
-  const trimmedInput = toolCall.input.trim();
+  const trimmedInput = privateTextTrim(toolCall.input);
   if (trimmedInput.length === 0) {
     return null;
   }
@@ -31,9 +34,9 @@ export const repairToolCall: RuntimeToolCallRepairFunction = async ({
   let normalizedQuery = trimmedInput;
 
   try {
-    const parsedInput = JSON.parse(trimmedInput) as unknown;
+    const parsedInput = privateJsonParse(trimmedInput) as unknown;
     if (typeof parsedInput === "string") {
-      normalizedQuery = parsedInput.trim();
+      normalizedQuery = privateTextTrim(parsedInput);
     }
   } catch {
     // Raw string input is also repairable for provider-native web_search.
@@ -45,6 +48,6 @@ export const repairToolCall: RuntimeToolCallRepairFunction = async ({
 
   return {
     ...toolCall,
-    input: JSON.stringify({ query: normalizedQuery }),
+    input: privateJsonStringify({ query: normalizedQuery }),
   };
 };

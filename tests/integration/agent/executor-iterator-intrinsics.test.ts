@@ -1,0 +1,350 @@
+import { AgentRuntime } from "veryfront/agent";
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { agent } from "#veryfront/agent/factory.ts";
+import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
+import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
+import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+import type { JsonValue } from "#veryfront/schemas/index.ts";
+
+describe("prepared executor private iteration", () => {
+  for (
+    const probe of [
+      "async generators",
+      "inherited metadata",
+      "array iteration",
+      "array append",
+      "text extraction",
+      "array filtering",
+      "array mapping",
+      "array flattening",
+      "array joining",
+      "array every",
+      "array last-index",
+      "promise chaining",
+      "regexp testing",
+      "regexp execution",
+      "reasoning scans",
+      "reasoning signatures",
+      "private runtime methods",
+    ]
+  ) {
+    it(`keeps stream requests and model output out of replaced ${probe}`, async () => {
+      const binding = { allocationId: "iterators", invocationId: "iterators", generation: 1 };
+      const source = { type: "release", releaseId: "synthetic-release" } as const;
+      const modelId = "veryfront-cloud/openai/gpt-5.4";
+      const coder = agent({
+        id: "coder",
+        system: "Synthetic source instructions.",
+        model: modelId,
+        maxSteps: 3,
+        tools: {},
+      });
+      let facadeCleanups = 0;
+      let discoveryCleanups = 0;
+      const marker = "synthetic-private-iterator-marker";
+      const model = scriptedModel([{
+        parts: [
+          { type: "reasoning-start", id: "synthetic-reasoning" },
+          { type: "reasoning-delta", id: "synthetic-reasoning", delta: marker },
+          { type: "reasoning-end", id: "synthetic-reasoning" },
+          { type: "text-delta", text: marker },
+          { type: "finish", finishReason: "stop" },
+        ],
+      }]);
+      const discovery = createExecutorDiscovery({
+        binding,
+        source,
+        projectDir: "/synthetic-project",
+        signal: new AbortController().signal,
+        backend: {
+          load: () =>
+            Promise.resolve({
+              agents: new Map([[coder.id, coder]]),
+              tools: new Map(),
+              skills: new Map(),
+              prompts: new Map(),
+              resources: new Map(),
+              workflows: new Map(),
+              tasks: new Map(),
+              schedules: new Map(),
+              webhooks: new Map(),
+              evals: new Map(),
+              errors: [],
+              sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+            }),
+          cleanup: () => {
+            discoveryCleanups++;
+            return Promise.resolve();
+          },
+        },
+      });
+      const owner = createExecutorRuntimePreparation({
+        binding,
+        source,
+        discovery,
+        grant: {
+          agentId: "coder",
+          defaultModelId: modelId,
+          maxSteps: 5,
+          models: new Map([[modelId, { maxOutputTokens: 200, providerToolNames: [] }]]),
+          allowedToolNames: [],
+          hostToolFacadeIds: [],
+          remoteToolSourceIds: [],
+          execution: { kind: "ephemeral", projectId: null },
+        },
+        facades: {
+          hostTools: new Map(),
+          remoteToolSources: new Map(),
+          resolveModelRuntime: () => model,
+          cleanup: () => {
+            facadeCleanups++;
+            return Promise.resolve();
+          },
+        },
+      });
+      const forward = new TransformStream<Uint8Array, Uint8Array>();
+      const backward = new TransformStream<Uint8Array, Uint8Array>();
+      const broker = createExecutorChannel({
+        binding,
+        transport: { readable: backward.readable, writable: forward.writable },
+      });
+      const executor = createExecutorChannel({
+        binding,
+        operations: owner.operations,
+        transport: { readable: forward.readable, writable: backward.writable },
+      });
+      const prototype = Object.getPrototypeOf(Object.getPrototypeOf((async function* () {})()));
+      const originalArrayIterator = Array.prototype[Symbol.iterator];
+      const originalPush = Array.prototype.push;
+      const originalFilter = Array.prototype.filter;
+      const originalMap = Array.prototype.map;
+      const originalFlatMap = Array.prototype.flatMap;
+      const originalJoin = Array.prototype.join;
+      const originalThen = Promise.prototype.then;
+      const originalTurnPreparation = Object.getOwnPropertyDescriptor(
+        AgentRuntime.prototype,
+        "prepareTurnMessages",
+      );
+      const originalTest = RegExp.prototype.test;
+      const originalExec = RegExp.prototype.exec;
+      const originalSome = Array.prototype.some;
+      const originalEvery = Array.prototype.every;
+      const originalFindLastIndex = Array.prototype.findLastIndex;
+      const originalSignature = Object.getOwnPropertyDescriptor(Object.prototype, "signature");
+      const originalMetadata = Object.getOwnPropertyDescriptor(Object.prototype, "metadata");
+      const originalNext = prototype.next;
+      const originalReturn = prototype.return;
+      let observations = 0;
+      let frames: JsonValue[] = [];
+      const observeMessages = (value: unknown) => {
+        const messages = Array.isArray(value)
+          ? value
+          : value !== null && typeof value === "object"
+          ? Object.getOwnPropertyDescriptor(value, "messages")?.value
+          : undefined;
+        if (!Array.isArray(messages)) return;
+        for (let index = 0; index < messages.length; index++) {
+          const parts = messages[index]?.parts;
+          if (!Array.isArray(parts)) continue;
+          for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+            if (parts[partIndex]?.text === marker) {
+              observations++;
+              return;
+            }
+          }
+        }
+      };
+      const observeTextArray = (values: unknown[]) => {
+        observeMessages(values);
+        for (let index = 0; index < values.length; index++) {
+          const value = values[index];
+          if (
+            value === marker ||
+            (value !== null && typeof value === "object" &&
+              Object.getOwnPropertyDescriptor(value, "text")?.value === marker)
+          ) {
+            observations++;
+            return;
+          }
+        }
+      };
+      const hook = (original: typeof originalNext) =>
+        async function (this: unknown, ...args: unknown[]) {
+          const result = await Reflect.apply(original, this, args) as IteratorResult<unknown>;
+          if (JSON.stringify(result.value)?.includes(marker)) observations++;
+          return result;
+        };
+      try {
+        await Promise.all([broker.ready, executor.ready]);
+        if (probe === "private runtime methods") {
+          Object.defineProperty(AgentRuntime.prototype, "prepareTurnMessages", {
+            configurable: true,
+            writable: true,
+            value: function (this: unknown, ...args: unknown[]) {
+              observeMessages(args[0]);
+              if (!originalTurnPreparation) throw new Error("Private runtime called a public hook");
+              return Reflect.apply(originalTurnPreparation.value, this, args);
+            },
+          });
+        } else if (probe === "regexp testing") {
+          RegExp.prototype.test = function (input) {
+            if (input.includes(marker)) observations++;
+            return Reflect.apply(originalTest, this, [input]);
+          };
+        } else if (probe === "regexp execution") {
+          RegExp.prototype.exec = function (input) {
+            if (input.includes(marker)) observations++;
+            return Reflect.apply(originalExec, this, [input]);
+          };
+        } else if (probe === "array every") {
+          Array.prototype.every = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalEvery, this, args);
+          }) as typeof originalEvery;
+        } else if (probe === "array last-index") {
+          Array.prototype.findLastIndex = function (...args) {
+            observeTextArray(this);
+            return Reflect.apply(originalFindLastIndex, this, args);
+          };
+        } else if (probe === "reasoning scans") {
+          Array.prototype.some = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalSome, this, args);
+          }) as typeof originalSome;
+        } else if (probe === "reasoning signatures") {
+          Object.defineProperty(Object.prototype, "signature", {
+            configurable: true,
+            get() {
+              if (Object.getOwnPropertyDescriptor(this, "text")?.value === marker) observations++;
+              return undefined;
+            },
+          });
+        } else if (probe === "async generators") {
+          prototype.next = hook(originalNext);
+          prototype.return = hook(originalReturn);
+        } else if (probe === "array iteration") {
+          Array.prototype[Symbol.iterator] = (function (this: unknown[]) {
+            observeMessages(this);
+            return Reflect.apply(originalArrayIterator, this, []);
+          }) as typeof originalArrayIterator;
+        } else if (probe === "array append") {
+          Array.prototype.push = function (...items) {
+            observeMessages(this);
+            return Reflect.apply(originalPush, this, items);
+          };
+        } else if (probe === "text extraction") {
+          Array.prototype.filter = function (
+            this: unknown[],
+            callback: (value: unknown, index: number, array: unknown[]) => unknown,
+            thisArg?: unknown,
+          ) {
+            for (let index = 0; index < this.length; index++) {
+              const part = this[index] as { type?: unknown; text?: unknown } | null;
+              if (part?.type === "text" && part?.text === marker) observations++;
+            }
+            return Reflect.apply(originalFilter, this, [callback, thisArg]);
+          } as typeof originalFilter;
+        } else if (probe === "promise chaining") {
+          Promise.prototype.then = (function (
+            this: Promise<unknown>,
+            fulfilled: ((value: unknown) => unknown) | null | undefined,
+            rejected: ((reason: unknown) => unknown) | null | undefined,
+          ) {
+            return Reflect.apply(originalThen, this, [(value: unknown) => {
+              observeMessages(value);
+              return typeof fulfilled === "function"
+                ? Reflect.apply(fulfilled, undefined, [value])
+                : value;
+            }, rejected]);
+          }) as typeof originalThen;
+        } else if (probe === "array filtering") {
+          Array.prototype.filter = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalFilter, this, args);
+          }) as typeof originalFilter;
+        } else if (probe === "array mapping") {
+          Array.prototype.map = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalMap, this, args);
+          }) as typeof originalMap;
+        } else if (probe === "array joining") {
+          Array.prototype.join = function (separator) {
+            observeTextArray(this);
+            return Reflect.apply(originalJoin, this, [separator]);
+          };
+        } else if (probe === "array flattening") {
+          Array.prototype.flatMap = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalFlatMap, this, args);
+          }) as typeof originalFlatMap;
+        } else {
+          Object.defineProperty(Object.prototype, "metadata", {
+            configurable: true,
+            get() {
+              const parts = Object.getOwnPropertyDescriptor(this, "parts")?.value;
+              if (Array.isArray(parts) && parts.some((part) => part?.text === marker)) {
+                observations++;
+              }
+              return undefined;
+            },
+          });
+        }
+        const prepared = await broker.request("runtime.prepare", { agentId: "coder" }) as {
+          ok: boolean;
+          value: { preparedRuntimeHandle: string };
+        };
+        assertEquals(prepared.ok, true);
+        frames = await Array.fromAsync(broker.stream("agent.stream", {
+          preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
+          messages: [{
+            id: "synthetic-message",
+            role: "user",
+            parts: [{ type: "text", text: marker }],
+            timestamp: 1,
+          }],
+        }));
+      } finally {
+        Array.prototype[Symbol.iterator] = originalArrayIterator;
+        Array.prototype.push = originalPush;
+        Array.prototype.filter = originalFilter;
+        Array.prototype.map = originalMap;
+        Array.prototype.flatMap = originalFlatMap;
+        Array.prototype.join = originalJoin;
+        Promise.prototype.then = originalThen;
+        if (originalTurnPreparation) {
+          Object.defineProperty(
+            AgentRuntime.prototype,
+            "prepareTurnMessages",
+            originalTurnPreparation,
+          );
+        } else Reflect.deleteProperty(AgentRuntime.prototype, "prepareTurnMessages");
+        RegExp.prototype.test = originalTest;
+        RegExp.prototype.exec = originalExec;
+        Array.prototype.some = originalSome;
+        Array.prototype.every = originalEvery;
+        Array.prototype.findLastIndex = originalFindLastIndex;
+        if (originalSignature) {
+          Object.defineProperty(Object.prototype, "signature", originalSignature);
+        } else Reflect.deleteProperty(Object.prototype, "signature");
+        if (originalMetadata) Object.defineProperty(Object.prototype, "metadata", originalMetadata);
+        else Reflect.deleteProperty(Object.prototype, "metadata");
+        prototype.next = originalNext;
+        prototype.return = originalReturn;
+        broker.close();
+        executor.close();
+        await Promise.all([broker.settled, executor.settled]);
+        await owner.close();
+        await owner.settled;
+      }
+      assertEquals(frames[0], { type: "ready" });
+      assertEquals(frames.at(-1), { type: "complete" });
+      assertEquals(frames.some((frame) => JSON.stringify(frame).includes(marker)), true);
+      assertEquals(observations, 0);
+      assertEquals(facadeCleanups, 1);
+      assertEquals(discoveryCleanups, 1);
+    });
+  }
+});

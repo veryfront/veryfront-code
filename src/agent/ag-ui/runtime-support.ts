@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import type { Message } from "../types.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 
@@ -46,7 +47,7 @@ export function normalizeAgUiRuntimeMessages(
 ): Message[] {
   const toolNamesById = new Map<string, string>();
 
-  return messages.map((message) => {
+  return mapPrivateArray(messages, (message) => {
     const parts: Message["parts"] = [];
 
     switch (message.role) {

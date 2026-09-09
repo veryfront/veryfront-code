@@ -1,3 +1,4 @@
+import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import { defineError, VeryfrontError } from "#veryfront/errors/types.ts";
@@ -6,6 +7,8 @@ import {
   getExecutorAgentFailureCodeSchema,
   getExecutorPreparedRuntimeHandleSchema,
 } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+
+import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 
 const failureStatus = {
   EXECUTOR_RUNTIME_INVALID_INPUT: 400,
@@ -95,6 +98,38 @@ export type ExecutorRuntimePrepareResult = InferSchema<
   ReturnType<typeof getExecutorRuntimePrepareResultSchema>
 >;
 
+export const getExecutorRuntimeSteeringSchema = defineSchema((v) =>
+  v.object({
+    agent: getRuntimeAgentMarkdownDefinitionSchema(),
+    environmentContext: v.string().optional(),
+    initialProjectInstructions: v.string().optional(),
+    skillSelectorPolicy: v.union([
+      v.object({ kind: v.literal("all-visible"), source: v.enum(["omitted", "true"] as const) })
+        .strict(),
+      v.object({ kind: v.literal("none") }).strict(),
+      v.object({ kind: v.literal("allowlist"), entries: v.array(v.string()) }).strict(),
+    ]).optional(),
+    initialSkills: v.array(
+      v.object({
+        id: v.string().min(1),
+        name: v.string(),
+        description: v.string(),
+        instructions: v.string(),
+        displayName: v.string().optional(),
+        allowedTools: v.array(v.string()).optional(),
+        metadata: v.record(v.string(), v.string()).optional(),
+        model: v.string().optional(),
+        thinking: v.union([v.literal(false), v.number()]).optional(),
+        maxSteps: v.number().optional(),
+        references: v.array(v.string()).optional(),
+        ownerAgentId: v.string().optional(),
+        shortName: v.string().optional(),
+        sourcePath: v.string().optional(),
+      }).strict(),
+    ).optional(),
+  }).strict()
+);
+
 export const getExecutorRuntimeGrantDataSchema = defineSchema((v) => {
   const context = {
     projectId: v.string().nullable(),
@@ -136,7 +171,11 @@ export type ExecutorRuntimeGrantData = InferSchema<
 >;
 
 export function parseRuntimePreparationData<T>(schema: Schema<T>, value: unknown): T {
-  const result = schema.safeParse(value);
-  if (!result.success) throw new ExecutorRuntimePreparationError("EXECUTOR_RUNTIME_INVALID_INPUT");
-  return result.data;
+  try {
+    const result = schema.safeParse(snapshotOwnDataRecords(value));
+    if (result.success) return snapshotOwnDataRecords(result.data) as T;
+  } catch {
+    // Keep invalid data and accessor failures behind the fixed input diagnostic.
+  }
+  throw new ExecutorRuntimePreparationError("EXECUTOR_RUNTIME_INVALID_INPUT");
 }

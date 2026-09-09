@@ -1,6 +1,18 @@
+import { createPrivateTextDecoder, encodePrivateText } from "#veryfront/security/private-text.ts";
+import { protectPrivateStreamReader } from "#veryfront/security/private-stream.ts";
+import {
+  isPrivateUint8Array,
+  privateByteLength,
+  privateByteSubarray,
+  PrivateUint8Array,
+  setPrivateBytes,
+} from "#veryfront/security/private-bytes.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+
+const min = Math.min;
 
 /** Internal protocol limits. The frame limit includes its four-byte length prefix. */
 export const EXECUTOR_PROTOCOL_VERSION = 1;
@@ -73,13 +85,17 @@ export function encodeExecutorFrame(frame: ExecutorFrame): Uint8Array {
   if (!snapshot.success || !getExecutorFrameSchema().safeParse(snapshot.value).success) {
     throw new TypeError("Invalid executor frame");
   }
-  const payload = new TextEncoder().encode(JSON.stringify(snapshot.value));
-  if (payload.byteLength > EXECUTOR_MAX_FRAME_BYTES - 4) {
+  const payload = encodePrivateText(privateJsonStringify(snapshot.value));
+  const length = privateByteLength(payload);
+  if (length > EXECUTOR_MAX_FRAME_BYTES - 4) {
     throw new TypeError("Executor frame exceeds byte limit");
   }
-  const bytes = new Uint8Array(payload.byteLength + 4);
-  new DataView(bytes.buffer).setUint32(0, payload.byteLength);
-  bytes.set(payload, 4);
+  const bytes = new PrivateUint8Array(length + 4);
+  bytes[0] = length >>> 24;
+  bytes[1] = length >>> 16;
+  bytes[2] = length >>> 8;
+  bytes[3] = length;
+  setPrivateBytes(bytes, payload, 4);
   return bytes;
 }
 
@@ -90,43 +106,48 @@ export function encodeExecutorFrame(frame: ExecutorFrame): Uint8Array {
 export async function* readExecutorFrames(
   reader: ReadableStreamDefaultReader<Uint8Array>,
 ): AsyncGenerator<ExecutorFrame> {
-  const prefix = new Uint8Array(4);
+  const privateReader = protectPrivateStreamReader(reader);
+  const prefix = new PrivateUint8Array(4);
   let prefixOffset = 0;
   let payload: Uint8Array | undefined;
   let payloadOffset = 0;
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = createPrivateTextDecoder("utf-8", { fatal: true });
   while (true) {
-    const { value: chunk, done } = await reader.read();
+    const { value: chunk, done } = await privateReader.read();
     if (done) {
       if (prefixOffset || payload) throw new ExecutorProtocolError("Truncated executor frame");
       return;
     }
-    if (!(chunk instanceof Uint8Array) || chunk.byteLength > EXECUTOR_MAX_FRAME_BYTES) {
+    if (!isPrivateUint8Array(chunk) || privateByteLength(chunk) > EXECUTOR_MAX_FRAME_BYTES) {
       throw new ExecutorProtocolError("Executor transport chunk exceeds byte limit");
     }
     let offset = 0;
-    while (offset < chunk.byteLength) {
+    while (offset < privateByteLength(chunk)) {
       if (!payload) {
-        const size = Math.min(4 - prefixOffset, chunk.byteLength - offset);
-        prefix.set(chunk.subarray(offset, offset + size), prefixOffset);
+        const size = min(4 - prefixOffset, privateByteLength(chunk) - offset);
+        setPrivateBytes(prefix, privateByteSubarray(chunk, offset, offset + size), prefixOffset);
         offset += size;
         prefixOffset += size;
         if (prefixOffset < 4) continue;
-        const length = new DataView(prefix.buffer).getUint32(0);
+        const length = prefix[0]! * 0x1000000 + prefix[1]! * 0x10000 + prefix[2]! * 0x100 +
+          prefix[3]!;
         if (!length || length > EXECUTOR_MAX_FRAME_BYTES - 4) {
           throw new ExecutorProtocolError("Executor frame exceeds byte limit");
         }
-        payload = new Uint8Array(length);
+        payload = new PrivateUint8Array(length);
         prefixOffset = 0;
       }
-      const size = Math.min(payload.byteLength - payloadOffset, chunk.byteLength - offset);
-      payload.set(chunk.subarray(offset, offset + size), payloadOffset);
+      const size = min(
+        privateByteLength(payload) - payloadOffset,
+        privateByteLength(chunk) - offset,
+      );
+      setPrivateBytes(payload, privateByteSubarray(chunk, offset, offset + size), payloadOffset);
       payloadOffset += size;
       offset += size;
-      if (payloadOffset === payload.byteLength) {
+      if (payloadOffset === privateByteLength(payload)) {
         let decoded: unknown;
         try {
-          decoded = JSON.parse(decoder.decode(payload));
+          decoded = privateJsonParse(decoder.decode(payload));
         } catch {
           throw new ExecutorProtocolError("Invalid executor frame encoding");
         }

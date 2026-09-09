@@ -51,6 +51,29 @@ function createResponse(text: string): AgentResponse {
 }
 
 describe("InputValidator", () => {
+  it("matches blocked input without consulting pattern test or exec overrides", async () => {
+    let observations = 0;
+    const pattern = /blocked/i;
+    Object.defineProperties(pattern, {
+      test: {
+        value() {
+          observations++;
+          return false;
+        },
+      },
+      exec: {
+        value() {
+          observations++;
+          return null;
+        },
+      },
+    });
+    const validator = new InputValidator({ blockedPatterns: [pattern] });
+    assertEquals((await validator.validate("synthetic blocked input")).valid, false);
+    assertEquals((await validator.validate("synthetic ordinary input")).valid, true);
+    assertEquals(observations, 0);
+  });
+
   it("collects max length, blocked pattern, and custom validation violations", async () => {
     const validator = new InputValidator({
       maxLength: 5,
@@ -205,6 +228,122 @@ describe("OutputFilter", () => {
 });
 
 describe("securityMiddleware", () => {
+  it("rejects structured input that cannot be inspected without hiding readable blocked fields", async () => {
+    let reads = 0;
+    const accessorInput = { query: "synthetic-blocked-input" };
+    Object.defineProperty(accessorInput, "unrelated", {
+      enumerable: true,
+      get() {
+        reads++;
+        return "harmless";
+      },
+    });
+    for (
+      const args of [accessorInput, {
+        query: "synthetic-blocked-input",
+        values: new Array(100_001),
+      }]
+    ) {
+      const context = createContext({
+        input: [{
+          id: "user",
+          role: "user",
+          parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args }],
+        }],
+      });
+      await assertRejects(
+        () =>
+          securityMiddleware({ input: { blockedPatterns: [/synthetic-blocked-input/] } })(
+            context,
+            () => Promise.resolve(createResponse("ok")),
+          ),
+        Error,
+        "Input validation failed",
+      );
+    }
+    assertEquals(reads, 0);
+  });
+
+  it("preserves sparse structured output positions without inherited reads", async () => {
+    const object = ["first", , "last"];
+    let reads = 0;
+    Object.setPrototypeOf(
+      object,
+      Object.create(Array.prototype, {
+        1: {
+          get() {
+            reads++;
+            return "inherited";
+          },
+        },
+      }),
+    );
+    const result = await securityMiddleware({})(createContext(), () =>
+      Promise.resolve({
+        ...createResponse("ok"),
+        object,
+      }));
+    assertEquals(result.object, ["first", undefined, "last"]);
+    assertEquals(reads, 0);
+  });
+  it("validates own structured input without invoking its custom JSON serializer", async () => {
+    let observations = 0;
+    const args = { query: "synthetic-blocked-input" };
+    Object.defineProperty(args, "toJSON", {
+      value() {
+        observations++;
+        return { query: "harmless" };
+      },
+    });
+    const context = createContext({
+      input: [{
+        id: "user",
+        role: "user",
+        parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args }],
+      }],
+    });
+    await assertRejects(
+      () =>
+        securityMiddleware({ input: { blockedPatterns: [/synthetic-blocked-input/] } })(
+          context,
+          () => Promise.resolve(createResponse("ok")),
+        ),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(observations, 0);
+  });
+  it("validates second-turn membership without consulting the input iterator", async () => {
+    const context = createContext();
+    await securityMiddleware({ input: { blockedPatterns: [/blocked phrase/] } })(
+      context,
+      () => Promise.resolve(createResponse("ok")),
+    );
+    const validateTurn = getTurnMessageValidator(context)!;
+    const current: Message[] = [{
+      id: "current",
+      role: "user",
+      parts: [{ type: "text", text: "phrase" }],
+    }];
+    let observations = 0;
+    Object.defineProperty(current, Symbol.iterator, {
+      get() {
+        observations++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    await assertRejects(
+      () =>
+        validateTurn(
+          [{ id: "previous", role: "user", parts: [{ type: "text", text: "blocked " }] }],
+          current,
+        ),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(observations, 0);
+  });
+
   it("reports structured user input violations and throws a veryfront error", async () => {
     const violations: string[] = [];
     const middleware = securityMiddleware({

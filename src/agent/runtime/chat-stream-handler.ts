@@ -1,3 +1,15 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import {
+  closePrivateStream,
+  createPrivateReadableStream,
+  enqueuePrivateStream,
+  errorPrivateStream,
+  getPrivateStreamReader,
+} from "#veryfront/security/private-stream.ts";
 /**
  * Model Runtime Stream Handler
  *
@@ -7,6 +19,8 @@
  *
  * @module agent/runtime/chat-stream-handler
  */
+
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -66,6 +80,8 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
 
+const hasOwn = Object.hasOwn;
+
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
@@ -105,25 +121,26 @@ export interface RuntimeStreamErrorEvent extends Record<string, unknown> {
 function wrapRuntimeProviderReadableStream(
   stream: ReadableStream<unknown>,
 ): ReadableStream<unknown> {
-  const reader = stream.getReader();
+  const reader = getPrivateStreamReader(stream);
   let released = false;
   const releaseReader = () => {
     if (released) return;
     released = true;
     reader.releaseLock();
   };
-  return new ReadableStream<unknown>(
+  return createPrivateReadableStream<unknown>(
     {
       async pull(controller) {
         try {
           const next = await reader.read();
           if (next.done) {
             releaseReader();
-            controller.close();
-          } else controller.enqueue(next.value);
+            closePrivateStream(controller);
+          } else enqueuePrivateStream(controller, next.value);
         } catch (error) {
           releaseReader();
-          controller.error(
+          errorPrivateStream(
+            controller,
             isStatefulTurnCycleError(error) ? error : createRuntimeProviderStreamFailure(error),
           );
         }
@@ -268,7 +285,10 @@ export function announceStreamedToolCallInput(
     ...(dynamic ? { dynamic: true } : {}),
   });
 
-  for (const delta of toolCall.inputDeltas ?? []) {
+  const deltas = toolCall.inputDeltas ?? [];
+  for (let index = 0; index < deltas.length; index++) {
+    if (!hasOwn(deltas, index)) continue;
+    const delta = deltas[index]!;
     sendSSE(controller, encoder, {
       type: "tool-input-delta",
       toolCallId: toolCall.id,
@@ -370,12 +390,12 @@ function normalizeToolInputString(input: unknown): string {
     return input;
   }
 
-  return JSON.stringify(input ?? null) ?? "null";
+  return privateJsonStringify(input ?? null) ?? "null";
 }
 
 function tryParseToolInputObject(input: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(stripLeadingEmptyObjectPlaceholder(input));
+    const parsed = privateJsonParse(stripLeadingEmptyObjectPlaceholder(input));
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
@@ -504,13 +524,15 @@ async function readNextStreamPartWithTimeout(
   abortSignal?: AbortSignal,
 ): Promise<IteratorResult<unknown> | "timeout"> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const pending = createPrivateDeferred<IteratorResult<unknown> | "timeout">();
   try {
-    return await Promise.race([
+    void chainPrivatePromise(
       readNextStreamPart(iterator, state, abortSignal),
-      new Promise<"timeout">((resolve) => {
-        timeoutId = setTimeoutFn(() => resolve("timeout"), timeoutMs);
-      }),
-    ]);
+      pending.resolve,
+      pending.reject,
+    );
+    timeoutId = setTimeoutFn(() => pending.resolve("timeout"), timeoutMs);
+    return await pending.promise;
   } finally {
     if (timeoutId !== undefined) {
       clearTimeoutFn(timeoutId);
@@ -536,7 +558,7 @@ export function createStreamState(): ChatStreamState {
     accumulatedText: "",
     reasoningParts: [],
     finishReason: null,
-    toolCalls: new Map(),
+    toolCalls: createPrivateMap(),
     toolResults: [],
     suppressedToolCalls: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
@@ -605,16 +627,22 @@ function readTraceAttributeString(
   return typeof value === "string" ? value : undefined;
 }
 
+function finalToolResultIds(state: ChatStreamState): Set<string> {
+  const ids = createPrivateSet<string>();
+  for (let index = 0; index < state.toolResults.length; index++) {
+    if (!hasOwn(state.toolResults, index)) continue;
+    const result = state.toolResults[index]!;
+    if (result.preliminary !== true) ids.add(result.toolCallId);
+  }
+  return ids;
+}
+
 function finalizeActiveUnresolvedProviderToolCalls(
   state: ChatStreamState,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
 ): void {
-  const terminalToolCallIds = new Set(
-    state.toolResults
-      .filter((result) => result.preliminary !== true)
-      .map((result) => result.toolCallId),
-  );
+  const terminalToolCallIds = finalToolResultIds(state);
 
   for (const toolCall of state.toolCalls.values()) {
     if (
@@ -647,9 +675,9 @@ async function processActiveStream(
     open: (signal) => source.open(signal).fullStream,
     options: {
       availableToolNames: callbacks?.availableToolNames
-        ? new Set(callbacks.availableToolNames)
+        ? createPrivateSet(callbacks.availableToolNames)
         : null,
-      providerExecutedToolNames: new Set(
+      providerExecutedToolNames: createPrivateSet(
         callbacks?.providerExecutedToolNames ?? [],
       ),
     },
@@ -694,15 +722,16 @@ async function processActiveStream(
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
   try {
-    for await (const frame of run.frames) {
+    for await (const frame of getPrivateAsyncIterator(run.frames)) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
         callbacks?.onChunk?.(frame.event.delta);
       }
       if (frame.class === "semantic" && frame.event.type === "usage") {
         callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
       }
-      for (const event of live.encode(frame)) {
-        sendSSE(controller, encoder, event);
+      const events = live.encode(frame);
+      for (let index = 0; index < events.length; index++) {
+        if (hasOwn(events, index)) sendSSE(controller, encoder, events[index]!);
       }
     }
   } catch (error) {
@@ -819,19 +848,19 @@ export function processStreamInternal(
     let activeTextPartId: string | undefined;
     let nextTextSegmentIndex = 0;
     let activeReasoningId: string | null = null;
-    const reasoningParts = new Map<string, StreamingReasoningPart>();
+    const reasoningParts = createPrivateMap<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
-    const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
+    const providerExecutedToolNames = createPrivateSet(callbacks?.providerExecutedToolNames ?? []);
     const availableToolNames = callbacks?.availableToolNames
-      ? new Set(callbacks.availableToolNames)
+      ? createPrivateSet(callbacks.availableToolNames)
       : null;
-    const suppressedToolCallIds = new Set<string>();
+    const suppressedToolCallIds = createPrivateSet<string>();
     // Provider-executed calls whose input completed but whose result has not
     // arrived yet. While any is outstanding the local-tool commit grace must not
     // truncate the stream: the provider result can arrive after a separate HTTP
     // continuation.
-    const pendingProviderExecutedToolCallIds = new Set<string>();
+    const pendingProviderExecutedToolCallIds = createPrivateSet<string>();
 
     const isUnavailableTool = (toolName: string) =>
       availableToolNames !== null && !availableToolNames.has(toolName);
@@ -842,7 +871,7 @@ export function processStreamInternal(
       }
       suppressedToolCallIds.add(toolCallId);
       pendingProviderExecutedToolCallIds.delete(toolCallId);
-      state.suppressedToolCalls.push({ id: toolCallId, name: toolName });
+      pushPrivateArray(state.suppressedToolCalls, { id: toolCallId, name: toolName });
     };
 
     /**
@@ -888,11 +917,7 @@ export function processStreamInternal(
 
       // Ignore any preliminary entries carried in from an older stream state.
       // They are progress, not proof that the provider answered.
-      const terminalToolCallIds = new Set(
-        state.toolResults
-          .filter((result) => result.preliminary !== true)
-          .map((result) => result.toolCallId),
-      );
+      const terminalToolCallIds = finalToolResultIds(state);
 
       for (const toolCall of state.toolCalls.values()) {
         if (!pendingProviderExecutedToolCallIds.has(toolCall.id)) continue;
@@ -962,9 +987,9 @@ export function processStreamInternal(
 
       activeReasoningId = reasoningId;
       if (!reasoningParts.has(reasoningId)) {
-        const part = { id: reasoningId, text: "" };
+        const part = { __proto__: null, id: reasoningId, text: "" };
         reasoningParts.set(reasoningId, part);
-        state.reasoningParts.push(part);
+        pushPrivateArray(state.reasoningParts, part);
       }
       sendSSE(controller, encoder, {
         type: "reasoning-start",
@@ -1103,7 +1128,7 @@ export function processStreamInternal(
     // client even when the stream aborts or throws, so the finalizer runs in a
     // `finally`. It runs after the shadow compare so a synthesized event can
     // never perturb the legacy-vs-reducer snapshot the rollout gate reads.
-    const streamIterator = result.fullStream[Symbol.asyncIterator]();
+    const streamIterator = getPrivateAsyncIterator(result.fullStream);
     let streamIteratorReturned = false;
     /** Release the upstream iterator exactly once, whichever exit is taken. */
     const returnStreamIteratorOnce = () => {
@@ -1296,7 +1321,7 @@ export function processStreamInternal(
 
             tc.arguments = mergeToolInputDelta(tc.arguments, typedPart.delta);
             tc.inputDeltas ??= [];
-            tc.inputDeltas.push(typedPart.delta);
+            pushPrivateArray(tc.inputDeltas, typedPart.delta);
             break;
           }
 
@@ -1452,8 +1477,10 @@ export function processStreamInternal(
             );
             if (
               typedPart.preliminary !== true && providerExecuted === true &&
-              state.toolResults.some((result) =>
-                result.toolCallId === typedPart.toolCallId && result.preliminary !== true
+              somePrivateArray(
+                state.toolResults,
+                (result) =>
+                  result.toolCallId === typedPart.toolCallId && result.preliminary !== true,
               )
             ) {
               break;
@@ -1495,7 +1522,7 @@ export function processStreamInternal(
             // result to live clients, durable history, or continuation input.
             if (typedPart.preliminary === true) break;
             if (isError) {
-              state.toolResults.push({
+              pushPrivateArray(state.toolResults, {
                 toolCallId: typedPart.toolCallId,
                 toolName: typedPart.toolName,
                 error: toolResultError,
@@ -1512,7 +1539,7 @@ export function processStreamInternal(
               break;
             }
 
-            state.toolResults.push({
+            pushPrivateArray(state.toolResults, {
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
               output: toolResultOutput,
@@ -1544,8 +1571,10 @@ export function processStreamInternal(
             );
             if (
               providerExecuted === true &&
-              state.toolResults.some((result) =>
-                result.toolCallId === typedPart.toolCallId && result.preliminary !== true
+              somePrivateArray(
+                state.toolResults,
+                (result) =>
+                  result.toolCallId === typedPart.toolCallId && result.preliminary !== true,
               )
             ) {
               break;
@@ -1566,7 +1595,7 @@ export function processStreamInternal(
               error: typedPart.error,
               input: typedPart.input,
             });
-            state.toolResults.push({
+            pushPrivateArray(state.toolResults, {
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
               error: typedPart.error,
@@ -1687,7 +1716,7 @@ export function processStreamInternal(
         } catch {
           shadowLifecycleFailed = true;
         }
-        const categories = new Set<StreamLifecycleShadowDivergence>(
+        const categories = createPrivateSet<StreamLifecycleShadowDivergence>(
           observed.categories,
         );
         if (shadowLifecycleFailed) categories.add("shadow_error");

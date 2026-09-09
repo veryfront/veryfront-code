@@ -1,9 +1,5 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import type {
-  ModelRuntimeCallOptions,
-  ModelRuntimeToolDefinition,
-  RuntimeMetadata,
-} from "#veryfront/provider/types.ts";
+import type { ModelRuntimeToolDefinition } from "#veryfront/provider/types.ts";
 import { createExecutorModelFailure } from "./executor-model-errors.ts";
 import {
   buildModelCallContextRequest,
@@ -17,6 +13,8 @@ import {
   getExecutorModelOptionsSchema,
   parseExecutorModelData,
 } from "./executor-model-schema.ts";
+
+const numberIsSafeInteger = Number.isSafeInteger;
 
 type ProviderTool = Extract<ModelRuntimeToolDefinition, { type: "provider" }>;
 
@@ -79,14 +77,15 @@ function assertSingleCompletion(options: ExecutorModelDispatch["options"]): void
   for (const bucket of Object.values(options.providerOptions ?? {})) inspect(bucket);
 }
 
-/** @internal Shared additive output budget for preparation and broker admission. */
-export function executorAdditiveReasoningTokens(
-  model: Pick<RuntimeMetadata, "modelId" | "provider" | "modelProvider">,
-  options: Pick<ModelRuntimeCallOptions, "reasoning" | "providerOptions">,
+/** Internal output allowance reserved by the effective provider thinking configuration. */
+export function getExecutorModelAdditiveReasoningTokens(
+  request: Pick<ExecutorModelDispatch, "model"> & {
+    options: Pick<ExecutorModelDispatch["options"], "reasoning" | "providerOptions">;
+  },
 ): number {
-  if (resolveModelCallProvider(model) !== "anthropic") return 0;
-  const reasoning = buildModelCallContextRequest(model, options)?.reasoning;
-  if (options.reasoning?.enabled === true) {
+  if (resolveModelCallProvider(request.model) !== "anthropic") return 0;
+  const reasoning = buildModelCallContextRequest(request.model, request.options)?.reasoning;
+  if (request.options.reasoning?.enabled === true) {
     const budget = reasoning?.budgetTokens ??
       (reasoning?.effort === "low"
         ? 1024
@@ -96,14 +95,14 @@ export function executorAdditiveReasoningTokens(
         ? 32768
         : 4096);
     // Match the first-party Anthropic builder; its offline contract matrix guards drift.
-    if (!Number.isSafeInteger(budget) || budget < 1024) {
+    if (!numberIsSafeInteger(budget) || budget < 1024) {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
     return budget;
   }
   // Canonical native thinking has precedence when neutral reasoning does not enable it.
   // Adaptive thinking stays within max_tokens and adds no separate budget.
-  const anthropic = options.providerOptions?.anthropic;
+  const anthropic = request.options.providerOptions?.anthropic;
   const thinking = anthropic && typeof anthropic === "object" && !Array.isArray(anthropic)
     ? (anthropic as Record<string, unknown>).thinking
     : undefined;
@@ -112,7 +111,7 @@ export function executorAdditiveReasoningTokens(
     (thinking as Record<string, unknown>).type === "enabled"
   ) {
     const budget = reasoning?.budgetTokens;
-    if (budget === undefined || !Number.isSafeInteger(budget) || budget < 1024) {
+    if (budget === undefined || !numberIsSafeInteger(budget) || budget < 1024) {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
     return budget;
@@ -196,7 +195,7 @@ export function createExecutorModelAdmission(
       const policy = policies.get(request.model.id);
       if (!policy) throw new TypeError("Executor model is not granted");
       assertSingleCompletion(request.options);
-      const budget = executorAdditiveReasoningTokens(request.model, request.options);
+      const budget = getExecutorModelAdditiveReasoningTokens(request);
       const available = policy.maxOutputTokens - budget;
       const maxOutputTokens = request.options.maxOutputTokens ?? available;
       if (

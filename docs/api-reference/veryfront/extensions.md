@@ -501,12 +501,12 @@ import { estimateTokens } from "veryfront/extensions/distributed/agent-memory-su
 
 #### Types
 
-| Name               | Description                               | Source                                                                                               |
-| ------------------ | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `Memory`           | Public API contract for memory.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
-| `MemoryConfigBase` | ************************ Memory Interface | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
-| `MemoryStats`      | Public API contract for memory stats.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
-| `MinimalMessage`   |                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
+| Name               | Description                                                | Source                                                                                               |
+| ------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `Memory`           | Public API contract for memory.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
+| `MemoryConfigBase` | Memory retention settings shared by agent memory backends. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
+| `MemoryStats`      | Public API contract for memory stats.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
+| `MinimalMessage`   |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts) |
 
 ### `veryfront/extensions/distributed/cache-support`
 

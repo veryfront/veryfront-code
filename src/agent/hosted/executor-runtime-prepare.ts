@@ -1,7 +1,10 @@
+import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
   chainPrivatePromise as chain,
   createPrivateDeferred,
+  observePrivatePromise,
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -9,9 +12,10 @@ import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
+  tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { executorAdditiveReasoningTokens } from "./executor-model-grant.ts";
+import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
 import { isToolVisibleTo } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
@@ -36,6 +40,7 @@ import {
   type ExecutorDiscoverySource,
   getExecutorAgentDescribeResultSchema,
   getExecutorDiscoverySourceSchema,
+  parseDiscoveryData,
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
@@ -77,6 +82,7 @@ import {
   type ExecutorRuntimePrepareRequest,
   getExecutorRuntimeGrantDataSchema,
   getExecutorRuntimePrepareRequestSchema,
+  getExecutorRuntimeSteeringSchema,
   parseRuntimePreparationData,
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 
@@ -84,24 +90,39 @@ const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const hasOwn = Object.hasOwn;
-const objectDefineProperty = Object.defineProperty;
+const objectSetPrototypeOf = Object.setPrototypeOf;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
 const objectEntries = Object.entries;
 const arrayIncludes = Array.prototype.includes;
+const arrayIsArray = Array.isArray;
 const abortController = AbortController.prototype.abort;
 const abortSignalAny = AbortSignal.any;
 const AbortSignalConstructor = AbortSignal;
 const mathMin = Math.min;
+const numberIsSafeInteger = Number.isSafeInteger;
+const addEventListener = EventTarget.prototype.addEventListener;
+const removeEventListener = EventTarget.prototype.removeEventListener;
+const iteratorSymbol = Symbol.iterator;
+
+function combineSignals(...signals: AbortSignal[]): AbortSignal {
+  const inputs = createPrivateSet(signals);
+  defineOwnDataProperty(signals, iteratorSymbol, () => inputs.values());
+  return apply(abortSignalAny, AbortSignalConstructor, [signals]) as AbortSignal;
+}
 
 function filter<T>(values: readonly T[], predicate: (value: T) => boolean): T[] {
   const filtered: T[] = [];
   for (let index = 0; index < values.length; index++) {
     const value = values[index] as T;
     if (!predicate(value)) continue;
-    apply(objectDefineProperty, Object, [
+    defineOwnDataProperty(
       filtered,
       filtered.length,
-      { value, enumerable: true, configurable: true, writable: true },
-    ]);
+      value,
+      { enumerable: true, configurable: true, writable: true },
+    );
   }
   return filtered;
 }
@@ -128,11 +149,12 @@ function selectAllowedHostTools(
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined || !allowed.has(entry[0])) continue;
-    apply(objectDefineProperty, Object, [
+    defineOwnDataProperty(
       selected,
       entry[0],
-      { value: entry[1], enumerable: true, configurable: true, writable: true },
-    ]);
+      entry[1],
+      { enumerable: true, configurable: true, writable: true },
+    );
   }
   return selected;
 }
@@ -204,7 +226,57 @@ function snapshotGrant(
     ) || !parsed.models.some((model) => model.id === parsed.defaultModelId) ||
     createPrivateSet(parsed.models.map((model) => model.id)).size !== parsed.models.length
   ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+  objectSetPrototypeOf(parsed, null);
+  objectSetPrototypeOf(parsed.execution, null);
   return parsed;
+}
+
+function snapshotCheckpointFacade<I, C>(
+  facade: { initial?: I; persist: (checkpoint: C) => void | Promise<void> } | undefined,
+): { initial?: I; persist: (checkpoint: C) => void | Promise<void> } | undefined {
+  if (!facade) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(facade, "initial");
+  const initial = descriptor && hasOwn(descriptor, "value") ? descriptor.value as I : undefined;
+  const persist = snapshotFacadeMethod(facade, "persist");
+  const snapshot = {
+    initial,
+    persist: typeof persist === "function"
+      ? (checkpoint: C) =>
+        chain(
+          resolvePrivatePromise(),
+          () => apply(persist, facade, [checkpoint]) as void | Promise<void>,
+        )
+      : persist,
+  };
+  objectSetPrototypeOf(snapshot, null);
+  return snapshot;
+}
+
+function snapshotFacadeMethod<T extends object, K extends keyof T>(facade: T, key: K): T[K] {
+  let current: object | null = facade;
+  for (let depth = 0; current !== null && current !== objectPrototype && depth < 128; depth++) {
+    const descriptor = objectGetOwnPropertyDescriptor(current, key);
+    if (descriptor) {
+      const method = hasOwn(descriptor, "value") ? descriptor.value : undefined;
+      return (typeof method === "function"
+        ? (...args: unknown[]) => apply(method, facade, args)
+        : undefined) as T[K];
+    }
+    current = objectGetPrototypeOf(current);
+  }
+  return undefined as T[K];
+}
+
+function snapshotSteeringFacade(
+  facade: ExecutorRuntimeFacades["projectSteering"],
+): ExecutorRuntimeFacades["projectSteering"] {
+  if (!facade) return undefined;
+  const snapshot = {
+    prepare: snapshotFacadeMethod(facade, "prepare"),
+    refresh: snapshotFacadeMethod(facade, "refresh"),
+  };
+  objectSetPrototypeOf(snapshot, null);
+  return snapshot;
 }
 function sameBinding(left: ExecutorBinding, right: ExecutorBinding) {
   return left.allocationId === right.allocationId && left.generation === right.generation &&
@@ -233,11 +305,21 @@ export function createExecutorRuntimePreparation(input: Options) {
   const modelGrants = new Map(grant?.models.map((model) => [model.id, model]) ?? []);
   const binding = parseRuntimePreparationData(getExecutorBindingSchema(), input.binding);
   const source = parseRuntimePreparationData(getExecutorDiscoverySourceSchema(), input.source);
+  objectSetPrototypeOf(binding, null);
+  objectSetPrototypeOf(source, null);
+  const installedModelResolver = input.facades.resolveModelRuntime;
   const facades: ExecutorRuntimeFacades = {
-    ...input.facades,
+    resolveModelRuntime: snapshotFacadeMethod(input.facades, "resolveModelRuntime"),
+    cleanup: snapshotFacadeMethod(input.facades, "cleanup"),
+    projectSteering: snapshotSteeringFacade(input.facades.projectSteering),
+    latestConversationUserText: snapshotFacadeMethod(input.facades, "latestConversationUserText"),
+    publishParentRunEvents: snapshotFacadeMethod(input.facades, "publishParentRunEvents"),
     hostTools: new Map(input.facades.hostTools),
     remoteToolSources: new Map(input.facades.remoteToolSources),
+    toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),
+    providerReplayCheckpoint: snapshotCheckpointFacade(input.facades.providerReplayCheckpoint),
   };
+  objectSetPrototypeOf(facades, null);
   const lifetime = new AbortController();
   let preparation: Promise<JsonValue> | undefined;
   let preparedOperations: ReadonlyMap<string, ExecutorOperation> | undefined;
@@ -259,8 +341,8 @@ export function createExecutorRuntimePreparation(input: Options) {
       // Startup can still reserve producer work. Join both before releasing
       // facades, without joining the stream handler that calls this cleanup.
       if (startup) await chain(startup, () => {}, () => {});
-      await producerCompletion;
-      if (resourcesStarted) await facades.cleanup();
+      if (producerCompletion) await observePrivatePromise(producerCompletion);
+      if (resourcesStarted) await observePrivatePromise(facades.cleanup());
     });
     return cleanup;
   };
@@ -275,7 +357,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         failed = true;
       }
       try {
-        await input.discovery.close();
+        await observePrivatePromise(input.discovery.close());
       } catch {
         failed = true;
       }
@@ -284,13 +366,13 @@ export function createExecutorRuntimePreparation(input: Options) {
     });
     void chain(closing, settled.resolve, settled.reject);
     apply(abortController, lifetime, []);
-    input.discovery.signal.removeEventListener("abort", onDiscoveryAbort);
+    apply(removeEventListener, input.discovery.signal, ["abort", onDiscoveryAbort]);
     return closing;
   }
   const onDiscoveryAbort = () => {
     void chain(close(), () => {}, () => {});
   };
-  input.discovery.signal.addEventListener("abort", onDiscoveryAbort, { once: true });
+  apply(addEventListener, input.discovery.signal, ["abort", onDiscoveryAbort, { once: true }]);
   if (input.discovery.signal.aborted) onDiscoveryAbort();
 
   function requireFacades(
@@ -355,8 +437,13 @@ export function createExecutorRuntimePreparation(input: Options) {
       }
       const operation = privateMapGet(input.discovery.operations, "agent.describe");
       if (operation?.mode !== "unary") refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
-      const described = getExecutorAgentDescribeResultSchema().parse(
-        await operation.handle({ agentId: request.agentId }, context),
+      const described = parseDiscoveryData(
+        getExecutorAgentDescribeResultSchema(),
+        await chain(
+          resolvePrivatePromise(),
+          () => operation.handle({ agentId: request.agentId }, context),
+        ),
+        true,
       );
       if (
         !described.ok || described.value.definition.id !== grant.agentId ||
@@ -370,6 +457,35 @@ export function createExecutorRuntimePreparation(input: Options) {
         (request.maxOutputTokens !== undefined &&
           request.maxOutputTokens > modelGrant.maxOutputTokens)
       ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      const thinking = request.thinking ?? definition.thinking ??
+        resolveVeryfrontCloudModelThinking(modelId);
+      let availableOutputTokens = modelGrant.maxOutputTokens;
+      const modelProvider = tryGetVeryfrontCloudProviderFromModelId(modelId);
+      if (modelProvider === "anthropic") {
+        try {
+          const effectiveThinking = thinking ?? resolveVeryfrontCloudModelThinking(modelId);
+          const model = { id: modelId, modelId, provider: modelProvider };
+          const options = {
+            reasoning: resolveVeryfrontCloudReasoningOption(modelId, effectiveThinking),
+            providerOptions: resolveVeryfrontCloudThinkingProviderOptions(
+              modelId,
+              effectiveThinking,
+            ),
+          };
+          objectSetPrototypeOf(model, null);
+          objectSetPrototypeOf(options, null);
+          availableOutputTokens -= getExecutorModelAdditiveReasoningTokens({ model, options });
+        } catch {
+          refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        }
+      }
+      const maxOutputTokens = request.maxOutputTokens ?? availableOutputTokens;
+      if (
+        !numberIsSafeInteger(maxOutputTokens) || maxOutputTokens <= 0 ||
+        maxOutputTokens > availableOutputTokens
+      ) {
+        refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      }
       requireFacades(definition, grant);
       const runtime = input.discovery.getRuntime();
       // Enroll only after agent.describe returns: a failed discovery operation
@@ -396,12 +512,13 @@ export function createExecutorRuntimePreparation(input: Options) {
           localTools,
         })!,
       ];
-      const deniedToolNames = [
-        ...createPrivateSet([
-          ...definition.deniedTools ?? [],
-          ...normalizeToolNames(definition.deniedTools ?? []),
-        ]),
-      ];
+      const deniedToolSet = createPrivateSet(definition.deniedTools ?? []);
+      const normalizedDenials = normalizeToolNames(definition.deniedTools ?? []);
+      for (let index = 0; index < normalizedDenials.length; index++) {
+        const name = normalizedDenials[index];
+        if (name !== undefined) deniedToolSet.add(name);
+      }
+      const deniedToolNames = [...deniedToolSet];
       const sourceToolNames = resolveHostedRuntimeAllowedTools({
         configuredTools: definition.tools,
         configuredDeniedTools: definition.deniedTools,
@@ -411,7 +528,7 @@ export function createExecutorRuntimePreparation(input: Options) {
       });
       let allowedToolNames = intersectNames(
         normalizeToolNames(grant.allowedToolNames),
-        Array.isArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
+        arrayIsArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
         request.allowedToolNames === undefined
           ? undefined
           : normalizeToolNames(request.allowedToolNames),
@@ -436,33 +553,24 @@ export function createExecutorRuntimePreparation(input: Options) {
       };
       registerModelRuntimeResolverRevoker(
         resolveModelRuntime,
-        () => revokeModelRuntimeResolver(facades.resolveModelRuntime),
+        () => revokeModelRuntimeResolver(installedModelResolver),
       );
       // The first facade call can reserve resources before throwing.
       resourcesStarted = true;
-      const modelRuntime = resolveModelRuntime(modelId)!;
-      const thinking = request.thinking ?? definition.thinking ??
-        resolveVeryfrontCloudModelThinking(modelId);
-      const reasoningBudget = executorAdditiveReasoningTokens(modelRuntime, {
-        reasoning: resolveVeryfrontCloudReasoningOption(modelId, thinking),
-        providerOptions: resolveVeryfrontCloudThinkingProviderOptions(modelId, thinking),
-      });
-      const completionAllowance = modelGrant.maxOutputTokens - reasoningBudget;
-      if (
-        completionAllowance <= 0 ||
-        (request.maxOutputTokens ?? completionAllowance) > completionAllowance
-      ) {
-        refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-      }
+      resolveModelRuntime(modelId);
       const execution = grant.execution;
-      const steering = facades.projectSteering
-        ? await facades.projectSteering.prepare({
+      const steeringResult = facades.projectSteering
+        ? await observePrivatePromise(facades.projectSteering.prepare({
           definition,
           projectId: execution.projectId,
           branchId: execution.branchId,
-          signal: lifetime.signal,
-        })
+          signal: context.signal,
+        }))
         : undefined;
+      const steering = steeringResult === undefined ? undefined : parseRuntimePreparationData(
+        getExecutorRuntimeSteeringSchema(),
+        steeringResult,
+      );
       assertActive();
       if (steering && steering.agent.id !== definition.id) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
       const skills = resolveRuntimeSkillSelectorForAgent({
@@ -470,16 +578,16 @@ export function createExecutorRuntimePreparation(input: Options) {
         agentId: definition.id,
         selector: definition.skills === false ? [] : definition.skills,
       });
-      if (sourceToolNames !== undefined) {
+      if (sourceToolNames !== undefined || request.allowedToolNames === undefined) {
         const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
-          allowedToolNames: normalizeToolNames(sourceToolNames),
+          allowedToolNames: normalizeToolNames(sourceToolNames ?? allowedToolNames),
           localToolNames: filter(
             normalizeToolNames(grant.allowedToolNames),
             (name) => hasOwn(localTools, name),
           ),
           availableSkillIds: skills.allowedSkillIds,
           configDerivedSelector: request.allowedToolNames === undefined &&
-            !(definition.tools === true && Boolean(definition.deniedTools?.length)),
+            !(definition.tools === true && (definition.deniedTools?.length ?? 0) > 0),
         });
         allowedToolNames = intersectNames(
           normalizeToolNames(grant.allowedToolNames),
@@ -500,6 +608,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           ? { parentRunId: execution.runId, parentMessageId: execution.messageId }
           : {}),
       };
+      objectSetPrototypeOf(taskContext, null);
       const options: PreparedHostedRuntimeAgentOptions["options"] = {
         ...execution,
         agentId: definition.id,
@@ -523,7 +632,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           definition.maxSteps ?? grant.maxSteps,
           grant.maxSteps,
         ),
-        maxOutputTokens: request.maxOutputTokens ?? completionAllowance,
+        maxOutputTokens,
         allowedTools: allowedToolNames,
         allowedProviderTools: providerToolNames,
         availableSkillIds: skills.allowedSkillIds,
@@ -557,6 +666,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           }
           : {}),
       };
+      objectSetPrototypeOf(options, null);
       const remoteToolSources: RemoteToolSource[] = [];
       for (let index = 0; index < grant.remoteToolSourceIds.length; index++) {
         const id = grant.remoteToolSourceIds[index];
@@ -575,16 +685,12 @@ export function createExecutorRuntimePreparation(input: Options) {
             );
           }
         }
-        apply(objectDefineProperty, Object, [
+        defineOwnDataProperty(
           remoteToolSources,
           remoteToolSources.length,
-          {
-            value: remoteToolSource,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          },
-        ]);
+          remoteToolSource,
+          { enumerable: true, configurable: true, writable: true },
+        );
       }
       const facadeAllowedToolSet = createPrivateSet<string>();
       for (let index = 0; index < allowedToolNames.length; index++) {
@@ -596,7 +702,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         if (name !== undefined) facadeAllowedToolSet.add(name);
       }
       const facadeAllowedToolNames = [...facadeAllowedToolSet];
-      const toolAssembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      const assemblyInput: Parameters<typeof prepareFacadedHostedChatRuntimeToolAssembly>[0] = {
         signal: context.signal,
         taskContext,
         instructions: options.instructions,
@@ -623,36 +729,45 @@ export function createExecutorRuntimePreparation(input: Options) {
           }
         },
         loadLatestConversationUserText: facades.latestConversationUserText,
-      });
+      };
+      objectSetPrototypeOf(assemblyInput, null);
+      const toolAssembly = await observePrivatePromise(
+        prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
+      );
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
         if (!includes(toolAssembly.authorizedToolNames, name)) {
           refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
         }
       }
+      const scopedAssembly = {
+        ...toolAssembly,
+        runtimeTools: scopeHostedRuntimeToolResults(toolAssembly.runtimeTools),
+      };
+      objectSetPrototypeOf(scopedAssembly, null);
+      const runtimeInput: PreparedHostedRuntimeAgentOptions = {
+        options,
+        taskContext,
+        toolAssembly: scopedAssembly,
+        modelId,
+        sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
+        refreshSystem: facades.projectSteering
+          ? () => facades.projectSteering!.refresh(streamSignal, allowedToolNames)
+          : undefined,
+      };
+      const runtimeOptions: NonNullable<Parameters<typeof createPreparedHostedRuntimeAgent>[1]> = {
+        resolveModelRuntime,
+        preserveToolCatalog: true,
+        onStreamCompletion: (completion) => {
+          producerCompletion = completion;
+          input.discovery.retainRuntimeTask(completion);
+        },
+      };
+      objectSetPrototypeOf(runtimeInput, null);
+      objectSetPrototypeOf(runtimeOptions, null);
       const runtimeAgent = runWithProjectAgentRuntime(
         runtime,
-        () =>
-          createPreparedHostedRuntimeAgent({
-            options,
-            taskContext,
-            toolAssembly: {
-              ...toolAssembly,
-              runtimeTools: scopeHostedRuntimeToolResults(toolAssembly.runtimeTools),
-            },
-            modelId,
-            sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
-            refreshSystem: facades.projectSteering
-              ? () => facades.projectSteering!.refresh(streamSignal, allowedToolNames)
-              : undefined,
-          }, {
-            resolveModelRuntime,
-            preserveToolCatalog: true,
-            onStreamCompletion: (completion) => {
-              producerCompletion = completion;
-              input.discovery.retainRuntimeTask(completion);
-            },
-          }),
+        () => createPreparedHostedRuntimeAgent(runtimeInput, runtimeOptions),
       );
       assertActive();
       const preparedRuntimeHandle = crypto.randomUUID();
@@ -662,7 +777,7 @@ export function createExecutorRuntimePreparation(input: Options) {
           streamSignal = streamInput.abortSignal;
           startup = chain(resolvePrivatePromise(), () => {
             assertActive();
-            return createHostedChatRuntimeDataStream({
+            const streamOptions: Parameters<typeof createHostedChatRuntimeDataStream>[0] = {
               runtimeAgent,
               sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
               agentId: definition.id,
@@ -672,7 +787,9 @@ export function createExecutorRuntimePreparation(input: Options) {
                 ? { runId: execution.runId, conversationId: execution.conversationId }
                 : {}),
               maxOutputTokens: options.maxOutputTokens,
-            }, streamInput);
+            };
+            objectSetPrototypeOf(streamOptions, null);
+            return createHostedChatRuntimeDataStream(streamOptions, streamInput);
           });
           input.discovery.retainRuntimeTask(startup);
           return startup;
@@ -716,19 +833,16 @@ export function createExecutorRuntimePreparation(input: Options) {
         const cancel = () => {
           void chain(close(), () => {}, () => {});
         };
-        context.signal.addEventListener("abort", cancel, { once: true });
+        apply(addEventListener, context.signal, ["abort", cancel, { once: true }]);
         preparation = prepare(request, {
           ...context,
-          signal: apply(abortSignalAny, AbortSignalConstructor, [[
-            context.signal,
-            lifetime.signal,
-          ]]),
+          signal: combineSignals(context.signal, lifetime.signal),
         });
         if (context.signal.aborted) cancel();
         try {
-          return await preparation;
+          return await observePrivatePromise(preparation);
         } finally {
-          context.signal.removeEventListener("abort", cancel);
+          apply(removeEventListener, context.signal, ["abort", cancel]);
         }
       } catch (error) {
         return {
@@ -749,10 +863,10 @@ export function createExecutorRuntimePreparation(input: Options) {
         ? undefined
         : privateMapGet(preparedOperations, "agent.stream");
       if (operation?.mode !== "stream") refuse("EXECUTOR_RUNTIME_NOT_PREPARED");
-      yield* operation.handle(value, {
+      yield* getPrivateAsyncIterator(operation.handle(value, {
         ...context,
-        signal: apply(abortSignalAny, AbortSignalConstructor, [[context.signal, lifetime.signal]]),
-      });
+        signal: combineSignals(context.signal, lifetime.signal),
+      }));
     },
   });
   return { operations, close, settled: settled.promise, signal: lifetime.signal };

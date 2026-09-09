@@ -4,6 +4,8 @@ type PrivateWeakStore<TKey extends object, TValue> = Readonly<{
 }>;
 
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicWeakMap = WeakMap;
+const ObjectFreeze = Object.freeze;
 const WeakMapGet = WeakMap.prototype.get;
 const WeakMapSet = WeakMap.prototype.set;
 
@@ -12,8 +14,8 @@ export function createPrivateWeakStore<TKey extends object, TValue>(): PrivateWe
   TKey,
   TValue
 > {
-  const store = new WeakMap<TKey, TValue>();
-  return Object.freeze({
+  const store = new IntrinsicWeakMap<TKey, TValue>();
+  return ObjectFreeze({
     get(key: TKey): TValue | undefined {
       return IntrinsicReflectApply(WeakMapGet, store, [key]) as TValue | undefined;
     },

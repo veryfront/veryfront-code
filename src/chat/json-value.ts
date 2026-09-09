@@ -8,6 +8,33 @@
  */
 
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { filterPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { privateTextSlice } from "#veryfront/security/private-text.ts";
+
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
+const ownKeys = Reflect.ownKeys;
+const apply = Reflect.apply;
+const arraySort = Array.prototype.sort;
+const isArray = Array.isArray;
+const isSafeInteger = Number.isSafeInteger;
+const isFiniteNumber = Number.isFinite;
+const objectIs = Object.is;
+const minimum = Math.min;
+const NativeWeakSet = WeakSet;
+const weakSetHas = WeakSet.prototype.has;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetDelete = WeakSet.prototype.delete;
+const NativeDate = Date;
+const NativeURL = URL;
+const dateGetTime = Date.prototype.getTime;
+const dateToISOString = Date.prototype.toISOString;
+const urlToString = URL.prototype.toString;
+const bigintToString = BigInt.prototype.toString;
+const stringify = JSON.stringify;
+const setPrototypeOf = Object.setPrototypeOf;
+const objectKeys = Object.keys;
 const DEFAULT_MAX_DEPTH = 64;
 const DEFAULT_MAX_NODES = 65_536;
 const DEFAULT_MAX_STRING_CHARS = 8 * 1024 * 1024;
@@ -55,7 +82,7 @@ function readLimit(
   minimum: number,
 ): number {
   const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved < minimum) {
+  if (!isSafeInteger(resolved) || resolved < minimum) {
     throw new TypeError(`Chat JSON ${name} must be a safe integer no less than ${minimum}`);
   }
   return resolved;
@@ -93,9 +120,9 @@ function boundedString(value: string, state: ConversionState): string {
   const suffix = "… [truncated]";
   state.stringChars = state.maxStringChars;
   if (remaining <= suffix.length) {
-    return value.slice(0, remaining);
+    return privateTextSlice(value, 0, remaining);
   }
-  return `${value.slice(0, remaining - suffix.length)}${suffix}`;
+  return `${privateTextSlice(value, 0, remaining - suffix.length)}${suffix}`;
 }
 
 function beginValue(depth: number, state: ConversionState): boolean {
@@ -111,7 +138,7 @@ function readDescriptor(
   key: PropertyKey,
 ): PropertyDescriptor | undefined {
   try {
-    return Object.getOwnPropertyDescriptor(value, key);
+    return getOwnPropertyDescriptor(value, key);
   } catch {
     return undefined;
   }
@@ -123,28 +150,28 @@ function convertArray(
   state: ConversionState,
 ): ChatJsonValue[] {
   const lengthDescriptor = readDescriptor(value, "length");
-  const length = lengthDescriptor && Object.hasOwn(lengthDescriptor, "value") &&
-      Number.isSafeInteger(lengthDescriptor.value) && lengthDescriptor.value >= 0
+  const length = lengthDescriptor && hasOwn(lengthDescriptor, "value") &&
+      isSafeInteger(lengthDescriptor.value) && lengthDescriptor.value >= 0
     ? lengthDescriptor.value as number
     : 0;
-  const itemCount = Math.min(length, state.maxContainerEntries);
+  const itemCount = minimum(length, state.maxContainerEntries);
   const output: ChatJsonValue[] = [];
 
   for (let index = 0; index < itemCount; index += 1) {
     const descriptor = readDescriptor(value, String(index));
     if (!descriptor) {
-      output.push(null);
+      pushPrivateArray(output, null);
       continue;
     }
-    if (!Object.hasOwn(descriptor, "value")) {
-      output.push(ACCESSOR_MARKER);
+    if (!hasOwn(descriptor, "value")) {
+      pushPrivateArray(output, ACCESSOR_MARKER);
       continue;
     }
-    output.push(convertValue(descriptor.value, depth + 1, state));
+    pushPrivateArray(output, convertValue(descriptor.value, depth + 1, state));
   }
 
   if (length > itemCount) {
-    output.push(`${TRUNCATED_MARKER} ${length - itemCount} array items`);
+    pushPrivateArray(output, `${TRUNCATED_MARKER} ${length - itemCount} array items`);
   }
   return output;
 }
@@ -154,10 +181,9 @@ function defineJsonProperty(
   key: string,
   value: ChatJsonValue,
 ): void {
-  Object.defineProperty(target, key, {
+  defineOwnDataProperty(target, key, value, {
     configurable: true,
     enumerable: true,
-    value,
     writable: true,
   });
 }
@@ -169,16 +195,17 @@ function convertObject(
 ): { [key: string]: ChatJsonValue } | string {
   let keys: string[];
   try {
-    keys = Reflect.ownKeys(value)
-      .filter((key): key is string => typeof key === "string")
-      .filter((key) => readDescriptor(value, key)?.enumerable === true)
-      .sort(compareStrings);
+    keys = filterPrivateArray(
+      filterPrivateArray(ownKeys(value), (key): key is string => typeof key === "string"),
+      (key) => readDescriptor(value, key)?.enumerable === true,
+    );
+    apply(arraySort, keys, [compareStrings]);
   } catch {
     return UNREADABLE_MARKER;
   }
 
   const output: Record<string, ChatJsonValue> = {};
-  const candidateCount = Math.min(keys.length, state.maxContainerEntries);
+  const candidateCount = minimum(keys.length, state.maxContainerEntries);
   let entryCount = 0;
   for (let index = 0; index < candidateCount; index += 1) {
     const key = keys[index]!;
@@ -189,7 +216,7 @@ function convertObject(
     const descriptor = readDescriptor(value, key);
     if (!descriptor) {
       defineJsonProperty(output, key, UNREADABLE_MARKER);
-    } else if (!Object.hasOwn(descriptor, "value")) {
+    } else if (!hasOwn(descriptor, "value")) {
       defineJsonProperty(output, key, ACCESSOR_MARKER);
     } else {
       defineJsonProperty(output, key, convertValue(descriptor.value, depth + 1, state));
@@ -199,7 +226,7 @@ function convertObject(
 
   if (keys.length > entryCount) {
     let markerKey = "__veryfront_truncated__";
-    while (Object.hasOwn(output, markerKey)) markerKey = `_${markerKey}`;
+    while (hasOwn(output, markerKey)) markerKey = `_${markerKey}`;
     defineJsonProperty(output, markerKey, `${keys.length - entryCount} object entries omitted`);
   }
   return output;
@@ -210,14 +237,14 @@ function convertKnownScalarObject(
   state: ConversionState,
 ): ChatJsonValue | undefined {
   try {
-    if (value instanceof Date) {
-      const timestamp = Date.prototype.getTime.call(value);
-      return Number.isFinite(timestamp)
-        ? boundedString(Date.prototype.toISOString.call(value), state)
+    if (value instanceof NativeDate) {
+      const timestamp = apply(dateGetTime, value, []) as number;
+      return isFiniteNumber(timestamp)
+        ? boundedString(apply(dateToISOString, value, []) as string, state)
         : null;
     }
-    if (value instanceof URL) {
-      return boundedString(URL.prototype.toString.call(value), state);
+    if (value instanceof NativeURL) {
+      return boundedString(apply(urlToString, value, []) as string, state);
     }
   } catch {
     return UNREADABLE_MARKER;
@@ -242,9 +269,9 @@ function convertValue(
     case "boolean":
       return value;
     case "number":
-      return Number.isFinite(value) ? (Object.is(value, -0) ? 0 : value) : null;
+      return isFiniteNumber(value) ? (objectIs(value, -0) ? 0 : value) : null;
     case "bigint":
-      return boundedString(value.toString(), state);
+      return boundedString(apply(bigintToString, value, []) as string, state);
     case "undefined":
     case "function":
     case "symbol":
@@ -254,7 +281,7 @@ function convertValue(
   }
 
   const objectValue = value as object;
-  if (state.ancestors.has(objectValue)) {
+  if (apply(weakSetHas, state.ancestors, [objectValue])) {
     return CIRCULAR_MARKER;
   }
 
@@ -263,15 +290,15 @@ function convertValue(
     return scalar;
   }
 
-  state.ancestors.add(objectValue);
+  apply(weakSetAdd, state.ancestors, [objectValue]);
   try {
-    return Array.isArray(value)
+    return isArray(value)
       ? convertArray(value, depth, state)
       : convertObject(objectValue, depth, state);
   } catch {
     return UNREADABLE_MARKER;
   } finally {
-    state.ancestors.delete(objectValue);
+    apply(weakSetDelete, state.ancestors, [objectValue]);
   }
 }
 
@@ -288,7 +315,7 @@ export function toChatJsonValue(
   const resolved = resolveOptions(options);
   return convertValue(value, 0, {
     ...resolved,
-    ancestors: new WeakSet<object>(),
+    ancestors: new NativeWeakSet<object>(),
     nodes: 0,
     stringChars: 0,
   });
@@ -299,5 +326,16 @@ export function stringifyChatJson(
   value: unknown,
   options: ChatJsonValueOptions = {},
 ): string {
-  return JSON.stringify(toChatJsonValue(value, options));
+  const normalized = toChatJsonValue(value, options);
+  const protect = (value: ChatJsonValue): void => {
+    if (value === null || typeof value !== "object") return;
+    setPrototypeOf(value, null);
+    const keys = objectKeys(value);
+    for (let index = 0; index < keys.length; index++) {
+      const descriptor = getOwnPropertyDescriptor(value, keys[index]!)!;
+      protect(descriptor.value as ChatJsonValue);
+    }
+  };
+  protect(normalized);
+  return stringify(normalized);
 }

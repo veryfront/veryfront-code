@@ -1,3 +1,4 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import {
   createInitialReducerState,
@@ -111,7 +112,7 @@ function normalizeArgumentText(raw: string): string {
   const stripped = stripLeadingEmptyObjectPlaceholder(raw);
   if (stripped.length === 0) return "";
   try {
-    return JSON.stringify(JSON.parse(stripped));
+    return privateJsonStringify(privateJsonParse(stripped));
   } catch {
     return stripped;
   }

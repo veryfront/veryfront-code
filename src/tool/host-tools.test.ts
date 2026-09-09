@@ -15,6 +15,49 @@ import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("materializes class-defined execution methods with their original receiver", async () => {
+    class Definition {
+      description = "Synthetic class tool";
+      inputSchema = defineSchema((v) => v.object({}))();
+      executions = 0;
+      execute() {
+        this.executions++;
+        return { executions: this.executions };
+      }
+    }
+    const definition = new Definition();
+    const tools = createToolsFromHostDefinitions({ synthetic: definition });
+    assertEquals(Object.keys(tools), ["synthetic"]);
+    assertEquals(await tools.synthetic?.execute({}), { executions: 1 });
+    assertEquals(definition.executions, 1);
+  });
+
+  it("ignores inherited optional metadata and preserves the original execution receiver", async () => {
+    let metadataReads = 0;
+    const definition: HostToolSet[string] = Object.create({
+      get inputSchemaJson() {
+        metadataReads++;
+        return undefined;
+      },
+      get mcp() {
+        metadataReads++;
+        return undefined;
+      },
+    }, {
+      description: { value: "Synthetic tool", enumerable: true },
+      inputSchema: { value: defineSchema((v) => v.object({}))(), enumerable: true },
+      execute: {
+        value: function (this: HostToolSet[string]) {
+          return { originalReceiver: this === definition };
+        },
+        enumerable: true,
+      },
+    });
+    const tools = createToolsFromHostDefinitions({ synthetic: definition });
+    assertEquals(metadataReads, 0);
+    assertEquals(await tools.synthetic?.execute({}), { originalReceiver: true });
+  });
+
   it("materializes prototype-named tools as own data properties", async () => {
     const tools = createToolsFromHostDefinitions({
       ["__proto__"]: {

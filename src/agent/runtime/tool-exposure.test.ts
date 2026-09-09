@@ -36,6 +36,24 @@ const catalog = [
   definition("load_skill", "Load a configured skill"),
 ];
 
+it("searches private catalog entries without invoking their iterator", () => {
+  const authorized = [definition("lookup", "synthetic private search")];
+  let reads = 0;
+  Object.defineProperty(authorized, Symbol.iterator, {
+    get() {
+      reads++;
+      return Array.prototype[Symbol.iterator];
+    },
+  });
+  const result = searchToolExposure({
+    query: "synthetic private search",
+    authorized,
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches[0]?.name, "lookup");
+  assertEquals(reads, 0);
+});
+
 it("copies authorized tools without a mutable array iterator", () => {
   const allowed = [definition("allowed", "Allowed tool")];
   const denied = definition("denied", "Denied tool");

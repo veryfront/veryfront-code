@@ -18,11 +18,8 @@ export function markRuntimeLocalTool(tool: Tool): Tool {
 
 /** Check whether a tool must stay out of the project-wide tool registry. */
 export function isRuntimeLocalTool(value: unknown): boolean {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      objectGetOwnPropertyDescriptor(value, AGENT_RUNTIME_LOCAL_TOOL)?.value === true,
-  );
+  return value !== null && typeof value === "object" &&
+    objectGetOwnPropertyDescriptor(value, AGENT_RUNTIME_LOCAL_TOOL)?.value === true;
 }
 
 /** Mark a tool whose execution contract cannot consume hosted child-run overrides. */

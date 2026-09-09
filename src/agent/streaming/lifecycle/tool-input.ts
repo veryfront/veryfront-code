@@ -1,3 +1,4 @@
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 
 export type CanonicalToolInputParseResult =
@@ -17,7 +18,7 @@ export function parseCanonicalToolInput(
   const normalized = stripLeadingEmptyObjectPlaceholder(input);
   if (normalized.length === 0) return { ok: false, reason: "invalid" };
   try {
-    const parsed: unknown = JSON.parse(normalized);
+    const parsed: unknown = privateJsonParse(normalized);
     return isRecord(parsed) ? { ok: true, value: parsed } : { ok: false, reason: "invalid" };
   } catch {
     return { ok: false, reason: "malformed" };

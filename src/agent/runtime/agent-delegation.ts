@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { Tool, ToolExecutionContext } from "../../tool/types.ts";
 import type { Agent } from "../types.ts";
 import { agentAsTool, getAgent } from "../composition/index.ts";
@@ -51,7 +52,9 @@ function buildInvokeAgentPrompt(
 ): string {
   if (!context) return prompt;
   if (Object.keys(context).length === 0) return prompt;
-  return `${prompt}\n\n<structured_context>\n${JSON.stringify(context)}\n</structured_context>`;
+  return `${prompt}\n\n<structured_context>\n${
+    privateJsonStringify(context)
+  }\n</structured_context>`;
 }
 
 /**

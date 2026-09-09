@@ -1,8 +1,10 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   chainPrivatePromise as chain,
   createPrivateDeferred,
+  observePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type {
@@ -31,7 +33,14 @@ import {
 } from "./executor-discovery-schema.ts";
 
 const apply = Reflect.apply;
+const MapConstructor = Map;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const abortController = AbortController.prototype.abort;
+const addEventListener = EventTarget.prototype.addEventListener;
+const removeEventListener = EventTarget.prototype.removeEventListener;
 
 export interface ExecutorDiscoveryBackend {
   load(signal: AbortSignal): Promise<ProjectAgentRuntimeDiscovery>;
@@ -100,7 +109,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   let closing: Promise<void> | undefined;
   let cleanupStarted = false;
   const runtimeTasks = createPrivateSet<Promise<void>>();
-  const definitions = new Map<string, RuntimeAgentMarkdownDefinition>();
+  const definitions = new MapConstructor<string, RuntimeAgentMarkdownDefinition>();
   const helpers = () => import("#veryfront/agent/project/agent-runtime.ts");
 
   function assertActive() {
@@ -117,23 +126,23 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
           for (const task of runtimeTasks) await task;
         }
         cleanupStarted = true;
-        if (loadStarted) await backend?.cleanup(runtime);
+        if (loadStarted && backend) await observePrivatePromise(backend.cleanup(runtime));
       } catch {
         throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLEANUP_FAILED");
       } finally {
         runtime = undefined;
-        definitions.clear();
+        apply(mapClear, definitions, []);
       }
     });
     void chain(closing, settled.resolve, settled.reject);
-    input.signal.removeEventListener("abort", onAbort);
+    apply(removeEventListener, input.signal, ["abort", onAbort]);
     apply(abortController, lifetime, []);
     return closing;
   }
   const onAbort = () => {
     void chain(close(), () => {}, () => {});
   };
-  input.signal.addEventListener("abort", onAbort, { once: true });
+  apply(addEventListener, input.signal, ["abort", onAbort, { once: true }]);
   if (input.signal.aborted) onAbort();
 
   async function discover() {
@@ -144,15 +153,15 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       assertActive();
       backend = createNodeExecutorDiscoveryBackend({
         projectDir,
-        cacheKey: JSON.stringify(binding),
+        cacheKey: privateJsonStringify(binding),
       });
     }
     loadStarted = true;
     try {
-      runtime = await backend.load(lifetime.signal);
+      runtime = await observePrivatePromise(backend.load(lifetime.signal));
       assertActive();
       // Validate the whole catalog before publishing local or wire access.
-      const module = await helpers();
+      const module = await observePrivatePromise(helpers());
       parseDiscoveryData(
         getExecutorDiscoveryCandidatesSchema(),
         module.getProjectAgentRuntimeAgentIdCandidates(runtime),
@@ -167,19 +176,23 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   }
 
   async function describeAgent(discovery: ProjectAgentRuntimeDiscovery, agentId: string) {
-    const cached = definitions.get(agentId);
+    const cached = apply(mapGet, definitions, [agentId]) as
+      | RuntimeAgentMarkdownDefinition
+      | undefined;
     if (cached) return cached;
-    if (definitions.size >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
+    if ((apply(mapSize, definitions, []) as number) >= EXECUTOR_DISCOVERY_MAX_AGENTS) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_BUSY");
     }
-    const module = await helpers();
-    const found = discovery.agents.get(agentId);
+    const module = await observePrivatePromise(helpers());
+    const found = apply(mapGet, discovery.agents, [agentId]) as ReturnType<
+      ProjectAgentRuntimeDiscovery["agents"]["get"]
+    >;
     let definition: RuntimeAgentMarkdownDefinition;
     if (found && module.doesProjectAgentRuntimeAgentMatchSource(found, agentSource)) {
-      const projected = await module.runWithProjectAgentRuntime(
+      const projected = await observePrivatePromise(module.runWithProjectAgentRuntime(
         discovery,
         () => module.createRuntimeAgentDefinitionFromAgent(found),
-      );
+      ));
       definition = { ...projected, id: agentId };
     } else {
       if (agentSource === "code") throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
@@ -217,7 +230,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     if (parsed.id !== agentId) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
     }
-    definitions.set(agentId, parsed);
+    apply(mapSet, definitions, [agentId, parsed]);
     return parsed;
   }
 
@@ -234,14 +247,14 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     const onCancel = () => {
       void chain(close(), () => {}, () => {});
     };
-    context.signal.addEventListener("abort", onCancel, { once: true });
+    apply(addEventListener, context.signal, ["abort", onCancel, { once: true }]);
     const work = chain(tail, async () => {
       if (context.signal.aborted || Date.now() >= context.deadline) {
         onCancel();
         throw new ExecutorDiscoveryError("ABORTED");
       }
       assertActive();
-      const value = await operation();
+      const value = await observePrivatePromise(operation());
       assertActive();
       if (context.signal.aborted || Date.now() >= context.deadline) {
         onCancel();
@@ -268,23 +281,23 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       }
       return { ok: false, code };
     } finally {
-      context.signal.removeEventListener("abort", onCancel);
+      apply(removeEventListener, context.signal, ["abort", onCancel]);
     }
   }
 
-  const operations = new Map<string, ExecutorOperation>([
+  const operations = new MapConstructor<string, ExecutorOperation>([
     ["discovery.describe", {
       mode: "unary",
       handle(value, context) {
         return execute(context, async () => {
           parseDiscoveryData(getExecutorDiscoveryRequestSchema(), value);
-          const discovery = await discover();
-          const module = await helpers();
+          const discovery = await observePrivatePromise(discover());
+          const module = await observePrivatePromise(helpers());
           const candidates = module.getProjectAgentRuntimeAgentIdCandidates(discovery);
           const defaultAgentId = defaultId ??
             module.resolveSingleProjectAgentRuntimeAgentId({ candidates, source: agentSource });
           if (!defaultAgentId) throw new ExecutorDiscoveryError("CONFIG_INVALID");
-          const definition = await describeAgent(discovery, defaultAgentId);
+          const definition = await observePrivatePromise(describeAgent(discovery, defaultAgentId));
           return discoverySuccess(
             parseDiscoveryData(getExecutorDiscoveryDescriptionSchema(), {
               source,
@@ -302,8 +315,8 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       handle(value, context) {
         return execute(context, async () => {
           const request = parseDiscoveryData(getExecutorAgentDescribeRequestSchema(), value);
-          const discovery = await discover();
-          const definition = await describeAgent(discovery, request.agentId);
+          const discovery = await observePrivatePromise(discover());
+          const definition = await observePrivatePromise(describeAgent(discovery, request.agentId));
           return discoverySuccess(
             parseDiscoveryData(getExecutorAgentDescriptionSchema(), { source, definition }, true),
           );

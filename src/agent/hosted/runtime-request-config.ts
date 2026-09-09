@@ -272,7 +272,7 @@ export function resolveHostedRuntimeRequestConfig(
       input.agentConfig.model,
   );
   const failClosedUnrestrictedToolDenials = input.agentConfig.tools === true &&
-    Boolean(input.agentConfig.deniedTools?.length);
+    (input.agentConfig.deniedTools?.length ?? 0) > 0;
 
   return {
     effectiveRuntimeOverrides,

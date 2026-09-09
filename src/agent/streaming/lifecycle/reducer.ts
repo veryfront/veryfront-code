@@ -1,3 +1,12 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import {
+  concatPrivateArrays,
+  filterPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   mergeToolCallInput,
   mergeToolInputDelta,
@@ -47,7 +56,7 @@ export function createInitialReducerState(): StreamReducerState {
     activeTextId: null,
     activeReasoningId: null,
     nextTextIndex: 0,
-    tools: new Map(),
+    tools: createPrivateMap(),
     terminal: false,
     terminalError: null,
   };
@@ -64,7 +73,8 @@ export function reduceStreamSignal(
   const emit = (
     frame: Omit<StreamLifecycleFrame, "sequence" | "elapsedMs">,
   ) =>
-    frames.push(
+    pushPrivateArray(
+      frames,
       { ...frame, sequence: ++state.sequence, elapsedMs } as StreamLifecycleFrame,
     );
 
@@ -132,13 +142,13 @@ export function reduceStreamSignal(
           event: { type: "protocol_repair", code: "implicit_reasoning_start" },
         });
       }
-      const reasoning = [...state.snapshot.reasoning];
-      const index = reasoning.findIndex((part) => part.id === id);
-      const prior = (index >= 0 ? reasoning[index] : undefined) ??
-        { id, text: "" };
+      const reasoning = mapPrivateArray(state.snapshot.reasoning, (part) => part);
+      let index = 0;
+      while (index < reasoning.length && reasoning[index]!.id !== id) index++;
+      const prior = index < reasoning.length ? reasoning[index]! : { id, text: "" };
       const updated = { ...prior, text: prior.text + delta };
-      if (index >= 0) reasoning[index] = updated;
-      else reasoning.push(updated);
+      if (index < reasoning.length) reasoning[index] = updated;
+      else pushPrivateArray(reasoning, updated);
       state.snapshot = { ...state.snapshot, reasoning };
       emit({ class: "semantic", event: signal.event });
       if (delta.length > 0) markProgress();
@@ -150,15 +160,14 @@ export function reduceStreamSignal(
       if (signature !== undefined || redactedData !== undefined) {
         state.snapshot = {
           ...state.snapshot,
-          reasoning: state.snapshot.reasoning.map((part) =>
+          reasoning: mapPrivateArray(state.snapshot.reasoning, (part) =>
             part.id === id
               ? {
                 ...part,
                 ...(signature !== undefined ? { signature } : {}),
                 ...(redactedData !== undefined ? { redactedData } : {}),
               }
-              : part
-          ),
+              : part),
         };
       }
       emit({ class: "semantic", event: signal.event });
@@ -246,23 +255,22 @@ type FrameEmitter = (
 ) => void;
 
 function cloneReducerState(current: StreamReducerState): StreamReducerState {
+  const tools = createPrivateMap<string, StreamToolSnapshot>();
+  for (const [id, tool] of current.tools) {
+    tools.set(id, { ...tool, inputDeltas: mapPrivateArray(tool.inputDeltas, (delta) => delta) });
+  }
   return {
     ...current,
     snapshot: {
       ...current.snapshot,
-      reasoning: current.snapshot.reasoning.map((part) => ({ ...part })),
-      tools: current.snapshot.tools.map((tool) => ({
+      reasoning: mapPrivateArray(current.snapshot.reasoning, (part) => ({ ...part })),
+      tools: mapPrivateArray(current.snapshot.tools, (tool) => ({
         ...tool,
-        inputDeltas: [...tool.inputDeltas],
+        inputDeltas: mapPrivateArray(tool.inputDeltas, (delta) => delta),
       })),
       usage: { ...current.snapshot.usage },
     },
-    tools: new Map(
-      [...current.tools].map(([id, tool]) => [id, {
-        ...tool,
-        inputDeltas: [...tool.inputDeltas],
-      }]),
-    ),
+    tools,
     terminalError: current.terminalError ? { ...current.terminalError } : null,
   };
 }
@@ -311,7 +319,7 @@ function reduceNonTextProtocolEvent(
         ...tool,
         phase: "input_streaming",
         inputText,
-        inputDeltas: [...tool.inputDeltas, event.delta],
+        inputDeltas: concatPrivateArrays(tool.inputDeltas, [event.delta]),
       });
       syncToolSnapshot(state, "awaiting_tool_input");
       emit({ class: "semantic", event });
@@ -433,11 +441,13 @@ function reduceNonTextProtocolEvent(
         commitPendingLocalInputs(state, emit, elapsedMs);
       }
       emit({ class: "semantic", event });
-      const readyLocal = [...state.tools.values()].filter((tool) =>
-        tool.phase === "input_ready" && tool.providerExecuted !== true
+      const readyLocal = filterPrivateArray(
+        [...state.tools.values()],
+        (tool) => tool.phase === "input_ready" && tool.providerExecuted !== true,
       );
-      const rejectedLocal = [...state.tools.values()].filter((tool) =>
-        tool.phase === "input_rejected" && tool.providerExecuted !== true
+      const rejectedLocal = filterPrivateArray(
+        [...state.tools.values()],
+        (tool) => tool.phase === "input_rejected" && tool.providerExecuted !== true,
       );
       const phaseBeforeFinish = state.snapshot.phase;
       const terminalPhase = event.finishReason === "tool-calls" && readyLocal.length > 0
@@ -455,9 +465,11 @@ function reduceNonTextProtocolEvent(
         hasSemanticProgress: true,
       };
       if (terminalPhase === "failed") {
-        const incomplete = rejectedLocal.some((tool) =>
-          tool.rejectionReason === "invalid" ||
-          tool.rejectionReason === "malformed"
+        const incomplete = somePrivateArray(
+          rejectedLocal,
+          (tool) =>
+            tool.rejectionReason === "invalid" ||
+            tool.rejectionReason === "malformed",
         );
         state.terminalError = {
           code: incomplete ? "TOOL_INPUT_INCOMPLETE" : "PROTOCOL_VIOLATION",
@@ -503,7 +515,7 @@ function closeOpenContent(state: StreamReducerState, emit: FrameEmitter): void {
 
 function serializeToolInput(input: unknown): string | null {
   try {
-    return JSON.stringify(input ?? null) ?? "null";
+    return privateJsonStringify(input ?? null) ?? "null";
   } catch {
     return null;
   }
@@ -521,9 +533,9 @@ function syncToolSnapshot(
   state.snapshot = {
     ...state.snapshot,
     phase,
-    tools: [...state.tools.values()].map((tool) => ({ ...tool })),
+    tools: mapPrivateArray([...state.tools.values()], (tool) => ({ ...tool })),
     hasStreamOutput: state.snapshot.hasStreamOutput ||
-      [...state.tools.values()].some((tool) => tool.rejectionReason !== "unavailable"),
+      somePrivateArray([...state.tools.values()], (tool) => tool.rejectionReason !== "unavailable"),
   };
 }
 
@@ -633,7 +645,8 @@ export function resolveLocalToolDeadline(
   const state = cloneReducerState(current);
   const frames: StreamLifecycleFrame[] = [];
   const emit: FrameEmitter = (frame) =>
-    frames.push(
+    pushPrivateArray(
+      frames,
       { ...frame, sequence: ++state.sequence, elapsedMs } as StreamLifecycleFrame,
     );
 
@@ -701,8 +714,9 @@ export function resolveLocalToolDeadline(
     }
   }
 
-  const ready = [...state.tools.values()].filter((tool) =>
-    tool.phase === "input_ready" && tool.providerExecuted !== true
+  const ready = filterPrivateArray(
+    [...state.tools.values()],
+    (tool) => tool.phase === "input_ready" && tool.providerExecuted !== true,
   );
   state.terminal = true;
   if (ready.length > 0) {
@@ -711,13 +725,13 @@ export function resolveLocalToolDeadline(
       finishReason: "tool-calls",
       phase: "tool_handoff",
       hasSemanticProgress: true,
-      tools: [...state.tools.values()].map((tool) => ({ ...tool })),
+      tools: mapPrivateArray([...state.tools.values()], (tool) => ({ ...tool })),
     };
     return { kind: "handoff", reduction: { state, frames, semanticProgress: true } };
   }
   state.snapshot = {
     ...state.snapshot,
-    tools: [...state.tools.values()].map((tool) => ({ ...tool })),
+    tools: mapPrivateArray([...state.tools.values()], (tool) => ({ ...tool })),
   };
   return {
     kind: "failed",
@@ -738,7 +752,8 @@ export function finalizeStreamProjection(
   const state = cloneReducerState(current);
   const frames: StreamLifecycleFrame[] = [];
   const emit: FrameEmitter = (frame) => {
-    frames.push(
+    pushPrivateArray(
+      frames,
       { ...frame, sequence: ++state.sequence, elapsedMs } as StreamLifecycleFrame,
     );
   };

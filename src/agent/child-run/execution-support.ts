@@ -1,13 +1,27 @@
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { throwIfAborted } from "#veryfront/utils/abort.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+
+const isArray = Array.isArray;
+const objectEntries = Object.entries;
 
 /** Record shape for to child run tool input. */
 export function toChildRunToolInputRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null || isArray(value)) {
     return {};
   }
 
-  return Object.fromEntries(Object.entries(value));
+  const result: Record<string, unknown> = {};
+  const entries = objectEntries(value);
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    defineOwnDataProperty(result, entry[0], entry[1], {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return result;
 }
 
 /**

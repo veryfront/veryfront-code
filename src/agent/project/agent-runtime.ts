@@ -31,6 +31,31 @@ import {
 } from "#veryfront/integrations/source-policy-context.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+
+const objectSetPrototypeOf = Object.setPrototypeOf;
+const objectEntries = Object.entries;
+const arraySort = Array.prototype.sort;
+const apply = Reflect.apply;
+
+function selectedConfigToolNames(
+  tools: Exclude<AgentConfig["tools"], true | undefined>,
+  denied: boolean,
+): string[] {
+  const entries = objectEntries(tools);
+  const names: string[] = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    if ((entry[1] === false) === denied) {
+      defineOwnDataProperty(names, names.length, entry[0], {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+  return apply(arraySort, names, [compareStrings]) as string[];
+}
 
 /** Public API contract for project agent runtime agent source. */
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";
@@ -81,9 +106,7 @@ function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | u
     return undefined;
   }
 
-  const names = Object.entries(tools)
-    .flatMap(([name, value]) => value === false ? [] : [name])
-    .sort(compareStrings);
+  const names = selectedConfigToolNames(tools, false);
 
   return names.length > 0 ? names : undefined;
 }
@@ -98,9 +121,7 @@ function resolveAgentDeniedToolNames(tools: AgentConfig["tools"]): string[] | un
     return undefined;
   }
 
-  const names = Object.entries(tools)
-    .flatMap(([name, value]) => value === false ? [name] : [])
-    .sort(compareStrings);
+  const names = selectedConfigToolNames(tools, true);
 
   return names.length > 0 ? names : undefined;
 }
@@ -112,7 +133,10 @@ function resolveSerializableMcpServers(
     return undefined;
   }
 
-  return mcpServers.map((server) => {
+  const serialized: RuntimeAgentMcpServerConfig[] = [];
+  for (let index = 0; index < mcpServers.length; index++) {
+    const server = { ...mcpServers[index]! };
+    objectSetPrototypeOf(server, null);
     if ("transport" in server) {
       throw CONFIG_INVALID.create({
         detail:
@@ -121,12 +145,13 @@ function resolveSerializableMcpServers(
       });
     }
 
-    return {
+    defineOwnDataProperty(serialized, serialized.length, {
       kind: server.kind,
       ...(server.id === undefined ? {} : { id: server.id }),
       ...(server.toolPolicy === undefined ? {} : { toolPolicy: server.toolPolicy }),
-    };
-  });
+    }, { enumerable: true, configurable: true, writable: true });
+  }
+  return serialized;
 }
 
 /** Clear project agent runtime registries. */
@@ -208,37 +233,31 @@ export async function createRuntimeAgentDefinitionFromAgent(
   if (markdownDefinition) {
     return markdownDefinition;
   }
-  const toolNames = resolveAgentToolNames(runtimeAgent.config.tools);
-  const deniedToolNames = resolveAgentDeniedToolNames(runtimeAgent.config.tools);
-  const mcpServers = resolveSerializableMcpServers(runtimeAgent.config.mcpServers);
-  const system = await resolveAgentSystem(runtimeAgent.config.system);
+  const config = { ...runtimeAgent.config };
+  objectSetPrototypeOf(config, null);
+  const toolNames = resolveAgentToolNames(config.tools);
+  const deniedToolNames = resolveAgentDeniedToolNames(config.tools);
+  const mcpServers = resolveSerializableMcpServers(config.mcpServers);
+  const system = await resolveAgentSystem(config.system);
 
   return {
     id: runtimeAgent.id,
-    name: runtimeAgent.config.name ?? runtimeAgent.id,
-    description: runtimeAgent.config.description ?? "",
-    ...(runtimeAgent.config.avatarUrl ?? runtimeAgent.config.avatar_url
-      ? { avatarUrl: runtimeAgent.config.avatarUrl ?? runtimeAgent.config.avatar_url }
+    name: config.name ?? runtimeAgent.id,
+    description: config.description ?? "",
+    ...(config.avatarUrl ?? config.avatar_url
+      ? { avatarUrl: config.avatarUrl ?? config.avatar_url }
       : {}),
     instructions: typeof system === "string" ? system : flattenSystemInstructions(system),
     ...(typeof system === "string" ? {} : { system }),
-    model: runtimeAgent.config.model,
-    ...(runtimeAgent.config.temperature === undefined
-      ? {}
-      : { temperature: runtimeAgent.config.temperature }),
-    ...(runtimeAgent.config.thinking === undefined
-      ? {}
-      : { thinking: runtimeAgent.config.thinking }),
-    maxSteps: runtimeAgent.config.maxSteps,
-    ...(runtimeAgent.config.providerTools
-      ? { providerTools: runtimeAgent.config.providerTools }
-      : {}),
-    ...(runtimeAgent.config.skills === undefined ? {} : { skills: runtimeAgent.config.skills }),
+    model: config.model,
+    ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
+    ...(config.thinking === undefined ? {} : { thinking: config.thinking }),
+    maxSteps: config.maxSteps,
+    ...(config.providerTools ? { providerTools: config.providerTools } : {}),
+    ...(config.skills === undefined ? {} : { skills: config.skills }),
     ...(toolNames === undefined ? {} : { tools: toolNames }),
     ...(deniedToolNames === undefined ? {} : { deniedTools: deniedToolNames }),
-    ...(runtimeAgent.config.delegates === undefined
-      ? {}
-      : { delegates: runtimeAgent.config.delegates }),
+    ...(config.delegates === undefined ? {} : { delegates: config.delegates }),
     ...(mcpServers === undefined ? {} : { mcpServers }),
   };
 }

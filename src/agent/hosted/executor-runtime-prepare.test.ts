@@ -8,8 +8,14 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { parseRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
-import type { HostToolDefinition, ToolDefinition } from "#veryfront/tool";
+import type {
+  HostToolDefinition,
+  HostToolSet,
+  RemoteToolSource,
+  ToolDefinition,
+} from "#veryfront/tool";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
+import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
@@ -19,7 +25,11 @@ import {
   type ExecutorRuntimeFacades,
   type ExecutorRuntimePreparationGrant,
 } from "./executor-runtime-prepare.ts";
-import { ExecutorRuntimePreparationError } from "./executor-runtime-prepare-schema.ts";
+import {
+  ExecutorRuntimePreparationError,
+  getExecutorRuntimePrepareRequestSchema,
+  parseRuntimePreparationData,
+} from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import { createExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorHostedChatRuntimeAgent } from "./executor-agent-bridge.ts";
 import { createExecutorModelRuntimeResolver } from "./executor-model-bridge.ts";
@@ -91,6 +101,7 @@ function fixture(
   overrides: {
     grant?: ExecutorRuntimePreparationGrant | null;
     facades?: Partial<ExecutorRuntimeFacades>;
+    facadeInstance?: ExecutorRuntimeFacades;
     config?: Partial<AgentConfig>;
     load?: () => Promise<ProjectAgentRuntimeDiscovery>;
   } = {},
@@ -116,7 +127,7 @@ function fixture(
     source,
     discovery,
     grant: overrides.grant === null ? undefined : overrides.grant ?? grant,
-    facades: {
+    facades: overrides.facadeInstance ?? {
       resolveModelRuntime: () => model,
       hostTools: new Map(),
       remoteToolSources: new Map(),
@@ -187,6 +198,30 @@ describe("executor runtime preparation", () => {
             code: "EXECUTOR_RUNTIME_NOT_GRANTED",
           },
         );
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
+  for (const selection of [undefined, [], ["load_skill"]]) {
+    it(`normalizes implicit disabled skill tools while retaining explicit rejection (${JSON.stringify(selection)})`, async () => {
+      const f = fixture({
+        config: { tools: true, skills: false },
+        grant: { ...grant, allowedToolNames: ["load_skill"], hostToolFacadeIds: ["skills"] },
+        facades: { hostTools: new Map([["skills", { load_skill: syntheticHostTool() }]]) },
+      });
+      try {
+        const result = await prepare(f.owner, {
+          agentId: "coder",
+          ...(selection === undefined ? {} : { allowedToolNames: selection }),
+        });
+        if (selection?.length) {
+          assertEquals(result, { ok: false, code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE" });
+        } else {
+          assert(result && typeof result === "object" && !Array.isArray(result));
+          assertEquals(result.ok, true);
+        }
       } finally {
         await f.owner.close();
       }
@@ -730,6 +765,308 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  const outputCases: {
+    name: string;
+    request: Record<string, JsonValue>;
+    expected?: number;
+    ceiling?: number;
+  }[] = [
+    { name: "catalog thinking default", request: {}, expected: 6144 },
+    { name: "neutral thinking default", request: { thinking: { enabled: true } }, expected: 4096 },
+    { name: "explicit narrower output", request: { maxOutputTokens: 1000 }, expected: 1000 },
+    { name: "explicit output exceeding the remainder", request: { maxOutputTokens: 6145 } },
+    { name: "no room after thinking", request: {}, ceiling: 2048 },
+    {
+      name: "invalid fixed thinking budget",
+      request: { thinking: { enabled: true, budgetTokens: 512 } },
+    },
+  ];
+  for (const test of outputCases) {
+    it(`reserves reasoning tokens during preparation: ${test.name}`, async () => {
+      const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+      let captured: ModelRuntimeCallOptions | undefined;
+      let resolutions = 0;
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: selectedModel,
+          models: new Map([[selectedModel, {
+            maxOutputTokens: test.ceiling ?? 8192,
+            providerToolNames: [],
+          }]]),
+        },
+        facades: {
+          resolveModelRuntime: () => {
+            resolutions++;
+            return {
+              ...model,
+              provider: "anthropic",
+              modelId: "claude-sonnet-4-6",
+              doStream(options) {
+                captured = options as ModelRuntimeCallOptions;
+                return finishStream();
+              },
+            };
+          },
+        },
+      });
+      try {
+        const request = { agentId: "coder", ...test.request };
+        if (test.expected === undefined) {
+          assertEquals(await prepare(f.owner, request), {
+            ok: false,
+            code: "EXECUTOR_RUNTIME_NOT_GRANTED",
+          });
+          assertEquals(resolutions, 0);
+        } else {
+          await Array.fromAsync(await preparedStream(f, request));
+          assertEquals(captured?.maxOutputTokens, test.expected);
+        }
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
+  it("retains the steering preparation method and its original receiver through discovery", async () => {
+    class Steering {
+      #calls: string[] = [];
+      prepare(
+        { definition }: Parameters<
+          NonNullable<ExecutorRuntimeFacades["projectSteering"]>["prepare"]
+        >[0],
+      ) {
+        this.#calls.push("prepare");
+        return Promise.resolve({ agent: definition });
+      }
+      refresh() {
+        return "Synthetic instructions";
+      }
+      get calls() {
+        return this.#calls;
+      }
+    }
+    const steering = new Steering();
+    const f = fixture({
+      facades: { projectSteering: steering },
+      load: () => {
+        steering.prepare = () => {
+          throw new Error("Replaced preparation method");
+        };
+        return Promise.resolve(runtime());
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assert(steering.calls.includes("prepare"));
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  for (const missing of ["prepare", "refresh"] as const) {
+    it(`refuses inherited steering ${missing} without exposing its facade`, async () => {
+      let reads = 0;
+      const steering: Partial<NonNullable<ExecutorRuntimeFacades["projectSteering"]>> = {
+        prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+        refresh: () => "Synthetic instructions",
+      };
+      delete steering[missing];
+      const f = fixture({
+        grant: { ...grant, requiredCapabilities: ["project-steering"] },
+        facades: {
+          projectSteering: steering as NonNullable<ExecutorRuntimeFacades["projectSteering"]>,
+        },
+        load: () => {
+          Object.setPrototypeOf(steering, {
+            get [missing]() {
+              reads++;
+              return () => Promise.resolve(undefined);
+            },
+          });
+          return Promise.resolve(runtime());
+        },
+      });
+      try {
+        assertEquals(await prepare(f.owner), {
+          ok: false,
+          code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE",
+        });
+        assertEquals(reads, 0);
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
+  for (const method of ["own", "prototype"] as const) {
+    it(`preserves the original receiver for ${method} model resolver methods`, async () => {
+      class Facades implements ExecutorRuntimeFacades {
+        #modelCalls = 0;
+        hostTools = new Map<string, HostToolSet>();
+        remoteToolSources = new Map<string, RemoteToolSource>();
+        resolveModelRuntime() {
+          this.#modelCalls++;
+          return model;
+        }
+        cleanup() {
+          return Promise.resolve();
+        }
+        get modelCalls() {
+          return this.#modelCalls;
+        }
+      }
+      const facades = new Facades();
+      if (method === "own") {
+        Object.defineProperty(facades, "resolveModelRuntime", {
+          value: facades.resolveModelRuntime,
+          enumerable: true,
+        });
+      }
+      const f = fixture({ facadeInstance: facades });
+      try {
+        assertEquals((await prepare(f.owner) as { ok: boolean }).ok, true);
+        assert(facades.modelCalls > 0);
+      } finally {
+        await f.owner.close();
+      }
+    });
+
+    it(`preserves the original receiver for ${method} cleanup methods`, async () => {
+      class Facades implements ExecutorRuntimeFacades {
+        #cleanups = 0;
+        resolveModelRuntime = () => model;
+        hostTools = new Map<string, HostToolSet>();
+        remoteToolSources = new Map<string, RemoteToolSource>();
+        cleanup() {
+          this.#cleanups++;
+          return Promise.resolve();
+        }
+        get cleanups() {
+          return this.#cleanups;
+        }
+      }
+      const facades = new Facades();
+      if (method === "own") {
+        Object.defineProperty(facades, "cleanup", { value: facades.cleanup, enumerable: true });
+      }
+      const f = fixture({ facadeInstance: facades });
+      try {
+        assertEquals((await prepare(f.owner) as { ok: boolean }).ok, true);
+      } finally {
+        await f.owner.close();
+      }
+      assertEquals(facades.cleanups, 1);
+    });
+  }
+
+  it("validates preparation requests without inheriting optional model limits", () => {
+    let reads = 0;
+    const request = Object.create({
+      get modelId() {
+        reads++;
+        return "veryfront-cloud/openai/other";
+      },
+      get maxOutputTokens() {
+        reads++;
+        return 999;
+      },
+    }, { agentId: { value: "coder", enumerable: true } });
+    const parsed = parseRuntimePreparationData(getExecutorRuntimePrepareRequestSchema(), request);
+    assertEquals(reads, 0);
+    assertEquals(parsed.modelId, undefined);
+    assertEquals(parsed.maxOutputTokens, undefined);
+  });
+
+  it("does not treat inherited steering skills as authorized", async () => {
+    let reads = 0;
+    let visible: string[] = [];
+    const f = fixture({
+      config: { tools: {}, skills: true },
+      grant: { ...grant, allowedToolNames: ["load_skill"], hostToolFacadeIds: ["skills"] },
+      facades: {
+        hostTools: new Map([["skills", { load_skill: syntheticHostTool() }]]),
+        projectSteering: {
+          prepare: ({ definition }) =>
+            Promise.resolve(Object.create({
+              get initialSkills() {
+                reads++;
+                return [{
+                  id: "injected",
+                  name: "Injected",
+                  description: "Synthetic",
+                  instructions: "Synthetic",
+                }];
+              },
+            }, { agent: { value: definition, enumerable: true } })),
+          refresh: () => "Synthetic instructions",
+        },
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(reads, 0);
+      assertEquals(visible, []);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("ignores inherited initial checkpoint state during canonical preparation", async () => {
+    let inheritedReads = 0;
+    type CheckpointFacade = NonNullable<ExecutorRuntimeFacades["toolExposureCheckpoint"]>;
+    const checkpoint: CheckpointFacade = Object.create({
+      get initial() {
+        inheritedReads++;
+        return { version: 1, loadedToolNames: [] };
+      },
+    }, {
+      persist: {
+        value: () => Promise.resolve(),
+        enumerable: true,
+      },
+    });
+    let calls = 0;
+    const f = fixture({
+      grant: {
+        ...grant,
+        allowedToolNames: ["visible"],
+        hostToolFacadeIds: ["local"],
+        execution: {
+          kind: "canonical",
+          projectId: null,
+          conversationId: "synthetic-conversation",
+          runId: "synthetic-run",
+          messageId: "synthetic-message",
+          providerReplay: "disabled",
+        },
+      },
+      facades: {
+        hostTools: new Map([["local", { visible: syntheticHostTool() }]]),
+        toolExposureCheckpoint: checkpoint,
+        publishParentRunEvents: () => Promise.resolve(),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: () => finishStream(calls++ === 0 ? "visible" : undefined),
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(inheritedReads, 0);
+      assertEquals(calls, 2);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("preserves a granted provider-selected local web fetch fallback", async () => {
     let visible: string[] = [];
     const f = fixture({
@@ -1734,6 +2071,61 @@ Synthetic source instructions.`,
     });
   }
 
+  it("reserves the catalog thinking budget when the request omits thinking and output limits", async () => {
+    const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+    let captured: ModelRuntimeCallOptions | undefined;
+    const f = fixture({
+      grant: {
+        ...grant,
+        defaultModelId: selectedModel,
+        models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+      },
+      facades: {
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: (options) => {
+            captured = options as ModelRuntimeCallOptions;
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assert(captured);
+      assertEquals(captured.reasoning, { enabled: true, budgetTokens: 2048 });
+      assertEquals(captured.maxOutputTokens, 6144);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  for (
+    const request of [
+      { agentId: "coder", thinking: { enabled: true, budgetTokens: 8192 } },
+      { agentId: "coder", thinking: { enabled: true, budgetTokens: 4096 }, maxOutputTokens: 4097 },
+    ]
+  ) {
+    it(`rejects preparation when fixed thinking leaves insufficient output allowance: ${JSON.stringify(request)}`, async () => {
+      const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: selectedModel,
+          models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+        },
+      });
+      try {
+        assertEquals(await prepare(f.owner, request as JsonValue), {
+          ok: false,
+          code: "EXECUTOR_RUNTIME_NOT_GRANTED",
+        });
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   for (
     const selectedModel of [
       modelId,
@@ -1787,6 +2179,28 @@ Synthetic source instructions.`,
                 },
               }
               : undefined,
+          );
+          const admission = createExecutorModelAdmission({
+            maxCalls: 1,
+            maxConcurrentCalls: 1,
+            models: new Map([[selectedModel, { maxOutputTokens: 8192, providerTools: [] }]]),
+          }, new Set([selectedModel]));
+          const expectedOutput = selectedModel.includes("claude-sonnet") && thinking.enabled
+            ? 4096
+            : 8192;
+          assertEquals(captured.maxOutputTokens, expectedOutput);
+          assertEquals(
+            admission.normalize({
+              identity: { binding, sequence: 1 },
+              mode: "stream",
+              model: {
+                id: selectedModel,
+                modelId: selectedModel,
+                provider: selectedModel.includes("anthropic") ? "anthropic" : "openai",
+              },
+              options: captured,
+            }).maxOutputTokens,
+            expectedOutput,
           );
           assertPersistedModelOptions({
             identity: { binding, sequence: 1 },

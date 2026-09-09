@@ -1,3 +1,5 @@
+import { privateArtifactText as text } from "./private-artifact-text.ts";
+import { joinPrivateArray } from "#veryfront/security/private-array.ts";
 const RESEARCH_TASK_CUE_PATTERN = /\b(research|report|findings|sources|authoritative sources)\b/i;
 const RESEARCH_PROJECT_SAVE_CUE_PATTERN =
   /\b(?:save|write|persist|store|compile)\b[^\n]{0,120}\b(?:to|into)\b[^\n]{0,40}\b(?:the\s+)?project\b/i;
@@ -5,62 +7,43 @@ const RESEARCH_PROJECT_SAVE_CUE_PATTERN =
 const PROJECT_ARTIFACT_PATH_PATTERN = /(?:\/|\.{1,2}\/)?(?:[\w.-]+\/)+[\w.-]+\.[\w.-]+/g;
 
 function slugifyArtifactSegment(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/['"]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const lower = text.toLowerCase(value);
+  const unquoted = text.replace(lower, /['"]/g, "");
+  const separated = text.replace(unquoted, /[^a-z0-9]+/g, "-");
+  return text.replace(separated, /^-+|-+$/g, "");
 }
 
 function slugifyRunArtifactSegment(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const separated = text.replace(text.toLowerCase(value), /[^a-z0-9_-]+/g, "-");
+  return text.replace(separated, /^-+|-+$/g, "");
 }
 
 function hasAnyArtifactPath(prompt: string): boolean {
-  PROJECT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
-  return PROJECT_ARTIFACT_PATH_PATTERN.test(prompt);
+  return text.match(prompt, PROJECT_ARTIFACT_PATH_PATTERN) !== null;
 }
 
 function isGenericResearchTopic(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
+  const normalized = text.toLowerCase(text.trim(value));
   return normalized.length === 0 ||
-    normalized === "this" ||
-    normalized === "that" ||
-    normalized === "it" ||
-    normalized === "the project" ||
-    normalized === "the topic";
+    normalized === "this" || normalized === "that" || normalized === "it" ||
+    normalized === "the project" || normalized === "the topic";
 }
 
 function extractResearchTopic(input: { description: string; prompt: string }): string | null {
-  const quotedPromptTopic = input.prompt.match(/\bresearch(?:\s+on|\s+about)?\s+["“]([^"”]+)["”]/i)
-    ?.[1];
-  if (quotedPromptTopic?.trim() && !isGenericResearchTopic(quotedPromptTopic)) {
-    return quotedPromptTopic.trim();
-  }
+  const quoted = text.match(input.prompt, /\bresearch(?:\s+on|\s+about)?\s+["“]([^"”]+)["”]/i)?.[1];
+  if (quoted && text.trim(quoted) && !isGenericResearchTopic(quoted)) return text.trim(quoted);
 
-  const cleanedDescription = input.description
-    .replace(/^research\s+/i, "")
-    .replace(/\.\s+.*$/s, "")
-    .replace(/\s+and\s+(?:save|write|persist|store|compile)\b.*$/i, "")
-    .replace(/\s+across\b.*$/i, "")
-    .trim();
-  if (cleanedDescription.length > 0) {
-    return cleanedDescription;
-  }
+  let cleaned = text.replace(input.description, /^research\s+/i, "");
+  cleaned = text.replace(cleaned, /\.\s+.*$/s, "");
+  cleaned = text.replace(cleaned, /\s+and\s+(?:save|write|persist|store|compile)\b.*$/i, "");
+  cleaned = text.trim(text.replace(cleaned, /\s+across\b.*$/i, ""));
+  if (cleaned.length > 0) return cleaned;
 
-  const promptTopic = input.prompt
-    .match(/\bresearch(?:\s+on|\s+about)?\s+([^\n.,:]+)/i)?.[1]
-    ?.replace(/\s+and\s+save\b.*$/i, "")
-    ?.replace(/\s+and\s+write\b.*$/i, "")
-    ?.trim();
-  if (!promptTopic || isGenericResearchTopic(promptTopic)) {
-    return null;
-  }
-
-  return promptTopic;
+  let topic = text.match(input.prompt, /\bresearch(?:\s+on|\s+about)?\s+([^\n.,:]+)/i)?.[1];
+  if (topic === undefined) return null;
+  topic = text.replace(topic, /\s+and\s+save\b.*$/i, "");
+  topic = text.trim(text.replace(topic, /\s+and\s+write\b.*$/i, ""));
+  return !topic || isGenericResearchTopic(topic) ? null : topic;
 }
 
 /** Public API contract for default research artifact paths. */
@@ -79,13 +62,13 @@ export function shouldInjectDefaultResearchArtifactPath(input: {
   prompt: string;
 }): boolean {
   if (
-    !RESEARCH_TASK_CUE_PATTERN.test(input.description) &&
-    !RESEARCH_TASK_CUE_PATTERN.test(input.prompt)
+    text.match(input.description, RESEARCH_TASK_CUE_PATTERN) === null &&
+    text.match(input.prompt, RESEARCH_TASK_CUE_PATTERN) === null
   ) {
     return false;
   }
 
-  if (!RESEARCH_PROJECT_SAVE_CUE_PATTERN.test(input.prompt)) {
+  if (text.match(input.prompt, RESEARCH_PROJECT_SAVE_CUE_PATTERN) === null) {
     return false;
   }
 
@@ -104,14 +87,14 @@ export function buildDefaultResearchArtifactPathReminder(input: {
 
   const artifactPaths = buildDefaultResearchArtifactPaths(input);
 
-  return [
+  return joinPrivateArray([
     "Default research workspace (because no exact artifact path was provided):",
     `- Write the run-scoped report to exactly ${artifactPaths.runReportPath}.`,
     `- Then create or update the current topic report at exactly ${artifactPaths.currentReportPath}.`,
     `- Supporting artifacts can live at ${artifactPaths.findingsPath} and ${artifactPaths.sourcesPath} when useful.`,
     `CRITICAL: The task is incomplete until ${artifactPaths.runReportPath} and ${artifactPaths.currentReportPath} both exist with the final report content.`,
     "Use create_file or update_file yourself before finishing.",
-  ].join("\n");
+  ], "\n");
 }
 
 /** Builds default research artifact paths. */
@@ -140,8 +123,8 @@ export function buildDefaultResearchArtifactPathsFromCurrentReportPath(input: {
   currentReportPath: string;
   runId?: string;
 }): DefaultResearchArtifactPaths | null {
-  const currentReportPath = input.currentReportPath.replace(/^\/+/, "");
-  const reportPathMatch = currentReportPath.match(/^research\/(.+)\/report\.md$/);
+  const currentReportPath = text.replace(input.currentReportPath, /^\/+/, "");
+  const reportPathMatch = text.match(currentReportPath, /^research\/(.+)\/report\.md$/);
   if (!reportPathMatch?.[1]) {
     return null;
   }
@@ -172,5 +155,5 @@ export function withDefaultResearchArtifactPath(input: {
     return input.prompt;
   }
 
-  return [input.prompt, "", reminder].join("\n");
+  return joinPrivateArray([input.prompt, "", reminder], "\n");
 }

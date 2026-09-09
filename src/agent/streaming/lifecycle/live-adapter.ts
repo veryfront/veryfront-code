@@ -1,3 +1,9 @@
+import {
+  filterPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import type {
   ChatStreamState,
   StreamingToolResult,
@@ -21,7 +27,7 @@ interface LiveAdapterToolState {
 export function createStreamLifecycleLiveAdapter(
   input: { textPartId?: string },
 ) {
-  const tools = new Map<string, LiveAdapterToolState>();
+  const tools = createPrivateMap<string, LiveAdapterToolState>();
   let activeTextPartId: string | undefined;
   let nextTextSegmentIndex = 0;
   const openTextPartId = (eventId: string | undefined): string => {
@@ -92,7 +98,7 @@ export function createStreamLifecycleLiveAdapter(
         }
         case "tool_input_content": {
           const tool = tools.get(event.toolCallId);
-          if (tool) tool.deltas.push(event.delta);
+          if (tool) pushPrivateArray(tool.deltas, event.delta);
           return [];
         }
         case "tool_input_ready": {
@@ -100,17 +106,17 @@ export function createStreamLifecycleLiveAdapter(
           const dynamic = event.dynamic ?? tool?.dynamic;
           const events: ChatStreamEvent[] = [];
           if (!tool?.announced && event.announced !== true) {
-            events.push({
+            pushPrivateArray(events, {
               type: "tool-input-start",
               toolCallId: event.toolCallId,
               toolName: event.toolName,
               ...(dynamic ? { dynamic: true } : {}),
             });
-            for (const delta of tool?.deltas ?? []) {
-              events.push({
+            for (let index = 0; tool && index < tool.deltas.length; index++) {
+              pushPrivateArray(events, {
                 type: "tool-input-delta",
                 toolCallId: event.toolCallId,
-                inputTextDelta: delta,
+                inputTextDelta: tool.deltas[index]!,
               });
             }
             if (tool) tool.announced = true;
@@ -123,7 +129,7 @@ export function createStreamLifecycleLiveAdapter(
               });
             }
           }
-          events.push({
+          pushPrivateArray(events, {
             type: "tool-input-available",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
@@ -223,25 +229,29 @@ export function applyLifecycleSnapshotToChatStreamState(
   snapshot: Readonly<StreamSnapshot>,
 ): void {
   state.accumulatedText = snapshot.accumulatedText;
-  state.reasoningParts = snapshot.reasoning.map((part) => ({ ...part }));
+  state.reasoningParts = mapPrivateArray(
+    snapshot.reasoning,
+    (part) => ({ __proto__: null, ...part }),
+  );
   state.finishReason = snapshot.finishReason;
   state.providerMetadata = snapshot.providerMetadata;
-  state.toolCalls = new Map(
-    snapshot.tools.filter(isAvailableTool).map((tool) => [
-      tool.id,
-      {
-        id: tool.id,
-        name: tool.name,
-        arguments: tool.inputText,
-        inputDeltas: [...tool.inputDeltas],
-        inputAnnounced: isInputAvailable(tool),
-        inputAvailable: isInputAvailable(tool),
-        ...(tool.providerExecuted !== undefined ? { providerExecuted: tool.providerExecuted } : {}),
-        ...(tool.dynamic !== undefined ? { dynamic: tool.dynamic } : {}),
-      },
-    ]),
-  );
-  state.toolResults = snapshot.tools.filter(isProviderToolTerminal).map(
+  state.toolCalls = createPrivateMap();
+  const availableTools = filterPrivateArray(snapshot.tools, isAvailableTool);
+  for (let index = 0; index < availableTools.length; index++) {
+    const tool = availableTools[index]!;
+    state.toolCalls.set(tool.id, {
+      id: tool.id,
+      name: tool.name,
+      arguments: tool.inputText,
+      inputDeltas: mapPrivateArray(tool.inputDeltas, (delta) => delta),
+      inputAnnounced: isInputAvailable(tool),
+      inputAvailable: isInputAvailable(tool),
+      ...(tool.providerExecuted !== undefined ? { providerExecuted: tool.providerExecuted } : {}),
+      ...(tool.dynamic !== undefined ? { dynamic: tool.dynamic } : {}),
+    });
+  }
+  state.toolResults = mapPrivateArray(
+    filterPrivateArray(snapshot.tools, isProviderToolTerminal),
     (tool): StreamingToolResult => ({
       toolCallId: tool.id,
       toolName: tool.name,
@@ -252,8 +262,9 @@ export function applyLifecycleSnapshotToChatStreamState(
       ...(tool.preliminary !== undefined ? { preliminary: tool.preliminary } : {}),
     }),
   );
-  state.suppressedToolCalls = snapshot.tools
-    .filter((tool) => tool.rejectionReason === "unavailable")
-    .map((tool) => ({ id: tool.id, name: tool.name }));
+  state.suppressedToolCalls = mapPrivateArray(
+    filterPrivateArray(snapshot.tools, (tool) => tool.rejectionReason === "unavailable"),
+    (tool) => ({ id: tool.id, name: tool.name }),
+  );
   state.usage = toLegacyRuntimeUsage(snapshot.usage);
 }

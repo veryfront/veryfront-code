@@ -9,6 +9,10 @@
  * avoiding circular dependencies with the main types module.
  **************************/
 
+const hasOwn = Object.hasOwn;
+const ceil = Math.ceil;
+
+/** Memory retention settings shared by agent memory backends. */
 export interface MemoryConfigBase {
   type: string;
   maxTokens?: number;
@@ -78,21 +82,26 @@ export interface MemoryPersistence<M extends MinimalMessage = MinimalMessage> {
 export function getTextFromMemoryParts(
   parts: Array<{ type: string; text?: string }>,
 ): string {
-  return parts
-    .filter(
-      (p): p is { type: "text"; text: string } => p.type === "text" && typeof p.text === "string",
-    )
-    .map((p) => p.text)
-    .join("");
+  let text = "";
+  for (let index = 0; index < parts.length; index++) {
+    if (!hasOwn(parts, index)) continue;
+    const part = parts[index]!;
+    const value = part.type === "text" ? part.text : undefined;
+    if (typeof value === "string") text += value;
+  }
+  return text;
 }
 
 export function estimateTokens(messages: MinimalMessage[]): number {
-  const totalChars = messages.reduce((sum, msg) => {
+  let totalChars = 0;
+  for (let index = 0; index < messages.length; index++) {
+    if (!hasOwn(messages, index)) continue;
+    const msg = messages[index]!;
     const text = getTextFromMemoryParts(
       msg.parts as Array<{ type: string; text?: string }>,
     );
-    return sum + text.length;
-  }, 0);
+    totalChars += text.length;
+  }
 
-  return Math.ceil(totalChars / 4);
+  return ceil(totalChars / 4);
 }

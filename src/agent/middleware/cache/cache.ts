@@ -1,3 +1,4 @@
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import type { AgentMiddleware, AgentResponse, Message } from "#veryfront/agent/types.ts";
 import { isStatefulTurn } from "#veryfront/agent/middleware/turn-validation.ts";
 import {
@@ -293,7 +294,7 @@ function defaultKeyGenerator(input: string, context?: Record<string, unknown>): 
 function toCacheableInputString(input: string | Message[]): string {
   if (typeof input === "string") return input;
   return JSON.stringify(
-    input.map((message) => {
+    mapPrivateArray(input, (message) => {
       const { id, timestamp, ...rest } = message;
       return {
         ...rest,

@@ -11,6 +11,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
 import {
+  announceStreamedToolCallInput,
   createRuntimeStreamSource,
   createStreamState,
   processStream,
@@ -71,6 +72,26 @@ function pendingAsyncIterable() {
 }
 
 describe("chat-stream-handler", () => {
+  it("announces buffered deltas once without consulting the buffer iterator", () => {
+    const { controller, encoder, events } = createSSECollector();
+    const inputDeltas = ['{"query":', '"synthetic private input"}'];
+    let reads = 0;
+    Object.defineProperty(inputDeltas, Symbol.iterator, {
+      get() {
+        reads++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    const toolCall = { id: "call", name: "inspect", arguments: inputDeltas.join(""), inputDeltas };
+    announceStreamedToolCallInput(controller, encoder, toolCall);
+    announceStreamedToolCallInput(controller, encoder, toolCall);
+    assertEquals(events, [
+      { type: "tool-input-start", toolCallId: "call", toolName: "inspect" },
+      { type: "tool-input-delta", toolCallId: "call", inputTextDelta: inputDeltas[0] },
+      { type: "tool-input-delta", toolCallId: "call", inputTextDelta: inputDeltas[1] },
+    ]);
+    assertEquals(reads, 0);
+  });
   describe("summarizeProviderToolDebugValue", () => {
     it("redacts sensitive provider tool debug fields", () => {
       assertEquals(
@@ -98,6 +119,34 @@ describe("chat-stream-handler", () => {
   });
 
   describe("createStreamState", () => {
+    it("keeps tool-call state methods independent of its mutable prototype", () => {
+      const state = createStreamState();
+      let observations = 0;
+      if (Object.isExtensible(state.toolCalls)) {
+        Object.setPrototypeOf(
+          state.toolCalls,
+          Object.create(Map.prototype, {
+            set: {
+              value(key: string, value: unknown) {
+                observations++;
+                return Map.prototype.set.call(this, key, value);
+              },
+            },
+            get: {
+              value(key: string) {
+                observations++;
+                return Map.prototype.get.call(this, key);
+              },
+            },
+          }),
+        );
+      }
+      const call = { id: "call", name: "read_file", arguments: '{"path":"example.txt"}' };
+      state.toolCalls.set(call.id, call);
+      assertEquals(state.toolCalls.get(call.id), call);
+      assertEquals(observations, 0);
+    });
+
     it("returns a clean initial state", () => {
       const state = createStreamState();
       assertEquals(state.accumulatedText, "");
@@ -368,6 +417,13 @@ describe("chat-stream-handler", () => {
     it("accumulates streamed reasoning text with Anthropic signatures", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
+      let appendLookups = 0;
+      Object.defineProperty(state.reasoningParts, "push", {
+        get() {
+          appendLookups++;
+          return Array.prototype.push;
+        },
+      });
 
       const result = createMockResult([
         { type: "reasoning-start", id: "thinking-0" },
@@ -378,6 +434,8 @@ describe("chat-stream-handler", () => {
 
       await processStream(result, state, controller, encoder, "text-1", undefined);
 
+      assertEquals(appendLookups, 0);
+      assertEquals(Object.getPrototypeOf(state.reasoningParts[0]), null);
       assertEquals(state.reasoningParts, [{
         id: "thinking-0",
         text: "Check evidence.",

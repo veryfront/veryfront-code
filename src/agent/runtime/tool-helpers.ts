@@ -1,3 +1,4 @@
+import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
  *
@@ -5,6 +6,8 @@
  *
  * @module ai/agent/runtime/tool-helpers
  */
+
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
@@ -42,27 +45,6 @@ export interface ParsedToolArgs {
   error?: string;
 }
 
-function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
-  let normalized = rawArgs.trim();
-
-  while (normalized.startsWith("{}")) {
-    const remainder = normalized.slice(2).trimStart();
-    if (remainder.startsWith("{")) {
-      normalized = remainder;
-      continue;
-    }
-
-    if (remainder.startsWith('"')) {
-      normalized = `{${remainder}`;
-      continue;
-    }
-
-    break;
-  }
-
-  return normalized;
-}
-
 /**
  * Parse tool arguments from raw string or object.
  * Returns parsed args and optional error message.
@@ -81,7 +63,7 @@ export function parseToolArgs(
       rawArgs = trimmed;
     }
 
-    const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+    const parsed = typeof rawArgs === "string" ? privateJsonParse(rawArgs) : rawArgs;
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return { args: {}, error: "Tool call arguments must be a JSON object" };
@@ -391,7 +373,7 @@ export async function executeConfiguredTool(
 function logToolDefinition(name: string, def: ToolDefinition): void {
   logger.debug(
     `[AGENT] Tool definition for "${name}":`,
-    JSON.stringify(def, null, 2),
+    privateJsonStringify(def, null, 2),
   );
 }
 
