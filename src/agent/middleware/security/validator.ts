@@ -1,4 +1,6 @@
 import {
+  privateTextCharCodeAt,
+  privateTextCodePointAt,
   privateTextSlice,
   privateTextTrim,
   privateTextTrimStart,
@@ -173,7 +175,7 @@ function freshStatefulPattern(pattern: RegExp): RegExp {
 
 function advanceStringIndex(input: string, index: number, unicode: boolean): number {
   if (!unicode) return index + 1;
-  return index + ((input.codePointAt(index) ?? 0) > 0xffff ? 2 : 1);
+  return index + ((privateTextCodePointAt(input, index) ?? 0) > 0xffff ? 2 : 1);
 }
 
 function redactBlockedPattern(input: string, pattern: RegExp): string {
@@ -1127,7 +1129,7 @@ function negativeAssertionBody(
       groupDepth++;
     } else if (character === ")" && --groupDepth === 0) {
       return {
-        body: source.slice(start + prefixLength, index),
+        body: privateTextSlice(source, start + prefixLength, index),
         end: index,
         context,
         backrefs,
@@ -1155,7 +1157,7 @@ function assertionInspectionWidth(source: string, unicodeSets: boolean): number 
     else if (classDepth === 0) {
       if (character === "*" || character === "+") return Infinity;
       if (character === "{") {
-        const quantifier = /^\{(\d+)(?:,(\d*))?\}/.exec(source.slice(index));
+        const quantifier = /^\{(\d+)(?:,(\d*))?\}/.exec(privateTextSlice(source, index));
         if (quantifier) {
           if (quantifier[2] === "") return Infinity;
           width *= Math.max(1, Number(quantifier[2] ?? quantifier[1]));
@@ -1180,8 +1182,10 @@ function createTrustedMatchPredicate(
 ): (match: { index: number; text: string }) => boolean {
   const unicode = pattern.unicode || pattern.unicodeSets;
   const splitsCodePoint = (offset: number) =>
-    assembled.charCodeAt(offset - 1) >= 0xd800 && assembled.charCodeAt(offset - 1) <= 0xdbff &&
-    assembled.charCodeAt(offset) >= 0xdc00 && assembled.charCodeAt(offset) <= 0xdfff;
+    privateTextCharCodeAt(assembled, offset - 1) >= 0xd800 &&
+    privateTextCharCodeAt(assembled, offset - 1) <= 0xdbff &&
+    privateTextCharCodeAt(assembled, offset) >= 0xdc00 &&
+    privateTextCharCodeAt(assembled, offset) <= 0xdfff;
   // Joining lone surrogates changes Unicode matching even without assertions.
   if (
     unicode &&
@@ -1189,8 +1193,15 @@ function createTrustedMatchPredicate(
   ) {
     return () => false;
   }
-  const units = (text: string) => unicode ? [...text].length : text.length;
-  const lower = units(assembled.slice(0, segment.start));
+  const units = (text: string) => {
+    if (!unicode) return text.length;
+    let count = 0;
+    for (let index = 0; index < text.length; count++) {
+      index += (privateTextCodePointAt(text, index) ?? 0) > 0xffff ? 2 : 1;
+    }
+    return count;
+  };
+  const lower = units(privateTextSlice(assembled, 0, segment.start));
   const upper = lower + units(segment.text);
   const lowerGuard = "(?<=[\\s\\S]{" + lower + "})";
   const upperGuard = "(?<![\\s\\S]{" + (upper + 1) + "})";
@@ -1201,11 +1212,13 @@ function createTrustedMatchPredicate(
   let ignoreCase = pattern.ignoreCase;
   const isWord = (character: string | undefined) =>
     character !== undefined &&
-    new RegExp(
-      "\\w",
-      (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
-    )
-      .test(character);
+    testBlockedPattern(
+      new RegExpConstructor(
+        "\\w",
+        (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (ignoreCase ? "i" : ""),
+      ),
+      character,
+    );
   const localNegativeBody = (body: string): string => {
     let result = "";
     let depth = 0;
@@ -1213,10 +1226,13 @@ function createTrustedMatchPredicate(
     const cases: Array<{ ignoreCase: boolean; assertion?: "ahead" | "behind" }> = [];
     const word = (character: string | undefined) =>
       character !== undefined &&
-      new RegExp(
-        "\\w",
-        (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (localIgnoreCase ? "i" : ""),
-      ).test(character);
+      testBlockedPattern(
+        new RegExpConstructor(
+          "\\w",
+          (pattern.unicodeSets ? "v" : pattern.unicode ? "u" : "") + (localIgnoreCase ? "i" : ""),
+        ),
+        character,
+      );
     for (let index = 0; index < body.length; index++) {
       const character = body[index];
       if (character === "\\") {
@@ -1241,7 +1257,7 @@ function createTrustedMatchPredicate(
           continue;
         }
         if (character === "(") {
-          const assertion = /^\(\?(<?)=/.exec(body.slice(index));
+          const assertion = /^\(\?(<?)=/.exec(privateTextSlice(body, index));
           if (assertion) {
             const direction = assertion[1] ? "behind" : "ahead";
             pushPrivateArray(cases, { ignoreCase: localIgnoreCase, assertion: direction });
@@ -1250,13 +1266,13 @@ function createTrustedMatchPredicate(
             continue;
           }
           pushPrivateArray(cases, { ignoreCase: localIgnoreCase });
-          const named = /^\(\?<[^>]+>/.exec(body.slice(index));
+          const named = /^\(\?<[^>]+>/.exec(privateTextSlice(body, index));
           if (body[index + 1] !== "?" || named) {
             result += "(?:";
             if (named) index += named[0].length - 1;
             continue;
           }
-          const flags = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(body.slice(index));
+          const flags = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(privateTextSlice(body, index));
           if (flags?.[1]?.includes("i")) localIgnoreCase = true;
           if (flags?.[2]?.includes("i")) localIgnoreCase = false;
         } else if (character === ")") {
@@ -1310,7 +1326,7 @@ function createTrustedMatchPredicate(
     if (character === "(") {
       const negative = negativeAssertionBody(pattern, index);
       if (negative) {
-        const original = pattern.source.slice(index, negative.end + 1);
+        const original = privateTextSlice(pattern.source, index, negative.end + 1);
         if (
           negative.nestedNegative || ((negative.nested || negative.context) && negative.backrefs)
         ) {
@@ -1348,7 +1364,9 @@ function createTrustedMatchPredicate(
         continue;
       }
       pushPrivateArray(groups, { kind: "ordinary", ignoreCase });
-      const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(pattern.source.slice(index));
+      const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(
+        privateTextSlice(pattern.source, index),
+      );
       if (modifiers?.[1]?.includes("i")) ignoreCase = true;
       if (modifiers?.[2]?.includes("i")) ignoreCase = false;
     } else if (character === ")") {
@@ -1359,7 +1377,7 @@ function createTrustedMatchPredicate(
         inspectionRadius = Math.max(
           inspectionRadius,
           assertionInspectionWidth(
-            pattern.source.slice(group.bodyStart, index),
+            privateTextSlice(pattern.source, group.bodyStart, index),
             pattern.unicodeSets,
           ) * (unicode ? 2 : 1),
         );
@@ -1379,7 +1397,7 @@ function createTrustedMatchPredicate(
     // Guard positive assertions' consumed context without adding captures or
     // changing backreference numbers. Contextual negative assertions also
     // check a capture-free body against the trusted segment's own boundaries.
-    const matcher = new RegExp(source, pattern.flags.replace(/[gy]/g, "") + "y");
+    const matcher = new RegExpConstructor(source, pattern.flags.replace(/[gy]/g, "") + "y");
     return (match) => {
       // Interior matches cannot inspect caller text. Avoid prefix scans for
       // each occurrence in long trusted prompts with many boundary matches.
@@ -1388,7 +1406,7 @@ function createTrustedMatchPredicate(
         match.index + match.text.length + inspectionRadius <= segment.text.length
       ) return true;
       matcher.lastIndex = segment.start + match.index;
-      const found = matcher.exec(assembled);
+      const found = applyRegExp(regexpExec, matcher, [assembled]) as RegExpExecArray | null;
       return found?.index === segment.start + match.index && found[0] === match.text;
     };
   } catch {
@@ -1479,7 +1497,10 @@ async function assertProviderRunsValid(
 }
 
 function patternOccurrences(input: string, pattern: RegExp): { index: number; text: string }[] {
-  const matcher = new RegExp(pattern.source, pattern.global ? pattern.flags : `${pattern.flags}g`);
+  const matcher = new RegExpConstructor(
+    pattern.source,
+    pattern.global ? pattern.flags : `${pattern.flags}g`,
+  );
   if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
   const matches: { index: number; text: string }[] = [];
   for (

@@ -7,6 +7,8 @@ const trimStart = String.prototype.trimStart;
 const trim = String.prototype.trim;
 const trimEnd = String.prototype.trimEnd;
 const lastIndexOf = String.prototype.lastIndexOf;
+const charCodeAt = String.prototype.charCodeAt;
+const codePointAt = String.prototype.codePointAt;
 const toLowerCase = String.prototype.toLowerCase;
 
 export function privateTextToLowerCase(value: string): string {
@@ -23,6 +25,14 @@ export function privateTextTrimEnd(value: string): string {
 
 export function privateTextLastIndexOf(value: string, search: string): number {
   return apply(lastIndexOf, value, [search]) as number;
+}
+
+export function privateTextCharCodeAt(value: string, index: number): number {
+  return apply(charCodeAt, value, [index]) as number;
+}
+
+export function privateTextCodePointAt(value: string, index: number): number | undefined {
+  return apply(codePointAt, value, [index]) as number | undefined;
 }
 
 export function privateTextEndsWith(value: string, search: string): boolean {

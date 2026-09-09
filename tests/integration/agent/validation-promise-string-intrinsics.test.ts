@@ -50,7 +50,7 @@ for (const hooks of [false, true]) {
       assertEquals(observations, 0);
     });
 
-    it("retains trusted word-boundary matches without exposing the segment to String.at", async () => {
+    it("retains trusted word-boundary matches without shared string inspection", async () => {
       const marker = "synthetic-private-trusted";
       const input: Message[] = [{
         id: "caller",
@@ -64,11 +64,14 @@ for (const hooks of [false, true]) {
         data: {},
         platform: {},
       };
-      await securityMiddleware({ input: { blockedPatterns: [/\bsynthetic-private-trusted\b/] } })(
+      await securityMiddleware({ input: { blockedPatterns: [/\btrusted\b/u] } })(
         context,
         () => Promise.resolve({ text: "ok", messages: [], toolCalls: [], status: "completed" }),
       );
       const at = String.prototype.at;
+      const slice = String.prototype.slice;
+      const charCodeAt = String.prototype.charCodeAt;
+      const codePointAt = String.prototype.codePointAt;
       const includes = String.prototype.includes;
       const apply = Reflect.apply;
       let observations = 0;
@@ -79,11 +82,28 @@ for (const hooks of [false, true]) {
             if (apply(includes, this, [marker])) observations++;
             return apply(at, this, args);
           };
+          String.prototype.slice = function (...args) {
+            if (apply(includes, this, [marker])) observations++;
+            return apply(slice, this, args);
+          };
+          String.prototype.charCodeAt = function (...args) {
+            if (apply(includes, this, [marker])) observations++;
+            return apply(charCodeAt, this, args);
+          };
+          String.prototype.codePointAt = function (...args) {
+            if (apply(includes, this, [marker])) observations++;
+            return apply(codePointAt, this, args);
+          };
         }
         await getTurnProviderRequestValidator(context)!(marker, input);
         validated = true;
       } finally {
-        if (hooks) String.prototype.at = at;
+        if (hooks) {
+          String.prototype.at = at;
+          String.prototype.slice = slice;
+          String.prototype.charCodeAt = charCodeAt;
+          String.prototype.codePointAt = codePointAt;
+        }
       }
       assertEquals(validated, true);
       assertEquals(observations, 0);
