@@ -6,6 +6,8 @@ const NativeSet = Set;
 const setHas = NativeSet.prototype.has;
 const setAdd = NativeSet.prototype.add;
 const freeze = Object.freeze;
+const create = Object.create;
+const defineProperty = Object.defineProperty;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const numberIsSafeInteger = Number.isSafeInteger;
@@ -86,8 +88,8 @@ export function captureBoundedCacheRead(
           return null;
         }
         const method = descriptor.value as NonNullable<CacheBackend["getWithinLimit"]>;
-        const captured = Object.create(null) as CapturedBoundedCacheRead;
-        Object.defineProperty(captured, "getWithinLimit", {
+        const captured = create(null) as CapturedBoundedCacheRead;
+        defineProperty(captured, "getWithinLimit", {
           value: (key: string, maximumBytes: number) =>
             apply(method, backend, [key, maximumBytes]) as Promise<string | null>,
           enumerable: true,

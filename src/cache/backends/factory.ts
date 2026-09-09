@@ -163,6 +163,8 @@ const accessorMapSize = Object.getOwnPropertyDescriptor(AccessorMap.prototype, "
 const accessorMapIteratorNext = Object.getPrototypeOf(new AccessorMap<string, unknown>().keys())
   .next as () => IteratorResult<string>;
 const accessorPromiseFinally = Promise.prototype.finally;
+const AccessorPromise = Promise;
+const accessorPromiseResolve = AccessorPromise.resolve;
 
 interface DistributedCacheAccessorState {
   backend: CacheBackend | null | undefined;
@@ -207,7 +209,11 @@ export function createDistributedCacheAccessor(
         logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
       }
 
-      if (state.backend !== undefined) return Promise.resolve(state.backend);
+      if (state.backend !== undefined) {
+        return accessorApply(accessorPromiseResolve, AccessorPromise, [state.backend]) as Promise<
+          CacheBackend | null
+        >;
+      }
     }
 
     if (!state.inflight) {

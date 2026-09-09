@@ -273,9 +273,13 @@ export async function _createSharedDependencySnapshotCacheBackend(): Promise<Cac
  * first request, per `docs/architecture/15-runtime-adapters.md`:
  *
  * ```ts
+ * import { createCacheDependencySnapshotStoreHandle, type RuntimeAdapter } from "veryfront/platform";
+ *
+ * export function configureSnapshotHistory(adapter: RuntimeAdapter): void {
  * Object.defineProperty(adapter, "dependencySnapshotStore", {
  *   value: createCacheDependencySnapshotStoreHandle(),
  * });
+ * }
  * ```
  *
  * The handle's operations reject while no qualifying shared backend (API cache

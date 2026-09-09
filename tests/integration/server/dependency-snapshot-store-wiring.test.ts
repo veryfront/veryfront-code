@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backends/memory.ts";
+import { createDistributedCacheAccessor } from "#veryfront/cache/backends/factory.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import * as publicPlatform from "veryfront/platform";
 import {
   _createSharedDependencySnapshotCacheBackend,
   createCacheBackedDependencySnapshotStore,
@@ -44,6 +47,82 @@ const MANAGED_ENV = [
 ] as const;
 
 describe("host-configured dependency snapshot store", () => {
+  it("exports the host opt-in factory through the public platform surface", () => {
+    assertEquals(
+      "createCacheDependencySnapshotStoreHandle" in publicPlatform &&
+        publicPlatform.createCacheDependencySnapshotStoreHandle,
+      createCacheDependencySnapshotStoreHandle,
+    );
+  });
+
+  it("keeps cached backends out of a replaced Promise.resolve", async () => {
+    const backend = { type: "api" } as CacheBackend;
+    const accessor = createDistributedCacheAccessor(() => Promise.resolve(backend), "SYNTHETIC");
+    assertEquals(await accessor(), backend);
+    const originalResolve = Promise.resolve;
+    const apply = Reflect.apply;
+    let observations = 0;
+    Promise.resolve = (function (this: PromiseConstructor, value: unknown) {
+      if (value === backend) observations++;
+      return apply(originalResolve, this, [value]);
+    }) as typeof Promise.resolve;
+    try {
+      assertEquals(await accessor(), backend);
+    } finally {
+      Promise.resolve = originalResolve;
+    }
+    assertEquals(observations, 0);
+  });
+
+  for (const hook of ["create", "defineProperty"] as const) {
+    it(`keeps bounded read capabilities out of replaced Object.${hook}`, async () => {
+      const backend = new MemoryCacheBackend();
+      const namespace = "a".repeat(64);
+      const expiresAt = Date.now() + 60_000;
+      await backend.set(
+        `${namespace}:on:synthetic`,
+        JSON.stringify({ value: "snapshot", expiresAt }),
+        60,
+      );
+      const store = createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend));
+      const originalCreate = Object.create;
+      const originalDefineProperty = Object.defineProperty;
+      let observedCapabilities = 0;
+      const inspect = (key: PropertyKey, descriptor: PropertyDescriptor) => {
+        if (key === "getWithinLimit" && typeof descriptor.value === "function") {
+          observedCapabilities++;
+        }
+      };
+      if (hook === "create") {
+        Object.create = ((prototype: object | null, descriptors?: PropertyDescriptorMap) => {
+          const value = descriptors === undefined
+            ? originalCreate(prototype)
+            : originalCreate(prototype, descriptors);
+          return new Proxy(value, {
+            defineProperty(target, key, descriptor) {
+              inspect(key, descriptor);
+              originalDefineProperty(target, key, descriptor);
+              return true;
+            },
+          });
+        }) as typeof Object.create;
+      } else {
+        Object.defineProperty =
+          ((target: object, key: PropertyKey, descriptor: PropertyDescriptor) => {
+            inspect(key, descriptor);
+            return originalDefineProperty(target, key, descriptor);
+          }) as typeof Object.defineProperty;
+      }
+      try {
+        assertEquals(await store.read(namespace, "on:synthetic"), { value: "snapshot", expiresAt });
+      } finally {
+        Object.create = originalCreate;
+        Object.defineProperty = originalDefineProperty;
+      }
+      assertEquals(observedCapabilities, 0);
+    });
+  }
+
   const prior = new Map<string, string | undefined>();
   beforeEach(() => {
     for (const name of MANAGED_ENV) {
