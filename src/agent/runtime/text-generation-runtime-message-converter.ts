@@ -619,7 +619,7 @@ function splitAnthropicProviderMetadata(
     anthropic.rawAssistantMessages,
     segmentCount,
   );
-  return grouped?.map((rawAssistantMessages) => ({
+  return grouped && mapPrivateArray(grouped, (rawAssistantMessages) => ({
     ...providerMetadata,
     anthropic: { ...anthropic, rawAssistantMessages },
   }));
