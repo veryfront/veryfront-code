@@ -35,6 +35,7 @@ import {
 } from "#veryfront/security/private-stream.ts";
 
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import {
   enterSerializedTurn,
@@ -1355,7 +1356,10 @@ function getResponseFinishReason(response: AgentResponse): string | undefined {
   return typeof finishReason === "string" && finishReason.length > 0 ? finishReason : undefined;
 }
 
-const AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES = new Set([
+const agentWriteArraySort = Array.prototype.sort;
+const agentWriteApply = Reflect.apply;
+
+const AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES = createPrivateSet([
   "create_agent",
   "update_agent",
 ]);
@@ -1365,8 +1369,9 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
 }
 
 function didReloadProjectAgentWriteTool(result: ToolSearchResult): boolean {
-  return result.matches.some((match) =>
-    match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name)
+  return somePrivateArray(
+    result.matches,
+    (match) => match.status === "loaded" && shouldHideProjectToolAfterAgentWriteSuccess(match.name),
   );
 }
 
@@ -1385,28 +1390,33 @@ function applyAgentWriteFinalResponseGuard(
     }
   }
   if (options.reloadable) {
-    const guardedTools = plan.authorized.filter((tool) => !keep(tool));
-    const visible = plan.visible.filter(keep);
-    const deferredByName = new Map(
-      [...plan.deferred, ...guardedTools].map((tool) => [tool.name, tool]),
-    );
+    const guardedTools = filterPrivateArray(plan.authorized, (tool) => !keep(tool));
+    const visible = filterPrivateArray(plan.visible, keep);
+    const deferredByName = createPrivateMap<string, ToolExposurePlan["deferred"][number]>();
+    const deferredTools = concatPrivateArrays(plan.deferred, guardedTools);
+    for (let index = 0; index < deferredTools.length; index++) {
+      const tool = deferredTools[index]!;
+      deferredByName.set(tool.name, tool);
+    }
     if (
       guardedTools.length > 0 &&
-      !visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME)
+      !somePrivateArray(visible, (tool) => tool.name === TOOL_SEARCH_TOOL_NAME)
     ) {
       pushPrivateArray(visible, createToolSearchDefinition());
     }
     return {
       ...plan,
-      visible: visible.sort(compareToolNames),
-      deferred: [...deferredByName.values()].sort(compareToolNames),
+      visible: agentWriteApply(agentWriteArraySort, visible, [compareToolNames]),
+      deferred: agentWriteApply(agentWriteArraySort, [...deferredByName.values()], [
+        compareToolNames,
+      ]),
     };
   }
   return {
     ...plan,
-    authorized: plan.authorized.filter(keep),
-    visible: plan.visible.filter(keep),
-    deferred: plan.deferred.filter(keep),
+    authorized: filterPrivateArray(plan.authorized, keep),
+    visible: filterPrivateArray(plan.visible, keep),
+    deferred: filterPrivateArray(plan.deferred, keep),
   };
 }
 
@@ -2888,8 +2898,9 @@ export class AgentRuntime {
             currentSystemPrompt,
             runtimeTools,
             agentWriteFinalResponseToolGuardEnabled
-              ? effectiveToolExposurePlan.deferred.filter((tool) =>
-                shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+              ? filterPrivateArray(
+                effectiveToolExposurePlan.deferred,
+                (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
               )
               : [],
           ),
@@ -3542,8 +3553,9 @@ export class AgentRuntime {
           currentSystemPrompt,
           runtimeTools,
           agentWriteFinalResponseToolGuardEnabled
-            ? effectiveToolExposurePlan.deferred.filter((tool) =>
-              shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
+            ? filterPrivateArray(
+              effectiveToolExposurePlan.deferred,
+              (tool) => shouldHideProjectToolAfterAgentWriteSuccess(tool.name),
             )
             : [],
         ),

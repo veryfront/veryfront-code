@@ -1,3 +1,6 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
@@ -171,7 +174,7 @@ async function getRemoteToolDefinitions(options?: {
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
-  const seenToolNames = new Set<string>();
+  const seenToolNames = createPrivateSet<string>();
 
   const addDefinition = (definition: ToolDefinition): void => {
     if (seenToolNames.has(definition.name)) {
@@ -193,8 +196,8 @@ async function getRemoteToolDefinitions(options?: {
     const source = sources[index]!;
     try {
       const sourceDefs = await source.listTools(remoteToolContext);
-      for (const def of sourceDefs) {
-        addDefinition(def);
+      for (let index = 0; index < sourceDefs.length; index++) {
+        if (intrinsicHasOwn(sourceDefs, index)) addDefinition(sourceDefs[index]!);
       }
     } catch (error) {
       logger.warn("Failed to fetch remote tool definitions from source", {
@@ -415,7 +418,7 @@ function appendForwardedToolDefinitions(
   allowedNames: string[] | undefined,
 ): void {
   if (!forwarded?.length) return;
-  const existing = new Set(remoteDefs.map((def) => def.name));
+  const existing = createPrivateSet(mapPrivateArray(remoteDefs, (def) => def.name));
   for (const def of forwarded) {
     if (existing.has(def.name)) continue;
     if (allowedNames && !intrinsicIncludes(allowedNames, def.name)) continue;
@@ -499,10 +502,10 @@ export async function getAvailableTools(
       options?.allowedRemoteToolNames,
     );
   }
-  const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
-  const explicitlyRequestedRemoteToolNames = new Set<string>();
+  const remoteToolNames = createPrivateSet(mapPrivateArray(remoteDefs, (def) => def.name));
+  const explicitlyRequestedRemoteToolNames = createPrivateSet<string>();
   const unresolvedConfiguredToolNames: string[] = [];
-  const configuredAuthorizationToolNames = new Map<string, string>();
+  const configuredAuthorizationToolNames = createPrivateMap<string, string>();
 
   const configuredEntries = intrinsicReflectApply(intrinsicObjectEntries, Object, [
     toolsConfig,
