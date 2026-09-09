@@ -1,53 +1,18 @@
 /**
- * Cache-backed dependency snapshot storage for host bootstrap configuration.
+ * Opt-in cache-backed dependency snapshot storage for trusted host bootstrap.
+ * The host places the handle on its runtime adapter before requests begin.
+ * The framework does not activate this provider itself; unconfigured runtimes
+ * retain process-local history and shared metadata-history recovery.
  *
- * The dependency snapshot registry (`transforms/esm/dependency-snapshot-registry.ts`)
- * shares pinned dependency history across renderer replicas through the
- * `DependencySnapshotStore` capability. Without a configured provider, history
- * stays process-local and cold replicas depend on metadata-history recovery to
- * resolve keys rendered elsewhere.
+ * This provider is incomplete for production shared storage. Unconditional
+ * writes followed by verification cannot guarantee immutable publication across
+ * replicas. Optional revision methods require the reserved revisioned key format,
+ * and fail-soft backend reads cannot distinguish an outage from missing history.
+ * These paths must satisfy the DependencySnapshotStore contract before activation.
  *
- * This module implements that capability over the shared cache backends the
- * module response caches already use (API cache or Redis). It never activates
- * itself: per `docs/architecture/15-runtime-adapters.md`, the framework does
- * not select a storage transport from environment variables — the host
- * bootstrap that owns the runtime adapter decides, before its first request,
- * by placing the handle from {@link createCacheDependencySnapshotStoreHandle}
- * on the adapter as `dependencySnapshotStore`. Only genuinely shared backends
- * qualify: node-local disk and memory resolutions reject rather than serve,
- * which also keeps `createDistributedCacheAccessor`'s failure-retry path armed
- * so a recovered backend is picked up without a process restart.
- *
- * Failure semantics follow the store contract: publication resolves only after
- * the backend demonstrably retains the exact bytes until the requested deadline
- * (the backends fail open on `set`, so publication re-reads and verifies), and
- * different bytes at an already-published key fail rather than overwrite —
- * atomically where the backend exposes the revision capability, and by
- * read-back verification elsewhere. Reads are bounded before materializing a
- * record. One documented limitation remains: the qualifying backends also fail
- * open on `get`, so a read outage surfaces as missing history (a snapshot
- * conflict), never as wrong data — a host that requires strict outage
- * rejection must supply a fail-closed provider instead.
- *
- * Privileged state must stay unobservable from project code: every intrinsic
- * this module needs at operation time is captured here, before project code
- * runs, so replaced globals never receive the backend, the adapter, or stored
- * bytes. Two residual properties are accepted deliberately:
- *
- * - Promise resolution assimilates its value, so an installed
- *   `Object.prototype.then` getter can observe any object the cache layer
- *   resolves — backends included, here and in every existing
- *   `Promise<CacheBackend>` across `cache/backends`. Captured intrinsics
- *   cannot close that channel; per the adapter architecture doc, the opaque
- *   handle is not a security sandbox, and a provider holding privileged
- *   credentials requires an execution boundary outside project code.
- * - Two same-value publishers that both observe an absent record can commit
- *   in either order on the non-revisioned path, so stored retention can end
- *   at the earlier of the two acknowledged deadlines. The shortfall is
- *   bounded by the publishers' skew (they race the same fresh key), and the
- *   registry renews half a retention period before expiry, so it never
- *   outlives the next renewal. Backends exposing the revision capability
- *   commit atomically and do not carry this property.
+ * Captured intrinsics protect the specific private-capability paths covered by
+ * tests. The opaque handle does not provide a sandbox for privileged credentials;
+ * the host must isolate privileged storage from project execution.
  */
 import {
   createDependencySnapshotStoreHandle,
@@ -145,7 +110,7 @@ function retainedDeadlineCovers(retained: number, requested: number): boolean {
 
 /**
  * Build a `DependencySnapshotStore` over a cache backend accessor. The accessor
- * resolving `null` means storage is unavailable, and every operation rejects —
+ * resolving `null` means storage is unavailable, and every operation rejects ,
  * unavailable history must never read as missing history or cached success.
  */
 export function createCacheBackedDependencySnapshotStore(
@@ -224,7 +189,7 @@ export function createCacheBackedDependencySnapshotStore(
       // canonical serialization of exactly the state hashed into its key
       // (encodeDependencySnapshot sorts and canonicalizes), so concurrent
       // publishers at one key carry identical bytes unless storage is
-      // corrupted — and corruption is what the checks above still catch.
+      // corrupted, and corruption is what the checks above still catch.
       const set = backend.set;
       await apply(set, backend, [cacheKey, encoded, ttlSeconds]);
       // The backends fail open on `set`, and acknowledged retention is the
@@ -276,9 +241,9 @@ export async function _createSharedDependencySnapshotCacheBackend(): Promise<Cac
  * import { createCacheDependencySnapshotStoreHandle, type RuntimeAdapter } from "veryfront/platform";
  *
  * export function configureSnapshotHistory(adapter: RuntimeAdapter): void {
- * Object.defineProperty(adapter, "dependencySnapshotStore", {
- *   value: createCacheDependencySnapshotStoreHandle(),
- * });
+ *   Object.defineProperty(adapter, "dependencySnapshotStore", {
+ *     value: createCacheDependencySnapshotStoreHandle(),
+ *   });
  * }
  * ```
  *

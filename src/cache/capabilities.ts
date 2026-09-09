@@ -19,6 +19,7 @@ type UncheckedCallable = (...args: never[]) => unknown;
 // Captured before project code runs: capability inspection receives private
 // backend objects, and a replaced reflection global must never observe them.
 const reflectApply = Reflect.apply;
+const objectFreeze = Object.freeze;
 const NativeSet = Set;
 const setHas = NativeSet.prototype.has;
 const setAdd = NativeSet.prototype.add;
@@ -87,7 +88,7 @@ export function captureRevisionedCacheBackendMethods(
     const compareExchange = findCallableDataProperty(backend, "compareExchange");
     if (compareExchange === null) return null;
 
-    return Object.freeze({
+    return objectFreeze({
       getWithRevision: getWithRevision as RevisionedCacheBackend["getWithRevision"],
       compareExchange: compareExchange as RevisionedCacheBackend["compareExchange"],
     });
@@ -152,7 +153,7 @@ export function snapshotCacheRevisionResult(value: unknown): CacheRevisionSnapsh
     );
   }
 
-  return Object.freeze({ value: snapshotValue, revision });
+  return objectFreeze({ value: snapshotValue, revision });
 }
 
 /** Validate a provider-returned compare-exchange result. */

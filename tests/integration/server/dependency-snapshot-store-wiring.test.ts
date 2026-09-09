@@ -5,6 +5,7 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backends/memory.ts";
 import { createDistributedCacheAccessor } from "#veryfront/cache/backends/factory.ts";
+import { captureRevisionedCacheBackendMethods } from "#veryfront/cache/capabilities.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import * as publicPlatform from "veryfront/platform";
 import {
@@ -47,6 +48,39 @@ const MANAGED_ENV = [
 ] as const;
 
 describe("host-configured dependency snapshot store", () => {
+  it("keeps captured revision methods and their backend out of replaced Object.freeze", async () => {
+    const backend = {
+      type: "redis",
+      getWithRevision: () => Promise.resolve({ value: null, revision: "synthetic-revision" }),
+      compareExchange: () => Promise.resolve(true),
+    };
+    const originalFreeze = Object.freeze;
+    let observations = 0;
+    Object.freeze = ((value: unknown) => {
+      if (
+        value !== null && typeof value === "object" &&
+        Object.getOwnPropertyDescriptor(value, "getWithRevision")?.value
+      ) {
+        observations++;
+        return {
+          getWithRevision(this: unknown) {
+            if (this === backend) observations++;
+            return Promise.resolve({ value: null, revision: "synthetic-revision" });
+          },
+          compareExchange: () => Promise.resolve(true),
+        };
+      }
+      return originalFreeze(value);
+    }) as typeof Object.freeze;
+    try {
+      const methods = captureRevisionedCacheBackendMethods(backend)!;
+      await Reflect.apply(methods.getWithRevision, backend, ["synthetic-key"]);
+    } finally {
+      Object.freeze = originalFreeze;
+    }
+    assertEquals(observations, 0);
+  });
+
   it("exports the host opt-in factory through the public platform surface", () => {
     assertEquals(
       "createCacheDependencySnapshotStoreHandle" in publicPlatform &&
