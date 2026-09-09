@@ -51,6 +51,29 @@ function createResponse(text: string): AgentResponse {
 }
 
 describe("InputValidator", () => {
+  it("matches blocked input without consulting pattern test or exec overrides", async () => {
+    let observations = 0;
+    const pattern = /blocked/i;
+    Object.defineProperties(pattern, {
+      test: {
+        value() {
+          observations++;
+          return false;
+        },
+      },
+      exec: {
+        value() {
+          observations++;
+          return null;
+        },
+      },
+    });
+    const validator = new InputValidator({ blockedPatterns: [pattern] });
+    assertEquals((await validator.validate("synthetic blocked input")).valid, false);
+    assertEquals((await validator.validate("synthetic ordinary input")).valid, true);
+    assertEquals(observations, 0);
+  });
+
   it("collects max length, blocked pattern, and custom validation violations", async () => {
     const validator = new InputValidator({
       maxLength: 5,
@@ -205,6 +228,37 @@ describe("OutputFilter", () => {
 });
 
 describe("securityMiddleware", () => {
+  it("validates second-turn membership without consulting the input iterator", async () => {
+    const context = createContext();
+    await securityMiddleware({ input: { blockedPatterns: [/blocked phrase/] } })(
+      context,
+      () => Promise.resolve(createResponse("ok")),
+    );
+    const validateTurn = getTurnMessageValidator(context)!;
+    const current: Message[] = [{
+      id: "current",
+      role: "user",
+      parts: [{ type: "text", text: "phrase" }],
+    }];
+    let observations = 0;
+    Object.defineProperty(current, Symbol.iterator, {
+      get() {
+        observations++;
+        return Array.prototype[Symbol.iterator];
+      },
+    });
+    await assertRejects(
+      () =>
+        validateTurn(
+          [{ id: "previous", role: "user", parts: [{ type: "text", text: "blocked " }] }],
+          current,
+        ),
+      Error,
+      "Input validation failed",
+    );
+    assertEquals(observations, 0);
+  });
+
   it("reports structured user input violations and throws a veryfront error", async () => {
     const violations: string[] = [];
     const middleware = securityMiddleware({

@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   concatPrivateArrays,
   filterPrivateArray,
@@ -129,10 +130,18 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
 ];
 
+const RegExpConstructor = RegExp;
+const regexpExec = RegExp.prototype.exec;
+const applyRegExp = Reflect.apply;
+
+function testBlockedPattern(pattern: RegExp, input: string): boolean {
+  return applyRegExp(regexpExec, freshStatefulPattern(pattern), [input]) !== null;
+}
+
 function freshStatefulPattern(pattern: RegExp): RegExp {
   if (!pattern.global && !pattern.sticky) return pattern;
 
-  const matcher = new RegExp(pattern.source, pattern.flags);
+  const matcher = new RegExpConstructor(pattern.source, pattern.flags);
   if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
   return matcher;
 }
@@ -224,7 +233,7 @@ export class InputValidator {
       // Blocked pattern groups are shared module-level objects reused across
       // requests. Test stateful patterns through a fresh matcher so lastIndex
       // cannot skip a repeat match and caller-owned patterns remain untouched.
-      if (!freshStatefulPattern(pattern).test(input)) continue;
+      if (!testBlockedPattern(pattern, input)) continue;
 
       violations.push({
         type: "input",
@@ -309,7 +318,7 @@ export class OutputFilter {
     for (const pattern of this.config.blockedPatterns ?? []) {
       // See InputValidator.validate: shared /g patterns must not carry
       // lastIndex across calls or require caller-owned regexes to be mutable.
-      if (!freshStatefulPattern(pattern).test(filtered)) continue;
+      if (!testBlockedPattern(pattern, filtered)) continue;
 
       violations.push({
         type: "output",
@@ -722,7 +731,7 @@ function extractMergedRunTexts(
   const sameOccurrence = previousMessages
     ? createMessageOccurrenceMatcher(previousMessages, messages)
     : undefined;
-  const runTexts = new Set<string>();
+  const runTexts = createPrivateSet<string>();
   for (const run of extractMergedRuns(messages)) {
     // Only an identical grouping keeps its provenance. Comparing text alone
     // would also exempt a newly joined boundary that happens to duplicate a
@@ -1505,7 +1514,7 @@ export function securityMiddleware(
               ? { id: message.id, role: message.role, parts: message.parts }
               : message,
         );
-        const currentSystemMessages = new Set<Message>();
+        const currentSystemMessages = createPrivateSet<Message>();
         for (let index = messages.length - 1; index >= 0; index--) {
           const message = messages[index]!;
           if (message.role !== "system") continue;
@@ -1520,8 +1529,8 @@ export function securityMiddleware(
           callerMessages,
           (message) => message.role === "system",
         );
-        const trusted = new Set(systemMessages);
-        const callers = new Set(callerSystemMessages);
+        const trusted = createPrivateSet(systemMessages);
+        const callers = createPrivateSet(callerSystemMessages);
         const providerRuns: ProviderValidationRun[] = [];
         for (
           const run of extractMergedSystemRuns(concatPrivateArrays(systemMessages, callerMessages))
@@ -1584,7 +1593,7 @@ export function securityMiddleware(
           : { texts: [], assembled: [] };
         const runTexts = extractMergedRunTexts(
           concatPrivateArrays(history, turnInput),
-          new Set(turnInput),
+          createPrivateSet(turnInput),
         );
         // Merged runs are synthetic assemblies, so they are pattern-checked but
         // never length-checked (`InputValidationOptions.checkMaxLength`).

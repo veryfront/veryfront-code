@@ -98,6 +98,34 @@ describe("chat-stream-handler", () => {
   });
 
   describe("createStreamState", () => {
+    it("keeps tool-call state methods independent of its mutable prototype", () => {
+      const state = createStreamState();
+      let observations = 0;
+      if (Object.isExtensible(state.toolCalls)) {
+        Object.setPrototypeOf(
+          state.toolCalls,
+          Object.create(Map.prototype, {
+            set: {
+              value(key: string, value: unknown) {
+                observations++;
+                return Map.prototype.set.call(this, key, value);
+              },
+            },
+            get: {
+              value(key: string) {
+                observations++;
+                return Map.prototype.get.call(this, key);
+              },
+            },
+          }),
+        );
+      }
+      const call = { id: "call", name: "read_file", arguments: '{"path":"example.txt"}' };
+      state.toolCalls.set(call.id, call);
+      assertEquals(state.toolCalls.get(call.id), call);
+      assertEquals(observations, 0);
+    });
+
     it("returns a clean initial state", () => {
       const state = createStreamState();
       assertEquals(state.accumulatedText, "");
@@ -386,6 +414,7 @@ describe("chat-stream-handler", () => {
       await processStream(result, state, controller, encoder, "text-1", undefined);
 
       assertEquals(appendLookups, 0);
+      assertEquals(Object.getPrototypeOf(state.reasoningParts[0]), null);
       assertEquals(state.reasoningParts, [{
         id: "thinking-0",
         text: "Check evidence.",

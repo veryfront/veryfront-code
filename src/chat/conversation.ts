@@ -269,11 +269,7 @@ function isProviderOwnedInputAvailableTool(input: {
   state: string;
   providerExecuted?: unknown;
 }): boolean {
-  if (input.state !== "input-available") {
-    return false;
-  }
-
-  return input.providerExecuted === true;
+  return input.state === "input-available" && input.providerExecuted === true;
 }
 
 /** Push tool parts. */

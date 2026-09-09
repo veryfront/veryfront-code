@@ -1,3 +1,4 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
@@ -548,7 +549,7 @@ export function createStreamState(): ChatStreamState {
     accumulatedText: "",
     reasoningParts: [],
     finishReason: null,
-    toolCalls: new Map(),
+    toolCalls: createPrivateMap(),
     toolResults: [],
     suppressedToolCalls: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
@@ -831,7 +832,7 @@ export function processStreamInternal(
     let activeTextPartId: string | undefined;
     let nextTextSegmentIndex = 0;
     let activeReasoningId: string | null = null;
-    const reasoningParts = new Map<string, StreamingReasoningPart>();
+    const reasoningParts = createPrivateMap<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
     const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
@@ -974,7 +975,7 @@ export function processStreamInternal(
 
       activeReasoningId = reasoningId;
       if (!reasoningParts.has(reasoningId)) {
-        const part = { id: reasoningId, text: "" };
+        const part = { __proto__: null, id: reasoningId, text: "" };
         reasoningParts.set(reasoningId, part);
         pushPrivateArray(state.reasoningParts, part);
       }

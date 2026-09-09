@@ -5,6 +5,7 @@ const apply = Reflect.apply;
 const defineProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const isArray = Array.isArray;
+const hasOwn = Object.hasOwn;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const setDelete = Set.prototype.delete;
@@ -44,7 +45,9 @@ export function createPrivateSet<T>(values?: Iterable<T>): Set<T> {
   const sizeDescriptor = { __proto__: null, get: () => apply(setSize, set, []) as number };
   defineProperty(set, "size", sizeDescriptor);
   if (isArray(values)) {
-    for (let index = 0; index < values.length; index++) add(values[index]);
+    for (let index = 0; index < values.length; index++) {
+      if (hasOwn(values, index)) add(values[index]);
+    }
   } else if (values) {
     for (const value of values) add(value);
   }

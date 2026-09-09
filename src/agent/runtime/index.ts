@@ -1,6 +1,7 @@
 import {
   appendPrivateArray,
   concatPrivateArrays,
+  filterPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
 } from "#veryfront/security/private-array.ts";
@@ -3787,7 +3788,11 @@ export class AgentRuntime {
       // This is a stopgap: reasoning is default-on across the hosted catalog,
       // which makes recovery inert on most hosted paths. See #3736 for the
       // reconciliation protocol that would let it run again.
-      const hasExposedReasoning = state.reasoningParts.some(isPersistedReasoningPart);
+      const persistedReasoningParts = filterPrivateArray(
+        state.reasoningParts,
+        isPersistedReasoningPart,
+      );
+      const hasExposedReasoning = persistedReasoningParts.length > 0;
       const canRecoverInterruptedLocalToolBatch = !recoveredInterruptedLocalToolBatch &&
         step + 1 < maxSteps &&
         !hasExposedReasoning;
@@ -3818,7 +3823,7 @@ export class AgentRuntime {
         logger.warn("Declined interrupted local tool batch recovery after exposed reasoning", {
           step,
           toolName: streamedToolCalls.find(isInterruptedClientToolCall)?.name,
-          reasoningPartCount: state.reasoningParts.filter(isPersistedReasoningPart).length,
+          reasoningPartCount: persistedReasoningParts.length,
         });
       }
       const assistantMessage = buildStreamedAssistantMessage({
