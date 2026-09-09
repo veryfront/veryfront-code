@@ -4,7 +4,7 @@ import {
   privateTextTrimStart,
 } from "#veryfront/security/private-text.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
-import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { PrivateJsonArrayError, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
@@ -457,10 +457,12 @@ function extractPartInputText(part: unknown): string[] {
     try {
       const serialized = privateJsonStringify(value);
       if (typeof serialized === "string") pushPrivateArray(values, serialized);
-    } catch {
+    } catch (error) {
       throw toError(createError({
         type: "agent",
-        message: "Input validation failed: Structured input cannot be safely inspected",
+        message: error instanceof PrivateJsonArrayError
+          ? "Input validation failed: Array input cannot be safely copied"
+          : "Input validation failed: Structured input cannot be safely inspected",
       }));
     }
   };

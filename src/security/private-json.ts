@@ -25,6 +25,13 @@ const bigintValue = BigInt.prototype.valueOf;
 const finite = Number.isFinite;
 const notScalar = Symbol("not-native-json-scalar");
 
+/** A private array could not be copied for serialization. */
+export class PrivateJsonArrayError extends NativeTypeError {
+  constructor() {
+    super("Array input cannot be safely copied");
+  }
+}
+
 function nativeScalar(value: unknown): unknown {
   try {
     const time = apply(dateTime, value, []) as number;
@@ -72,8 +79,12 @@ export function privateJsonStringify(
       const scalar = nativeScalar(input);
       if (scalar !== notScalar) return copy(scalar, depth + 1);
     }
-    if (array && input.length > 100_000) {
-      throw new NativeTypeError("Private JSON data exceeds its structural limit");
+    if (array) {
+      try {
+        if (input.length > 100_000) throw new PrivateJsonArrayError();
+      } catch {
+        throw new PrivateJsonArrayError();
+      }
     }
     if (apply(setHas, ancestors, [input])) {
       throw new NativeTypeError("Cannot serialize circular data");
@@ -101,6 +112,9 @@ export function privateJsonStringify(
         defineProperty(output, key, copiedProperty);
       }
       return output;
+    } catch (error) {
+      if (array) throw new PrivateJsonArrayError();
+      throw error;
     } finally {
       apply(setDelete, ancestors, [input]);
     }

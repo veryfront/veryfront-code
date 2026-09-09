@@ -3,6 +3,18 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { privateJsonStringify } from "./private-json.ts";
 
 describe("private JSON serialization", () => {
+  it("reports unreadable arrays without exposing the underlying access error", () => {
+    const array = new Proxy(["synthetic private value"], {
+      get() {
+        throw new Error("synthetic private detail");
+      },
+    });
+    assertThrows(
+      () => privateJsonStringify({ array }),
+      TypeError,
+      "Array input cannot be safely copied",
+    );
+  });
   it("preserves native scalar data without calling their serialization methods", () => {
     const value = {
       text: "å🙂",
