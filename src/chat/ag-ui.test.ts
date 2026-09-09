@@ -13,9 +13,11 @@ import {
 import {
   buildDocumentCitedEvent,
   buildFileAttachedEvent,
+  buildUrlCitedEvent,
   NATIVE_RUN_EVENTS,
 } from "#veryfront/agent/ag-ui/native-run-events.ts";
 import { AG_UI_EVENT_TIMING_STAMP_FIELDS } from "#veryfront/agent/ag-ui/encoder.ts";
+import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
 import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
@@ -733,30 +735,33 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
-  it("falls back to a data chunk when a citation or attachment cannot render", () => {
+  it("falls back to a data chunk when an attachment cannot render", () => {
     ensureTestSchemaValidator();
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
-    // toRenderableCustomChunk returned null for these two, and the Custom arm
-    // fell through to a data chunk. The native arms must do the same, or the
-    // renderer gets a part with a field it requires missing.
+    // toRenderableCustomChunk returned null for a file with no url, and the
+    // Custom arm fell through to a data chunk. The native FileAttached arm
+    // does the same: unlike DocumentCited's title (falls back to the source
+    // id, since ChatSourceDocumentUiPart.title is required) or UrlCited's
+    // title (optional, simply omitted), a url has no safe non-empty
+    // fallback -- a placeholder would be an actively misleading, possibly
+    // broken link -- so a missing one still has to fall back to the raw
+    // chunk instead. See "treats a chunk's empty file url the same as a
+    // missing one" for the encoder-to-decoder round trip, and "still
+    // renders a citation despite the encoder dropping its empty title" for
+    // DocumentCited/UrlCited's fallback instead.
     //
     // The Custom twin's fallback `data` is the whole original chunk object,
-    // which still carries its own `type` (e.g. "source-document") because
-    // that object is what toRenderableCustomChunk received as `value` before
-    // it returned null. The native wire payload never carries that field —
-    // the encoder's `toFrame` strips it, since the AG-UI event name already
+    // which still carries its own `type` (e.g. "file") because that object
+    // is what toRenderableCustomChunk received as `value` before it
+    // returned null. The native wire payload never carries that field — the
+    // encoder's `toFrame` strips it, since the AG-UI event name already
     // names the chunk type — so the fallback here restores it to stay
     // byte-identical to the twin's fallback chunk.
     const frames = [
-      'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown"}\n\n',
       'event: FileAttached\ndata: {"mediaType":"application/pdf","filename":"a.pdf"}\n\n',
     ].join("");
 
     assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
-      {
-        type: "data-source-document",
-        data: { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown" },
-      },
       {
         type: "data-file",
         data: { type: "file", mediaType: "application/pdf", filename: "a.pdf" },
@@ -766,14 +771,16 @@ describe("chat/ag-ui", () => {
 
   it("accepts empty-string title and filename like the legacy custom mapping", () => {
     ensureTestSchemaValidator();
-    // The native builders pass title/filename through unguarded on the live
-    // wire frame (native-run-events.ts keeps this decoder's own render gate
-    // intact -- see the round-trip test below), so an empty string is a
-    // value the wire can legitimately carry. Only the durable record drops
-    // one, since the API's z.string().min(1).optional() catalog rejects it
-    // there. The legacy `Custom` twin only ever checked
+    // The native builders drop an empty title/filename/url before either
+    // wire shape ever carries it (native-run-events.ts's omitEmptyStrings,
+    // I1), so this scenario is unreachable from this producer today -- but a
+    // replayed or hand-built frame could still carry a literal empty string,
+    // and the legacy `Custom` twin only ever checked
     // `typeof value.title === "string"`, with no length requirement, so the
-    // native decoder must accept it too instead of dropping the whole frame.
+    // native decoder must stay lenient and accept it too instead of
+    // dropping the whole frame or substituting a fallback for a value that
+    // is, unlike an absent one, present and valid as far as this decoder is
+    // concerned.
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
     const frames = [
       'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
@@ -793,18 +800,16 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
-  it("still renders a citation/attachment the builders produced with an empty title/url", () => {
-    // Encoder-to-decoder round trip, not a hand-built frame like the test
-    // above. This decoder's DocumentCited case uses a string title as its
-    // gate for rendering `source-document` at all; the FileAttached case
-    // does the same with url. buildDocumentCitedEvent never lets title be
-    // empty in the first place -- it falls back to the source id -- so the
-    // citation always renders. buildFileAttachedEvent's live frame still
-    // carries an empty url through unchanged (only its durable record drops
-    // it, for the API's append route), so the attachment renders too;
-    // dropping it from the live frame instead, as an earlier version of
-    // this fix did, would make the attachment disappear from the chat's
-    // sources.
+  it("still renders a citation despite the encoder dropping its empty title", () => {
+    // Encoder-to-decoder round trip, not a hand-built frame like the tests
+    // above and below: buildDocumentCitedEvent/buildUrlCitedEvent drop an
+    // empty title from the one payload both shapes share (I1), so the live
+    // wire frame never carries it either -- the citation still has to
+    // render as if it had one. DocumentCited's decoder case falls back to
+    // the citation's own source id because ChatSourceDocumentUiPart.title is
+    // required; UrlCited's does the same for consistency, even though its
+    // own title is optional and an absent one would otherwise just be
+    // omitted.
     ensureTestSchemaValidator();
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
 
@@ -814,20 +819,124 @@ describe("chat/ag-ui", () => {
       mediaType: "text/markdown",
       title: "",
     }).live;
-    const fileFrame = buildFileAttachedEvent({
-      type: "file",
-      mediaType: "application/pdf",
-      url: "",
+    const urlFrame = buildUrlCitedEvent({
+      type: "source-url",
+      sourceId: "web-1",
+      url: "https://example.com/a",
+      title: "",
     }).live;
     const frames = [
       `event: ${documentFrame.event}\ndata: ${JSON.stringify(documentFrame.payload)}\n\n`,
-      `event: ${fileFrame.event}\ndata: ${JSON.stringify(fileFrame.payload)}\n\n`,
+      `event: ${urlFrame.event}\ndata: ${JSON.stringify(urlFrame.payload)}\n\n`,
     ].join("");
 
     assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
       { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "doc-1" },
-      { type: "file", url: "", mediaType: "application/pdf" },
+      { type: "source-url", sourceId: "web-1", url: "https://example.com/a", title: "web-1" },
     ]);
+  });
+
+  it("still renders a replayed citation despite the durable record dropping its empty title", () => {
+    // Compatibility-replay round trip, not the live wire frame like the test
+    // above: a durable DOCUMENT_CITED/URL_CITED record with an empty title
+    // (native-run-events.ts drops it, I1) gets read back by
+    // legacy-run-read-adapter.ts as a legacy `Custom`-wrapped twin
+    // (`{type: "custom", name, data}` lifecycle frames). Encoding that
+    // straight back into a live AG-UI wire event re-natives it through
+    // buildNativeRunEventFrame (lifecycle-adapter.ts's own "custom" case),
+    // which exercises the same native decoder arm the test above already
+    // covers -- so this constructs the literal `Custom` wire frame the twin
+    // itself represents instead, the shape a compatibility reader that does
+    // NOT re-native would emit. That goes through this decoder's `Custom`
+    // arm and toRenderableCustomChunk (ag-ui-helpers.ts), a completely
+    // different code path from the native arms' own title fallback. Both
+    // paths must fall back to the source id the same way, or a citation
+    // that rendered live disappears under compatibility replay.
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+
+    const documentDurable = buildDocumentCitedEvent({
+      type: "source-document",
+      sourceId: "doc-1",
+      mediaType: "text/markdown",
+      title: "",
+    }).durable;
+    const urlDurable = buildUrlCitedEvent({
+      type: "source-url",
+      sourceId: "web-1",
+      url: "https://example.com/a",
+      title: "",
+    }).durable;
+    const read = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          ...documentDurable,
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "replay:document",
+        },
+        {
+          ...urlDurable,
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "replay:url",
+        },
+      ],
+    });
+    assertEquals(read.status, "ok");
+    if (read.status !== "ok") return;
+
+    const customTwins = read.frames
+      .map((frame) => frame.event)
+      .filter((event): event is { type: "custom"; name: string; data: unknown } =>
+        event.type === "custom"
+      );
+    assertEquals(customTwins.length, 2, "both records must read back as Custom twins");
+
+    const frames = customTwins
+      .map((twin) =>
+        `event: Custom\ndata: ${JSON.stringify({ name: twin.name, value: twin.data })}\n\n`
+      )
+      .join("");
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "doc-1" },
+      { type: "source-url", sourceId: "web-1", url: "https://example.com/a", title: "web-1" },
+    ]);
+  });
+
+  it("treats a chunk's empty file url the same as a missing one", () => {
+    // buildFileAttachedEvent drops an empty url from the one payload both
+    // shapes share (I1), so it never reaches the wire as "" -- once encoded,
+    // a chunk whose url was originally empty is indistinguishable from one
+    // that never had a url at all, and the FileAttached decoder case falls
+    // back to a raw data-file chunk for both, exactly as
+    // toRenderableCustomChunk did for the legacy Custom wrapper's `file`
+    // value with no url.
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+
+    const emptyUrlFrame = buildFileAttachedEvent({
+      type: "file",
+      mediaType: "application/pdf",
+      url: "",
+    }).live;
+    const noUrlFrame = buildFileAttachedEvent({
+      type: "file",
+      mediaType: "application/pdf",
+    }).live;
+    const frames = [
+      `event: ${emptyUrlFrame.event}\ndata: ${JSON.stringify(emptyUrlFrame.payload)}\n\n`,
+      `event: ${noUrlFrame.event}\ndata: ${JSON.stringify(noUrlFrame.payload)}\n\n`,
+    ].join("");
+
+    const decoded = decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents);
+    assertEquals(
+      decoded[0],
+      { type: "data-file", data: { type: "file", mediaType: "application/pdf" } },
+    );
+    assertEquals(decoded[0], decoded[1], "an empty url and a missing url must decode identically");
   });
 
   it("tolerates a null optional field the way the legacy custom mapping did", () => {
@@ -836,9 +945,10 @@ describe("chat/ag-ui", () => {
     // received them, including an explicit null, and the legacy `Custom`
     // twin's `typeof value.field === "string"` guard never rejected a null
     // value outright — it just omitted the field. A renderable citation or
-    // attachment with a null filename must still render, and a null field
-    // on an otherwise-unrenderable one must not be dropped from the fallback
-    // data either.
+    // attachment with a null filename must still render, a null title on a
+    // DocumentCited falls back to the source id the same way an absent one
+    // does, and a null field on an otherwise-unrenderable FileAttached must
+    // not be dropped from the fallback data either.
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
     const frames = [
       'event: DocumentCited\ndata: {"sourceId":"doc-1","mediaType":"text/markdown",' +
@@ -846,20 +956,17 @@ describe("chat/ag-ui", () => {
       'event: FileAttached\ndata: {"url":"https://cdn.example.com/a.pdf",' +
       '"mediaType":"application/pdf","filename":null}\n\n',
       'event: DocumentCited\ndata: {"sourceId":"doc-2","mediaType":"text/markdown",' +
-      '"filename":null}\n\n',
+      '"title":null}\n\n',
+      'event: FileAttached\ndata: {"mediaType":"application/pdf","filename":null}\n\n',
     ].join("");
 
     assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
       { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown", title: "Report" },
       { type: "file", url: "https://cdn.example.com/a.pdf", mediaType: "application/pdf" },
+      { type: "source-document", sourceId: "doc-2", mediaType: "text/markdown", title: "doc-2" },
       {
-        type: "data-source-document",
-        data: {
-          type: "source-document",
-          sourceId: "doc-2",
-          mediaType: "text/markdown",
-          filename: null,
-        },
+        type: "data-file",
+        data: { type: "file", mediaType: "application/pdf", filename: null },
       },
     ]);
   });
@@ -878,6 +985,48 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
+  it("keeps the Custom twin's URL citation title behavior consistent with the native decoder", () => {
+    // Regression guard: toRenderableCustomChunk (ag-ui-helpers.ts) decodes
+    // the reconstructed CUSTOM twin a replayed native URL_CITED record
+    // produces, while this decoder's own UrlCited case decodes the live
+    // wire frame -- both must resolve title the same way for the same
+    // logical value (absent falls back to the source id; present-but-wrong-typed
+    // is dropped; a real string is kept), or a citation renders differently
+    // depending on whether it was seen live or replayed.
+    ensureTestSchemaValidator();
+
+    for (const title of [undefined, null, 42, { unexpected: true }, "Reference"]) {
+      const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+      const nativePayload: Record<string, unknown> = {
+        sourceId: "web-1",
+        url: "https://example.com/a",
+      };
+      const customValue: Record<string, unknown> = {
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/a",
+      };
+      if (title !== undefined) {
+        nativePayload.title = title;
+        customValue.title = title;
+      }
+
+      const frames = [
+        `event: UrlCited\ndata: ${JSON.stringify(nativePayload)}\n\n`,
+        `event: Custom\ndata: ${JSON.stringify({ name: "source-url", value: customValue })}\n\n`,
+      ].join("");
+
+      const [nativeEvent, customEvent] = decodeAgUiSseChunk(state, frames).events.flatMap((
+        entry,
+      ) => entry.chatEvents);
+      assertEquals(
+        customEvent,
+        nativeEvent,
+        `native and Custom decoding must agree for title ${JSON.stringify(title)}`,
+      );
+    }
+  });
+
   it("falls back to the url as sourceId for a URL citation missing one", () => {
     ensureTestSchemaValidator();
     // toRenderableCustomChunk falls back to url when sourceId is absent or
@@ -891,8 +1040,18 @@ describe("chat/ag-ui", () => {
     ].join("");
 
     assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
-      { type: "source-url", sourceId: "https://example.com/a", url: "https://example.com/a" },
-      { type: "source-url", sourceId: "https://example.com/b", url: "https://example.com/b" },
+      {
+        type: "source-url",
+        sourceId: "https://example.com/a",
+        url: "https://example.com/a",
+        title: "https://example.com/a",
+      },
+      {
+        type: "source-url",
+        sourceId: "https://example.com/b",
+        url: "https://example.com/b",
+        title: "https://example.com/b",
+      },
     ]);
   });
 
@@ -946,8 +1105,10 @@ describe("chat/ag-ui", () => {
         data: { toolCallId: "t", childRunId: "r", status: "running" },
       },
       {
-        type: "data-source-document",
-        data: { type: "source-document", sourceId: "doc-1", mediaType: "text/markdown" },
+        type: "source-document",
+        sourceId: "doc-1",
+        mediaType: "text/markdown",
+        title: "doc-1",
       },
       {
         type: "data-file",

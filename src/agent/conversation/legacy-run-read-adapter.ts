@@ -87,18 +87,13 @@ function readNativeAsLegacyCustom(
     // before storing, so it must be reinstated here to make the twin exact.
     // `...value` first for the same reason as the input-request case above.
     //
-    // DOCUMENT_CITED's title is required at the chat UI type level
-    // (ChatSourceDocumentUiPart.title is not optional, unlike its siblings'
-    // title/filename/url), so buildDocumentCitedEvent never lets it be
-    // dropped from either shape -- it falls back to sourceId instead of an
-    // empty string -- and there is nothing to restore here. FILE_ATTACHED's
-    // url has the same chat-type requirement but no safe non-empty
-    // fallback (a placeholder url would be an actively misleading, possibly
-    // broken link), so a chunk whose url was empty is, once stored and
-    // replayed, indistinguishable from one that never had a url at all and
-    // reads back the same way: unrenderable, falling back to a raw data
-    // chunk on replay even though the live frame (which keeps the empty
-    // string) rendered it correctly the first time. Known, accepted gap.
+    // An empty title/filename/url never reaches this stored value in the
+    // first place (native-run-events.ts's omitEmptyStrings drops it from
+    // the one payload both the live frame and this durable record share,
+    // I1), so there is nothing to restore here: a replayed record renders
+    // exactly the way the chat decoder's own fallback (source id for a
+    // missing DOCUMENT_CITED title, a raw data chunk for a missing
+    // FILE_ATTACHED url) already renders the live frame.
     return {
       name: definition.legacyCustomName,
       value: { ...value, type: definition.legacyCustomName },

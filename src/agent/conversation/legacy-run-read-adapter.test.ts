@@ -1676,14 +1676,15 @@ describe("conversation run lifecycle read adapter", () => {
       );
     });
 
-    // Regression guard: a DOCUMENT_CITED chunk built with an empty title
-    // must still read back with a renderable (non-empty) title after a
-    // durable round trip, since ChatSourceDocumentUiPart.title is required
-    // at the chat UI type level -- buildDocumentCitedEvent falls back to
-    // sourceId instead of dropping it, so there is nothing for this reader
-    // to restore, and a replayed record renders exactly as the live frame
-    // did.
-    it("replays a DOCUMENT_CITED citation built with an empty title as its sourceId-titled CUSTOM twin", () => {
+    // Regression guard: a DOCUMENT_CITED chunk built with an empty title has
+    // no title key at all in the durable record (native-run-events.ts's
+    // omitEmptyStrings drops it from the one payload both shapes share, I1),
+    // and there is nothing for this reader to restore -- the replayed CUSTOM
+    // twin must keep it just as absent, matching the live frame the encoder
+    // produced. Rendering a fallback title for a citation with no title is
+    // the chat decoder's job (src/chat/ag-ui.ts), exercised there against
+    // both the live and replayed shapes since they are now identical.
+    it("replays a DOCUMENT_CITED citation built with an empty title with no title key, matching the live frame", () => {
       const durable = buildDocumentCitedEvent({
         type: "source-document",
         sourceId: "doc-1",
@@ -1691,15 +1692,19 @@ describe("conversation run lifecycle read adapter", () => {
         title: "",
       }).durable;
       assertEquals(
-        durable.title,
-        "doc-1",
-        "the durable record must fall back to a non-empty title",
+        Object.hasOwn(durable, "title"),
+        false,
+        "the durable record must not carry the empty title",
       );
 
-      const frames = customFramesFor(2, { ...durable, ...v2Envelope(1, "empty-title-fallback") });
+      const frames = customFramesFor(2, { ...durable, ...v2Envelope(1, "empty-title-dropped") });
       assertEquals(frames.length, 1);
       const data = (frames[0] as { data: Record<string, unknown> }).data;
-      assertEquals(data.title, "doc-1", "the replayed CUSTOM twin must keep the fallback title");
+      assertEquals(
+        Object.hasOwn(data, "title"),
+        false,
+        "the replayed CUSTOM twin must not have a title key either",
+      );
     });
   });
 });

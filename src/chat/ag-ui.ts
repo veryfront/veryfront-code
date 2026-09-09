@@ -1024,37 +1024,43 @@ function mapWireEventToChatEvents(
       // DocumentCited and FileAttached siblings), so guard it here the way
       // toRenderableCustomChunk does rather than spreading it straight into
       // the chat event. sourceId mirrors that same twin: fall back to url
-      // when it is absent or empty instead of requiring it.
+      // when it is absent or empty instead of requiring it. A wrong-typed
+      // title (present, but not a string) is still dropped rather than
+      // rendered or defaulted, matching toRenderableCustomChunk's own
+      // `typeof value.title === "string"` guard. Only a genuinely absent
+      // title -- the encoder drops an empty one before either shape ever
+      // carries it (I1) -- falls back to the resolved source id, for
+      // consistency with this event's DocumentCited sibling, which needs
+      // the same fallback because its own title is not optional.
       const { sourceId, url, title } = wireEvent.payload;
       const resolvedSourceId = typeof sourceId === "string" && sourceId.length > 0 ? sourceId : url;
+      const resolvedTitle = title === undefined
+        ? resolvedSourceId
+        : typeof title === "string"
+        ? title
+        : undefined;
       return [{
         type: "source-url",
         sourceId: resolvedSourceId,
         url,
-        ...(typeof title === "string" ? { title } : {}),
+        ...(resolvedTitle !== undefined ? { title: resolvedTitle } : {}),
       }];
     }
 
     case "DocumentCited": {
+      // ChatSourceDocumentUiPart.title is a required chat UI field, unlike
+      // UrlCited's title or this event's own filename, so an absent title
+      // (the encoder drops an empty one before either shape carries it, I1)
+      // falls back to the citation's source id rather than making the whole
+      // citation unrenderable: sourceId and mediaType are already validated
+      // strings by the time a payload reaches this arm (isValidAgUiPayload's
+      // DocumentCited case requires both), so this citation always renders.
       const { sourceId, mediaType, title, filename } = wireEvent.payload;
-      if (typeof title !== "string") {
-        // The encoder's `toFrame` strips the chunk's own `type` before it
-        // goes on the wire (native frames carry it as the AG-UI event name
-        // instead), but the legacy `Custom` twin's `value` never had it
-        // stripped, so its fallback `data` still carried `type:
-        // "source-document"`. Restore it so this fallback is byte-identical
-        // to what the twin produced, and later `type` wins over anything a
-        // crafted payload smuggled in under that key.
-        return [{
-          type: "data-source-document",
-          data: { ...stripAgUiTimingStamps(wireEvent.payload), type: "source-document" },
-        }];
-      }
       return [{
         type: "source-document",
         sourceId,
         mediaType,
-        title,
+        title: typeof title === "string" ? title : sourceId,
         ...(typeof filename === "string" ? { filename } : {}),
       }];
     }
