@@ -2,10 +2,13 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   concatPrivateArrays,
+  everyPrivateArray,
   filterPrivateArray,
+  findLastPrivateArrayIndex,
   flatMapPrivateArray,
   joinPrivateArray,
   mapPrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { isDeepStrictEqual } from "node:util";
 import type {
@@ -660,11 +663,9 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   // layers, so keep the original runs above and validate this alternate view
   // in addition.
   for (const run of extractAdjacentRuns(messages, "system", true)) {
-    const alreadyCovered = runs.some(
-      (candidate) =>
-        candidate.length === run.length &&
-        candidate.every((message, index) => message === run[index]),
-    );
+    const alreadyCovered = somePrivateArray(runs, (candidate) =>
+      candidate.length === run.length &&
+      everyPrivateArray(candidate, (message, index) => message === run[index]));
     if (!alreadyCovered) runs.push(run);
   }
 
@@ -677,11 +678,9 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   // A single system message is covered by the per-message extraction.
   if (hoisted.length < 2) return runs;
 
-  const alreadyCovered = runs.some(
-    (run) =>
-      run.length === hoisted.length &&
-      run.every((message, index) => message === hoisted[index]),
-  );
+  const alreadyCovered = somePrivateArray(runs, (run) =>
+    run.length === hoisted.length &&
+    everyPrivateArray(run, (message, index) => message === hoisted[index]));
   return alreadyCovered ? runs : [...runs, hoisted];
 }
 
@@ -753,13 +752,15 @@ function extractMergedRunTexts(
     // would also exempt a newly joined boundary that happens to duplicate a
     // different historical run, or a run shortened by trimming.
     if (
-      previousRuns?.some((previous) =>
+      previousRuns !== undefined &&
+      somePrivateArray(previousRuns, (previous) =>
         previous.length === run.length &&
-        previous.every((message, index) => sameOccurrence?.(message, run[index]))
-      )
+        everyPrivateArray(previous, (message, index) => sameOccurrence?.(message, run[index])))
     ) continue;
-    if (mustInclude && !run.some((message) => mustInclude.has(message))) continue;
-    if (mustAlsoInclude && !run.some((message) => mustAlsoInclude.has(message))) continue;
+    if (mustInclude && !somePrivateArray(run, (message) => mustInclude.has(message))) continue;
+    if (mustAlsoInclude && !somePrivateArray(run, (message) => mustAlsoInclude.has(message))) {
+      continue;
+    }
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
       // The OpenAI-compatible converter and the Anthropic builder join system
       // run members with a blank line, but the Google builder sends each
@@ -882,7 +883,7 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
     // into one fully sanitized part instead of being kept apart.
     const textValues = mapPrivateArray(filterPrivateArray(parts, isTextPart), (part) => part.text);
     const assembledNeedsRewrite = textValues.length > 1 &&
-      ASSEMBLED_TEXT_SEPARATORS.some((separator) => {
+      somePrivateArray(ASSEMBLED_TEXT_SEPARATORS, (separator) => {
         const assembled = joinPrivateArray(textValues, separator);
         return (validator.sanitize(assembled) ?? assembled) !== assembled;
       });
@@ -999,7 +1000,7 @@ async function validateInputTexts(
     ),
   ]);
   return {
-    valid: results.every((result) => result.valid),
+    valid: everyPrivateArray(results, (result) => result.valid),
     violations: flatMapPrivateArray(results, (result) => result.violations),
   };
 }
@@ -1375,10 +1376,13 @@ async function assertProviderRunsValid(
             }),
           ),
       );
-      const introduced = patternOccurrences(text, pattern).some((match) =>
-        !trustedMatches.some((trusted) =>
-          trusted.index === match.index && trusted.text === match.text
-        )
+      const introduced = somePrivateArray(
+        patternOccurrences(text, pattern),
+        (match) =>
+          !somePrivateArray(
+            trustedMatches,
+            (trusted) => trusted.index === match.index && trusted.text === match.text,
+          ),
       );
       if (introduced) introducedViolations.push(violation);
     }
@@ -1493,7 +1497,7 @@ function sanitizeAgentInput(
 
 function sameTexts(left: InputValidationTexts, right: InputValidationTexts): boolean {
   const sameList = (a: string[], b: string[]) =>
-    a.length === b.length && a.every((value, index) => value === b[index]);
+    a.length === b.length && everyPrivateArray(a, (value, index) => value === b[index]);
   return sameList(left.texts, right.texts) && sameList(left.assembled, right.assembled);
 }
 
@@ -1538,8 +1542,10 @@ export function securityMiddleware(
         for (let index = messages.length - 1; index >= 0; index--) {
           const message = messages[index]!;
           if (message.role !== "system") continue;
-          const current = pendingCurrent.findLastIndex((input) =>
-            input === message || input.id === message.id && isDeepStrictEqual(input, message)
+          const current = findLastPrivateArrayIndex(
+            pendingCurrent,
+            (input) =>
+              input === message || input.id === message.id && isDeepStrictEqual(input, message),
           );
           if (current < 0) continue;
           pendingCurrent.splice(current, 1);
@@ -1556,8 +1562,8 @@ export function securityMiddleware(
           const run of extractMergedSystemRuns(concatPrivateArrays(systemMessages, callerMessages))
         ) {
           if (
-            !run.some((message) => trusted.has(message)) ||
-            !run.some((message) => callers.has(message))
+            !somePrivateArray(run, (message) => trusted.has(message)) ||
+            !somePrivateArray(run, (message) => callers.has(message))
           ) continue;
           // Runtime and historical text have separate exemptions. A new match
           // across their boundary must still be checked when the runtime changes.
@@ -1727,7 +1733,10 @@ export function securityMiddleware(
         const resolvedTexts = extractInputValidationTexts(messages);
         const sameMessageIdentity = approvedMessages !== undefined &&
           approvedMessages.length === messages.length &&
-          approvedMessages.every((message, index) => message.id === messages[index]?.id);
+          everyPrivateArray(
+            approvedMessages,
+            (message, index) => message.id === messages[index]?.id,
+          );
         const roleRewriteCandidates = approvedMessages === undefined
           ? filterPrivateArray(messages, (message) => !VALIDATED_INPUT_ROLES.has(message.role))
           : filterPrivateArray(

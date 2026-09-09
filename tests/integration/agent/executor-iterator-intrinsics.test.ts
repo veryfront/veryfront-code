@@ -20,6 +20,8 @@ describe("prepared executor private iteration", () => {
       "array mapping",
       "array flattening",
       "array joining",
+      "array every",
+      "array last-index",
       "promise chaining",
       "regexp testing",
       "regexp execution",
@@ -123,6 +125,8 @@ describe("prepared executor private iteration", () => {
       const originalTest = RegExp.prototype.test;
       const originalExec = RegExp.prototype.exec;
       const originalSome = Array.prototype.some;
+      const originalEvery = Array.prototype.every;
+      const originalFindLastIndex = Array.prototype.findLastIndex;
       const originalSignature = Object.getOwnPropertyDescriptor(Object.prototype, "signature");
       const originalMetadata = Object.getOwnPropertyDescriptor(Object.prototype, "metadata");
       const originalNext = prototype.next;
@@ -178,6 +182,16 @@ describe("prepared executor private iteration", () => {
           RegExp.prototype.exec = function (input) {
             if (input.includes(marker)) observations++;
             return Reflect.apply(originalExec, this, [input]);
+          };
+        } else if (probe === "array every") {
+          Array.prototype.every = (function (this: unknown[], ...args: unknown[]) {
+            observeTextArray(this);
+            return Reflect.apply(originalEvery, this, args);
+          }) as typeof originalEvery;
+        } else if (probe === "array last-index") {
+          Array.prototype.findLastIndex = function (...args) {
+            observeTextArray(this);
+            return Reflect.apply(originalFindLastIndex, this, args);
           };
         } else if (probe === "reasoning scans") {
           Array.prototype.some = (function (this: unknown[], ...args: unknown[]) {
@@ -287,6 +301,8 @@ describe("prepared executor private iteration", () => {
         RegExp.prototype.test = originalTest;
         RegExp.prototype.exec = originalExec;
         Array.prototype.some = originalSome;
+        Array.prototype.every = originalEvery;
+        Array.prototype.findLastIndex = originalFindLastIndex;
         if (originalSignature) {
           Object.defineProperty(Object.prototype, "signature", originalSignature);
         } else Reflect.deleteProperty(Object.prototype, "signature");

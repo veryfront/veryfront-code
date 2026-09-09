@@ -5,6 +5,7 @@ import {
   convertToTextGenerationRuntimeMessage,
   convertToTextGenerationRuntimeMessages,
   convertToTextGenerationRuntimeRequestMessages,
+  getAnthropicCompactedAssistantMessages,
 } from "./text-generation-runtime-message-converter.ts";
 import type {
   TextGenerationRuntimeAssistantMessage,
@@ -16,6 +17,40 @@ import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
+  it("compacts completed historical tool rounds without consulting the input reverse scan", () => {
+    const messages: Message[] = [
+      {
+        id: "user-first",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic first request" }],
+      },
+      {
+        id: "tool-round",
+        role: "assistant",
+        parts: [{ type: "tool-call", toolCallId: "call", toolName: "inspect", args: {} }],
+      },
+      {
+        id: "answer",
+        role: "assistant",
+        parts: [{ type: "text", text: "Synthetic historical answer" }],
+      },
+      {
+        id: "user-current",
+        role: "user",
+        parts: [{ type: "text", text: "Synthetic current request" }],
+      },
+    ];
+    let observations = 0;
+    Object.defineProperty(messages, "findLastIndex", {
+      get() {
+        observations++;
+        return Array.prototype.findLastIndex;
+      },
+    });
+    assertEquals([...getAnthropicCompactedAssistantMessages(messages)], [messages[1]]);
+    assertEquals(observations, 0);
+  });
+
   it("converts history without consulting caller-owned part iterators", () => {
     const parts: Message["parts"] = [{ type: "text", text: "Synthetic model text" }];
     let observations = 0;

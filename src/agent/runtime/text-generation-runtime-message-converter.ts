@@ -1,3 +1,5 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   privateTextEndsWith,
   privateTextIncludes,
@@ -6,9 +8,11 @@ import {
 } from "#veryfront/security/private-text.ts";
 import {
   appendPrivateArray,
+  findLastPrivateArrayIndex,
   flatMapPrivateArray,
   mapPrivateArray,
   pushPrivateArray,
+  somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 /**
  * Text-Generation Runtime Message Converter
@@ -125,7 +129,7 @@ function getToolInputRecord(part: Record<string, unknown>): Record<string, unkno
 
 function getTextGenerationToolCallPart(
   part: unknown,
-  providerExecutedToolCallIds: ReadonlySet<string> = new Set(),
+  providerExecutedToolCallIds: ReadonlySet<string> = createPrivateSet(),
 ): TextGenerationRuntimeToolCallPart | null {
   if (!isRecord(part) || typeof part.type !== "string") {
     return null;
@@ -328,7 +332,8 @@ export function convertToTextGenerationRuntimeMessage(
     & { providerExecutedToolCallIds?: Set<string> }
     & TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage {
-  const providerExecutedToolCallIds = options.providerExecutedToolCallIds ?? new Set<string>();
+  const providerExecutedToolCallIds = options.providerExecutedToolCallIds ??
+    createPrivateSet<string>();
   addProviderMetadataToolCallIds(msg, providerExecutedToolCallIds);
   const requireInternetReachableAttachments = options.requireInternetReachableAttachments ?? true;
 
@@ -398,7 +403,7 @@ export function convertToTextGenerationRuntimeMessage(
 
     case "tool": {
       const content: TextGenerationRuntimeToolMessage["content"] = [];
-      const toolNamesById = new Map<string, string>();
+      const toolNamesById = createPrivateMap<string, string>();
 
       for (let partIndex = 0; partIndex < msg.parts.length; partIndex++) {
         if (!hasOwn(msg.parts, partIndex)) continue;
@@ -438,7 +443,7 @@ export function convertToTextGenerationRuntimeMessage(
  */
 export function hasProviderSendableAssistantContent(
   message: Message,
-  priorProviderExecutedToolCallIds: ReadonlySet<string> = new Set(),
+  priorProviderExecutedToolCallIds: ReadonlySet<string> = createPrivateSet(),
 ): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
@@ -447,7 +452,7 @@ export function hasProviderSendableAssistantContent(
   // ordinary call in the same assistant message. Mirror that state here so a
   // duplicate ID cannot make the predicate claim content that conversion will
   // remove.
-  const providerExecutedToolCallIds = new Set(priorProviderExecutedToolCallIds);
+  const providerExecutedToolCallIds = createPrivateSet(priorProviderExecutedToolCallIds);
   for (let partIndex = 0; partIndex < message.parts.length; partIndex++) {
     if (!hasOwn(message.parts, partIndex)) continue;
     const part = message.parts[partIndex]!;
@@ -476,8 +481,8 @@ export function hasProviderSendableAssistantContent(
 export function getProviderSendableAssistantMessages(
   messages: readonly Message[],
 ): ReadonlySet<Message> {
-  const sendable = new Set<Message>();
-  const providerExecutedToolCallIds = new Set<string>();
+  const sendable = createPrivateSet<Message>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
@@ -517,8 +522,8 @@ export function getProviderSendableAssistantMessages(
 export function getProviderSendableToolMessages(
   messages: readonly Message[],
 ): ReadonlySet<Message> {
-  const sendable = new Set<Message>();
-  const providerExecutedToolCallIds = new Set<string>();
+  const sendable = createPrivateSet<Message>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
     if (message.role === "user" || message.role === "system") {
@@ -549,18 +554,19 @@ export function getProviderSendableToolMessages(
 export function getAnthropicCompactedAssistantMessages(
   messages: readonly Message[],
 ): ReadonlySet<Message> {
-  const compacted = new Set<Message>();
-  const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
-  const lastHistoricalAssistantTextIndex = messages.findLastIndex((message, index) =>
-    index < lastUserIndex &&
-    message.role === "assistant" &&
-    message.parts.some((part) =>
-      part.type === "text" && "text" in part &&
-      typeof (part as { text?: unknown }).text === "string" &&
-      (part as { text: string }).text.length > 0
-    )
+  const compacted = createPrivateSet<Message>();
+  const lastUserIndex = findLastPrivateArrayIndex(messages, (message) => message.role === "user");
+  const lastHistoricalAssistantTextIndex = findLastPrivateArrayIndex(
+    messages,
+    (message, index) =>
+      index < lastUserIndex &&
+      message.role === "assistant" &&
+      somePrivateArray(message.parts, (part) =>
+        part.type === "text" && "text" in part &&
+        typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0),
   );
-  const providerExecutedToolCallIds = new Set<string>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
 
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
@@ -577,14 +583,14 @@ export function getAnthropicCompactedAssistantMessages(
     if (
       message.role === "assistant" &&
       index < lastHistoricalAssistantTextIndex &&
-      message.parts.some((part) =>
-        getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null
+      somePrivateArray(
+        message.parts,
+        (part) => getTextGenerationToolCallPart(part, providerExecutedToolCallIds) !== null,
       ) &&
-      !message.parts.some((part) =>
+      !somePrivateArray(message.parts, (part) =>
         part.type === "text" && "text" in part &&
         typeof (part as { text?: unknown }).text === "string" &&
-        (part as { text: string }).text.length > 0
-      )
+        (part as { text: string }).text.length > 0)
     ) {
       compacted.add(message);
     }
@@ -623,8 +629,8 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   const assistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
   const deferredAssistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
   const toolResults: TextGenerationRuntimeToolMessage["content"] = [];
-  const pendingToolCallIds = new Set<string>();
-  const toolNamesById = new Map<string, string>();
+  const pendingToolCallIds = createPrivateSet<string>();
+  const toolNamesById = createPrivateMap<string, string>();
   const messages: TextGenerationRuntimeMessage[] = [];
 
   const flushAssistantMessage = (content: TextGenerationRuntimeAssistantMessage["content"]) => {
@@ -774,7 +780,7 @@ export function convertToTextGenerationRuntimeMessages(
   options: TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
-  const providerExecutedToolCallIds = new Set<string>();
+  const providerExecutedToolCallIds = createPrivateSet<string>();
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;

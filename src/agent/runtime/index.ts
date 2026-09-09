@@ -3590,7 +3590,9 @@ export class AgentRuntime {
 
         let remainingSsePrefixLength = interruptedRecoveryPrefixLength;
         let remainingCallbackPrefixLength = interruptedRecoveryPrefixLength;
-        for (const output of deferredRecoveryOutput) {
+        for (let outputIndex = 0; outputIndex < deferredRecoveryOutput.length; outputIndex++) {
+          if (!ObjectHasOwn(deferredRecoveryOutput, outputIndex)) continue;
+          const output = deferredRecoveryOutput[outputIndex]!;
           if (
             repeatsInterruptedRecoveryText &&
             (output.kind === "callback" || output.isTextEvent)
@@ -3679,10 +3681,13 @@ export class AgentRuntime {
           return;
         }
 
-        const retainedOutput = deferredRecoveryOutput.filter((output) =>
-          output.kind === "callback" || output.isTextEvent
+        const retainedOutput = filterPrivateArray(
+          deferredRecoveryOutput,
+          (output) => output.kind === "callback" || output.isTextEvent,
         );
-        for (const output of deferredRecoveryOutput) {
+        for (let outputIndex = 0; outputIndex < deferredRecoveryOutput.length; outputIndex++) {
+          if (!ObjectHasOwn(deferredRecoveryOutput, outputIndex)) continue;
+          const output = deferredRecoveryOutput[outputIndex]!;
           if (output.kind === "sse" && !output.isTextEvent) {
             enqueuePrivateStream(controller, output.chunk);
           }

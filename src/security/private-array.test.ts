@@ -3,13 +3,76 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   appendPrivateArray,
   concatPrivateArrays,
+  everyPrivateArray,
   filterPrivateArray,
+  findLastPrivateArrayIndex,
   flatMapPrivateArray,
   joinPrivateArray,
   pushPrivateArray,
 } from "./private-array.ts";
 
 describe("private array concatenation", () => {
+  it("checks and reverse-scans own entries with early termination", () => {
+    const values = [1, , 3];
+    let observations = 0;
+    Object.setPrototypeOf(
+      values,
+      Object.create(Array.prototype, {
+        1: {
+          get() {
+            observations++;
+            return 2;
+          },
+        },
+        every: {
+          get() {
+            observations++;
+            return Array.prototype.every;
+          },
+        },
+        findLastIndex: {
+          get() {
+            observations++;
+            return Array.prototype.findLastIndex;
+          },
+        },
+      }),
+    );
+    const indexes: number[] = [];
+    assertEquals(
+      everyPrivateArray(values, (value, index, source) => {
+        assertStrictEquals(source, values);
+        indexes.push(index);
+        return value !== undefined && value < 5;
+      }),
+      true,
+    );
+    assertEquals(indexes, [0, 2]);
+    indexes.length = 0;
+    assertEquals(
+      everyPrivateArray(values, (_value, index) => {
+        indexes.push(index);
+        return false;
+      }),
+      false,
+    );
+    assertEquals(indexes, [0]);
+    indexes.length = 0;
+    assertEquals(
+      findLastPrivateArrayIndex(values, (value, index) => {
+        indexes.push(index);
+        return value === 3;
+      }),
+      2,
+    );
+    assertEquals(indexes, [2]);
+    assertEquals(findLastPrivateArrayIndex(values, (value) => value === 1), 0);
+    assertEquals(findLastPrivateArrayIndex(values, (value) => value === 9), -1);
+    assertEquals(everyPrivateArray([], () => false), true);
+    assertEquals(findLastPrivateArrayIndex([], () => true), -1);
+    assertEquals(observations, 0);
+  });
+
   it("filters own values while preserving callback context and element identity", () => {
     const first = { value: 1 };
     const second = { value: 2 };

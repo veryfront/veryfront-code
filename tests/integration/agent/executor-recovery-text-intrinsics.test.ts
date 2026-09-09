@@ -11,14 +11,17 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 
 for (const replaceMethods of [false, true]) {
   describe(`private recovery text ${replaceMethods ? "hooks" : "baseline"}`, () => {
-    it("deduplicates replayed text without invoking replaced string methods", async () => {
+    it("deduplicates replayed text without invoking replaced string or filter methods", async () => {
       const marker = "synthetic-private-recovery-marker";
       const originalStartsWith = String.prototype.startsWith;
       const originalSlice = String.prototype.slice;
       const originalIncludes = String.prototype.includes;
+      const originalFilter = Array.prototype.filter;
+      const stringify = JSON.stringify;
       const apply = Reflect.apply;
       let calls = 0;
       let observations = 0;
+      let filterObservations = 0;
       let finished: AgentResponse | undefined;
       const chunks: string[] = [];
       const model: ModelRuntime = {
@@ -62,6 +65,10 @@ for (const replaceMethods of [false, true]) {
       } as RuntimeToolFilterConfig, { resolveModelRuntime: () => model });
       try {
         if (replaceMethods) {
+          Array.prototype.filter = (function (this: unknown[], ...args: unknown[]) {
+            if (apply(originalIncludes, stringify(this) ?? "", [marker])) filterObservations++;
+            return apply(originalFilter, this, args);
+          }) as typeof originalFilter;
           String.prototype.startsWith = function (search, position) {
             if (apply(originalIncludes, this, [marker])) observations++;
             return apply(originalStartsWith, this, [search, position]);
@@ -81,6 +88,7 @@ for (const replaceMethods of [false, true]) {
         await result.toDataStreamResponse().text();
       } finally {
         if (replaceMethods) {
+          Array.prototype.filter = originalFilter;
           String.prototype.startsWith = originalStartsWith;
           String.prototype.slice = originalSlice;
         }
@@ -89,6 +97,7 @@ for (const replaceMethods of [false, true]) {
       assertEquals(chunks, [marker + " complete"]);
       assertEquals((finished as AgentResponse | undefined)?.text, marker + " complete");
       assertEquals(observations, 0);
+      assertEquals(filterObservations, 0);
     });
   });
 }
