@@ -160,6 +160,30 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  for (const selection of [undefined, [], ["load_skill"]]) {
+    it(`normalizes implicit disabled skill tools while retaining explicit rejection (${JSON.stringify(selection)})`, async () => {
+      const f = fixture({
+        config: { tools: true, skills: false },
+        grant: { ...grant, allowedToolNames: ["load_skill"], hostToolFacadeIds: ["skills"] },
+        facades: { hostTools: new Map([["skills", { load_skill: syntheticHostTool() }]]) },
+      });
+      try {
+        const result = await prepare(f.owner, {
+          agentId: "coder",
+          ...(selection === undefined ? {} : { allowedToolNames: selection }),
+        });
+        if (selection?.length) {
+          assertEquals(result, { ok: false, code: "EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE" });
+        } else {
+          assert(result && typeof result === "object" && !Array.isArray(result));
+          assertEquals(result.ok, true);
+        }
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   it("keeps skill references and scripts outside a loader-only grant after loading a skill", async () => {
     const visible: string[][] = [];
     const f = fixture({

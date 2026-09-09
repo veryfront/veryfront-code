@@ -575,9 +575,9 @@ export function createExecutorRuntimePreparation(input: Options) {
         agentId: definition.id,
         selector: definition.skills === false ? [] : definition.skills,
       });
-      if (sourceToolNames !== undefined) {
+      if (sourceToolNames !== undefined || request.allowedToolNames === undefined) {
         const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
-          allowedToolNames: normalizeToolNames(sourceToolNames),
+          allowedToolNames: normalizeToolNames(sourceToolNames ?? allowedToolNames),
           localToolNames: filter(
             normalizeToolNames(grant.allowedToolNames),
             (name) => hasOwn(localTools, name),

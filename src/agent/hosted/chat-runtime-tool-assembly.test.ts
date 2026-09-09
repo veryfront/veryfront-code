@@ -24,6 +24,33 @@ import {
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 
 describe("private host tool metadata", () => {
+  it("observes private conversation work without invoking its own then override", async () => {
+    const text = Promise.resolve("Synthetic private conversation text");
+    const nativeThen = Promise.prototype.then;
+    let observations = 0;
+    Object.defineProperties(text, {
+      constructor: { value: Object },
+      then: {
+        value(...args: unknown[]) {
+          observations++;
+          return Reflect.apply(nativeThen, text, args);
+        },
+      },
+    });
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { agentId: "synthetic", model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: "Synthetic instructions",
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      localTools: {},
+      allowedToolNames: [],
+      remoteToolSources: [],
+      loadLatestConversationUserText: () => text,
+    });
+    assertEquals(assembly.availableToolNames, []);
+    assertEquals(observations, 0);
+  });
+
   it("does not read inherited short names while enforcing denials", async () => {
     let reads = 0;
     const definition = Object.create({

@@ -1,3 +1,4 @@
+import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -705,7 +706,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     if (input.loadLatestConversationUserText) {
       preparedInstructions = updateDefaultResearchArtifacts({
         taskContext: input.taskContext,
-        latestUserText: await input.loadLatestConversationUserText(input.signal),
+        latestUserText: await observePrivatePromise(
+          input.loadLatestConversationUserText(input.signal),
+        ),
         system: preparedInstructions,
       });
     }
