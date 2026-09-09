@@ -2,6 +2,7 @@ import { privateTextTrim, privateTextTrimStart } from "#veryfront/security/priva
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
+  appendPrivateArray,
   concatPrivateArrays,
   everyPrivateArray,
   filterPrivateArray,
@@ -240,7 +241,7 @@ export class InputValidator {
 
     const maxLength = options?.checkMaxLength === false ? undefined : this.config.maxLength;
     if (maxLength != null && input.length > maxLength) {
-      violations.push({
+      pushPrivateArray(violations, {
         type: "input",
         reason: `Input exceeds maximum length of ${maxLength}`,
         content: `${input.substring(0, 100)}...`,
@@ -253,7 +254,7 @@ export class InputValidator {
       // cannot skip a repeat match and caller-owned patterns remain untouched.
       if (!testBlockedPattern(pattern, input)) continue;
 
-      violations.push({
+      pushPrivateArray(violations, {
         type: "input",
         reason: "Input matches blocked pattern",
         content: input,
@@ -267,7 +268,7 @@ export class InputValidator {
     if (customValidate) {
       const customValid = await customValidate(input);
       if (!customValid) {
-        violations.push({
+        pushPrivateArray(violations, {
           type: "input",
           reason: "Custom validation failed",
           content: input,
@@ -339,7 +340,7 @@ export class OutputFilter {
       // lastIndex across calls or require caller-owned regexes to be mutable.
       if (!testBlockedPattern(pattern, filtered)) continue;
 
-      violations.push({
+      pushPrivateArray(violations, {
         type: "output",
         reason: "Output contains blocked pattern",
         content: filtered,
@@ -398,12 +399,12 @@ async function filterStructuredOutputValue(
   }
 
   if (Array.isArray(value)) {
-    const filteredItems = [];
+    const filteredItems: unknown[] = [];
     const violations: SecurityViolation[] = [];
     for (const item of value) {
       const result = await filterStructuredOutputValue(item, outputFilter);
-      filteredItems.push(result.value);
-      violations.push(...result.violations);
+      pushPrivateArray(filteredItems, result.value);
+      appendPrivateArray(violations, result.violations);
     }
     return { value: filteredItems, violations };
   }
@@ -414,7 +415,7 @@ async function filterStructuredOutputValue(
     for (const [key, item] of Object.entries(value)) {
       const result = await filterStructuredOutputValue(item, outputFilter);
       filteredObject[key] = result.value;
-      violations.push(...result.violations);
+      appendPrivateArray(violations, result.violations);
     }
     return { value: filteredObject, violations };
   }
@@ -431,12 +432,12 @@ function extractPartInputText(part: unknown): string[] {
   if (!isRecord(part) || part.type === "tool-result") return [];
 
   const values: string[] = [];
-  if (typeof part.inputText === "string") values.push(part.inputText);
+  if (typeof part.inputText === "string") pushPrivateArray(values, part.inputText);
   const appendSerialized = (value: unknown) => {
     if (!isRecord(value)) return;
     try {
       const serialized = JSON.stringify(value);
-      if (typeof serialized === "string") values.push(serialized);
+      if (typeof serialized === "string") pushPrivateArray(values, serialized);
     } catch {
       // Provider converters ignore non-text input on caller-authored user and
       // system messages. Unsupported JSON values must not fail the turn here.
@@ -527,7 +528,7 @@ function extractMessageAssembledTextsRegardlessOfRole(message: Message): string[
     ...attachmentMetadata,
   ];
   if (message.role === "user" && buildAttachmentContextFromParts(message.parts)) {
-    assembled.push(getUserTextWithAttachmentContext(message.parts));
+    pushPrivateArray(assembled, getUserTextWithAttachmentContext(message.parts));
   }
   return assembled;
 }
@@ -596,7 +597,7 @@ function extractAdjacentRuns(
   const flushRun = () => {
     // Runs of a single message are already covered by the per-message
     // extraction, including its own assembled forms.
-    if (run.length > 1) runs.push(run);
+    if (run.length > 1) pushPrivateArray(runs, run);
     run = [];
   };
 
@@ -623,7 +624,7 @@ function extractAdjacentRuns(
     ) {
       continue;
     }
-    run.push(message);
+    pushPrivateArray(run, message);
   }
   flushRun();
 
@@ -671,7 +672,7 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
     const alreadyCovered = somePrivateArray(runs, (candidate) =>
       candidate.length === run.length &&
       everyPrivateArray(candidate, (message, index) => message === run[index]));
-    if (!alreadyCovered) runs.push(run);
+    if (!alreadyCovered) pushPrivateArray(runs, run);
   }
 
   // Anthropic retains whitespace-only system layers and joins each layer with
@@ -840,10 +841,10 @@ function collapseTextParts(parts: Message["parts"], text: string | undefined): M
   let replaced = false;
   for (const part of parts) {
     if (!isTextPart(part)) {
-      collapsed.push(part);
+      pushPrivateArray(collapsed, part);
     } else if (!replaced && text !== undefined) {
       replaced = true;
-      collapsed.push(copySanitizedTextPart(part, text));
+      pushPrivateArray(collapsed, copySanitizedTextPart(part, text));
     }
   }
   return collapsed;
@@ -1181,8 +1182,12 @@ function createTrustedMatchPredicate(
         const escaped = body[++index];
         if (depth === 0 && (escaped === "b" || escaped === "B")) {
           const choices = [character + escaped + excludePosition(lower) + excludePosition(upper)];
-          if (word(segment.text[0]) === (escaped === "b")) choices.push(atPosition(lower));
-          if (word(segment.text.at(-1)) === (escaped === "b")) choices.push(atPosition(upper));
+          if (word(segment.text[0]) === (escaped === "b")) {
+            pushPrivateArray(choices, atPosition(lower));
+          }
+          if (word(segment.text.at(-1)) === (escaped === "b")) {
+            pushPrivateArray(choices, atPosition(upper));
+          }
           result += "(?:" + joinPrivateArray(choices, "|") + ")";
         } else result += character + escaped;
         continue;
@@ -1198,12 +1203,12 @@ function createTrustedMatchPredicate(
           const assertion = /^\(\?(<?)=/.exec(body.slice(index));
           if (assertion) {
             const direction = assertion[1] ? "behind" : "ahead";
-            cases.push({ ignoreCase: localIgnoreCase, assertion: direction });
+            pushPrivateArray(cases, { ignoreCase: localIgnoreCase, assertion: direction });
             result += assertion[0] + (direction === "behind" ? lowerGuard : "") + "(?:";
             index += assertion[0].length - 1;
             continue;
           }
-          cases.push({ ignoreCase: localIgnoreCase });
+          pushPrivateArray(cases, { ignoreCase: localIgnoreCase });
           const named = /^\(\?<[^>]+>/.exec(body.slice(index));
           if (body[index + 1] !== "?" || named) {
             result += "(?:";
@@ -1290,18 +1295,18 @@ function createTrustedMatchPredicate(
         continue;
       }
       if (pattern.source.startsWith("(?=", index)) {
-        groups.push({ kind: "ahead", ignoreCase, bodyStart: index + 3 });
+        pushPrivateArray(groups, { kind: "ahead", ignoreCase, bodyStart: index + 3 });
         source += "(?=(?:";
         index += 2;
         continue;
       }
       if (pattern.source.startsWith("(?<=", index)) {
-        groups.push({ kind: "behind", ignoreCase, bodyStart: index + 4 });
+        pushPrivateArray(groups, { kind: "behind", ignoreCase, bodyStart: index + 4 });
         source += "(?<=" + lowerGuard + "(?:";
         index += 3;
         continue;
       }
-      groups.push({ kind: "ordinary", ignoreCase });
+      pushPrivateArray(groups, { kind: "ordinary", ignoreCase });
       const modifiers = /^\(\?([ims]*)(?:-([ims]+))?:/.exec(pattern.source.slice(index));
       if (modifiers?.[1]?.includes("i")) ignoreCase = true;
       if (modifiers?.[2]?.includes("i")) ignoreCase = false;
@@ -1364,7 +1369,7 @@ async function assertProviderRunsValid(
     for (const violation of validation.violations) {
       const pattern = violation.pattern;
       if (pattern === undefined) {
-        introducedViolations.push(violation);
+        pushPrivateArray(introducedViolations, violation);
         continue;
       }
       const trustedMatches = flatMapPrivateArray(
@@ -1389,7 +1394,7 @@ async function assertProviderRunsValid(
             (trusted) => trusted.index === match.index && trusted.text === match.text,
           ),
       );
-      if (introduced) introducedViolations.push(violation);
+      if (introduced) pushPrivateArray(introducedViolations, violation);
     }
   }
   if (introducedViolations.length > 0) {
@@ -1433,7 +1438,7 @@ function patternOccurrences(input: string, pattern: RegExp): { index: number; te
     match;
     match = applyRegExp(regexpExec, matcher, [input]) as RegExpExecArray | null
   ) {
-    matches.push({ index: match.index, text: match[0] });
+    pushPrivateArray(matches, { index: match.index, text: match[0] });
     if (match[0].length === 0) {
       matcher.lastIndex = advanceStringIndex(
         input,
@@ -1589,11 +1594,11 @@ export function securityMiddleware(
                 if (kind !== "current") {
                   const previous = assembled.trustedSegments.at(-1);
                   if (previous && kind === previousKind) previous.text += runSeparator + text;
-                  else assembled.trustedSegments.push({ start, text });
+                  else pushPrivateArray(assembled.trustedSegments, { start, text });
                 }
                 previousKind = kind;
               }
-              providerRuns.push(assembled);
+              pushPrivateArray(providerRuns, assembled);
             }
           }
         }
