@@ -19,6 +19,8 @@ const REVIEW_REQUEST_MARKER =
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
+// Timelines include commits and lifecycle events as well as review evidence.
+const MAX_TIMELINE_ITEMS = 5000;
 const CODEX_REACTION_RETRY_DELAYS_MS = [1000, 2000, 4000];
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
@@ -1125,7 +1127,13 @@ export async function findAutomatedReview(
   )?.proof;
 }
 
-async function collectAll(github, endpoint, parameters, source) {
+async function collectAll(
+  github,
+  endpoint,
+  parameters,
+  source,
+  maxItems = MAX_ITEMS_PER_SOURCE,
+) {
   const items = [];
   for await (
     const response of github.paginate.iterator(endpoint, {
@@ -1137,8 +1145,8 @@ async function collectAll(github, endpoint, parameters, source) {
       throw new Error(`${source} pagination returned malformed data`);
     }
     items.push(...response.data);
-    if (items.length > MAX_ITEMS_PER_SOURCE) {
-      throw new Error(`${source} exceeded ${MAX_ITEMS_PER_SOURCE} items`);
+    if (items.length > maxItems) {
+      throw new Error(`${source} exceeded ${maxItems} items`);
     }
   }
   return items;
@@ -1189,6 +1197,7 @@ async function collectAutomatedReviewEvidence(
         github.rest.issues.listEventsForTimeline,
         { ...common, issue_number: pullNumber },
         source("pull request timeline"),
+        MAX_TIMELINE_ITEMS,
       ),
     ]);
   return { reviews, comments, reactions, events, statuses, timeline };
@@ -2281,6 +2290,7 @@ async function currentReviewPropagationRetry({
       github.rest.issues.listEventsForTimeline,
       { ...common, issue_number: pullNumber },
       "final review timeline",
+      MAX_TIMELINE_ITEMS,
     ),
   ]);
   const boundary = latestReviewEpochChange(events);
