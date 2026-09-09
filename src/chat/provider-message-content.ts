@@ -7,8 +7,14 @@ const isArray = Array.isArray;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
 
+function ownField(record: Record<string, unknown>, key: string): unknown {
+  const descriptor = getOwnPropertyDescriptor(record, key);
+  return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
 function hasNonEmptyStringField(record: Record<string, unknown>, key: string): boolean {
-  return typeof record[key] === "string" && privateTextTrim(record[key]).length > 0;
+  const value = ownField(record, key);
+  return typeof value === "string" && privateTextTrim(value).length > 0;
 }
 
 function hasValidToolResultOutput(value: unknown): boolean {
@@ -33,8 +39,7 @@ function isKeepableModelPart(
   includeReasoning: boolean,
 ): boolean {
   if (!isRecord(part) || typeof part.type !== "string") return false;
-  const descriptor = getOwnPropertyDescriptor(part, "providerExecuted");
-  const providerExecuted = descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  const providerExecuted = ownField(part, "providerExecuted");
 
   switch (part.type) {
     case "text":
@@ -70,8 +75,11 @@ function isKeepableModelPart(
         return false;
       }
 
-      const url = typeof part.url === "string" ? part.url : "";
-      if (privateTextStartsWith(url, "data:image/") && part.filename === "preview-screenshot.png") {
+      const url = ownField(part, "url");
+      if (
+        typeof url === "string" && privateTextStartsWith(url, "data:image/") &&
+        ownField(part, "filename") === "preview-screenshot.png"
+      ) {
         return false;
       }
       return true;

@@ -9,6 +9,43 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 
 for (const hooks of [false, true]) {
   describe(`private provider optional fields ${hooks ? "hooks" : "baseline"}`, () => {
+    it("keeps attachment data out of inherited filename and data getters", () => {
+      const marker = "synthetic-private-attachment-fields";
+      const part = {
+        type: "image",
+        mediaType: "image/png",
+        url: `data:image/png;base64,${marker}`,
+      };
+      const getDescriptor = Object.getOwnPropertyDescriptor;
+      const defineProperty = Object.defineProperty;
+      const filename = getDescriptor(Object.prototype, "filename");
+      const data = getDescriptor(Object.prototype, "data");
+      let observations = 0;
+      let cleaned;
+      try {
+        if (hooks) {
+          for (const key of ["filename", "data"]) {
+            defineProperty(Object.prototype, key, {
+              configurable: true,
+              get() {
+                if (getDescriptor(this, "url")?.value === part.url) observations++;
+                return undefined;
+              },
+            });
+          }
+        }
+        cleaned = cleanContent([part], "user");
+      } finally {
+        if (hooks) {
+          if (filename) defineProperty(Object.prototype, "filename", filename);
+          else Reflect.deleteProperty(Object.prototype, "filename");
+          if (data) defineProperty(Object.prototype, "data", data);
+          else Reflect.deleteProperty(Object.prototype, "data");
+        }
+      }
+      assertEquals(cleaned, [part]);
+      assertEquals(observations, 0);
+    });
     it("replays local tool arguments without consulting an inherited provider flag", () => {
       const marker = "synthetic-private-provider-flag";
       const messages: Message[] = [{
