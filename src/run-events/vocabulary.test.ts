@@ -103,8 +103,9 @@ describe("run-events/vocabulary", () => {
     ] as RunEventType[]);
   });
 
-  it("classes an uncatalogued type as a fact rather than failing", () => {
-    assertEquals(getRunEventClass("SOMETHING_THE_API_ADDED_LATER"), "fact");
+  it("returns null for an uncatalogued type so the row's event_class decides", () => {
+    assertEquals(getRunEventClass("SOMETHING_THE_API_ADDED_LATER"), null);
+    assertEquals(getRunEventClass("CUSTOM"), null);
     assertEquals(RUN_EVENT_CLASSES, ["fact", "delta"]);
   });
 

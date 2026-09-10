@@ -108,9 +108,10 @@ export const RUN_EVENT_CLASSES = ["fact", "delta"] as const;
 export type RunEventClass = (typeof RUN_EVENT_CLASSES)[number];
 
 /**
- * The types the API classes as `delta`. Everything else, catalogued or not,
- * is a `fact`, which is why `getRunEventClass` takes a plain string: a row
- * carrying a type this vocabulary has not learned yet still needs an answer.
+ * The types the API classes as `delta`; every other catalogued type is a
+ * `fact`. The set is consulted only for catalogued types: a type this
+ * vocabulary has not learned yet may be a delta the API added later, so its
+ * class comes from the row's `event_class` envelope field, never from here.
  */
 const RUN_EVENT_DELTA_TYPES: ReadonlySet<string> = new Set<string>([
   "TEXT_MESSAGE_CONTENT",
@@ -122,9 +123,19 @@ const RUN_EVENT_DELTA_TYPES: ReadonlySet<string> = new Set<string>([
   "ACTIVITY_DELTA",
 ]);
 
-/** The event class the API reports for a stored type. */
-export function getRunEventClass(eventType: string): RunEventClass {
+function classOfCataloguedType(eventType: RunEventType): RunEventClass {
   return RUN_EVENT_DELTA_TYPES.has(eventType) ? "delta" : "fact";
+}
+
+/**
+ * The event class the API reports for a catalogued type, or `null` for a type
+ * this vocabulary does not know. A `null` is not a fact: the API's
+ * post-cutover rule leaves `event_type` open, so a newer API can serve a delta
+ * this build predates, and the row's `event_class` envelope field is the
+ * authority for it. Read that field rather than defaulting.
+ */
+export function getRunEventClass(eventType: string): RunEventClass | null {
+  return isRunEventType(eventType) ? classOfCataloguedType(eventType) : null;
 }
 
 /**
@@ -138,7 +149,7 @@ export function getRunEventClass(eventType: string): RunEventClass {
  */
 export const RUN_EVENT_CLASS_BY_TYPE: Readonly<Record<RunEventType, RunEventClass>> = Object
   .fromEntries(
-    RUN_EVENT_TYPES.map((eventType) => [eventType, getRunEventClass(eventType)]),
+    RUN_EVENT_TYPES.map((eventType) => [eventType, classOfCataloguedType(eventType)]),
   ) as Record<RunEventType, RunEventClass>;
 
 /**
