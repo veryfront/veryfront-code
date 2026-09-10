@@ -123,13 +123,19 @@ describe("performance reports", () => {
     assertThrows(() => options(["--scenario=unknown"]));
     assertThrows(() => options(["--unknown"]));
   });
-  it("invalidates baselines when orchestration or report calculations change", async () => {
+  it("invalidates baselines when measurement code or permissions change", async () => {
     const sources = new Map<string, string>();
     const readSource = (path: string) =>
       Promise.resolve(sources.get(path) ?? "unchanged");
     const baseline = await workloadHash(readSource);
-    for (const file of ["run.ts", "report.ts"]) {
-      sources.set(`scripts/perf/${file}`, "changed measurement logic");
+    for (
+      const file of [
+        "scripts/perf/run.ts",
+        "scripts/perf/report.ts",
+        "scripts/test/suites.ts",
+      ]
+    ) {
+      sources.set(file, "changed measurement logic");
       assertEquals(await workloadHash(readSource) === baseline, false, file);
       sources.clear();
     }

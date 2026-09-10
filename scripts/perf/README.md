@@ -79,9 +79,11 @@ an optimization.
   Profile percentages are diagnostic. Unprofiled measurements determine impact.
 - The report records all trials, medians, spreads, runtime, CPU model, commit,
   working tree state, tracked runtime diff hash, and workload hash. The workload
-  hash includes orchestration and report calculations. Comparisons reject
-  different runtimes, hardware labels, workloads, or trial settings. CPU model
-  equality does not guarantee identical thermal or load conditions.
+  hash includes orchestration, report calculations, and the shared provider
+  permission source. CI copies that permission source into the base checkout and
+  runs profiling when it changes. Comparisons reject different runtimes,
+  hardware labels, workloads, or trial settings. CPU model equality does not
+  guarantee identical thermal or load conditions.
 - Warm throughput is sequential and expressed as time per operation. The spread
   describes trial averages, not p95 or p99. HTTP results are full-response
   averages.

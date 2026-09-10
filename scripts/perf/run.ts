@@ -112,17 +112,18 @@ export async function workloadHash(
 ) {
   const source = await Promise.all(
     [
-      "run.ts",
-      "report.ts",
-      "worker.ts",
-      "workloads.ts",
-      "scenarios.ts",
-      "http-worker.ts",
-      "http-client.ts",
-      "protocol.ts",
-    ].map((name) => readSource(`scripts/perf/${name}`)),
+      "scripts/perf/run.ts",
+      "scripts/perf/report.ts",
+      "scripts/perf/worker.ts",
+      "scripts/perf/workloads.ts",
+      "scripts/perf/scenarios.ts",
+      "scripts/perf/http-worker.ts",
+      "scripts/perf/http-client.ts",
+      "scripts/perf/protocol.ts",
+      "scripts/test/suites.ts",
+    ].map((path) => readSource(path)),
   );
-  return await digest(source.join("\n"));
+  return await digest(JSON.stringify(source));
 }
 function table(results: Results): string {
   return [

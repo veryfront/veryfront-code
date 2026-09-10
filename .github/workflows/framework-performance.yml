@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - "scripts/perf/**"
+      - "scripts/test/suites.ts"
       - "tests/integration/perf/**"
       - "src/**"
       - "extensions/**"
@@ -61,8 +62,9 @@ jobs:
           elif [[ "${perf_metadata_status}" -ne 0 ]]; then
             exit "${perf_metadata_status}"
           fi
-          mkdir -p "${perf_base_dir}/scripts/perf"
+          mkdir -p "${perf_base_dir}/scripts/perf" "${perf_base_dir}/scripts/test"
           cp scripts/perf/*.ts "${perf_base_dir}/scripts/perf/"
+          cp scripts/test/suites.ts "${perf_base_dir}/scripts/test/suites.ts"
           (
             cd "${perf_base_dir}"
             deno run --frozen --allow-read --allow-write=.cache --allow-env --allow-sys --allow-run=deno,git scripts/perf/run.ts --label=base --no-profile
