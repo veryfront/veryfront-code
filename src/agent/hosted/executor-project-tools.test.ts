@@ -185,8 +185,12 @@ describe("executor project tools", () => {
         const pending = f.source({
           limits: { maxMetadataBytes: catalogBytes + (includeAliases ? aliasBytes : 0) },
         });
-        if (includeAliases) assertEquals((await (await pending).listTools()).length, 1);
-        else await assertRejects(() => pending, TypeError);
+        if (includeAliases) {
+          const source = await pending;
+          assertEquals(source.aliasMetadataBytes, aliasBytes);
+          assert(Object.isFrozen(source));
+          assertEquals((await source.listTools()).length, 1);
+        } else await assertRejects(() => pending, TypeError);
       } finally {
         await f.close();
       }
@@ -452,6 +456,25 @@ describe("executor project tools", () => {
         );
         await assertRejects(() => f.source({ context: context as ExecutorProjectToolContext }));
       }
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("bounds peer alias metadata with the tightened tool ceiling", async () => {
+    const f = fixture();
+    try {
+      const operation = f.operations.get("project.tool-aliases");
+      assert(operation?.mode === "unary");
+      operation.handle = () => ({
+        agentId: fixed.agentId,
+        aliases: [{ name: "inspect", shortName: "one" }, { name: "inspect", shortName: "two" }],
+      });
+      await assertRejects(
+        () => f.source({ limits: { maxToolsPerSource: 1 } }),
+        TypeError,
+        "metadata",
+      );
     } finally {
       await f.close();
     }

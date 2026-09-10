@@ -7,6 +7,7 @@ import {
 
 await initializeExecutorRuntimeContracts();
 const executor = await startExecutorRuntimeEntrypoint({
+  mode: process.argv[3] === "project-tools" ? "project-tools" : "runtime",
   readKey: () => Promise.resolve(new Uint8Array(readFileSync(0))),
   readArtifact: () =>
     Promise.resolve({

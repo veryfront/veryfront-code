@@ -37,7 +37,8 @@ import {
   parseExecutorToolData,
 } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
-export const EXECUTOR_PROJECT_TOOL_SOURCE_ID = "project";
+import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "./executor-runtime-install-schema.ts";
+export { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "./executor-runtime-install-schema.ts";
 const TOOL_ALIASES_OPERATION = "project.tool-aliases";
 const apply = Reflect.apply;
 const freeze = Object.freeze;
@@ -46,6 +47,8 @@ const hasOwn = Object.hasOwn;
 
 export interface ExecutorProjectToolSource extends RemoteToolSource {
   readonly aliases: readonly { readonly name: string; readonly shortName: string }[];
+  /** Validated alias frame bytes reserved by each combined metadata boundary. */
+  readonly aliasMetadataBytes: number;
 }
 
 export interface ExecutorProjectToolContext {
@@ -298,7 +301,8 @@ export async function createExecutorProjectToolSource(
     await channel.request(TOOL_ALIASES_OPERATION, {}, { signal }),
   );
   check();
-  const remainingMetadataBytes = limits.maxMetadataBytes - executorToolBytes(metadata);
+  const aliasMetadataBytes = executorToolBytes(metadata);
+  const remainingMetadataBytes = limits.maxMetadataBytes - aliasMetadataBytes;
   if (
     metadata.agentId !== fixed.agentId || metadata.aliases.length > limits.maxToolsPerSource ||
     remainingMetadataBytes < 1
@@ -336,6 +340,7 @@ export async function createExecutorProjectToolSource(
   }
   return freeze({
     id: EXECUTOR_PROJECT_TOOL_SOURCE_ID,
+    aliasMetadataBytes,
     aliases: freeze(
       mapPrivateArray(
         filterPrivateArray([...aliases], (entry) => catalog.has(entry[1])),

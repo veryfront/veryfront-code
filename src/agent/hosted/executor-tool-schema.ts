@@ -47,6 +47,26 @@ export const EXECUTOR_TOOL_LIMITS = Object.freeze({
 });
 export type ExecutorToolLimits = { -readonly [K in keyof typeof EXECUTOR_TOOL_LIMITS]: number };
 
+/** Fixed protocol ceilings; installations may only tighten them. */
+export const getExecutorToolLimitsSchema = defineSchema((v) => {
+  const limit = (key: keyof ExecutorToolLimits) =>
+    v.number().int().min(1).max(EXECUTOR_TOOL_LIMITS[key]);
+  return v.object({
+    maxSources: limit("maxSources"),
+    maxToolsPerSource: limit("maxToolsPerSource"),
+    maxTotalTools: limit("maxTotalTools"),
+    maxMetadataBytes: limit("maxMetadataBytes"),
+    maxDescriptorBytes: limit("maxDescriptorBytes"),
+    maxArgumentBytes: limit("maxArgumentBytes"),
+    maxResultBytes: limit("maxResultBytes"),
+    maxProgressEvents: limit("maxProgressEvents"),
+    maxProgressBytes: limit("maxProgressBytes"),
+    maxProgressEventBytes: limit("maxProgressEventBytes"),
+    maxQueuedProgress: limit("maxQueuedProgress"),
+    maxQueuedProgressBytes: limit("maxQueuedProgressBytes"),
+  }).strict();
+});
+
 export function executorToolLimit(value: number, maximum: number): number {
   if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     throw new TypeError("Invalid executor tool limit");
@@ -65,6 +85,17 @@ export function executorToolLimits(
     limits[key] = executorToolLimit(overrides[key] ?? limits[key], limits[key]);
   }
   return freeze(limits);
+}
+
+/** Reserve separately validated metadata before counting source and definition frames. */
+export function reserveExecutorToolMetadata(
+  limits: ExecutorToolLimits,
+  bytes: number,
+): ExecutorToolLimits {
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes >= limits.maxMetadataBytes) {
+    throw new TypeError("Executor tool metadata limit exceeded");
+  }
+  return executorToolLimits({ ...limits, maxMetadataBytes: limits.maxMetadataBytes - bytes });
 }
 
 export const getExecutorToolIdSchema = defineSchema((v) => v.string().min(1).max(256));

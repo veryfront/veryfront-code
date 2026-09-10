@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
+import { EXECUTOR_TOOL_LIMITS } from "./executor-tool-schema.ts";
 
 const binding = { allocationId: "allocation", invocationId: "invocation", generation: 1 };
 const artifact = {
@@ -123,6 +124,15 @@ describe("project tool installation", () => {
           { ...request, grant: { models: [] } },
           { ...request, maxCalls: 4097 },
           { ...request, maxConcurrent: 33 },
+          { ...request, limits: { ...EXECUTOR_TOOL_LIMITS, maxProgressEvents: 0 } },
+          {
+            ...request,
+            limits: {
+              ...EXECUTOR_TOOL_LIMITS,
+              maxArgumentBytes: EXECUTOR_TOOL_LIMITS.maxArgumentBytes + 1,
+            },
+          },
+          { ...request, limits: { ...EXECUTOR_TOOL_LIMITS, unrecognized: 1 } },
           { ...request, allowedToolNames: ["inspect", "inspect"] },
           { ...request, binding: { ...binding, generation: 2 } },
           { ...request, source: { type: "release", releaseId: "other" } },

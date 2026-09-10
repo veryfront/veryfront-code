@@ -9,7 +9,13 @@ import {
 import { getExecutorRuntimeGrantDataSchema } from "./executor-runtime-prepare-schema.ts";
 import { getExecutorPersistenceCapabilityIdsSchema } from "./executor-persistence-schema.ts";
 import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
-import { EXECUTOR_TOOL_LIMITS, getExecutorToolIdSchema } from "./executor-tool-schema.ts";
+import {
+  EXECUTOR_TOOL_LIMITS,
+  getExecutorToolIdSchema,
+  getExecutorToolLimitsSchema,
+} from "./executor-tool-schema.ts";
+
+export const EXECUTOR_PROJECT_TOOL_SOURCE_ID = "project";
 
 function artifactShape(v: SchemaValidator) {
   return {
@@ -97,6 +103,7 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     ),
     maxCalls: v.number().int().min(1).max(4096),
     maxConcurrent: v.number().int().min(1).max(32),
+    limits: getExecutorToolLimitsSchema().optional(),
   }).strict().refine(
     (input) => new Set(input.allowedToolNames).size === input.allowedToolNames.length,
     "Duplicate project tool grant",
