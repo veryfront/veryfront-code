@@ -1,4 +1,7 @@
-/** Detect known broker credentials in literal or URI-decoded strings and property names. */
+const MAX_URI_DECODE_PASSES = 16;
+const uriTextDecoder = new TextDecoder();
+
+/** Reject known credentials or text that exceeds the URI normalization limit. */
 export function containsBrokerCredential(
   value: unknown,
   credentials: readonly (string | null | undefined)[],
@@ -23,10 +26,20 @@ function containsString(value: unknown, expected: string): boolean {
 }
 
 function containsCredentialText(value: string, expected: string): boolean {
-  if (value.includes(expected)) return true;
-  try {
-    return decodeURIComponent(value).includes(expected);
-  } catch {
-    return false;
+  let text = value;
+  for (let pass = 0; pass < MAX_URI_DECODE_PASSES; pass++) {
+    if (text.includes(expected)) return true;
+    if (!/%[0-9a-f]{2}/i.test(text)) return false;
+    // Decode valid byte runs independently. A malformed escape or invalid
+    // UTF-8 prefix must not hide a valid credential later in the same string.
+    text = text.replace(/(?:%[0-9a-f]{2})+/gi, (encoded) => {
+      const bytes = new Uint8Array(encoded.length / 3);
+      for (let index = 0; index < bytes.length; index++) {
+        bytes[index] = Number.parseInt(encoded.slice(index * 3 + 1, index * 3 + 3), 16);
+      }
+      return uriTextDecoder.decode(bytes);
+    });
   }
+  // Keep normalization work bounded and reject text that needs more decoding.
+  return text.includes(expected) || /%[0-9a-f]{2}/i.test(text);
 }

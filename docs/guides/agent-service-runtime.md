@@ -306,6 +306,16 @@ broker validates that selection against the installed grant before constructing
 instructions, and includes skills only when `load_skill` remains available.
 Refreshes without a tool selection omit the skill catalog.
 
+Managed broker ingress checks application strings and property names for known
+credentials after URI decoding. Malformed escapes do not suppress checks on valid
+encoded segments. Decoding is limited to 16 passes; ingress rejects strings that
+still require decoding after that limit. Keep credentials out of executor data,
+including encoded URLs and metadata.
+
+Closing the managed broker handler or aborting its service signal returns 503
+`BROKER_UNAVAILABLE` for pending admission. Request-only cancellation returns 499
+`BROKER_INGRESS_ABORTED`.
+
 ## Keep inference authority separate
 
 Signed runtime invocations may include an optional

@@ -145,6 +145,7 @@ async function handler(
   mode: "detached" | "sse",
   options: {
     signal?: AbortSignal;
+    serviceSignal?: AbortSignal;
     requestPath?: string;
     failStart?: boolean;
     admitBeforeFailure?: boolean;
@@ -183,6 +184,7 @@ async function handler(
   const executionController = new AbortController();
   const managed = createManagedBrokerHandler({
     responseMode: mode,
+    signal: options.serviceSignal,
     broker: {
       start: (start, lifecycle) => {
         brokerStarts++;
@@ -203,6 +205,7 @@ async function handler(
       authorizeScope: async () => {
         authorizationEntered.resolve();
         if (options.waitForAuthorization) await authorizationRelease.promise;
+        options.serviceSignal?.throwIfAborted();
         return { userId };
       },
     }),
@@ -501,19 +504,23 @@ describe("managed broker handler", () => {
   });
 
   for (const mode of ["detached", "sse"] as const) {
-    for (const source of ["shutdown", "request"] as const) {
+    for (const source of ["shutdown", "service", "request"] as const) {
       it(`maps ${source} during abortable ${mode} preparation without a setup failure`, async () => {
         const controller = new AbortController();
-        const f = await handler(mode, { signal: controller.signal, abortPrepare: true });
+        const f = await handler(mode, {
+          signal: source === "request" ? controller.signal : undefined,
+          serviceSignal: source === "service" ? controller.signal : undefined,
+          abortPrepare: true,
+        });
         const response = f.managed.handle(f.first.request);
         await f.prepareEntered;
         if (source === "shutdown") void f.managed.close();
         else controller.abort();
         try {
           const result = await response;
-          assertEquals(result.status, source === "shutdown" ? 503 : 499);
+          assertEquals(result.status, source === "request" ? 499 : 503);
           assertEquals(await result.json(), {
-            errorCode: source === "shutdown" ? "BROKER_UNAVAILABLE" : "BROKER_INGRESS_ABORTED",
+            errorCode: source === "request" ? "BROKER_INGRESS_ABORTED" : "BROKER_UNAVAILABLE",
           });
           assertEquals(f.brokerStarts, 0);
           assertEquals(f.managed.active, 0);
@@ -522,6 +529,54 @@ describe("managed broker handler", () => {
         }
       });
     }
+  }
+
+  for (const mode of ["detached", "sse"] as const) {
+    it(`maps service shutdown during ${mode} authorization to unavailable`, async () => {
+      const controller = new AbortController();
+      const f = await handler(mode, {
+        serviceSignal: controller.signal,
+        waitForAuthorization: true,
+      });
+      const response = f.managed.handle(f.first.request);
+      await f.authorizationEntered;
+      controller.abort();
+      f.releaseAuthorization();
+      try {
+        const result = await response;
+        assertEquals(result.status, 503);
+        assertEquals(await result.json(), { errorCode: "BROKER_UNAVAILABLE" });
+        assertEquals(f.prepareCalls, 0);
+      } finally {
+        await f.managed.close();
+      }
+    });
+
+    it(`maps service shutdown during ${mode} body reading to unavailable`, async () => {
+      const controller = new AbortController();
+      const f = await handler(mode, { serviceSignal: controller.signal });
+      const blockedBody = new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(new TextEncoder().encode("{"));
+        },
+      });
+      const pending = f.managed.handle(
+        new Request(f.first.request.url, {
+          method: "POST",
+          headers: f.first.request.headers,
+          body: blockedBody,
+        }),
+      );
+      controller.abort();
+      try {
+        const result = await pending;
+        assertEquals(result.status, 503);
+        assertEquals(await result.json(), { errorCode: "BROKER_UNAVAILABLE" });
+        assertEquals(f.prepareCalls, 0);
+      } finally {
+        await f.managed.close();
+      }
+    });
   }
 
   it("does not admit a late authorization result after handler closure", async () => {

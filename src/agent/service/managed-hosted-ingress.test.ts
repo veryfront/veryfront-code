@@ -40,7 +40,7 @@ describe("managed agent ingress", () => {
         it(`rejects ${credential} embedded in ${kind} ${placement}`, async () => {
           const text = placement === "message" ? `Use ${credential} for this request` : "Hello";
           const visibleCredential = placement.startsWith("encoded")
-            ? credential.replaceAll("-", "%2D")
+            ? "%ZZ" + credential.replaceAll("-", "%252D")
             : credential;
           const extra = placement === "url" || placement === "encoded url"
             ? {
