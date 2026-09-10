@@ -272,9 +272,14 @@ export async function runNativeTrustedScenario(
     assertEquals(frames.at(-1), { type: "complete" });
     assertEquals(results, [{
       query: "authorized query",
-      context: { ...context, toolCallId: "synthetic-call" },
+      context: {
+        ...context,
+        toolCallId: "synthetic-call",
+        activeSkillToolAvailability: { hasActiveSkill: false, references: [], scripts: [] },
+      },
       fields: [
         "abortSignal",
+        "activeSkillToolAvailability",
         "agentId",
         "projectId",
         "publishDataEvent",
