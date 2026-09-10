@@ -1,4 +1,4 @@
-/** Detect known broker credentials in bounded application strings and property names. */
+/** Detect known broker credentials in literal or URI-decoded strings and property names. */
 export function containsBrokerCredential(
   value: unknown,
   credentials: readonly (string | null | undefined)[],
@@ -13,11 +13,20 @@ export function containsBrokerCredential(
 }
 
 function containsString(value: unknown, expected: string): boolean {
-  if (typeof value === "string") return value.includes(expected);
+  if (typeof value === "string") return containsCredentialText(value, expected);
   if (!value || typeof value !== "object") return false;
   return Array.isArray(value)
     ? value.some((entry) => containsString(entry, expected))
     : Object.entries(value).some(([key, entry]) =>
-      key.includes(expected) || containsString(entry, expected)
+      containsCredentialText(key, expected) || containsString(entry, expected)
     );
+}
+
+function containsCredentialText(value: string, expected: string): boolean {
+  if (value.includes(expected)) return true;
+  try {
+    return decodeURIComponent(value).includes(expected);
+  } catch {
+    return false;
+  }
 }

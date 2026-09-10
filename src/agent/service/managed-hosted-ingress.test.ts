@@ -28,15 +28,28 @@ describe("managed agent ingress", () => {
         "inference-secret",
       ]
     ) {
-      for (const placement of ["message", "url", "property name"] as const) {
+      for (
+        const placement of [
+          "message",
+          "url",
+          "property name",
+          "encoded url",
+          "encoded property name",
+        ] as const
+      ) {
         it(`rejects ${credential} embedded in ${kind} ${placement}`, async () => {
           const text = placement === "message" ? `Use ${credential} for this request` : "Hello";
-          const extra = placement === "url"
+          const visibleCredential = placement.startsWith("encoded")
+            ? credential.replaceAll("-", "%2D")
+            : credential;
+          const extra = placement === "url" || placement === "encoded url"
             ? {
-              attachments: [{ url: `https://files.test/document?token=${credential}&download=1` }],
+              attachments: [{
+                url: `https://files.test/document?token=${visibleCredential}&download=1`,
+              }],
             }
-            : placement === "property name"
-            ? { [`result-${credential}-metadata`]: "value" }
+            : placement === "property name" || placement === "encoded property name"
+            ? { [`result-${visibleCredential}-metadata`]: "value" }
             : {};
           const payload = kind === "durable"
             ? {

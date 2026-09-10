@@ -149,6 +149,7 @@ async function handler(
     failStart?: boolean;
     admitBeforeFailure?: boolean;
     waitForPrepare?: boolean;
+    abortPrepare?: boolean;
     waitForAuthorization?: boolean;
     throwingObserver?: boolean;
     streamFailure?: boolean;
@@ -210,6 +211,11 @@ async function handler(
       prepareSignal = signal;
       prepareEntered.resolve();
       if (options.waitForPrepare) await prepareRelease.promise;
+      if (options.abortPrepare) {
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }
       return {
         start: { session: {} } as ManagedExecutorStartInput,
         messages: [],
@@ -493,6 +499,30 @@ describe("managed broker handler", () => {
     assertEquals(f.brokerStarts, 0);
     assertEquals(f.cleanupCalls, 1);
   });
+
+  for (const mode of ["detached", "sse"] as const) {
+    for (const source of ["shutdown", "request"] as const) {
+      it(`maps ${source} during abortable ${mode} preparation without a setup failure`, async () => {
+        const controller = new AbortController();
+        const f = await handler(mode, { signal: controller.signal, abortPrepare: true });
+        const response = f.managed.handle(f.first.request);
+        await f.prepareEntered;
+        if (source === "shutdown") void f.managed.close();
+        else controller.abort();
+        try {
+          const result = await response;
+          assertEquals(result.status, source === "shutdown" ? 503 : 499);
+          assertEquals(await result.json(), {
+            errorCode: source === "shutdown" ? "BROKER_UNAVAILABLE" : "BROKER_INGRESS_ABORTED",
+          });
+          assertEquals(f.brokerStarts, 0);
+          assertEquals(f.managed.active, 0);
+        } finally {
+          await f.managed.close();
+        }
+      });
+    }
+  }
 
   it("does not admit a late authorization result after handler closure", async () => {
     const f = await handler("detached", { waitForAuthorization: true });

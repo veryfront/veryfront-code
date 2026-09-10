@@ -155,13 +155,38 @@ describe("managed broker ingress", () => {
     }
   });
 
+  for (
+    const [placement, forwardedProps] of [
+      ["attachment URL", {
+        attachments: [{ url: "https://files.test/document?token=api%2Dauth%2Dtoken&download=1" }],
+      }],
+      ["property name", { attachments: [{ "result-inference%2Dtoken-metadata": "value" }] }],
+      ["Bearer attachment URL", {
+        attachments: [{ url: "https://files.test/document?token=Bearer%20broker%2Dtoken" }],
+      }],
+    ] as const
+  ) {
+    it(`rejects URI-escaped credentials in an ${placement}`, async () => {
+      const signed = await signedRequest(invocation({ forwardedProps }));
+      await assertIngressError(
+        () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
+        403,
+        "BROKER_INGRESS_SCOPE_DENIED",
+      );
+    });
+  }
+
   it("preserves application strings that do not contain a credential", async () => {
     const messages = [{
       id: "message-1",
       role: "user" as const,
       content: "Explain Bearer authentication",
     }];
-    const forwardedProps = { attachments: [{ url: "https://files.test/document?download=1" }] };
+    const forwardedProps = {
+      attachments: [{ url: "https://files.test/document?name=a%20b&download=1" }, {
+        url: "https://files.test/invalid%escape",
+      }],
+    };
     const signed = await signedRequest(invocation({ messages, forwardedProps }));
     const result = await parseBrokerRuntimeAgentIngress(
       signed.request,

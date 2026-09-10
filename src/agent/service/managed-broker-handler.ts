@@ -183,7 +183,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
       if (error instanceof BrokerIngressError) {
         return Response.json({ errorCode: error.errorCode }, { status: error.status });
       }
-      if (error instanceof BrokerHandlerUnavailableError) {
+      if (error instanceof BrokerHandlerUnavailableError || lifetime.signal.aborted) {
         return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
       }
       const aborted = request.signal.aborted || options.signal?.aborted;
