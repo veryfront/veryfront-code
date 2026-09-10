@@ -15,6 +15,8 @@ import {
   nativeRunEventTypes,
 } from "./native-run-events.ts";
 
+import { parseAgUiSseResponse } from "./sse-parser.ts";
+
 const INPUT_REQUEST = {
   id: "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f",
   conversationId: "a7c53a3d-feb2-4404-86e2-5c562455e46c",
@@ -112,6 +114,29 @@ describe("agent/ag-ui-native-run-events", () => {
         parentMessageId: "assistant-1",
       },
     );
+  });
+
+  it("keeps native event types when open input records contain a legacy type", async () => {
+    const frames = [
+      buildToolCallStatusChangedEvent({
+        type: "tool-call-status",
+        toolCallId: "tool-1",
+        status: "running",
+        result: { type: "nested-result", ok: true },
+      }),
+      buildChildRunStatusChangedEvent({ ...CHILD_RUN, type: "CUSTOM" }),
+    ] as const;
+    for (const frame of frames) {
+      const response = new Response(
+        `event: ${frame.live.event}\ndata: ${JSON.stringify(frame.live.payload)}\n\n`,
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+      const parsed = await parseAgUiSseResponse(response);
+      assertEquals(parsed.eventTypes, [frame.durable.type]);
+      assertEquals(Object.hasOwn(frame.live.payload, "type"), false);
+    }
+    assertEquals(frames[0].live.payload.result, { type: "nested-result", ok: true });
+    assertEquals(frames[0].durable.result, frames[0].live.payload.result);
   });
 
   it("selects the input request type from the action and drops the action field", () => {

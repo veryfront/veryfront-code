@@ -5,7 +5,10 @@ import {
   isPrivateConversationRunEvent,
 } from "./private-run-event.ts";
 import { AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE } from "#veryfront/agent/runtime/provider-replay.ts";
-import { isNativeRunEventStoredType } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import {
+  buildNativeRunEventFrame,
+  isNativeRunEventStoredType,
+} from "#veryfront/agent/ag-ui/native-run-events.ts";
 
 export { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
@@ -34,6 +37,21 @@ export function getConversationRunEventJsonByteLength(value: unknown): number {
   }
 }
 
+function normalizeChildRunLifecycleEvent(
+  event: ConversationRunEventRecord,
+): ConversationRunEventRecord {
+  // Public child-run builders and publisher callbacks retain their Custom
+  // contract. Convert at the shared direct-append and mirror boundary.
+  if (event.type === "CUSTOM" && event.name === "veryfront.invoke_agent.lifecycle") {
+    const native = buildNativeRunEventFrame({ name: event.name, value: event.value });
+    if (native) {
+      const { name: _name, value: _value, ...metadata } = event;
+      event = { ...metadata, ...native.durable };
+    }
+  }
+  return event;
+}
+
 /** Event emitted for normalize conversation run. */
 export function normalizeConversationRunEvent(
   event: ConversationRunEventRecord,
@@ -52,6 +70,7 @@ export function normalizeConversationRunEvent(
     }
     return [event];
   }
+  event = normalizeChildRunLifecycleEvent(event);
   if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
     return [event];
   }

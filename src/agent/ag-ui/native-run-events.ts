@@ -137,8 +137,8 @@ const URL_CITED = NATIVE_RUN_EVENTS[4];
 const DOCUMENT_CITED = NATIVE_RUN_EVENTS[5];
 const FILE_ATTACHED = NATIVE_RUN_EVENTS[6];
 
-// `type` is written last so a payload that still carries a chunk type can
-// never win over the stored type. No builder passes one through.
+// Strip the reserved `type` field before publication so both readers use
+// the native event type, including when an open input record carries a chunk type.
 //
 // One payload feeds both shapes: the live wire frame is not just this
 // repo's own chat client either, the API ingests the same SSE frame and
@@ -151,9 +151,10 @@ function toFrame(
   definition: NativeRunEventEntry,
   payload: Record<string, unknown>,
 ): NativeRunEventFrame {
+  const { type: _type, ...nativePayload } = payload;
   return {
-    live: { event: definition.wireName, payload },
-    durable: { ...payload, type: definition.storedType },
+    live: { event: definition.wireName, payload: nativePayload },
+    durable: { ...nativePayload, type: definition.storedType },
   };
 }
 

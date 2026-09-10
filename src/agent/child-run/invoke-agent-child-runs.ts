@@ -1,10 +1,11 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { buildChildRunStatusChangedEvent } from "#veryfront/agent/ag-ui/native-run-events.ts";
 import {
   appendConversationRunEvents,
   isIgnorableConversationRunAppendError,
 } from "../conversation/durable.ts";
+
+const AG_UI_CUSTOM_EVENT_TYPE = "CUSTOM";
 
 /** Zod schema for get invoke agent child run lifecycle value. */
 export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
@@ -63,15 +64,15 @@ export type InvokeAgentChildRunStateDelta = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunStateDeltaSchema>
 >;
 
-// legacy: removed in Phase F — rename to getInvokeAgentChildRunStatusChangedEventSchema at the cutover.
 /** Zod schema for get invoke agent child run lifecycle custom event. */
 export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v) =>
   v.object({
-    type: v.literal("CHILD_RUN_STATUS_CHANGED"),
-  }).merge(getInvokeAgentChildRunLifecycleValueSchema())
+    type: v.literal(AG_UI_CUSTOM_EVENT_TYPE),
+    name: v.literal("veryfront.invoke_agent.lifecycle"),
+    value: getInvokeAgentChildRunLifecycleValueSchema(),
+  })
 );
 
-// legacy: removed in Phase F — rename to InvokeAgentChildRunStatusChangedEventSchema at the cutover.
 /** Schema for invoke agent child run lifecycle custom event.
  * @deprecated Use getInvokeAgentChildRunLifecycleCustomEventSchema()
  */
@@ -79,7 +80,6 @@ export const InvokeAgentChildRunLifecycleCustomEventSchema = lazySchema(
   getInvokeAgentChildRunLifecycleCustomEventSchema,
 );
 
-// legacy: removed in Phase F — rename to InvokeAgentChildRunStatusChangedEvent at the cutover.
 /** Event emitted for invoke agent child run lifecycle custom. */
 export type InvokeAgentChildRunLifecycleCustomEvent = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunLifecycleCustomEventSchema>
@@ -144,15 +144,15 @@ export function buildInvokeAgentChildRunStateDelta(
   });
 }
 
-// legacy: removed in Phase F — rename to buildInvokeAgentChildRunStatusChangedEvent at the cutover.
 /** Event emitted for build invoke agent child run lifecycle custom. */
 export function buildInvokeAgentChildRunLifecycleCustomEvent(
   input: InvokeAgentChildRunProgressInput,
 ): InvokeAgentChildRunLifecycleCustomEvent {
-  const value = buildInvokeAgentChildRunLifecycleValue(input);
-  return getInvokeAgentChildRunLifecycleCustomEventSchema().parse(
-    buildChildRunStatusChangedEvent({ ...value }).durable,
-  );
+  return getInvokeAgentChildRunLifecycleCustomEventSchema().parse({
+    type: AG_UI_CUSTOM_EVENT_TYPE,
+    name: "veryfront.invoke_agent.lifecycle",
+    value: buildInvokeAgentChildRunLifecycleValue(input),
+  });
 }
 
 /** Builds invoke agent child run progress events. */

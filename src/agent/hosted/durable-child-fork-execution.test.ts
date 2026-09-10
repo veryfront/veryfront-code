@@ -977,8 +977,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
             },
             publishParentRunEvents: (events: InvokeAgentChildRunProgressEvent[]) => {
               for (const event of events) {
-                if (event.type === "CHILD_RUN_STATUS_CHANGED") {
-                  lifecycleStatuses.push(event.status);
+                if (event.type === "CUSTOM") {
+                  lifecycleStatuses.push(event.value.status);
                 }
               }
             },

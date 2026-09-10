@@ -20,6 +20,7 @@ import {
   buildInputRequestLifecycleEvent,
   buildToolCallStatusChangedEvent,
   buildUrlCitedEvent,
+  NATIVE_RUN_EVENTS,
 } from "../ag-ui/native-run-events.ts";
 
 function frames(
@@ -1569,6 +1570,13 @@ describe("conversation run lifecycle read adapter", () => {
         },
       },
     ];
+
+    it("covers every native type with a legacy reconstruction case", () => {
+      assertEquals(
+        [...new Set(cases.map(({ native }) => native.type))].sort(),
+        NATIVE_RUN_EVENTS.map(({ storedType }) => storedType).sort(),
+      );
+    });
 
     for (const { description, native, customTwin } of cases) {
       it(`reads a ${description} durable record as its CUSTOM twin on the version 2 reader`, () => {
