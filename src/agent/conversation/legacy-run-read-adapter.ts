@@ -67,13 +67,19 @@ function readNativeAsLegacyCustom(
   }
   if (definition.storedType === "RUNTIME_EVENT_RECORDED") {
     // The legacy `veryfront.runtime_context` CUSTOM twin carried the bare
-    // AgentRunRuntimeContext object as its value; the native payload wraps
-    // that same object as `{ runtime, kind, value }` to match the API
-    // catalog's generic diagnostics shape (RUNTIME_EVENT_RECORDED has other
-    // producers with other runtimes/kinds, so the wrapper is required
-    // there). Unwrap back to the twin's own value here, the same way the
-    // citation/file case below restores a field the native payload dropped.
-    return { name: definition.legacyCustomName, value: value.value };
+    // AgentRunRuntimeContext object as its value, produced only for the
+    // veryfront/runtime_context pair; the native payload wraps that same
+    // object as `{ runtime, kind, value }` to match the API catalog's
+    // generic diagnostics shape (RUNTIME_EVENT_RECORDED has other producers
+    // with other runtimes/kinds, e.g. the codex runtime, so the wrapper is
+    // required there). Only that exact pair unwraps to the legacy twin here,
+    // the same way the citation/file case below restores a field the native
+    // payload dropped; any other runtime/kind becomes its own generic custom
+    // record instead of a false veryfront.runtime_context.
+    if (value.runtime === "veryfront" && value.kind === "runtime_context") {
+      return { name: definition.legacyCustomName, value: value.value };
+    }
+    return { name: `${String(value.runtime)}.${String(value.kind)}`, value: value.value };
   }
   if (
     definition.storedType === "INPUT_REQUEST_CREATED" ||

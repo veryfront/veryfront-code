@@ -780,6 +780,21 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
+  it("does not mistake a non-veryfront runtime event for runtime context", () => {
+    // RUNTIME_EVENT_RECORDED is the API catalog's generic diagnostics shape
+    // and accepts any non-empty runtime/kind pair (e.g. a codex thread or
+    // session event) -- only the exact veryfront/runtime_context pair may
+    // become the legacy `data-veryfront.runtime_context` chunk.
+    ensureTestSchemaValidator();
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const frames = 'event: RuntimeEventRecorded\ndata: {"runtime":"codex","kind":"stderr",' +
+      '"value":{"line":"boom"}}\n\n';
+
+    assertEquals(decodeAgUiSseChunk(state, frames).events.flatMap((entry) => entry.chatEvents), [
+      { type: "data-codex.stderr", data: { line: "boom" } },
+    ]);
+  });
+
   it("falls back to a data chunk when an attachment cannot render", () => {
     ensureTestSchemaValidator();
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });

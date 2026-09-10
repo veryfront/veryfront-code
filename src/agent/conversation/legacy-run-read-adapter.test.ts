@@ -1619,6 +1619,28 @@ describe("conversation run lifecycle read adapter", () => {
       assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
     });
 
+    it(
+      "does not reconstruct a non-veryfront RUNTIME_EVENT_RECORDED as the runtime_context twin",
+      () => {
+        // RUNTIME_EVENT_RECORDED is the API catalog's generic diagnostics
+        // shape and has other producers (e.g. the codex runtime) with other
+        // runtime/kind pairs. Only the exact veryfront/runtime_context pair
+        // may unwrap to the legacy `veryfront.runtime_context` CUSTOM twin;
+        // every other pair must surface as its own generic custom record
+        // instead of a false runtime_context.
+        const native = buildRuntimeEventRecordedEvent({
+          runtime: "codex",
+          kind: "stderr",
+          value: { line: "boom" },
+        }).durable;
+
+        assertEquals(
+          customFramesFor(2, { ...native, ...v2Envelope(1, "codex-runtime-event") }),
+          [{ type: "custom", name: "codex.stderr", data: { line: "boom" } }],
+        );
+      },
+    );
+
     it("reads a TOOL_CALL_STATUS_CHANGED durable record as its CUSTOM twin on the version 1 reader", () => {
       const { native, customTwin } = cases.find((entry) =>
         entry.description === "TOOL_CALL_STATUS_CHANGED"

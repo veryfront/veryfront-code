@@ -1,3 +1,5 @@
+import { getJsonValueSchema, getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
+
 /**
  * Native run event vocabulary shared by every emission path.
  *
@@ -352,11 +354,22 @@ export interface RuntimeEventRecordedInput {
   value: unknown;
 }
 
-/** Build the runtime event recorded frames. */
+/**
+ * Build the runtime event recorded frames.
+ *
+ * Validates against the catalog's own constraints -- `runtime`/`kind` non-empty
+ * strings, `value` a bounded JSON value -- rather than trusting the caller's
+ * static `string`/`unknown` types, since this builder (unlike the other seven)
+ * has callers outside this module's own dispatcher that supply the catalog
+ * fields directly.
+ */
 export function buildRuntimeEventRecordedEvent(
   input: RuntimeEventRecordedInput,
 ): NativeRunEventFrame {
-  return toFrame(RUNTIME_EVENT_RECORDED, { ...input });
+  const runtime = getNonEmptyStringSchema().parse(input.runtime);
+  const kind = getNonEmptyStringSchema().parse(input.kind);
+  const value = getJsonValueSchema().parse(input.value);
+  return toFrame(RUNTIME_EVENT_RECORDED, { runtime, kind, value });
 }
 
 /** Routing input for one custom event name and its value. */

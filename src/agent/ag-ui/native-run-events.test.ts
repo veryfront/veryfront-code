@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunStatusChangedEvent,
@@ -450,6 +450,28 @@ describe("agent/ag-ui-native-run-events", () => {
           type: "RUNTIME_EVENT_RECORDED",
         },
       },
+    );
+  });
+
+  it("rejects a runtime event recorded with an invalid runtime, kind, or value", () => {
+    // `runtime`/`kind` are typed `string`, which accepts empty text, and
+    // `value` is typed `unknown`, which accepts `undefined`; but the API
+    // catalog's RUNTIME_EVENT_RECORDED variant requires non-empty strings
+    // and a JSON value. This builder has callers outside this module's own
+    // dispatcher (e.g. a future codex-runtime producer), so it must reject
+    // those on its own rather than trusting the caller's static types.
+    assertThrows(() =>
+      buildRuntimeEventRecordedEvent({ runtime: "", kind: "runtime_context", value: {} })
+    );
+    assertThrows(() =>
+      buildRuntimeEventRecordedEvent({ runtime: "veryfront", kind: "", value: {} })
+    );
+    assertThrows(() =>
+      buildRuntimeEventRecordedEvent({
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: undefined,
+      })
     );
   });
 
