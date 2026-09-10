@@ -181,6 +181,7 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
   const terminalRelease = Promise.withResolvers();
   const finished = Promise.withResolvers();
   const allocations = [];
+  const ingressControls = [];
   const releases = [];
   const persisted = [];
   const completions = [];
@@ -328,16 +329,24 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
       defaultAgentId: "probe",
       ingress: {
         authenticate: (request) => {
+          assertEquals(allocations.length, 0);
+          ingressControls.push("authenticate");
           assertEquals(request.headers.get("authorization"), headers.authorization);
           return Promise.resolve({
             userId: "00000000-0000-4000-8000-000000000006",
             authToken: secrets.api,
           });
         },
-        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyProjectAccess: () => {
+          assertEquals(allocations.length, 0);
+          ingressControls.push("project-access");
+          return Promise.resolve({ success: true });
+        },
         verifyRunEventAppendToken: (
           { token, projectId: requestedProject, runId: requestedRun },
         ) => {
+          assertEquals(allocations.length, 0);
+          ingressControls.push("run-event-token");
           assertEquals(token, secrets.events);
           assertEquals(requestedProject, projectId);
           assertEquals(requestedRun, runId);
@@ -734,6 +743,14 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
     if (kind !== "disconnect") await bounded(reading, "SSE completion");
     const exit = await bounded(childExited, "Executor retirement");
     assertEquals(allocations.length, 1);
+    assertEquals(
+      ingressControls,
+      directDurable
+        ? ["authenticate", "project-access", "run-event-token"]
+        : directAgUi
+        ? ["authenticate"]
+        : [],
+    );
     assertEquals(releases.length, 1);
     assertEquals(transportClosed, true);
     assertEquals(

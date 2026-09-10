@@ -34,11 +34,11 @@ import {
   type ParseManagedAgUiAgentIngressOptions,
   parseManagedDurableAgentIngress,
 } from "./managed-hosted-ingress.ts";
-import type { ParseHostedChatRequestOptions } from "../hosted/chat-request-parser.ts";
+import type { ParseHostedChatRequestOptions } from "#veryfront/agent/hosted/chat-request-parser.ts";
 import {
   getHostedExecutorOwnerSchema,
   type HostedExecutorOwner,
-} from "../hosted/executor-session-schema.ts";
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
 
 /** Trusted executor admission boundary with actual settlement notification. */
 export interface ManagedExecutorStarter {

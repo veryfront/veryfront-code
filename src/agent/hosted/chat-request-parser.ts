@@ -1,4 +1,4 @@
-import { isResponseLike } from "../service/response-like.ts";
+import { isResponseLike } from "#veryfront/agent/service/response-like.ts";
 import type {
   ChatRequestContext,
   ChatRuntimeOverrides,
