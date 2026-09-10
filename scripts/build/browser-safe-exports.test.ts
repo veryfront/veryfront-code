@@ -1,4 +1,4 @@
-import { assert } from "#std/assert";
+import { assert, assertEquals } from "#std/assert";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
@@ -101,5 +101,44 @@ Deno.test("the public observability barrel does not eagerly import Node-only hel
 	assert(
 		!/\b(?:from|import)\s*["']node:util\/types["']/.test(bundle),
 		"the public observability barrel must not retain a browser-eager node:util/types import",
+	);
+});
+
+Deno.test("the run events entry point retains no browser-unsafe Node builtin", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/run-events/index.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `run events browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	const builtins = [...new Set(bundle.match(/["']node:[a-z_/]+/g) ?? [])]
+		.map((match: string) => match.slice(1))
+		.toSorted();
+
+	// `node:async_hooks` arrives through the contract registry, which every
+	// schema-carrying export reaches: `#veryfront/extensions/contracts.ts` ->
+	// `contract-registry-internal.ts` -> `platform/compat/async-context.ts`. The
+	// registry constructs an AsyncLocalStorage at module scope, so the import is
+	// eager and cannot be dropped from a consumer. Veryfront's import rewriter
+	// maps it to a no-op browser polyfill
+	// (`src/transforms/import-rewriter/strategies/node-builtin-strategy.ts`), and
+	// `./chat` and `./chat/ag-ui` ship with the same residual today. Pinning the
+	// exact set here keeps a genuinely browser-unsafe builtin (`node:fs`,
+	// `node:process`, and the rest) from reaching the browser through this entry
+	// point unnoticed.
+	assertEquals(
+		builtins,
+		["node:async_hooks"],
+		"veryfront/run-events must reach no Node builtin beyond the contract registry's async_hooks",
 	);
 });

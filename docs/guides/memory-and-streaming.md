@@ -305,6 +305,111 @@ export default function ChatPage() {
 }
 ```
 
+### Reading run events
+
+A run's durable event log is available from the Veryfront API. Read it with
+`format=typed` and every row carries a catalogued `event_type`, a payload named
+by that type, and a span envelope (`run_id`, `event_class`, `span_id`,
+`parent_span_id`, `turn_id`, `origin_event_type`, `origin_custom_name`,
+`unrecoverable_fields`). No typed row uses `event_type: "CUSTOM"`.
+
+The `veryfront/run-events` module owns the reader's half of that contract, so
+you do not restate the vocabulary or the payload shapes in your own code:
+
+```ts
+import { register, tryResolve } from "veryfront/extensions/contracts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+import {
+  isRunEventType,
+  parseTypedRunEventRow,
+  RUN_EVENT_PAYLOAD_SCHEMAS,
+} from "veryfront/run-events";
+
+// Register a validator only when nothing has (details below the export
+// list): outside a Veryfront app this installs the Zod adapter, inside one
+// it keeps the validator bootstrap owns.
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
+
+const apiUrl = "https://api.veryfront.example";
+const runId = "<RUN_ID>";
+const token = "<TOKEN>";
+
+const response = await fetch(
+  `${apiUrl}/runs/${runId}/events?format=typed`,
+  { headers: { Authorization: `Bearer ${token}` } },
+);
+const body = await response.json() as { data: unknown[] };
+
+for (const raw of body.data) {
+  const row = parseTypedRunEventRow(raw);
+  if (!isRunEventType(row.event_type)) {
+    console.log(row.event_type, row.span_id, row.payload); // a type this build predates
+    continue;
+  }
+  // The sixteen control-plane `AGENT_RUN_*` types have no payload schema (see
+  // "What the module exports" below), so look one up rather than assume one
+  // exists, and render the already-validated payload as-is when it does not.
+  const schema = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type];
+  const result = schema?.().safeParse(row.payload);
+  console.log(row.event_type, row.span_id, result?.success ? result.data : row.payload);
+}
+```
+
+Render or pass through every row rather than filtering to the ones with a
+payload schema: skipping unmatched rows would silently drop the control-plane
+types below, and the durable log has no "irrelevant" row to discard.
+
+What the module exports:
+
+- `RUN_EVENT_TYPES`, `isRunEventType`, and `RUN_EVENT_CLASSES` for the
+  catalogued vocabulary, and `getRunEventClass` to tell a self-contained
+  `fact` from an order-dependent `delta`.
+- `toRunEventWireName` and `fromRunEventWireName` to move between a stored
+  type such as `URL_CITED` and the SSE wire name `UrlCited`.
+- `getRunEventEnvelopeSchema`, `getTypedRunEventRowSchema`, and
+  `parseTypedRunEventRow` for the row itself. Conversation-scoped surfaces
+  (GraphQL, MCP, and the conversation events route) key the payload as `event`
+  rather than `payload`; use `getConversationTypedRunEventRowSchema` there.
+- One payload schema per type, such as `getUrlCitedPayloadSchema`, plus
+  `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime. The exception
+  is the sixteen control-plane `AGENT_RUN_*` types: the API owns their shape
+  and sanitizes it before a reader ever sees it, so `RUN_EVENT_PAYLOAD_SCHEMAS`
+  has no entry for them and `row.payload` is already the value to use.
+
+Every schema is lazy and materializes through the registered `SchemaValidator`
+contract. Inside a Veryfront app, bootstrap registers it before handlers run.
+Anywhere else, including a browser bundle that reads run events directly,
+register one yourself before the first `get*Schema()` call or
+`parseTypedRunEventRow`:
+
+```ts
+import { register, tryResolve } from "veryfront/extensions/contracts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
+```
+
+`register` replaces whatever is registered, so the `tryResolve` gate is what
+makes this safe to paste into an app that already owns a validator: it installs
+the adapter only when nothing has. The module ships no fallback validator: with nothing
+registered, a getter throws an error naming the `SchemaValidator` contract and
+this registration call.
+
+`event_type` is validated as a non-empty string, not as the closed catalog, so
+a type the API adds after your build still parses. Narrow it with
+`isRunEventType` when you need the closed set, and ignore what you do not
+handle. Do the same for the wire names on a stream: advance the durable cursor
+for every frame that carries an id, including the ones you do not render.
+
+Eight of these types come from the Veryfront Code runtime itself:
+`TOOL_CALL_STATUS_CHANGED`, `INPUT_REQUEST_CREATED`, `INPUT_REQUEST_UPDATED`,
+`CHILD_RUN_STATUS_CHANGED`, `URL_CITED`, `DOCUMENT_CITED`, `FILE_ATTACHED`, and
+`RUNTIME_EVENT_RECORDED`. `NATIVE_RUN_EVENT_TYPES` lists them.
+
 ### Non-streaming generation
 
 Use `generate()` when you need the complete response at once:
