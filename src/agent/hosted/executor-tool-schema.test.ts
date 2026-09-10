@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { JsonValue } from "#veryfront/schemas/index.ts";
 import {
+  executorToolBytes,
   executorToolDefinition,
   executorToolJson,
   executorToolLimits,
@@ -12,6 +14,14 @@ import {
 } from "./executor-tool-schema.ts";
 
 describe("executor tool schema", () => {
+  it("preserves the existing node and depth limits while measuring array-heavy JSON", () => {
+    const value = { items: Array.from({ length: 50_000 }, () => []) };
+    assertEquals(executorToolBytes(executorToolJson(value)), 150_011);
+    let nested: JsonValue = [];
+    for (let depth = 0; depth < 128; depth++) nested = [nested];
+    assertEquals(executorToolBytes(executorToolJson(nested)), 258);
+  });
+
   it("requires data-only JSON without coercing unsupported values", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;

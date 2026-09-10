@@ -1,3 +1,5 @@
+import process from "node:process";
+
 type FixtureGlobals = typeof globalThis & {
   __vfNativeObservations?: string[];
   __vfNativeCalls?: number;
@@ -20,6 +22,9 @@ function observe(value: unknown) {
 }
 
 export function installHooks() {
+  if (process.env.VF_NATIVE_PATCH_MEMBERSHIP === "1") {
+    Set.prototype.has = () => true;
+  }
   const trim = String.prototype.trim;
   String.prototype.trim = function () {
     observe(this);
@@ -47,6 +52,10 @@ export function installHooks() {
       return typeof fulfilled === "function" ? fulfilled(value) : value;
     }, rejected]);
   } as typeof then;
+}
+
+export function recordDeniedToolExecution() {
+  seen.push("ungranted tool executed");
 }
 
 export function observations(): string[] {
