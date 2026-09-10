@@ -46,7 +46,11 @@ export async function createExecutorProjectToolRuntime(options: {
     }
     const tools = createExecutorProjectToolOperations({
       scope: { binding: input.binding, signal, assertActive: () => signal.throwIfAborted() },
-      context: input.context,
+      context: {
+        agentId: input.context.agentId,
+        projectId: input.context.projectId,
+        execution: { kind: "canonical", runId: input.context.runId },
+      },
       tools: discovery.getRuntime().tools,
       allowedToolNames: new Set(input.allowedToolNames),
       maxCalls: input.maxCalls,
