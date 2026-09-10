@@ -7,6 +7,7 @@ import {
 } from "#veryfront/security/private-promise.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
 import { runWithProjectAgentRuntime } from "../project/agent-runtime.ts";
+import { getProjectAgentRuntimeInlineTools } from "../project/agent-runtime.ts";
 import type { ExecutorDiscovery } from "./executor-discovery.ts";
 import {
   getExecutorAgentDescribeResultSchema,
@@ -79,10 +80,14 @@ export async function createExecutorProjectToolRuntime(options: {
       throw new Error("Project discovery did not match installation");
     }
     const runtime: ReturnType<typeof getRuntime> = apply(getRuntime, discovery, []);
+    const runtimeTools = new Map(runtime.tools);
+    for (const [name, tool] of getProjectAgentRuntimeInlineTools(runtime, context.agentId)) {
+      runtimeTools.set(name, tool);
+    }
     const tools = createExecutorProjectToolOperations({
       scope: { binding, signal, assertActive: () => signal.throwIfAborted() },
       context,
-      tools: runtime.tools,
+      tools: runtimeTools,
       runWithProjectRuntime: (fn) => runWithProjectAgentRuntime(runtime, fn),
       allowedToolNames,
       maxCalls,

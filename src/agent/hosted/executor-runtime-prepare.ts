@@ -4,6 +4,7 @@ import type { ExecutorDiscoverySource } from "#veryfront/agent/hosted/executor-d
 import { ExecutorRuntimePreparationError } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import { createPreparedHostedRuntimeAgent } from "#veryfront/agent/hosted/default-chat-runtime.ts";
 import {
+  getProjectAgentRuntimeInlineTools,
   type ProjectAgentRuntimeDiscovery,
   runWithProjectAgentRuntime,
 } from "#veryfront/agent/project/agent-runtime.ts";
@@ -54,11 +55,15 @@ export function createExecutorRuntimePreparation(input: Options) {
           () => operation.handle({ agentId }, context),
         );
         runtime = discovery.getRuntime();
+        const localTools = new Map(runtime.tools);
+        for (const [name, tool] of getProjectAgentRuntimeInlineTools(runtime, agentId)) {
+          localTools.set(name, tool);
+        }
         return {
           __proto__: null,
           description,
           localTools: Object.fromEntries(filterPrivateArray(
-            [...runtime.tools],
+            [...localTools],
             ([id, value]) =>
               !isSkillInfrastructureToolId(id) && isToolVisibleTo(value, { agentId }),
           )),
