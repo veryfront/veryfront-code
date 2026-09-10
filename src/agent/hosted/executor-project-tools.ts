@@ -18,6 +18,7 @@ import type { RemoteToolSource, Tool, ToolExecutionContext } from "#veryfront/to
 import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
+import { isRuntimeLocalTool } from "#veryfront/agent/runtime/local-tool.ts";
 import {
   createExecutorToolBroker,
   type ExecutorToolCapability,
@@ -149,7 +150,7 @@ export function createExecutorProjectToolOperations(
   const aliases: { name: string; shortName: string }[] = [];
   for (const [name, registered] of tools) {
     if (
-      !allowed.has(name) || isSkillInfrastructureToolId(name) ||
+      !allowed.has(name) || isSkillInfrastructureToolId(name) || isRuntimeLocalTool(registered) ||
       !isToolVisibleTo(registered, { agentId: fixed.agentId })
     ) continue;
     if (typeof registered.execute !== "function") throw new TypeError("Invalid project tool");

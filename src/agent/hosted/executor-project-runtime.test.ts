@@ -5,6 +5,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
+import { markRuntimeLocalTool } from "#veryfront/agent/runtime/local-tool.ts";
 import { agent } from "../factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "../project/agent-runtime.ts";
 import { createExecutorDiscovery } from "./executor-discovery.ts";
@@ -102,6 +103,9 @@ function fixture(
   });
   return {
     discovery,
+    runtime,
+    registered,
+    coder,
     lifetime,
     started: started.promise,
     get loads() {
@@ -117,6 +121,105 @@ function fixture(
 }
 
 describe("installed project tool runtime", () => {
+  it("constructs project tool metadata under the admitted source policy", async () => {
+    const denyAll = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+    const observed: unknown[] = [];
+    const f = fixture(undefined, () => {
+      Object.defineProperty(f.registered, "description", {
+        get() {
+          observed.push(getActiveSourceIntegrationPolicy());
+          return "Inspect under policy";
+        },
+      });
+    }, denyAll);
+    const owner = await createExecutorProjectToolRuntime({
+      input: install(),
+      discovery: f.discovery,
+      signal: f.lifetime.signal,
+      deadline: Date.now() + 10_000,
+    });
+    try {
+      assert(observed.length > 0);
+      for (const policy of observed) assertEquals(policy, denyAll);
+    } finally {
+      await owner.close();
+    }
+  });
+
+  it("copies runtime catalogs without consulting replaceable map methods", async () => {
+    const f = fixture(undefined, () => {
+      const forbidden = () => {
+        throw new Error("Replaceable map operation reached");
+      };
+      Object.defineProperties(f.runtime.tools, {
+        [Symbol.iterator]: { value: forbidden },
+        set: { value: forbidden },
+      });
+      Object.defineProperty(f.runtime.agents, "get", { value: forbidden });
+    });
+    const owner = await createExecutorProjectToolRuntime({
+      input: install(),
+      discovery: f.discovery,
+      signal: f.lifetime.signal,
+      deadline: Date.now() + 10_000,
+    });
+    try {
+      const execute = owner.operations.get("tool.execute");
+      assert(execute?.mode === "stream");
+      const frames = await Array.fromAsync(execute.handle({
+        sourceId: "project",
+        toolName: "inspect",
+        toolCallId: "call",
+        args: { query: "approved" },
+      }, { binding, signal: f.lifetime.signal, deadline: Date.now() + 10_000 }));
+      assert(frames[0] && typeof frames[0] === "object" && !Array.isArray(frames[0]));
+      assertEquals(frames[0].type, "result");
+      assertEquals(f.calls, 1);
+    } finally {
+      await owner.close();
+    }
+  });
+
+  it("excludes runtime-generated tools even when their names appear in the project grant", async () => {
+    let delegated = 0;
+    const local = markRuntimeLocalTool(tool({
+      id: "generated-delegate",
+      description: "Runtime-only delegate",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => {
+        delegated++;
+        return null;
+      },
+    }));
+    const f = fixture();
+    f.coder.config.tools = { inspect: f.registered, "generated-delegate": local };
+    f.runtime.tools.set("generated-delegate", local);
+    const input = install();
+    input.allowedToolNames.push("generated-delegate");
+    const owner = await createExecutorProjectToolRuntime({
+      input,
+      discovery: f.discovery,
+      signal: f.lifetime.signal,
+      deadline: Date.now() + 10_000,
+    });
+    try {
+      const execute = owner.operations.get("tool.execute");
+      assert(execute?.mode === "stream");
+      assertEquals(
+        await Array.fromAsync(execute.handle({
+          sourceId: "project",
+          toolName: "generated-delegate",
+          toolCallId: "call",
+          args: {},
+        }, { binding, signal: f.lifetime.signal, deadline: Date.now() + 10_000 })),
+        [{ type: "failure" }],
+      );
+      assertEquals(delegated, 0);
+    } finally {
+      await owner.close();
+    }
+  });
+
   it("keeps original cleanup when discovery replaces the public close callback", async () => {
     const input = install();
     input.context.agentId = "missing";

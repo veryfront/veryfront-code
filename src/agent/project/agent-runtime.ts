@@ -33,11 +33,13 @@ import {
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectEntries = Object.entries;
 const arraySort = Array.prototype.sort;
 const apply = Reflect.apply;
+const mapGet = Map.prototype.get;
 
 function selectedConfigToolNames(
   tools: Exclude<AgentConfig["tools"], true | undefined>,
@@ -172,10 +174,14 @@ export function getProjectAgentRuntimeInlineTools(
   result: Pick<DiscoveryResult, "agents">,
   agentId: string,
 ): Map<string, Tool> {
-  const tools = new Map<string, Tool>();
-  const configuredTools = result.agents.get(agentId)?.config.tools;
+  const tools = createPrivateMap<string, Tool>();
+  const selected: Agent | undefined = apply(mapGet, result.agents, [agentId]);
+  const configuredTools = selected?.config.tools;
   if (configuredTools === undefined || configuredTools === true) return tools;
-  for (const [name, value] of objectEntries(configuredTools)) {
+  const entries = objectEntries(configuredTools);
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    const name = entry[0], value = entry[1];
     if (
       value !== false && value !== undefined && typeof value === "object" &&
       typeof (value as Tool).execute === "function"

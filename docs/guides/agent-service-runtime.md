@@ -500,6 +500,10 @@ An explicitly enabled project source can receive the current call's `activeSkill
 and bounded `activeSkillToolAvailability`. Omitted skill fields clear prior values.
 Credentials and other caller context fields do not cross the project channel.
 Unknown startup `mode` values fail before bootstrap configuration or artifact access.
+Selected inline tools and discovered tools are combined under the exact project
+source policy, including metadata access and later execution. Framework-generated
+agent runtime tools are excluded from the project-only catalog, even when their
+names appear in a grant.
 
 ### Broker composition
 
