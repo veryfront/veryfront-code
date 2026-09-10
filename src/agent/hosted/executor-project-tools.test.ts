@@ -108,6 +108,65 @@ function fixture(
 }
 
 describe("executor project tools", () => {
+  it("preserves fixed user and project scope and only the current call's skill data", async () => {
+    const scope = { ...projectContext, userId: "synthetic-user", projectSlug: "synthetic-slug" };
+    const observed: ToolExecutionContext[] = [];
+    const f = fixture(async (_args, context) => {
+      assert(context);
+      observed.push(context);
+      return null;
+    }, { context: scope });
+    try {
+      const source = await f.source({ context: scope });
+      // Neither adapter may keep reading mutable installation authority.
+      scope.userId = "changed-user";
+      scope.projectSlug = "changed-slug";
+      const active = {
+        activeSkillId: "inspect-skill",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: ["references/guide.md", "resources/example.json", "assets/icon.svg"],
+          scripts: ["scripts/inspect.ts"],
+        },
+      };
+      const inactive = {
+        activeSkillToolAvailability: { hasActiveSkill: false, references: [], scripts: [] },
+      };
+      const skillContexts: ToolExecutionContext[] = [active, inactive, {}];
+      for (const current of skillContexts) {
+        const context: ToolExecutionContext = { ...correlation, ...current };
+        Object.defineProperty(context, "authToken", {
+          enumerable: true,
+          get() {
+            throw new Error("Credentials must not be read");
+          },
+        });
+        await source.executeTool("inspect", { query: "hello" }, context);
+        const result = observed.at(-1)!;
+        assertEquals(result.userId, "synthetic-user");
+        assertEquals(result.projectSlug, "synthetic-slug");
+        assertEquals(result.activeSkillId, current.activeSkillId);
+        assertEquals(result.activeSkillToolAvailability, current.activeSkillToolAvailability);
+        assert(!Object.hasOwn(result, "authToken"));
+      }
+      const before = f.wire.length;
+      for (const key of ["userId", "projectSlug"]) {
+        await assertRejects(() =>
+          source.executeTool("inspect", { query: "hello" }, {
+            ...correlation,
+            [key]: "other",
+          })
+        );
+        await assertRejects(() => source.listTools({ [key]: "other" }));
+      }
+      assertEquals(f.wire.length, before);
+      assertEquals(observed.length, 3);
+      assert(!f.wire.join("").includes("authToken"));
+    } finally {
+      await f.close();
+    }
+  });
+
   it("charges aliases, source frames and definitions to one metadata budget", async () => {
     for (const includeAliases of [false, true]) {
       const f = fixture();
@@ -252,7 +311,7 @@ describe("executor project tools", () => {
     try {
       const source = await f.source();
       const before = f.wire.length;
-      for (const key of ["agentId", "runId", "projectId"]) {
+      for (const key of ["agentId", "runId", "projectId", "userId", "projectSlug"]) {
         await assertRejects(() =>
           source.executeTool("inspect", { query: "hello" }, { ...correlation, [key]: "other" })
         );

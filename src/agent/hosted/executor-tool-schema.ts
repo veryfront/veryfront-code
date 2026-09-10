@@ -15,6 +15,7 @@ import {
   executorAgentFailureCode,
 } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { executorModelFailure } from "#veryfront/agent/hosted/executor-model-errors.ts";
+import { getExecutorProjectCallContextSchema } from "#veryfront/agent/hosted/executor-project-context.ts";
 
 const objectKeys = Object.keys;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -82,6 +83,7 @@ export const getExecutorToolCallSchema = defineSchema((v) =>
     sourceId: getExecutorToolIdSchema(),
     toolName: getExecutorToolIdSchema(),
     args: v.record(v.string(), getJsonValueSchema()),
+    projectContext: getExecutorProjectCallContextSchema().optional(),
     ...correlationShape(v),
   }).strict()
 );

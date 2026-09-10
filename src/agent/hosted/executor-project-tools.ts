@@ -8,6 +8,7 @@ import {
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
+import { captureExecutorProjectCallContext } from "#veryfront/agent/hosted/executor-project-context.ts";
 import type { ExecutorChannel, ExecutorOperation } from "#veryfront/agent/executor/channel.ts";
 import {
   type ExecutorBinding,
@@ -49,6 +50,8 @@ export interface ExecutorProjectToolSource extends RemoteToolSource {
 export interface ExecutorProjectToolContext {
   agentId: string;
   projectId: string;
+  userId?: string;
+  projectSlug?: string;
   execution: { kind: "canonical"; runId: string } | { kind: "ephemeral" };
 }
 
@@ -56,6 +59,8 @@ const getContextSchema = defineSchema((v) =>
   v.object({
     agentId: getExecutorToolIdSchema(),
     projectId: getExecutorToolIdSchema(),
+    userId: getExecutorToolIdSchema().optional(),
+    projectSlug: getExecutorToolIdSchema().optional(),
     execution: v.discriminatedUnion("kind", [
       v.object({ kind: v.literal("canonical"), runId: getExecutorToolIdSchema() }).strict(),
       v.object({ kind: v.literal("ephemeral") }).strict(),
@@ -68,6 +73,8 @@ function captureContext(input: ExecutorProjectToolContext) {
   return freeze({
     agentId: context.agentId,
     projectId: context.projectId,
+    ...(context.userId === undefined ? {} : { userId: context.userId }),
+    ...(context.projectSlug === undefined ? {} : { projectSlug: context.projectSlug }),
     runIdBindsToolAuthorization: context.execution.kind === "canonical",
     ...(context.execution.kind === "canonical" ? { runId: context.execution.runId } : {}),
   });
@@ -175,6 +182,7 @@ export function createExecutorProjectToolOperations(
       }
       return await selected.execute(args, {
         ...fixed,
+        ...captureExecutorProjectCallContext(context),
         toolCallId: context.toolCallId,
         ...(context.progressToken === undefined ? {} : { progressToken: context.progressToken }),
         abortSignal: context.abortSignal,
@@ -187,6 +195,7 @@ export function createExecutorProjectToolOperations(
     source,
     allowedToolNames: createPrivateSet(catalog.keys()),
     context: fixed,
+    projectContext: "skill",
   });
   const operations = copyPrivateMap(createExecutorToolBroker({
     scope: options.scope,
@@ -237,7 +246,16 @@ export async function createExecutorProjectToolSource(
   };
   const projectContext = (context?: ToolExecutionContext): ToolExecutionContext => {
     check();
-    for (const key of ["agentId", "runId", "projectId", "runIdBindsToolAuthorization"] as const) {
+    for (
+      const key of [
+        "agentId",
+        "runId",
+        "projectId",
+        "runIdBindsToolAuthorization",
+        "userId",
+        "projectSlug",
+      ] as const
+    ) {
       const requested = callField(context, key);
       if (requested !== undefined && requested !== fixed[key]) {
         throw new TypeError("Project tool call identity mismatch");
@@ -254,6 +272,7 @@ export async function createExecutorProjectToolSource(
     abortSignal?.throwIfAborted();
     const publish = callField(context, "publishDataEvent");
     return {
+      ...captureExecutorProjectCallContext(context),
       toolCallId: correlation.toolCallId,
       progressToken: correlation.progressToken,
       abortSignal,
@@ -283,6 +302,7 @@ export async function createExecutorProjectToolSource(
     channel,
     signal,
     limits: { ...limits, maxMetadataBytes: remainingMetadataBytes },
+    projectContextSources: createPrivateSet([EXECUTOR_PROJECT_TOOL_SOURCE_ID]),
   });
   check();
   if (sources.length !== 1 || sources[0]?.id !== EXECUTOR_PROJECT_TOOL_SOURCE_ID) {

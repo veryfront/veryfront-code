@@ -38,12 +38,15 @@ import {
 const apply = Reflect.apply;
 const isArray = Array.isArray;
 const hasOwn = Object.hasOwn;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 /** Already-scoped capabilities. The source owns exact project, run, and skill policy. */
 export interface ExecutorToolCapability {
   readonly source: RemoteToolSource;
   readonly allowedToolNames: ReadonlySet<string>;
   readonly context: ToolExecutionContext;
+  /** Explicit permission for caller-supplied skill context; ordinary host capabilities reject it. */
+  readonly projectContext?: "skill";
 }
 
 /**
@@ -82,6 +85,7 @@ export function createExecutorToolBroker(options: {
     context: ToolExecutionContext;
     publisher: ToolExecutionContext["publishDataEvent"];
     publisherReceiver: ToolExecutionContext;
+    projectContext: "skill" | undefined;
   }>();
   let allowedTools = 0;
   let sourceCount = 0;
@@ -95,11 +99,17 @@ export function createExecutorToolBroker(options: {
   };
   for (const [id, capability] of suppliedSources) {
     const allowed = copyPrivateSet(capability.allowedToolNames, limits.maxToolsPerSource);
+    const contextGrant = getOwnPropertyDescriptor(capability, "projectContext");
+    if (contextGrant && !hasOwn(contextGrant, "value")) {
+      throw new TypeError("Invalid executor tool capability");
+    }
+    const projectContext = contextGrant?.value;
     if (
       ++sourceCount > limits.maxSources || sources.has(id) || !capability.context ||
       capability.source.id !== id || typeof capability.source.listTools !== "function" ||
       typeof capability.source.executeTool !== "function" ||
-      allowed.size > limits.maxToolsPerSource
+      allowed.size > limits.maxToolsPerSource ||
+      (projectContext !== undefined && projectContext !== "skill")
     ) {
       throw new TypeError("Invalid executor tool capability");
     }
@@ -118,6 +128,7 @@ export function createExecutorToolBroker(options: {
       context: { ...capability.context },
       publisher: capability.context.publishDataEvent,
       publisherReceiver: capability.context,
+      projectContext,
     });
   }
   let calls = 0;
@@ -168,6 +179,9 @@ export function createExecutorToolBroker(options: {
       const request = call ?? parseExecutorToolData(getExecutorToolListSchema(), value);
       const capability = sources.get(request.sourceId);
       if (!capability) throw new TypeError("Executor tool source is not allowed");
+      if (call?.projectContext !== undefined && capability.projectContext !== "skill") {
+        throw new TypeError("Executor project context is not granted");
+      }
       const assertCall = () => {
         assertScope(operation);
         capability.context.abortSignal?.throwIfAborted();
@@ -183,7 +197,14 @@ export function createExecutorToolBroker(options: {
           call
             ? apply(capability.execute, capability.source, [call.toolName, call.args, context])
             : apply(capability.list, capability.source, [context]),
-        context: capability.context,
+        context: capability.projectContext === "skill"
+          ? {
+            ...capability.context,
+            activeSkillId: undefined,
+            activeSkillToolAvailability: undefined,
+            ...call?.projectContext,
+          }
+          : capability.context,
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
         correlation: request,
