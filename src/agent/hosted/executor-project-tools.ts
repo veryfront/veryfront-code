@@ -93,6 +93,8 @@ export interface ExecutorProjectToolOperationsOptions {
   scope: { binding: ExecutorBinding; signal: AbortSignal; assertActive(): void };
   context: ExecutorProjectToolContext;
   tools: ReadonlyMap<string, Tool>;
+  /** Restore the exact project source policy while invoking project code. */
+  runWithProjectRuntime?: <T>(fn: () => T) => T;
   allowedToolNames: ReadonlySet<string>;
   maxCalls: number;
   maxConcurrent: number;
@@ -152,8 +154,12 @@ export function createExecutorProjectToolOperations(
     ) continue;
     if (typeof registered.execute !== "function") throw new TypeError("Invalid project tool");
     const callback = registered.execute;
-    const execute: Tool["execute"] = (args, context) =>
-      apply(callback, registered, [args, context]);
+    const execute: Tool["execute"] = (args, context) => {
+      const invoke = () => apply(callback, registered, [args, context]);
+      return options.runWithProjectRuntime === undefined
+        ? invoke()
+        : options.runWithProjectRuntime(invoke);
+    };
     const definition = executorToolDefinition({
       ...toolToProviderDefinition(registered),
       name,

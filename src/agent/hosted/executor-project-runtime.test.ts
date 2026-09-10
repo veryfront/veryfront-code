@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import { agent } from "../factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "../project/agent-runtime.ts";
@@ -27,7 +29,10 @@ const install = () =>
     maxCalls: 32,
     maxConcurrent: 2,
   });
-function fixture(wait?: Promise<void>, onLoad?: () => void) {
+function fixture(wait?: Promise<void>, onLoad?: () => void, sourceIntegrationPolicy: SourceIntegrationPolicyManifest = {
+  schemaVersion: 1 as const,
+  mode: "unrestricted" as const,
+}, onExecute?: () => unknown) {
   let cleaned = 0;
   let loads = 0;
   let calls = 0;
@@ -41,6 +46,7 @@ function fixture(wait?: Promise<void>, onLoad?: () => void) {
       calls++;
       started.resolve();
       await wait;
+      const executed = onExecute?.();
       return {
         query: args.query,
         agentId: context?.agentId,
@@ -48,6 +54,7 @@ function fixture(wait?: Promise<void>, onLoad?: () => void) {
         runId: context?.runId,
         ...(context?.userId === undefined ? {} : { userId: context.userId }),
         ...(context?.projectSlug === undefined ? {} : { projectSlug: context.projectSlug }),
+        ...(executed === undefined ? {} : { executed }),
       };
     },
   });
@@ -69,7 +76,7 @@ function fixture(wait?: Promise<void>, onLoad?: () => void) {
     webhooks: new Map(),
     evals: new Map(),
     errors: [],
-    sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+    sourceIntegrationPolicy,
   };
   const discovery = createExecutorDiscovery({
     binding,
@@ -262,5 +269,38 @@ describe("installed project tool runtime", () => {
     await rejected;
     await closing;
     assertEquals(f.cleaned, 1);
+  });
+
+  it("restores the source integration policy while project tools execute", async () => {
+    const denyAll = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+    const f = fixture(undefined, undefined, denyAll, () => getActiveSourceIntegrationPolicy());
+    const owner = await createExecutorProjectToolRuntime({
+      input: install(),
+      discovery: f.discovery,
+      signal: f.lifetime.signal,
+      deadline: Date.now() + 10_000,
+    });
+    try {
+      const operation = owner.operations.get("tool.execute");
+      assert(operation?.mode === "stream");
+      const frames = await Array.fromAsync(operation.handle({
+        sourceId: "project",
+        toolName: "inspect",
+        toolCallId: "policy",
+        args: { query: "policy" },
+      }, { binding, signal: f.lifetime.signal, deadline: Date.now() + 10_000 }));
+      assertEquals(frames, [{
+        type: "result",
+        result: {
+          query: "policy",
+          agentId: "coder",
+          projectId: "synthetic-project",
+          runId: "synthetic-run",
+          executed: denyAll,
+        },
+      }]);
+    } finally {
+      await owner.close();
+    }
   });
 });

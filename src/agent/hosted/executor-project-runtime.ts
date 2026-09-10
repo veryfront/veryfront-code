@@ -6,6 +6,7 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
+import { runWithProjectAgentRuntime } from "../project/agent-runtime.ts";
 import type { ExecutorDiscovery } from "./executor-discovery.ts";
 import {
   getExecutorAgentDescribeResultSchema,
@@ -82,6 +83,7 @@ export async function createExecutorProjectToolRuntime(options: {
       scope: { binding, signal, assertActive: () => signal.throwIfAborted() },
       context,
       tools: runtime.tools,
+      runWithProjectRuntime: (fn) => runWithProjectAgentRuntime(runtime, fn),
       allowedToolNames,
       maxCalls,
       maxConcurrent,
