@@ -565,7 +565,8 @@ describe("managed broker handler", () => {
           method: "POST",
           headers: f.first.request.headers,
           body: blockedBody,
-        }),
+          duplex: "half",
+        } as RequestInit),
       );
       controller.abort();
       try {
