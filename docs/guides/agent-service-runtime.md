@@ -494,6 +494,13 @@ runtime grants, private credentials or host capability IDs, and rejects unknown
 fields. This profile exposes neither runtime preparation nor agent streaming;
 the trusted broker owns the agent loop and privileged operations.
 
+The fixed context also accepts optional `userId` and `projectSlug` from the approved
+execution grant. Project tools receive those captured values; caller conflicts fail.
+An explicitly enabled project source can receive the current call's `activeSkillId`
+and bounded `activeSkillToolAvailability`. Omitted skill fields clear prior values.
+Credentials and other caller context fields do not cross the project channel.
+Unknown startup `mode` values fail before bootstrap configuration or artifact access.
+
 ### Broker composition
 
 The broker owns HTTP authentication, credentials, model and tool authorization,

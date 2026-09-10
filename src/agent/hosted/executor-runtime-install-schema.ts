@@ -89,6 +89,8 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
       agentId: getExecutorDiscoveryIdSchema(),
       projectId: getExecutorDiscoveryIdSchema(),
       runId: getExecutorDiscoveryIdSchema(),
+      userId: getExecutorDiscoveryIdSchema().optional(),
+      projectSlug: getExecutorDiscoveryIdSchema().optional(),
     }).strict(),
     allowedToolNames: v.array(getExecutorToolIdSchema()).max(
       EXECUTOR_TOOL_LIMITS.maxToolsPerSource,

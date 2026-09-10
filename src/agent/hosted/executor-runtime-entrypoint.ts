@@ -67,6 +67,10 @@ export async function startExecutorRuntimeEntrypoint(
     readArtifact?: () => Promise<{ manifest: ExecutorArtifactManifest; projectDir: string }>;
   } = {},
 ) {
+  const mode = options.mode;
+  if (mode !== undefined && mode !== "runtime" && mode !== "project-tools") {
+    throw new TypeError("Invalid executor installation profile");
+  }
   const environment = options.environment ?? { get: (name) => process.env[name] };
   const { binding } = readExecutorBootstrapConfiguration(environment);
   for (
@@ -81,7 +85,7 @@ export async function startExecutorRuntimeEntrypoint(
   signal.throwIfAborted();
   const channel = Promise.withResolvers<ExecutorChannel>();
   void channel.promise.catch(() => {});
-  const installation = options.mode === "project-tools"
+  const installation = mode === "project-tools"
     ? createExecutorRuntimeInstallation({
       mode: "project-tools",
       binding,

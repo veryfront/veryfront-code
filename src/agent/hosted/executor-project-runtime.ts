@@ -44,6 +44,10 @@ export async function createExecutorProjectToolRuntime(options: {
     const context: ExecutorProjectToolContext = {
       agentId: input.context.agentId,
       projectId: input.context.projectId,
+      ...(input.context.userId === undefined ? {} : { userId: input.context.userId }),
+      ...(input.context.projectSlug === undefined
+        ? {}
+        : { projectSlug: input.context.projectSlug }),
       execution: { kind: "canonical", runId: input.context.runId },
     };
     const allowedToolNames = createPrivateSet(input.allowedToolNames);

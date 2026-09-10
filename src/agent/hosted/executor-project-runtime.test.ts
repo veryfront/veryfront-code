@@ -46,6 +46,8 @@ function fixture(wait?: Promise<void>, onLoad?: () => void) {
         agentId: context?.agentId,
         projectId: context?.projectId,
         runId: context?.runId,
+        ...(context?.userId === undefined ? {} : { userId: context.userId }),
+        ...(context?.projectSlug === undefined ? {} : { projectSlug: context.projectSlug }),
       };
     },
   });
@@ -123,9 +125,13 @@ describe("installed project tool runtime", () => {
 
   it("captures admitted authority before project loading can mutate the caller input", async () => {
     const input = install();
+    input.context.userId = "synthetic-user";
+    input.context.projectSlug = "synthetic-slug";
     const f = fixture(undefined, () => {
       input.context.agentId = "foreign";
       input.context.runId = "foreign-run";
+      input.context.userId = "foreign-user";
+      input.context.projectSlug = "foreign-slug";
       input.allowedToolNames.length = 0;
       input.maxCalls = 1;
       input.binding.generation = 2;
@@ -152,6 +158,8 @@ describe("installed project tool runtime", () => {
           agentId: "coder",
           projectId: "synthetic-project",
           runId: "synthetic-run",
+          userId: "synthetic-user",
+          projectSlug: "synthetic-slug",
         },
       }]);
     } finally {
