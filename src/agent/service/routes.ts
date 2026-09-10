@@ -418,7 +418,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           options.verifyProjectAccess(projectId, authToken),
         verifyRunEventAppendToken: options.verifyRunEventAppendToken,
       });
-      if (req instanceof Response) {
+      if (isResponseLike(req)) {
         return req;
       }
 
@@ -450,7 +450,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         verifyRunEventAppendToken: options.verifyRunEventAppendToken,
         runtimeSource,
       });
-      if (req instanceof Response) {
+      if (isResponseLike(req)) {
         return req;
       }
 
@@ -478,7 +478,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   }): Promise<Response> {
     return trace("handler.durableChatRunCancel", async () => {
       const authenticatedRequest = await authenticateAgUiRequest(input.request);
-      if (authenticatedRequest instanceof Response) {
+      if (isResponseLike(authenticatedRequest)) {
         return authenticatedRequest;
       }
 
