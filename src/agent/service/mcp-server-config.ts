@@ -92,6 +92,8 @@ function createVeryfrontApiRemoteMcpConfig(
 ): RemoteMCPToolSourceConfig {
   return {
     id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
+    // Keep persisted selectors and name-based runtime policies stable during API rollouts.
+    listMeta: { "veryfront/tool-names": "legacy" },
     endpoint: () => createProjectScopedMcpUrl(input.apiMcpUrl, input.getProjectId?.()),
     headers: () => ({ Authorization: `Bearer ${input.authToken}` }),
   };

@@ -19,6 +19,7 @@ it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async ()
     getProjectId: () => projectId,
   });
   assertEquals(config?.id, "veryfront-mcp");
+  assertEquals(config?.listMeta, { "veryfront/tool-names": "legacy" });
   assertEquals(
     typeof config?.endpoint === "function" ? await config.endpoint() : config?.endpoint,
     "https://api.example/projects/project-1/mcp",

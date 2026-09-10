@@ -19,6 +19,45 @@ import {
 import { getToolResultError } from "./result.ts";
 
 describe("tool/remote-mcp", () => {
+  it("preserves discovery metadata on every page without adding it to calls", async () => {
+    const config = {
+      id: "naming",
+      endpoint: "https://93.184.216.34/mcp",
+      listMeta: { "veryfront/tool-names": "legacy" },
+    };
+    const source = createRemoteMCPToolSource(config);
+    const requests: Record<string, unknown>[] = [];
+    await withMockFetch(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      requests.push(body.params);
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: body.method === "tools/list"
+          ? {
+            tools: [{
+              name: body.params?.cursor ? "gmail__list_emails" : "get_file",
+              description: "Read",
+              inputSchema: {},
+            }],
+            ...(body.params?.cursor ? {} : { nextCursor: "page-2" }),
+          }
+          : { content: [{ type: "text", text: "ok" }] },
+      });
+    }, async () => {
+      assertEquals((await source.listTools()).map((tool) => tool.name), [
+        "get_file",
+        "gmail__list_emails",
+      ]);
+      await source.executeTool("get_file", {});
+    });
+    assertEquals(requests, [
+      { _meta: config.listMeta },
+      { cursor: "page-2", _meta: config.listMeta },
+      { name: "get_file", arguments: {} },
+    ]);
+  });
+
   it("uses host transport only for an exact trusted endpoint", async () => {
     let transportCalls = 0;
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({

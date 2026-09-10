@@ -529,6 +529,7 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   const platformRemoteToolSource = createRemoteMCPToolSource({
     id: VERYFRONT_API_MCP_SOURCE_ID,
+    listMeta: { "veryfront/tool-names": "legacy" },
     endpoint: `${apiUrl}/mcp`,
     headers: { Authorization: `Bearer ${input.token}` },
   });

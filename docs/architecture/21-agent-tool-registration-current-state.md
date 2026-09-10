@@ -73,6 +73,14 @@ The hosted path starts from `mcpServers`, converts each server config into a
 project-aware behavior, and finally maps it back into `AgentConfig.remoteTools`.
 Local host tools are converted separately into `runtimeTools`.
 
+Veryfront API sources request `_meta["veryfront/tool-names"] = "legacy"` on every
+`tools/list` page. This keeps persisted selectors, allow/deny rules, hosted access
+profiles, and streamed tool names stable when the API advertises canonical
+`veryfront__` names. Older APIs may ignore this additive metadata and continue
+returning legacy names. Generic and Studio sources retain their existing discovery
+requests. Discovery metadata is not added to `tools/call`; calls use the exact
+selected tool identity.
+
 ## Current configuration surfaces
 
 ### AgentConfig
