@@ -4,11 +4,14 @@ import {
   type ConversationRunProjection,
   getConversationRunProjectionSchema,
 } from "../conversation/durable-contracts.ts";
-import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
+import {
+  type ConversationHostedTerminalStateInput,
+  createConversationHostedTerminalAdapter,
+  resolveConversationHostedStreamErrorState,
+} from "../conversation/hosted-terminal.ts";
 import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
-  createHostedConversationTerminalFromCapability,
   createHostedRunEventWriterCapability,
   type HostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
@@ -34,16 +37,40 @@ export interface ManagedBrokerOutput {
   }): Promise<void>;
 }
 
+/** Trusted completion adapter authorized independently from event append. */
+export interface ManagedBrokerTerminal {
+  runId: string;
+  dispatch(state: ConversationHostedTerminalStateInput): Promise<HostedLifecycleTerminalState>;
+}
+
 /** Create exact-run API persistence callbacks while retaining credentials in the broker. */
 export function createManagedBrokerPersistence(input: {
   apiUrl: string;
   runEventToken: string;
+  /** Application authority accepted by the API completion route, never the append token. */
+  completionAuthToken: string;
   run: ConversationRunProjection;
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
+  if (
+    typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim() ||
+    input.completionAuthToken === input.runEventToken
+  ) {
+    throw new TypeError("Managed broker requires independent completion authorization");
+  }
+  const resolveProvider = input.resolveProvider;
+  const terminal = createConversationHostedTerminalAdapter({
+    apiUrl: input.apiUrl,
+    authToken: input.completionAuthToken,
+    run,
+    fallbackModelId: input.modelId,
+    // Do not expose secret-bearing adapter options as the caller's receiver.
+    resolveProvider: (modelId) => resolveProvider(modelId),
+    fetch: input.fetch,
+  });
   return createManagedBrokerPersistenceFromCapability({
     capability: createHostedRunEventWriterCapability({
       apiUrl: input.apiUrl,
@@ -52,8 +79,7 @@ export function createManagedBrokerPersistence(input: {
       fetch: input.fetch,
     }),
     run,
-    modelId: input.modelId,
-    resolveProvider: input.resolveProvider,
+    terminal: { runId: run.runId, dispatch: terminal.dispatch },
   });
 }
 
@@ -61,12 +87,15 @@ export function createManagedBrokerPersistence(input: {
 export function createManagedBrokerPersistenceFromCapability(input: {
   capability: HostedRunEventWriterCapability;
   run: ConversationRunProjection;
-  modelId: string;
-  resolveProvider(modelId: string): string;
+  terminal: ManagedBrokerTerminal;
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
     throw new TypeError("Managed broker persistence requires an active run");
+  }
+  const dispatchTerminal = input.terminal?.dispatch;
+  if (input.terminal?.runId !== run.runId || typeof dispatchTerminal !== "function") {
+    throw new TypeError("Managed broker terminal authority is not bound to this run");
   }
   let sessionOwnedWork: HostedExecutorOwnedWork | undefined;
   let retainedPersistenceTail = Promise.resolve();
@@ -81,12 +110,6 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     retainedPersistenceTail = Promise.all([retainedPersistenceTail, settled]).then(() => undefined);
     return owned;
   };
-  const terminal = createHostedConversationTerminalFromCapability(input.capability, {
-    run,
-    fallbackModelId: input.modelId,
-    resolveProvider: input.resolveProvider,
-  });
-  if (!terminal) throw new TypeError("Managed broker run-event capability is not bound");
   const mirror = createHostedConversationRunChunkMirrorFromCapability(input.capability, {
     expectedRunId: run.runId,
     conversationId: run.conversationId,
@@ -174,21 +197,21 @@ export function createManagedBrokerPersistenceFromCapability(input: {
         }
         try {
           if (terminalFailure.failed) {
-            await terminal.dispatch(
+            await dispatchTerminal(
               {
                 ...resolveConversationHostedStreamErrorState(terminalFailure.error),
                 metadata: result.metadata,
               },
             );
           } else if (result.completed) {
-            await terminal.dispatch({ status: "completed", metadata: result.metadata });
+            await dispatchTerminal({ status: "completed", metadata: result.metadata });
           } else if (result.error !== undefined) {
-            await terminal.dispatch({
+            await dispatchTerminal({
               ...resolveConversationHostedStreamErrorState(result.error),
               metadata: result.metadata,
             });
           } else {
-            await terminal.dispatch({
+            await dispatchTerminal({
               status: "cancelled",
               terminalErrorCode: "ABORTED",
               terminalErrorMessage: "Managed executor output was cancelled",

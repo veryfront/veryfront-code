@@ -7,9 +7,9 @@ import {
   createManagedBrokerPersistenceFromCapability,
 } from "#veryfront/agent/service/managed-broker.ts";
 import {
-  createHostedConversationTerminalFromCapability,
   createHostedRunEventWriterCapability,
 } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
+import { createConversationHostedTerminalAdapter } from "#veryfront/agent/conversation/hosted-terminal.ts";
 import { FakeTime } from "#std/testing/time";
 
 const conversationId = "00000000-0000-4000-8000-000000000001";
@@ -49,6 +49,21 @@ function successfulFetch(calls: Record<string, unknown>[]) {
   };
 }
 
+function terminalForTest(
+  fetch: typeof globalThis.fetch,
+  resolveProvider: (modelId: string) => string = () => "provider",
+) {
+  const adapter = createConversationHostedTerminalAdapter({
+    apiUrl: "https://api.example.test",
+    authToken: "synthetic-completion-token",
+    run,
+    fallbackModelId: "model",
+    resolveProvider,
+    fetch,
+  });
+  return { runId: run.runId, dispatch: adapter.dispatch };
+}
+
 function bindForTest(
   persistence: ReturnType<typeof createManagedBrokerPersistence>,
 ): ReturnType<typeof createManagedBrokerPersistence> {
@@ -58,9 +73,14 @@ function bindForTest(
 
 for (const authority of ["token", "capability"] as const) {
   describe(`managed broker persistence (${authority})`, () => {
-    const createPersistence = (input: Parameters<typeof createManagedBrokerPersistence>[0]) =>
+    const createPersistence = (
+      input: Omit<Parameters<typeof createManagedBrokerPersistence>[0], "completionAuthToken">,
+    ) =>
       authority === "token"
-        ? createManagedBrokerPersistence(input)
+        ? createManagedBrokerPersistence({
+          ...input,
+          completionAuthToken: "synthetic-completion-token",
+        })
         : createManagedBrokerPersistenceFromCapability({
           capability: createHostedRunEventWriterCapability({
             apiUrl: input.apiUrl,
@@ -69,8 +89,7 @@ for (const authority of ["token", "capability"] as const) {
             fetch: input.fetch,
           }),
           run: input.run,
-          modelId: input.modelId,
-          resolveProvider: input.resolveProvider,
+          terminal: terminalForTest(input.fetch ?? successfulFetch([]), input.resolveProvider),
         });
     it("requires one active session owner before persistence can enqueue or fetch", async () => {
       const calls: Record<string, unknown>[] = [];
@@ -416,6 +435,8 @@ describe("managed persistence capability authorization", () => {
       const input = {
         apiUrl: "https://api.example.test",
         runEventToken: "synthetic-token",
+        completionAuthToken: "synthetic-completion-token",
+        terminal: terminalForTest(fetch),
         fetch,
         run: canonical,
         modelId: "model",
@@ -447,39 +468,65 @@ describe("managed persistence capability authorization", () => {
   }
   it("does not expose private terminal options as callback receivers", async () => {
     const receivers: unknown[] = [];
-    const capability = createHostedRunEventWriterCapability({
+    const persistence = bindForTest(createManagedBrokerPersistence({
       apiUrl: "https://api.example.test",
-      runId: run.runId,
-      runEventAppendToken: "synthetic-private-event-token",
-      fetch: successfulFetch([]),
-    });
-    const resolveProvider = function (this: unknown) {
-      receivers.push(this);
-      return "provider";
-    };
-    const persistence = bindForTest(createManagedBrokerPersistenceFromCapability({
-      capability,
+      runEventToken: "synthetic-event-token",
+      completionAuthToken: "synthetic-completion-token",
       run,
       modelId: "model",
-      resolveProvider,
+      resolveProvider: function (this: unknown) {
+        receivers.push(this);
+        return "provider";
+      },
+      fetch: successfulFetch([]),
     }));
     try {
       await persistence.output.finish({ completed: true });
     } finally {
       await persistence.cleanup();
     }
-    const terminal = createHostedConversationTerminalFromCapability(capability, {
-      run,
-      fallbackModelId: "model",
-      resolveProvider,
-      onTerminalState: function (this: unknown) {
-        receivers.push(this);
-      },
-    });
-    if (!terminal) throw new Error("Expected verified terminal capability");
-    await terminal.dispatch({ status: "completed" });
-    assertEquals(receivers.length, 3);
+    assertEquals(receivers.length, 1);
     assertEquals(receivers.every((receiver) => receiver === undefined), true);
+  });
+  it("requires independent terminal authorization before accepting an append capability", () => {
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.test",
+      runId: run.runId,
+      runEventAppendToken: "synthetic-event-token",
+      fetch: successfulFetch([]),
+    });
+    for (
+      const terminal of [undefined, {
+        runId: "wrong-run",
+        dispatch: terminalForTest(successfulFetch([])).dispatch,
+      }]
+    ) {
+      assertThrows(
+        () =>
+          Reflect.apply(createManagedBrokerPersistenceFromCapability, undefined, [{
+            capability,
+            run,
+            terminal,
+          }]),
+        TypeError,
+        "terminal",
+      );
+    }
+    for (const completionAuthToken of [undefined, "", "synthetic-event-token"]) {
+      assertThrows(
+        () =>
+          Reflect.apply(createManagedBrokerPersistence, undefined, [{
+            apiUrl: "https://api.example.test",
+            runEventToken: "synthetic-event-token",
+            completionAuthToken,
+            run,
+            modelId: "model",
+            resolveProvider: () => "provider",
+          }]),
+        TypeError,
+        "completion",
+      );
+    }
   });
   for (const invalid of ["foreign run", "fabricated capability"] as const) {
     it(`rejects ${invalid} before network work`, () => {
@@ -503,8 +550,7 @@ describe("managed persistence capability authorization", () => {
           createManagedBrokerPersistenceFromCapability({
             capability,
             run,
-            modelId: "model",
-            resolveProvider: () => "provider",
+            terminal: terminalForTest(successfulFetch([])),
           }),
         TypeError,
         "not bound",
@@ -512,24 +558,33 @@ describe("managed persistence capability authorization", () => {
       assertEquals(calls, 0);
     });
   }
-  it("uses the capability's pinned endpoint, credential and transport for append and completion", async () => {
+  it("keeps append and completion authority separate with pinned transport", async () => {
     const calls: Record<string, unknown>[] = [];
     const requests: { url: string; authorization: string | null }[] = [];
     const respond = successfulFetch(calls);
+    const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push({ url: request.url, authorization: request.headers.get("authorization") });
+      const expected = request.url.endsWith("/complete")
+        ? "Bearer synthetic-completion-token"
+        : "Bearer synthetic-pinned-token";
+      // Model the API's purpose separation: append credentials cannot authenticate completion.
+      if (request.headers.get("authorization") !== expected) {
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }
+      return respond(input, init);
+    };
     const capability = createHostedRunEventWriterCapability({
       apiUrl: "https://api.example.test",
       runId: run.runId,
       runEventAppendToken: "synthetic-pinned-token",
-      fetch: (input, init) => {
-        const request = new Request(input, init);
-        requests.push({ url: request.url, authorization: request.headers.get("authorization") });
-        return respond(input, init);
-      },
+      fetch,
     });
     const mutableRun = { ...run };
     const input = {
       capability,
       run: mutableRun,
+      terminal: terminalForTest(fetch),
       modelId: "model",
       resolveProvider: () => "provider",
       apiUrl: "https://untrusted.example.test",
@@ -552,7 +607,12 @@ describe("managed persistence capability authorization", () => {
     assertEquals(requests.length, 2);
     for (const request of requests) {
       assertEquals(new URL(request.url).origin, "https://api.example.test");
-      assertEquals(request.authorization, "Bearer synthetic-pinned-token");
+      assertEquals(
+        request.authorization,
+        request.url.endsWith("/complete")
+          ? "Bearer synthetic-completion-token"
+          : "Bearer synthetic-pinned-token",
+      );
       assertEquals(request.url.includes("mutated-run"), false);
       assertEquals(request.url.includes("run-1"), true);
     }

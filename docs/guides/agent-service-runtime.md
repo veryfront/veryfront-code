@@ -564,13 +564,20 @@ event-queue writes use that session owner. A persistence timeout can return
 promptly while pool capacity stays reserved until the original write settles.
 
 `createManagedBrokerPersistenceFromCapability` accepts the opaque writer returned
-by managed ingress's `createRunEventWriterCapability` together with the canonical
-run projection, model ID and provider resolver. It binds both event append and
-terminal completion to that capability's run, API endpoint and transport. Missing,
-fabricated or different-run authority is rejected before persistence starts.
-The raw credential stays private; the existing `createManagedBrokerPersistence`
-constructor remains available for trusted callers that already hold a verified
-run-event token. Both constructors require the same session binding and cleanup.
+by managed ingress's `createRunEventWriterCapability`, the canonical run projection,
+and a trusted `terminal` adapter. The writer pins event append to its run, API
+endpoint and transport. The terminal adapter must declare the same `runId` and
+provide `dispatch`, acknowledging the authoritative terminal outcome. Configure
+its completion authority separately; an event-writer token cannot authenticate
+the API's `/complete` route. Missing, fabricated or different-run writer authority,
+and missing or different-run terminal configuration, are rejected before writes.
+
+The raw-token `createManagedBrokerPersistence` constructor requires both
+`runEventToken` and a distinct `completionAuthToken` accepted by the API completion
+route. Existing callers must add that completion credential; the constructor
+rejects omission or reuse of the append token. Provider resolution is called without
+exposing private adapter options as its receiver. Both constructors require the
+same session binding and cleanup. Tokens and terminal adapters remain in the broker.
 
 `startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
 and cancel/resume handlers to a Node server. Supply every handler, the broker

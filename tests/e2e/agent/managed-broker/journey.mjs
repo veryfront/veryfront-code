@@ -181,7 +181,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   // provider is contacted; credentials are freshly generated synthetic canaries.
   const api = createServer(async (request, response) => {
     try {
-      assertEquals(request.headers.authorization, `Bearer ${secrets.events}`);
+      assertEquals(
+        request.headers.authorization,
+        `Bearer ${request.url.endsWith("/complete") ? secrets.api : secrets.events}`,
+      );
       let raw = "";
       for await (const chunk of request) raw += chunk;
       const data = JSON.parse(raw);
@@ -311,6 +314,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         const persistence = createManagedBrokerPersistence({
           apiUrl,
           runEventToken: ingress.privateAuthority.runEventToken,
+          completionAuthToken: ingress.privateAuthority.apiAuthToken,
           run,
           modelId,
           resolveProvider: () => "openai",
