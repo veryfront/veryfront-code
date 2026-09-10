@@ -92,6 +92,39 @@ describe("managed agent ingress", () => {
     }
   }
 
+  for (const verify of [false, true]) {
+    it(`admits durable ingress without a resolved project slug (verify=${verify})`, async () => {
+      const request = new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-secret",
+        },
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: { conversationId, branchId: "branch-1", projectId },
+          durableRootRun: { runId: "run_root_1", messageId },
+        }),
+      });
+      const result = await parseManagedDurableAgentIngress(request, {
+        authenticate,
+        ...(verify
+          ? { verifyProjectAccess: () => Promise.resolve({ success: true as const }) }
+          : {}),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+      });
+      if (result instanceof Response) throw new Error("Expected managed durable ingress");
+      assertEquals(result.executor.projectSlug, null);
+      assert(
+        result.executor.context !== null && typeof result.executor.context === "object" &&
+          !Array.isArray(result.executor.context),
+      );
+      assertEquals(Object.hasOwn(result.executor.context, "projectSlug"), false);
+      assertEquals(result.executor.context.conversationId, conversationId);
+      assertEquals(result.executor.projectId, projectId);
+    });
+  }
+
   it("separates durable broker authority from a detached executor request", async () => {
     const request = new Request("https://agent.example.test/api/runs", {
       method: "POST",

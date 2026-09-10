@@ -627,7 +627,13 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
     assert(persisted.length > 0, "Canonical model/tool events must reach persistence");
     const observation = JSON.parse(await readFile(new URL("observations.json", project), "utf8"));
     assertEquals(observation.pid, child.pid);
-    assertEquals(observation.controls, { call: true, json: true, decode: true, headers: true });
+    assertEquals(observation.controls, {
+      call: true,
+      json: true,
+      decode: true,
+      headers: true,
+      tee: true,
+    });
     assertEquals(observation.observations, 0, "Project hooks observed a broker canary");
     for (const canary of canaries) {
       assert(!`${wire}${childOutput}`.includes(canary), "Credential entered executor output");

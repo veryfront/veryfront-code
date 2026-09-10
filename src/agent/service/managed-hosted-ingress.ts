@@ -197,13 +197,14 @@ function createExecutorRequest(
   credentials: readonly (string | null)[],
   agUiInput?: ParsedHostedAgUiRequest["agUiInput"],
 ): ManagedAgentExecutorRequest | Response {
+  const { projectSlug, ...context } = parsedRequest.validatedContext;
   const request = {
     protocolVersion: 1,
     kind,
     agentId: parsedRequest.agentId ?? null,
     userId: parsedRequest.userId,
     messages: parsedRequest.messages,
-    context: parsedRequest.validatedContext,
+    context: projectSlug === undefined ? context : { ...context, projectSlug },
     projectId: parsedRequest.projectId,
     projectSlug: parsedRequest.projectSlug ?? null,
     conversationId: parsedRequest.conversationId ?? null,

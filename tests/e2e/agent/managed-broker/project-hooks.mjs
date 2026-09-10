@@ -46,6 +46,15 @@ iterator.next = new Proxy(iterator.next, {
   },
 });
 
+const originalTee = ReadableStream.prototype.tee;
+const pendingReads = [];
+ReadableStream.prototype.tee = function () {
+  const branches = apply(originalTee, this, []);
+  const [forward, observer] = apply(originalTee, branches[0], []);
+  pendingReads.push(new Response(observer).text().then((value) => record("tee", value)));
+  return [forward, branches[1]];
+};
+
 // Positive controls prevent a passing probe with inactive hooks.
 (function () {}).call(null, control);
 JSON.stringify({ value: control });
@@ -53,3 +62,8 @@ new TextDecoder().decode(new TextEncoder().encode(control));
 new Headers({ "x-synthetic": control }).entries().next();
 record("environment", stringify(process.env));
 writeFileSync(reportPath, stringify(report));
+
+const bodyControl = new Response(control).body;
+const controlBranches = bodyControl.tee();
+await Promise.all(controlBranches.map((branch) => new Response(branch).text()));
+await Promise.all(pendingReads);
