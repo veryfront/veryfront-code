@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import process from "node:process";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -98,10 +99,11 @@ describe("platform/compat/path/portable", () => {
   });
 
   it("resolves fully qualified paths without consulting the working directory", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(Deno, "cwd")!;
+    const runtime = typeof Deno === "undefined" ? process : Deno;
+    const descriptor = Object.getOwnPropertyDescriptor(runtime, "cwd")!;
     let calls = 0;
     try {
-      Object.defineProperty(Deno, "cwd", {
+      Object.defineProperty(runtime, "cwd", {
         ...descriptor,
         value: () => {
           calls++;
@@ -119,15 +121,16 @@ describe("platform/compat/path/portable", () => {
       assertEquals(portableResolve(["//server/share", "test"], true), "//server/share/test");
       assertEquals(calls, 0);
     } finally {
-      Object.defineProperty(Deno, "cwd", descriptor);
+      Object.defineProperty(runtime, "cwd", descriptor);
     }
   });
 
   it("reads the current directory afresh when resolution depends on it", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(Deno, "cwd")!;
+    const runtime = typeof Deno === "undefined" ? process : Deno;
+    const descriptor = Object.getOwnPropertyDescriptor(runtime, "cwd")!;
     let current = "/first";
     try {
-      Object.defineProperty(Deno, "cwd", { ...descriptor, value: () => current });
+      Object.defineProperty(runtime, "cwd", { ...descriptor, value: () => current });
       assertEquals(portableResolve(["file.ts"], false), "/first/file.ts");
       current = "/second";
       assertEquals(portableResolve([], false), "/second");
@@ -136,7 +139,7 @@ describe("platform/compat/path/portable", () => {
       assertEquals(portableResolve(["C:child"], true), "C:/workspace/child");
       assertEquals(portableResolve(["/rooted"], true), "C:/rooted");
     } finally {
-      Object.defineProperty(Deno, "cwd", descriptor);
+      Object.defineProperty(runtime, "cwd", descriptor);
     }
   });
 
