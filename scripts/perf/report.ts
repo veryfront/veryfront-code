@@ -177,8 +177,9 @@ export function flamegraph(profile: CpuProfile): string {
   const draw = (id: number, x: number, level: number) => {
     const node = nodes.get(id)!;
     const ms = totals.get(id) ?? 0;
+    // Retain sampled descendants even when they become readable only after zoom.
+    if (ms <= 0) return;
     const width = 1200 * ms / duration;
-    if (width < 0.5) return;
     depth = Math.max(depth, level);
     const label = node.callFrame.functionName || "(anonymous)";
     const title = escapeHtml(

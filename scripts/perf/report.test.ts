@@ -133,6 +133,22 @@ describe("performance reports", () => {
     assertStringIncludes(svg, "&lt;script&gt;");
     assertEquals(escapeHtml("<>&"), "&lt;&gt;&amp;");
   });
+  it("retains subpixel samples and their zero-self-time ancestors for zoom", () => {
+    const narrow = structuredClone(profile);
+    narrow.endTime = 10000000;
+    narrow.samples = [1, 3];
+    narrow.timeDeltas = [9999000, 1000];
+    narrow.nodes[0]!.children!.push(4);
+    narrow.nodes.push({
+      id: 4,
+      callFrame: { ...narrow.nodes[2]!.callFrame, functionName: "unsampled" },
+    });
+    const svg = flamegraph(narrow);
+    assertEquals((svg.match(/<g data-box=/g) ?? []).length, 3);
+    assertStringIncludes(svg, 'data-label="render"');
+    assertStringIncludes(svg, 'data-label="encode"');
+    assertEquals(svg.includes('data-label="unsampled"'), false);
+  });
   it("bounds command inputs and keeps output labels inside the artifact directory", () => {
     assertEquals(
       options(["--json", "--scenario=ssr", "--trials=7"]).json,
