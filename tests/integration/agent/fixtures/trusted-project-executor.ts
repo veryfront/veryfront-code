@@ -44,7 +44,11 @@ const operations = new Map(discovery.operations);
 for (
   const [name, operation] of createExecutorProjectToolOperations({
     scope: { binding, signal, assertActive() {} },
-    context,
+    context: {
+      agentId: context.agentId,
+      projectId: context.projectId,
+      execution: { kind: "canonical", runId: context.runId },
+    },
     tools: runtime.tools,
     allowedToolNames: new Set(["inspect"]),
     maxCalls: 32,

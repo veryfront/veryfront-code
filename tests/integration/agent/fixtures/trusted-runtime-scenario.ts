@@ -78,7 +78,11 @@ export async function runNativeTrustedScenario(
     const source = await createExecutorProjectToolSource({
       channel,
       signal,
-      context,
+      context: {
+        agentId: context.agentId,
+        projectId: context.projectId,
+        execution: { kind: "canonical", runId: context.runId },
+      },
       allowedToolNames: new Set(["inspect"]),
       assertActive() {},
     });
@@ -248,7 +252,15 @@ export async function runNativeTrustedScenario(
     assertEquals(results, [{
       query: "authorized query",
       context: { ...context, toolCallId: "synthetic-call" },
-      fields: ["abortSignal", "agentId", "projectId", "publishDataEvent", "runId", "toolCallId"],
+      fields: [
+        "abortSignal",
+        "agentId",
+        "projectId",
+        "publishDataEvent",
+        "runId",
+        "runIdBindsToolAuthorization",
+        "toolCallId",
+      ],
       observations: [],
       hasParentSecret: false,
     }]);

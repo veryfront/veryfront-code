@@ -106,7 +106,11 @@ async function fixture(options: {
   }
   const operations = new Map(createExecutorProjectToolOperations({
     scope: { binding, signal: lifetime.signal, assertActive() {} },
-    context,
+    context: {
+      agentId: context.agentId,
+      projectId: context.projectId,
+      execution: { kind: "canonical", runId: context.runId },
+    },
     tools: new Map([[toolName, registered]]),
     allowedToolNames: new Set([toolName]),
     maxCalls: 32,
@@ -150,7 +154,11 @@ async function fixture(options: {
   const projectTools = await createExecutorProjectToolSource({
     channel: trusted,
     signal: lifetime.signal,
-    context,
+    context: {
+      agentId: context.agentId,
+      projectId: context.projectId,
+      execution: { kind: "canonical", runId: context.runId },
+    },
     allowedToolNames: new Set([toolName]),
     assertActive() {},
   });
