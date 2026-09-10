@@ -198,6 +198,16 @@ Keep common CLI behavior consistent with the command router and `cli/AGENTS.md`.
 
 ## Agent workflows
 
+For framework performance work, use `deno task perf --help`. Capture a baseline
+with `deno task perf --label=before --json`, make one focused change, then run
+`deno task perf --label=after --baseline=".cache/perf/before/results.json" --json`.
+Read the generated `summary.md` or `results.json`; open `index.html` for flamegraphs.
+Run focused correctness tests before keeping an optimization. Report absolute
+cost and repeated unprofiled measurements alongside percentage changes.
+Keep generated profiles, benchmark results, and experiment notes in the ignored
+`.cache/perf/` directory. Do not commit them.
+See [the performance workflow](scripts/perf/README.md) for workload scope and CI.
+
 Call `vf_bootstrap` once at session start when the Veryfront MCP server is available and project context is needed.
 
 ```text
