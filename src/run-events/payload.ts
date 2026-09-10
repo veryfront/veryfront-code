@@ -361,22 +361,13 @@ export const getUnknownRunEventPayloadSchema = defineRunEventSchema((v) =>
 );
 
 /**
- * Every per-type payload schema, keyed by stored type, for a reader that
- * validates a row whose type it only learns at runtime. Types without a
- * declared payload shape (the sixteen control plane types) are absent, which
- * is the signal to validate the envelope only.
- *
- * @example
- * ```ts
- * import { RUN_EVENT_PAYLOAD_SCHEMAS } from "veryfront/run-events";
- *
- * const getSchema = RUN_EVENT_PAYLOAD_SCHEMAS["URL_CITED"];
- * const payload = getSchema?.().parse({ type: "URL_CITED", url: "https://example.com", sourceId: "web-1" });
- * ```
+ * The getters actually declared above, keyed by the type they mirror. This is
+ * an internal step: its only purpose is to let `RUN_EVENT_PAYLOAD_SCHEMAS`'s
+ * type be derived rather than hand-written, so a literal lookup narrows to
+ * the variant's own output type instead of collapsing every entry to
+ * `Record<string, unknown>`.
  */
-export const RUN_EVENT_PAYLOAD_SCHEMAS: Readonly<
-  Partial<Record<RunEventType, () => Schema<Record<string, unknown>>>>
-> = {
+const runEventPayloadSchemasByType = {
   RUN_STARTED: getRunStartedPayloadSchema,
   RUN_FINISHED: getRunFinishedPayloadSchema,
   RUN_ERROR: getRunErrorPayloadSchema,
@@ -415,3 +406,33 @@ export const RUN_EVENT_PAYLOAD_SCHEMAS: Readonly<
   RUNTIME_EVENT_RECORDED: getRuntimeEventRecordedPayloadSchema,
   UNKNOWN: getUnknownRunEventPayloadSchema,
 };
+
+type KnownRunEventPayloadSchemas = typeof runEventPayloadSchemasByType;
+
+/**
+ * Every per-type payload schema, keyed by stored type, for a reader that
+ * validates a row whose type it only learns at runtime. Types without a
+ * declared payload shape (the sixteen control plane types) are absent, which
+ * is the signal to validate the envelope only.
+ *
+ * Indexing with a literal type narrows to that variant's own schema type
+ * (`Schema<UrlCitedPayload>`, not `Schema<Record<string, unknown>>`); the
+ * sixteen control plane types type as `undefined` rather than failing to
+ * index at all, matching that they are legal `RunEventType` values with no
+ * getter.
+ *
+ * @example
+ * ```ts
+ * import { RUN_EVENT_PAYLOAD_SCHEMAS } from "veryfront/run-events";
+ *
+ * const getSchema = RUN_EVENT_PAYLOAD_SCHEMAS["URL_CITED"];
+ * const payload = getSchema?.().parse({ type: "URL_CITED", url: "https://example.com", sourceId: "web-1" });
+ * ```
+ */
+export const RUN_EVENT_PAYLOAD_SCHEMAS: Readonly<
+  {
+    [K in RunEventType]?: K extends keyof KnownRunEventPayloadSchemas
+      ? KnownRunEventPayloadSchemas[K]
+      : never;
+  }
+> = runEventPayloadSchemasByType;

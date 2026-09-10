@@ -118,7 +118,7 @@
     "./prompt": "./src/prompt/index.ts",
     "./resource": "./src/resource/index.ts",
     "./runs": "./src/runs/index.ts",
-  "./run-events": "./src/run-events/index.ts",
+    "./run-events": "./src/run-events/index.ts",
     "./skill": "./src/skill/index.ts",
     "./trigger": "./src/trigger/index.ts",
     "./task": "./src/task/index.ts",
