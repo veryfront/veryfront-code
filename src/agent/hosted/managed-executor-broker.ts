@@ -136,6 +136,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
       getExecutorRuntimePrepareRequestSchema(),
       input.prepare,
     );
+    const selectedModelId = prepare.modelId ?? installation.grant.defaultModelId;
     if (
       !sameHostedExecutorOwner(installation.owner, input.session.request.owner) ||
       verifyHostedRuntimeSourceBinding(input.session.request.source, installation.source) !==
@@ -169,6 +170,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
       operationInput,
       installation,
       allowedModelIds,
+      selectedModelId,
     );
 
     let gate: ExecutorOperationGate | undefined;
@@ -182,6 +184,7 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
           operationInput,
           installation,
           allowedModelIds,
+          selectedModelId,
         );
         gate = createExecutorOperationGate({
           binding: channelBinding,
@@ -232,7 +235,6 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
         }
         throw new ExecutorAgentError(prepared.code);
       }
-      const selectedModelId = prepare.modelId ?? installation.grant.defaultModelId;
       if (
         !allowedModelIds.has(prepared.value.modelId) || prepared.value.modelId !== selectedModelId
       ) {
@@ -379,6 +381,7 @@ function buildBrokerOperations(
   input: ManagedExecutorOperationInput,
   installation: ExecutorRuntimeInstall,
   allowedModelIds: ReadonlySet<string>,
+  selectedModelId: string,
 ): ReadonlyMap<string, ExecutorOperation> {
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
   const model = installation.grant.execution.kind === "canonical"
@@ -413,7 +416,12 @@ function buildBrokerOperations(
     projectId: execution.projectId,
     branchId: execution.branchId,
     ...input.state,
-    allowedToolNames: installation.grant.allowedToolNames,
+    allowedToolNames: [
+      ...installation.grant.allowedToolNames,
+      ...(installation.grant.models.find((model) => model.id === selectedModelId)
+        ?.providerToolNames ??
+        []),
+    ],
   });
   const combined = new Map<string, ExecutorOperation>();
   for (const operations of [model, tools, persistence, state]) {

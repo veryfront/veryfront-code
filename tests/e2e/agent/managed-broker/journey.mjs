@@ -42,6 +42,8 @@ async function bounded(promise, label, ms = 25_000) {
 }
 
 async function scenario(kind) {
+  const steering = kind === "steering";
+  const providerToolNames = steering ? ["web_search"] : [];
   const mode = kind === "sse" || kind === "disconnect" ? "sse" : "detached";
   const project = new URL(`./project-${kind}/`, import.meta.url);
   await mkdir(new URL("agents/", project), { recursive: true });
@@ -54,7 +56,11 @@ async function scenario(kind) {
     new URL("agents/probe.ts", project),
     `import { agent } from "veryfront/agent";
 export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
-  system: "Use host_probe once, then report its result.", tools: { host_probe: true } });`,
+  system: "Use host_probe once, then report its result.",
+  tools: ${
+      JSON.stringify(steering ? { host_probe: true, update_file: true } : { host_probe: true })
+    },
+  providerTools: ${JSON.stringify(providerToolNames)} });`,
   );
 
   const secrets = Object.fromEntries(["authorization", "api", "inference", "events"].map(
@@ -127,6 +133,7 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
   const persisted = [];
   const completions = [];
   const modelCalls = [];
+  const steeringRefreshes = [];
   const tools = [];
   const apiErrors = [];
   let cursor = 0;
@@ -209,6 +216,14 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
                 toolName: "host_probe",
                 input: {},
               });
+              if (steering) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "steering-call",
+                  toolName: "update_file",
+                  input: { path: "AGENTS.md", project_reference: projectId },
+                });
+              }
               controller.enqueue({ type: "finish", finishReason: "tool-calls", totalUsage: usage });
               controller.close();
             } else {
@@ -384,13 +399,13 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
                 agentId: "probe",
                 defaultModelId: modelId,
                 maxSteps: 4,
-                models: [{ id: modelId, maxOutputTokens: 100, providerToolNames: [] }],
-                allowedToolNames: ["host_probe"],
+                models: [{ id: modelId, maxOutputTokens: 100, providerToolNames }],
+                allowedToolNames: steering ? ["host_probe", "update_file"] : ["host_probe"],
                 hostToolFacadeIds: ["host"],
-                remoteToolSourceIds: [],
+                remoteToolSourceIds: steering ? ["state-tools"] : [],
                 execution: {
                   kind: "canonical",
-                  projectId: null,
+                  projectId: steering ? projectId : null,
                   conversationId,
                   runId,
                   messageId,
@@ -399,6 +414,7 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
               },
               capabilities: {
                 persistence: { publishParentRunEvents: "parent", toolExposureCheckpoint: "tools" },
+                ...(steering ? { projectSteering: "steering" } : {}),
               },
             },
             prepare: { agentId: "probe" },
@@ -408,36 +424,84 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
               grant: {
                 maxCalls: 3,
                 maxConcurrentCalls: 1,
-                models: new Map([[modelId, { maxOutputTokens: 100, providerTools: [] }]]),
+                models: new Map([[modelId, {
+                  maxOutputTokens: 100,
+                  providerTools: providerToolNames.map((name) => ({
+                    type: "provider",
+                    name,
+                    id: `openai.${name}`,
+                    args: {},
+                  })),
+                }]]),
               },
             },
             tools: {
-              catalog: new Map([["host_probe", {}]]),
+              catalog: new Map([
+                ["host_probe", {}],
+                ...(steering ? [["update_file", {}]] : []),
+              ]),
               maxCalls: 8,
               maxConcurrent: 1,
-              sources: new Map([["host", {
-                allowedToolNames: new Set(["host_probe"]),
-                context: {},
-                source: {
-                  id: "host",
-                  listTools: () =>
-                    Promise.resolve([{
-                      name: "host_probe",
-                      description: "Read a synthetic result",
-                      parameters: { type: "object", properties: {}, additionalProperties: false },
-                    }]),
-                  executeTool(name) {
-                    tools.push(name);
-                    return Promise.resolve({ text: "host-ok" });
+              sources: new Map([
+                ["host", {
+                  allowedToolNames: new Set(["host_probe"]),
+                  context: {},
+                  source: {
+                    id: "host",
+                    listTools: () =>
+                      Promise.resolve([{
+                        name: "host_probe",
+                        description: "Read a synthetic result",
+                        parameters: { type: "object", properties: {}, additionalProperties: false },
+                      }]),
+                    executeTool(name) {
+                      tools.push(name);
+                      return Promise.resolve({ text: "host-ok" });
+                    },
                   },
-                },
-              }]]),
+                }],
+                ...(steering
+                  ? [["state-tools", {
+                    allowedToolNames: new Set(["update_file"]),
+                    context: {},
+                    source: {
+                      id: "state-tools",
+                      listTools: () =>
+                        Promise.resolve([{
+                          name: "update_file",
+                          description: "Update synthetic project instructions",
+                          parameters: {
+                            type: "object",
+                            properties: {
+                              path: { type: "string" },
+                              project_reference: { type: "string" },
+                            },
+                            required: ["path", "project_reference"],
+                          },
+                        }]),
+                      executeTool(name) {
+                        tools.push(name);
+                        return Promise.resolve({ success: true });
+                      },
+                    },
+                  }]]
+                  : []),
+              ]),
             },
             persistence: {
               publishParentRunEvents: persistence.publishParentRunEvents,
               persistToolExposureCheckpoint: persistence.persistToolExposureCheckpoint,
+              initialProviderReplayCheckpoints: [],
             },
-            state: {},
+            state: steering
+              ? {
+                prepareProjectSteering: ({ definition }) => Promise.resolve({ agent: definition }),
+                refreshProjectSteering(_signal, names) {
+                  steeringRefreshes.push([...names].sort());
+                  return Promise.resolve("Synthetic refreshed steering");
+                },
+              }
+              : {},
           },
           messages: ingress.executor.input.messages.map((message) => ({
             id: message.id,
@@ -529,10 +593,17 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
     assertEquals(allocations.length, 1);
     assertEquals(releases.length, 1);
     assertEquals(transportClosed, true);
-    assertEquals(tools, ["host_probe"]);
+    assertEquals([...tools].sort(), steering ? ["host_probe", "update_file"] : ["host_probe"]);
     assertEquals(modelCalls.length, 2);
     assert(JSON.stringify(modelCalls[0].prompt).includes("Run the host probe."));
     assert(JSON.stringify(modelCalls[1].prompt).includes("host-ok"));
+    if (steering) {
+      assertEquals(steeringRefreshes, [["host_probe", "update_file", "web_search"]]);
+      for (const call of modelCalls) {
+        assert(call.tools.some((tool) => tool.name === "web_search"));
+      }
+      assert(JSON.stringify(modelCalls[1].prompt).includes("Synthetic refreshed steering"));
+    }
     assertEquals(apiErrors, []);
     if (kind === "kill") assertEquals(exit.signal, "SIGKILL");
     else assertEquals(exit.code, 0);
@@ -572,6 +643,6 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
   }
 }
 
-for (const kind of ["sse", "detached", "kill", "disconnect", "delayed-persistence"]) {
+for (const kind of ["sse", "detached", "kill", "disconnect", "delayed-persistence", "steering"]) {
   it(`packed managed broker: ${kind}`, { timeout: 90_000 }, () => scenario(kind));
 }

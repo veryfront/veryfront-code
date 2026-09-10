@@ -496,7 +496,9 @@ deno task test:e2e:managed-broker
 
 This suite installs the built packages and exercises signed HTTP ingress, a
 separate executor over TLS, model and tool calls, SSE and detached responses,
-executor termination, client cancellation, and delayed terminal persistence.
+executor termination, client cancellation, delayed terminal persistence, and
+steering refresh with provider-native tools. Empty replay snapshots remain valid
+when provider replay is disabled.
 Project-controlled hooks use synthetic credential canaries with positive
 controls. The npm smoke jobs run the suite on the minimum supported Node version
 and the current CI version. These checks use local synthetic services. Verify

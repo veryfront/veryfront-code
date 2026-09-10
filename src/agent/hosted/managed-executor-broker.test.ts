@@ -653,6 +653,75 @@ describe("managed executor broker", () => {
     }
   });
 
+  for (const selectOtherModel of [false, true]) {
+    it(`authorizes only the selected model's effective provider tools for steering (${selectOtherModel})`, async () => {
+      const otherModelId = "veryfront-cloud/anthropic/synthetic";
+      const selectedModelId = selectOtherModel ? otherModelId : modelId;
+      const selectedTool = selectOtherModel ? "web_fetch" : "web_search";
+      const rejectedTool = selectOtherModel ? "web_search" : "web_fetch";
+      const f = fixture({ prepareModelId: selectedModelId });
+      if (selectOtherModel) f.input.prepare.modelId = selectedModelId;
+      f.input.installation.grant.models = [modelId, otherModelId].map((id) => ({
+        id,
+        maxOutputTokens: 100,
+        providerToolNames: ["web_search", "web_fetch"],
+      }));
+      f.input.model.grant.models = new Map([
+        [modelId, {
+          maxOutputTokens: 100,
+          providerTools: [{
+            type: "provider",
+            name: "web_search",
+            id: "openai.web_search",
+            args: {},
+          }],
+        }],
+        [otherModelId, {
+          maxOutputTokens: 100,
+          providerTools: [{
+            type: "provider",
+            name: "web_fetch",
+            id: "anthropic.web_fetch",
+            args: {},
+          }],
+        }],
+      ]);
+      f.input.installation.capabilities.projectSteering = "steering";
+      f.input.state.prepareProjectSteering = ({ definition }) =>
+        Promise.resolve({ agent: definition });
+      const selections: (readonly string[] | undefined)[] = [];
+      f.input.state.refreshProjectSteering = (_signal, names) => {
+        selections.push(names);
+        return Promise.resolve("Refreshed");
+      };
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      const runtime = await broker.start(f.input);
+      try {
+        runtime.accept({ kind: "execution" });
+        assertEquals(
+          await f.peer!.request(executorStateOperations.refreshProjectSteering, {
+            capabilityId: "steering",
+            availableToolNames: [selectedTool],
+          }),
+          "Refreshed",
+        );
+        for (const tool of [rejectedTool, "ungranted_host_tool"]) {
+          await assertRejects(() =>
+            f.peer!.request(executorStateOperations.refreshProjectSteering, {
+              capabilityId: "steering",
+              availableToolNames: [tool],
+            })
+          );
+        }
+        assertEquals(selections, [[selectedTool]]);
+      } finally {
+        await runtime.close();
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
+
   it("uses owner-scoped tool grants for steering refresh authorization", async () => {
     const f = fixture();
     f.input.installation.grant.allowedToolNames = ["fetch-paper"];
