@@ -1,0 +1,99 @@
+name: Framework performance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * 1"
+  pull_request:
+    paths:
+      - "scripts/perf/**"
+      - "scripts/test/suites.ts"
+      - "tests/integration/perf/**"
+      - "src/**"
+      - "extensions/**"
+      - "react/**"
+      - "**/deno.json"
+      - "**/deno.jsonc"
+      - "**/package.json"
+      - "**/*.lock"
+      - ".tool-versions"
+      - ".github/workflows/framework-performance.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: framework-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Check profiling harness
+        run: |
+          deno task perf:check
+          deno task test:file tests/integration/perf/runner.test.ts
+      - name: Measure pull request base with the same harness
+        if: github.event_name == 'pull_request'
+        env:
+          PERF_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          perf_base_dir="${RUNNER_TEMP}/framework-perf-base"
+          perf_base_sha="$(git merge-base "${PERF_BASE_SHA}" HEAD)"
+          git worktree add --detach "${perf_base_dir}" "${perf_base_sha}"
+          if ! cmp -s .tool-versions "${perf_base_dir}/.tool-versions"; then
+            echo "Runtime pin changed. This run establishes a new baseline." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          perf_metadata_status=0
+          deno run --frozen --allow-read scripts/perf/baseline.ts "${perf_base_dir}" || perf_metadata_status=$?
+          if [[ "${perf_metadata_status}" -eq 1 ]]; then
+            echo "Dependency metadata changed. This run establishes a new baseline." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          elif [[ "${perf_metadata_status}" -ne 0 ]]; then
+            exit "${perf_metadata_status}"
+          fi
+          mkdir -p "${perf_base_dir}/scripts/perf" "${perf_base_dir}/scripts/test"
+          cp scripts/perf/*.ts "${perf_base_dir}/scripts/perf/"
+          cp scripts/test/suites.ts "${perf_base_dir}/scripts/test/suites.ts"
+          (
+            cd "${perf_base_dir}"
+            deno run --frozen --allow-read --allow-write=.cache --allow-env --allow-sys --allow-run=deno,git scripts/perf/run.ts --label=base --no-profile
+          )
+          mkdir -p .cache/perf/base
+          cp "${perf_base_dir}/.cache/perf/base/results.json" .cache/perf/base/results.json
+      - name: Profile and compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--label=ci)
+          if [[ -f .cache/perf/base/results.json ]]; then
+            args+=(--baseline=.cache/perf/base/results.json)
+          fi
+          deno task perf "${args[@]}"
+          cat .cache/perf/ci/summary.md >> "${GITHUB_STEP_SUMMARY}"
+      - name: Upload profiles and reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: framework-performance
+          path: |
+            .cache/perf/*/index.html
+            .cache/perf/*/summary.md
+            .cache/perf/*/results.json
+            .cache/perf/*/*.cpuprofile
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
