@@ -8,6 +8,7 @@ import {
   flamegraph,
   summarizeProfile,
   summarizeRuns,
+  zoomFlamegraph,
 } from "./report.ts";
 
 type Measurement = {
@@ -45,6 +46,56 @@ type Results = {
 };
 
 class UsageError extends Error {}
+export function workerDiagnostics(
+  exitCode: number | null,
+  stderr: string,
+  timedOut = false,
+) {
+  let reason = "worker-error";
+  let message = "Run the focused runtime tests to diagnose the worker failure";
+  if (timedOut || /deadline expired|timed out/i.test(stderr)) {
+    reason = "timeout";
+    message =
+      "The worker timed out. Reduce the duration or check runtime startup";
+  } else if (
+    /NotCapable|PermissionDenied|Requires .* access|permission denied|operation not permitted/i
+      .test(stderr)
+  ) {
+    reason = "permission-denied";
+    message =
+      "A required worker permission is unavailable. Check the runtime permissions";
+  } else if (
+    /HTTP fixture (returned|used)|SSR workload produced|performance control message|did not complete its measurement/
+      .test(stderr)
+  ) {
+    reason = "invalid-response";
+    message =
+      "The fixture returned an unexpected response or control message. Check the routing and rendering changes";
+  } else if (
+    /Module not found|Failed to resolve|Cannot resolve|Lockfile is out of date|error sending request|dns error|Build failed/i
+      .test(stderr)
+  ) {
+    reason = "dependency-setup";
+    message =
+      "Dependency loading or compilation failed. Ensure dependencies are cached and the lockfile matches the checkout";
+  }
+  const errorType = stderr.match(
+    /\b(?:NotCapable|PermissionDenied|NotFound|TypeError|SyntaxError|RangeError|ReferenceError|InvalidData|VeryfrontError)\b/,
+  )?.[0] ?? null;
+  return { exitCode, reason, errorType, message };
+}
+
+class CaptureError extends Error {
+  readonly context;
+  constructor(
+    scenario: string,
+    trial: number,
+    diagnostic: ReturnType<typeof workerDiagnostics>,
+  ) {
+    super(`The ${scenario} workload failed. ${diagnostic.message}`);
+    this.context = { scenario, trial: trial + 1, ...diagnostic };
+  }
+}
 export function options(args: string[]) {
   const result = {
     label: "latest",
@@ -299,8 +350,19 @@ async function main() {
         stdout: "piped",
         stderr: "piped",
       });
-      const child = command.spawn();
+      let child: Deno.ChildProcess;
+      try {
+        child = command.spawn();
+      } catch (error) {
+        throw new CaptureError(
+          name,
+          trial,
+          workerDiagnostics(null, String(error)),
+        );
+      }
+      let timedOut = false;
       const timeout = setTimeout(() => {
+        timedOut = true;
         try {
           child.kill("SIGKILL");
         } catch { /* Already exited. */ }
@@ -312,8 +374,14 @@ async function main() {
         clearTimeout(timeout);
       }
       if (!result.success) {
-        throw new Error(
-          `The ${name} workload failed. Run the focused SSR or observability tests to diagnose setup`,
+        throw new CaptureError(
+          name,
+          trial,
+          workerDiagnostics(
+            result.code,
+            decoder.decode(result.stderr),
+            timedOut,
+          ),
         );
       }
       try {
@@ -342,9 +410,9 @@ async function main() {
       const { totals: _, ...summary } = summarizeProfile(profile);
       scenario.profile = summary;
       graphs.push(
-        `<h2>${name}</h2><p><a href="${name}.cpuprofile">Download CPU profile</a>. Width shows sampled time, including runtime and idle samples. Select a frame to zoom; select Reset to restore.</p><button class="reset">Reset</button>${
+        `<h2>${name}</h2><p><a href="${name}.cpuprofile">Download CPU profile</a>. Width shows sampled time, including runtime and idle samples. Select a frame to zoom; select Reset to restore.</p><button class="reset">Reset</button><div class="flamegraph">${
           flamegraph(profile)
-        }`,
+        }</div>`,
       );
     }
     results.scenarios.push(scenario);
@@ -369,11 +437,11 @@ async function main() {
   );
   await Deno.writeTextFile(`${output}/summary.md`, summary + hotspots);
   const html =
-    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Veryfront performance</title><style>body{font:16px system-ui;margin:32px auto;max-width:1400px;padding:0 20px;color:#202938}pre{white-space:pre-wrap;background:#f4f6f8;padding:20px;overflow:auto}svg{width:100%;height:600px;border:1px solid #ddd;margin:12px 0}g[role=button]{cursor:pointer}button{padding:6px 16px}a{color:#205bc0}</style><h1>Veryfront performance</h1><p><a href="results.json">JSON for coding agents</a> | <a href="summary.md">Markdown report</a></p><pre>${
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Veryfront performance</title><style>body{font:16px system-ui;margin:32px auto;max-width:1400px;padding:0 20px;color:#202938}pre{white-space:pre-wrap;background:#f4f6f8;padding:20px;overflow:auto}.flamegraph{max-height:600px;overflow:auto}svg{width:100%;height:auto;border:1px solid #ddd;margin:12px 0}g[role=button]{cursor:pointer}button{padding:6px 16px}a{color:#205bc0}</style><h1>Veryfront performance</h1><p><a href="results.json">JSON for coding agents</a> | <a href="summary.md">Markdown report</a></p><pre>${
       escapeHtml(summary)
     }</pre>${graphs.join("")}<h2>Hotspots</h2><pre>${
       escapeHtml(hotspots)
-    }</pre><script>for(const svg of document.querySelectorAll('svg')){const original=svg.getAttribute('viewBox');const zoom=g=>{const [x,y,w]=g.dataset.box.split(' ').map(Number);svg.setAttribute('viewBox',x+' '+y+' '+w+' '+Math.max(22,Math.min(Number(svg.dataset.height)-y,w/2))); };svg.addEventListener('click',e=>{const g=e.target.closest('g');if(g)zoom(g)});svg.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('g'))zoom(e.target)});svg.previousElementSibling.addEventListener('click',()=>svg.setAttribute('viewBox',original));}</script></html>`;
+    }</pre><script>for(const svg of document.querySelectorAll('svg')){const zoom=box=>(${zoomFlamegraph.toString()})(svg,box);svg.addEventListener('click',e=>{const g=e.target.closest('g');if(g)zoom(g.dataset.box)});svg.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('g'))zoom(e.target.dataset.box)});svg.parentElement.previousElementSibling.addEventListener('click',()=>zoom('0 0 1200 22'));}</script></html>`;
   await Deno.writeTextFile(`${output}/index.html`, html);
   if (opts.json) {
     console.log(
@@ -411,10 +479,16 @@ if (import.meta.main) {
             ? "invalid-arguments"
             : "command-failed",
           message,
+          ...(error instanceof CaptureError ? { context: error.context } : {}),
         },
         timing: { duration_ms: performance.now() - started },
       }));
-    } else console.error(message);
+    } else {
+      console.error(message);
+      if (error instanceof CaptureError) {
+        console.error(`Diagnostics: ${JSON.stringify(error.context)}`);
+      }
+    }
     Deno.exitCode = error instanceof UsageError ? 2 : 1;
   }
 }

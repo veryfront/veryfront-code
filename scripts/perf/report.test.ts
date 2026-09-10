@@ -13,7 +13,7 @@ import {
   summarizeProfile,
   summarizeRuns,
 } from "./report.ts";
-import { options, workloadHash } from "./run.ts";
+import { options, workerDiagnostics, workloadHash } from "./run.ts";
 import { baselineCompatible } from "./baseline.ts";
 
 describe("performance reports", () => {
@@ -143,6 +143,32 @@ describe("performance reports", () => {
     assertThrows(() => options(["--duration-ms=0"]));
     assertThrows(() => options(["--scenario=unknown"]));
     assertThrows(() => options(["--unknown"]));
+  });
+  it("classifies worker failures without exporting raw diagnostics", () => {
+    const denied = workerDiagnostics(
+      1,
+      'NotCapable: Requires net access to "private.invalid"',
+    );
+    assertEquals(denied.reason, "permission-denied");
+    assertEquals(denied.exitCode, 1);
+    assertEquals(JSON.stringify(denied).includes("private.invalid"), false);
+    assertEquals(
+      workerDiagnostics(1, "Error: HTTP fixture returned incomplete HTML")
+        .reason,
+      "invalid-response",
+    );
+    assertEquals(
+      workerDiagnostics(1, "Module not found: file:///workspace/private.ts")
+        .reason,
+      "dependency-setup",
+    );
+    assertEquals(workerDiagnostics(137, "", true).reason, "timeout");
+    assertEquals(
+      workerDiagnostics(1, "unrecognized private payload").message.includes(
+        "private",
+      ),
+      false,
+    );
   });
   it("invalidates baselines when measurement code or permissions change", async () => {
     const sources = new Map<string, string>();

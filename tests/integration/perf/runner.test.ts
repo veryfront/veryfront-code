@@ -153,7 +153,26 @@ describe("framework profiling command", () => {
       assertEquals(results.scenarios.length, 1);
       assertEquals(results.scenarios[0].runs.length, 3);
       assertEquals(results.scenarios[0].latencyMs.median > 0, true);
-      assertStringIncludes(await Deno.readTextFile(`${directory}/index.html`), "<svg");
+      const html = await Deno.readTextFile(`${directory}/index.html`);
+      assertStringIncludes(html, "<svg");
+      const viewer = await new Deno.Command("deno", {
+        args: [
+          "run",
+          "--frozen",
+          "--config=deno.json",
+          "--allow-read",
+          "--allow-env",
+          "tests/integration/perf/viewer.test-helpers.ts",
+          `${directory}/index.html`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        viewer.code,
+        0,
+        "Generated flamegraph controls must pass the browser DOM checks",
+      );
       assertStringIncludes(await Deno.readTextFile(`${directory}/summary.md`), "request-timing");
       const profile = JSON.parse(await Deno.readTextFile(`${directory}/request-timing.cpuprofile`));
       assertEquals(profile.samples.length > 0, true);
@@ -221,7 +240,12 @@ describe("framework profiling command", () => {
         stderr: "piped",
       }).output();
       assertEquals(failed.code, 1);
-      assertEquals(JSON.parse(new TextDecoder().decode(failed.stdout)).success, false);
+      const failure = JSON.parse(new TextDecoder().decode(failed.stdout));
+      assertEquals(failure.success, false);
+      assertEquals(failure.error.context.scenario, "request-timing");
+      assertEquals(failure.error.context.trial, 1);
+      assertEquals(failure.error.context.reason, "permission-denied");
+      assertEquals(failure.error.context.exitCode, null);
       for (const name of ["results.json", "index.html", "summary.md"]) {
         await assertRejects(() => Deno.stat(`${directory}/${name}`), Deno.errors.NotFound);
       }

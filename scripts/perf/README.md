@@ -15,6 +15,9 @@ full graph. Load a `.cpuprofile` in Chrome DevTools for timeline and bottom-up
 analysis. No service, browser extension, dependency, or Deno upgrade is
 required.
 
+Use the chart scrollbar to inspect deep stacks. Zoom expands the selected
+subtree horizontally and preserves readable rows and descendant labels.
+
 Reusing a label replaces its previous reports and profiles when capture starts.
 Use distinct labels to retain baselines. A failed capture leaves no previous
 report under that label.
@@ -43,6 +46,11 @@ queries are removed before artifacts are written. Generated module paths use
 `[generated]` because runtime cache filenames can embed absolute source paths.
 Hotspot aggregation retains script and column identity so sanitized URLs do not
 combine unrelated functions.
+
+Failed captures include `error.context` with the scenario, trial, worker exit
+code, safe failure reason, and recognized error type. A null exit code means the
+worker could not start. Human output prints the same diagnostics. Raw worker
+logs are not exported because they can contain local paths or payloads.
 
 Run `deno task perf:check` after changing the harness. It checks report types,
 lint, formatting, and calculation tests. Run

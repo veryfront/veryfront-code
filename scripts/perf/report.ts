@@ -123,6 +123,48 @@ export function escapeHtml(value: string): string {
   );
 }
 
+/** Resize the selected subtree while preserving row height and labels. */
+export function zoomFlamegraph(svg: {
+  querySelectorAll(selector: string): Iterable<{
+    dataset: Record<string, string | undefined>;
+    style: { display: string };
+    querySelector(selector: string): {
+      setAttribute(name: string, value: string): void;
+      textContent: string | null;
+    } | null;
+  }>;
+  setAttribute(name: string, value: string): void;
+  parentElement: { scrollTop: number } | null;
+}, box: string) {
+  const [x, y, width] = box.split(" ").map(Number) as [number, number, number];
+  let height = 22;
+  for (const group of svg.querySelectorAll("g[data-box]")) {
+    const [gx, gy, gw] = group.dataset.box!.split(" ").map(Number) as [
+      number,
+      number,
+      number,
+    ];
+    const visible = gy >= y && gx >= x - 0.001 && gx + gw <= x + width + 0.001;
+    group.style.display = visible ? "" : "none";
+    if (!visible) continue;
+    const left = (gx - x) * 1200 / width;
+    const size = gw * 1200 / width;
+    const rect = group.querySelector("rect")!;
+    rect.setAttribute("x", String(left));
+    rect.setAttribute("y", String(gy - y));
+    rect.setAttribute("width", String(size));
+    const text = group.querySelector("text")!;
+    text.setAttribute("x", String(left + 3));
+    text.setAttribute("y", String(gy - y + 15));
+    text.textContent = size > 40
+      ? group.dataset.label!.slice(0, Math.floor(size / 7) - 1)
+      : "";
+    height = Math.max(height, gy - y + 22);
+  }
+  svg.setAttribute("viewBox", `0 0 1200 ${height}`);
+  if (svg.parentElement) svg.parentElement.scrollTop = 0;
+}
+
 /** Standalone SVG. Width is sampled time; horizontal position is not a timeline. */
 export function flamegraph(profile: CpuProfile): string {
   const { totals } = summarizeProfile(profile);
@@ -144,17 +186,17 @@ export function flamegraph(profile: CpuProfile): string {
     );
     const box = `${x} ${level * 22} ${width} 22`;
     frames.push(
-      `<g data-box="${box}" tabindex="0" role="button" aria-label="${title}"><title>${title}</title><rect x="${x}" y="${
+      `<g data-box="${box}" data-label="${
+        escapeHtml(label)
+      }" tabindex="0" role="button" aria-label="${title}"><title>${title}</title><rect x="${x}" y="${
         level * 22
       }" width="${width}" height="21" fill="hsl(${
         20 + level * 9 % 40
-      } 85% 72%)" stroke="white" stroke-width=".5"/>${
-        width > 40
-          ? `<text x="${x + 3}" y="${level * 22 + 15}" font-size="12">${
-            escapeHtml(label.slice(0, Math.floor(width / 7) - 1))
-          }</text>`
-          : ""
-      }</g>`,
+      } 85% 72%)" stroke="white" stroke-width=".5"/><text x="${x + 3}" y="${
+        level * 22 + 15
+      }" font-size="12">${
+        width > 40 ? escapeHtml(label.slice(0, Math.floor(width / 7) - 1)) : ""
+      }</text></g>`,
     );
     let childX = x;
     for (const child of node.children ?? []) {
