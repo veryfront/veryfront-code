@@ -697,7 +697,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   options: ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
 ): Promise<ParsedHostedChatRequest | Response> {
   const authenticatedRequest = await options.authenticate(request);
-  if (authenticatedRequest instanceof Response) {
+  if (isResponseLike(authenticatedRequest)) {
     return authenticatedRequest;
   }
 
