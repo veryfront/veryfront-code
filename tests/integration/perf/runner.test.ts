@@ -11,6 +11,15 @@ describe("framework profiling command", () => {
       await Deno.readTextFile(new URL("../../../deno.json", import.meta.url)),
     );
     const lock = await Deno.readTextFile(new URL("../../../deno.lock", import.meta.url));
+    const stageMembers = async (directory: string) => {
+      for (const member of config.workspace) {
+        await Deno.mkdir(`${directory}/${member}`, { recursive: true });
+        await Deno.writeTextFile(
+          `${directory}/${member}/deno.json`,
+          await Deno.readTextFile(new URL(`../../../${member}/deno.json`, import.meta.url)),
+        );
+      }
+    };
     const check = async (cwd?: string) => {
       const result = await new Deno.Command("deno", {
         args: [
@@ -29,7 +38,23 @@ describe("framework profiling command", () => {
     try {
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, tasks: {} }));
       await Deno.writeTextFile(`${base}/deno.lock`, lock);
+      await stageMembers(base);
       assertEquals(await check(), 0);
+      for (const member of ["react", "extensions/ext-css-tailwind"]) {
+        const path = `${base}/${member}/deno.json`;
+        const original = await Deno.readTextFile(path);
+        const memberConfig = JSON.parse(original);
+        await Deno.writeTextFile(path, JSON.stringify({ ...memberConfig, imports: {} }));
+        assertEquals(await check(), 1);
+        await Deno.writeTextFile(path, JSON.stringify({ ...memberConfig, exports: "./other.ts" }));
+        assertEquals(await check(), 1);
+        await Deno.writeTextFile(
+          path,
+          JSON.stringify({ ...memberConfig, tasks: { test: "changed" } }),
+        );
+        assertEquals(await check(), 0);
+        await Deno.writeTextFile(path, original);
+      }
       await Deno.writeTextFile(
         `${base}/deno.json`,
         JSON.stringify({ ...config, lock: "alternate.lock" }),
@@ -38,8 +63,42 @@ describe("framework profiling command", () => {
       assertEquals(await check(), 1);
       const head = `${base}/head`;
       await Deno.mkdir(head);
+      await stageMembers(head);
       await Deno.writeTextFile(`${head}/deno.lock`, lock);
       await Deno.writeTextFile(`${head}/alternate.lock`, lock);
+      for (const directory of [head, base]) {
+        await Deno.writeTextFile(`${directory}/deno.json`, JSON.stringify(config));
+        await Deno.writeTextFile(
+          `${directory}/package.json`,
+          JSON.stringify({ dependencies: { fixture: "1.0.0" } }),
+        );
+      }
+      assertEquals(await check(head), 0);
+      await Deno.writeTextFile(
+        `${base}/package.json`,
+        JSON.stringify({ dependencies: { fixture: "2.0.0" } }),
+      );
+      assertEquals(await check(head), 1);
+      const reactConfig = JSON.parse(await Deno.readTextFile(`${head}/react/deno.json`));
+      const mappedConfig = { ...reactConfig, importMap: "import_map.json" };
+      delete mappedConfig.imports;
+      for (const directory of [head, base]) {
+        await Deno.remove(`${directory}/package.json`);
+        await Deno.writeTextFile(`${directory}/react/deno.json`, JSON.stringify(mappedConfig));
+        await Deno.writeTextFile(
+          `${directory}/react/import_map.json`,
+          JSON.stringify({ imports: {} }),
+        );
+      }
+      assertEquals(await check(head), 0);
+      await Deno.writeTextFile(
+        `${base}/react/import_map.json`,
+        JSON.stringify({ imports: { fixture: "./fixture.ts" } }),
+      );
+      assertEquals(await check(head), 1);
+      for (const directory of [head, base]) {
+        await Deno.writeTextFile(`${directory}/react/deno.json`, JSON.stringify(reactConfig));
+      }
       for (const setting of ["alternate.lock", { path: "alternate.lock", frozen: true }]) {
         const configured = JSON.stringify({ ...config, lock: setting });
         await Deno.writeTextFile(`${head}/deno.json`, configured);

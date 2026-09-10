@@ -12,8 +12,10 @@ on:
       - "src/**"
       - "extensions/**"
       - "react/**"
-      - "deno.json"
-      - "deno.lock"
+      - "**/deno.json"
+      - "**/deno.jsonc"
+      - "**/package.json"
+      - "**/*.lock"
       - ".tool-versions"
       - ".github/workflows/framework-performance.yml"
 

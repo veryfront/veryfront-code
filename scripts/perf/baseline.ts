@@ -1,5 +1,20 @@
 import { resolve } from "node:path";
 
+const DEPENDENCY_FIELDS = [
+  "imports",
+  "scopes",
+  "workspace",
+  "importMap",
+  "nodeModulesDir",
+  "vendor",
+  "unstable",
+  "compilerOptions",
+  "minimumDependencyAge",
+  "links",
+  "patch",
+  "lock",
+];
+
 /** Whether the copied harness can use the base checkout's dependency graph. */
 export function baselineCompatible(
   headConfig: Record<string, unknown>,
@@ -10,29 +25,109 @@ export function baselineCompatible(
   if (headLock === null || baseLock === null || headLock !== baseLock) {
     return false;
   }
-  return [
-    "imports",
-    "scopes",
-    "workspace",
-    "importMap",
-    "nodeModulesDir",
-    "vendor",
-    "unstable",
-    "compilerOptions",
-    "minimumDependencyAge",
-    "links",
-    "patch",
-    "lock",
-  ].every((key) =>
+  return DEPENDENCY_FIELDS.every((key) =>
     JSON.stringify(headConfig[key]) === JSON.stringify(baseConfig[key])
   );
+}
+
+async function optionalText(path: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(path);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
+}
+
+async function workspaceMetadata(
+  directory: string,
+  config: Record<string, unknown>,
+) {
+  const workspace = config.workspace;
+  const members = Array.isArray(workspace)
+    ? workspace
+    : workspace && typeof workspace === "object" && "members" in workspace
+    ? workspace.members
+    : [];
+  if (
+    !Array.isArray(members) ||
+    members.some((member) =>
+      typeof member !== "string" || /[*?\[{]/.test(member)
+    )
+  ) {
+    return null;
+  }
+  const metadata: unknown[] = [];
+  for (const member of [".", ...members]) {
+    const memberDir = resolve(directory, member);
+    for (const file of ["deno.json", "deno.jsonc", "package.json"]) {
+      if (member === "." && file === "deno.json") continue;
+      const source = await optionalText(resolve(memberDir, file));
+      if (source === null) {
+        metadata.push([member, file, null]);
+        continue;
+      }
+      // Unknown JSONC syntax establishes a baseline instead of approximating
+      // dependency configuration with a partial parser.
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(source);
+      } catch (error) {
+        if (file === "deno.jsonc") return null;
+        throw error;
+      }
+      const fields = file === "package.json"
+        ? [
+          "name",
+          "version",
+          "type",
+          "exports",
+          "imports",
+          "dependencies",
+          "devDependencies",
+          "peerDependencies",
+          "optionalDependencies",
+          "overrides",
+          "resolutions",
+        ]
+        : [...DEPENDENCY_FIELDS, "name", "version", "exports"];
+      metadata.push([
+        member,
+        file,
+        fields.map((field) => [field, parsed[field]]),
+      ]);
+      if (parsed.workspace || parsed.links || parsed.patch) return null;
+      if (parsed.importMap) {
+        if (
+          typeof parsed.importMap !== "string" ||
+          /^https?:/.test(parsed.importMap)
+        ) return null;
+        metadata.push(
+          await Deno.readTextFile(resolve(memberDir, parsed.importMap)),
+        );
+      }
+    }
+  }
+  if (config.links || config.patch) return null;
+  if (config.importMap) {
+    if (
+      typeof config.importMap !== "string" || /^https?:/.test(config.importMap)
+    ) return null;
+    metadata.push(
+      await Deno.readTextFile(resolve(directory, config.importMap)),
+    );
+  }
+  return metadata;
 }
 
 async function dependencyMetadata(directory: string) {
   const config: Record<string, unknown> = JSON.parse(
     await Deno.readTextFile(resolve(directory, "deno.json")),
   );
-  if (config.lock === false) return { config, lock: null };
+  const workspace = await workspaceMetadata(directory, config);
+  if (config.lock === false || workspace === null) {
+    return { config, lock: null, workspace };
+  }
   const setting = config.lock;
   const path = typeof setting === "string"
     ? setting
@@ -40,7 +135,11 @@ async function dependencyMetadata(directory: string) {
     ? setting.path
     : "deno.lock";
   if (typeof path !== "string") throw new Error("Invalid lockfile path");
-  return { config, lock: await Deno.readTextFile(resolve(directory, path)) };
+  return {
+    config,
+    lock: await Deno.readTextFile(resolve(directory, path)),
+    workspace,
+  };
 }
 
 if (import.meta.main) {
@@ -56,7 +155,9 @@ if (import.meta.main) {
         baseMetadata.config,
         headMetadata.lock,
         baseMetadata.lock,
-      )
+      ) &&
+        JSON.stringify(headMetadata.workspace) ===
+          JSON.stringify(baseMetadata.workspace)
       ? 0
       : 1;
   } catch {
