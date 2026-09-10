@@ -185,12 +185,18 @@ export async function registerAgentColocatedTools(
           file,
           result: input.result,
         });
-        registerTool(namespaced, {
+        const registered = {
           ...moduleTool,
           id: namespaced,
           ownerAgentId: input.agentId,
           shortName,
-        });
+        };
+        registerTool(namespaced, registered);
+        // The discovery result is the source of truth for isolated runtimes.
+        // Keep colocated registrations in it as well as the project registry;
+        // otherwise an executor built from `runtime.tools` cannot expose an
+        // explicitly allowed directory-agent tool.
+        input.result?.tools.set(namespaced, registered);
         registeredIds.push(namespaced);
       }
     } catch (error) {

@@ -412,6 +412,11 @@ export default tool({
       const registered = toolRegistry.get("researcher--fetch-paper");
       assertEquals(registered?.ownerAgentId, "researcher");
       assertEquals(registered?.shortName, "fetch-paper");
+      assertEquals(
+        result.tools.get("researcher--fetch-paper"),
+        registered,
+        "the discovery result must include colocated tools for isolated runtimes",
+      );
 
       // Owner executes (by full id through the registry gate)...
       const ok = await executeTool("researcher--fetch-paper", {}, { agentId: "researcher" });
@@ -430,6 +435,7 @@ export default tool({
       // A tool authored without an explicit id falls back to its filename for
       // the agent-facing short name instead of leaking the generated id.
       const generated = toolRegistry.get("researcher--summarize");
+      assertEquals(result.tools.get("researcher--summarize"), generated);
       assertEquals(
         generated?.shortName,
         "summarize",

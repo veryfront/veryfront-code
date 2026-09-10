@@ -8,14 +8,23 @@ import { createExecutorModelRuntimeResolver } from "./executor-model-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { createExecutorPersistenceFacades } from "./executor-persistence-bridge.ts";
 import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
+import type { ExecutorToolLimits } from "./executor-tool-schema.ts";
+import { EXECUTOR_TOOL_LIMITS } from "#veryfront/agent/hosted/executor-tool-schema.ts";
+import { copyPrivateSet, createPrivateSet } from "#veryfront/security/private-set.ts";
 
 /** Executor-local capability views; cleanup revokes these views, never their shared channel. */
 export async function createExecutorRuntimeFacades(options: {
   input: ExecutorRuntimeInstall;
   channel: ExecutorChannel;
   signal: AbortSignal;
+  toolLimits?: Partial<ExecutorToolLimits>;
+  /** Explicit trusted source slots allowed to receive per-call project skill data. */
+  projectContextSources?: ReadonlySet<string>;
 }): Promise<ExecutorRuntimeFacades> {
   const { input, channel } = options;
+  const projectContextSources = options.projectContextSources
+    ? copyPrivateSet(options.projectContextSources, EXECUTOR_TOOL_LIMITS.maxSources)
+    : createPrivateSet<string>();
   const lifetime = new AbortController();
   const signal = AbortSignal.any([options.signal, channel.signal, lifetime.signal]);
   const resolveModelRuntime = await createExecutorModelRuntimeResolver({
@@ -36,10 +45,22 @@ export async function createExecutorRuntimeFacades(options: {
     if (expected.size !== hostIds.size + remoteIds.size) {
       throw new TypeError("Ambiguous executor tool source grant");
     }
-    const sources = expected.size ? await createExecutorRemoteToolSources({ channel, signal }) : [];
-    if (sources.length !== expected.size || sources.some((source) => !expected.has(source.id))) {
-      throw new TypeError("Executor tool sources do not match installation");
+    for (const id of projectContextSources) {
+      if (!expected.has(id)) throw new TypeError("Project context source is unavailable");
     }
+    const sources = expected.size
+      ? await createExecutorRemoteToolSources({
+        channel,
+        signal,
+        limits: options.toolLimits,
+        projectContextSources,
+      })
+      : [];
+    if (
+      sources.length !== expected.size ||
+      new Set(sources.map((source) => source.id)).size !== expected.size ||
+      sources.some((source) => !expected.has(source.id))
+    ) throw new TypeError("Executor tool sources do not match installation");
     const hostTools = new Map<string, HostToolSet>();
     const remoteToolSources = new Map<string, RemoteToolSource>();
     for (const source of sources) {

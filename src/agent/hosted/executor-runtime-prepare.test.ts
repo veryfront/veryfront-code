@@ -18,6 +18,8 @@ import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/mo
 import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { agent } from "#veryfront/agent/factory.ts";
+import { tool } from "#veryfront/tool/factory.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
 import { createExecutorDiscovery } from "./executor-discovery.ts";
 import {
@@ -164,6 +166,35 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  it("extracts inline tools under the source policy in the full-runtime profile", async () => {
+    const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+    const observed: unknown[] = [];
+    const registered = tool({
+      id: "inspect",
+      description: "Inspect inline scope",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => null,
+    });
+    const execute = registered.execute;
+    const discovered = runtime({ tools: { inspect: registered } });
+    discovered.sourceIntegrationPolicy = policy;
+    Object.defineProperty(registered, "execute", {
+      get() {
+        observed.push(getActiveSourceIntegrationPolicy());
+        return execute;
+      },
+    });
+    const f = fixture({ load: () => Promise.resolve(discovered) });
+    try {
+      const result = await prepare(f.owner);
+      assert(result && typeof result === "object" && !Array.isArray(result) && result.ok === true);
+      assert(observed.length > 0);
+      for (const active of observed) assertEquals(active, policy);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   for (
     const request of [
       { thinking: { enabled: true, budgetTokens: 8192 } },
@@ -204,6 +235,38 @@ describe("executor runtime preparation", () => {
     });
   }
 
+  it("normalizes a synchronous discovery result before private promise observation", async () => {
+    const f = fixture();
+    const context = {
+      binding,
+      signal: new AbortController().signal,
+      deadline: Date.now() + 30_000,
+    };
+    const describe = f.discovery.operations.get("agent.describe");
+    assert(describe?.mode === "unary");
+    const description = await describe.handle({ agentId: "coder" }, context);
+    (f.discovery.operations as Map<
+      string,
+      import("#veryfront/agent/executor/channel.ts").ExecutorOperation
+    >).set("agent.describe", { mode: "unary", handle: () => description });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let completed = false;
+    try {
+      const result = await Promise.race([
+        prepare(f.owner),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 500);
+        }),
+      ]);
+      completed = result !== null;
+      assert(completed, "Synchronous discovery must not leave preparation pending");
+      assertEquals((result as { ok: boolean }).ok, true);
+    } finally {
+      clearTimeout(timer);
+      if (completed) await f.owner.close();
+      else void f.owner.close().catch(() => {});
+    }
+  });
   for (const selection of [undefined, [], ["load_skill"]]) {
     it(`normalizes implicit disabled skill tools while retaining explicit rejection (${JSON.stringify(selection)})`, async () => {
       const f = fixture({

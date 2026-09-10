@@ -18,6 +18,8 @@ import {
   startNodeManagedAgentBroker,
 } from "veryfront/agent/managed-broker";
 
+import { createTrustedManagedExecutorBroker } from "veryfront/agent/trusted-broker";
+
 await initializeExecutorRuntimeContracts();
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "global", serviceName: "synthetic-broker" };
@@ -43,14 +45,15 @@ async function bounded(promise, label, ms = 25_000) {
   }
 }
 
-async function scenario(kind) {
+async function scenario(kind, trusted = false) {
+  const privateRuntimeMarker = `synthetic-broker-private-runtime-${randomUUID()}`;
   const steering = kind === "steering";
   const directAgUi = kind === "direct-ag-ui";
   const directDurable = kind === "direct-durable";
   const direct = directAgUi || directDurable;
   const providerToolNames = steering ? ["web_search"] : [];
   const mode = kind === "sse" || kind === "disconnect" || directAgUi ? "sse" : "detached";
-  const project = new URL(`./project-${kind}/`, import.meta.url);
+  const project = new URL(`./project-${kind}-${trusted ? "trusted" : "remote"}/`, import.meta.url);
   await mkdir(new URL("agents/", project), { recursive: true });
   await copyFile(
     new URL("./project-hooks.mjs", import.meta.url),
@@ -67,17 +70,39 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
   system: "Use host_probe once, then report its result.",
   tools: ${
       JSON.stringify(
-        steering ? { host_probe: true, update_file: true } : { host_probe: true },
+        trusted
+          ? { host_probe: true, project_probe: true }
+          : steering
+          ? { host_probe: true, update_file: true }
+          : { host_probe: true },
       )
     },
   providerTools: ${JSON.stringify(providerToolNames)} });`,
   );
 
-  const secrets = Object.fromEntries(
-    ["authorization", "api", "inference", "events"].map(
-      (name) => [name, `synthetic-broker-private-${name}-${randomUUID()}`],
-    ),
-  );
+  if (trusted) {
+    await mkdir(new URL("tools/", project));
+    await writeFile(
+      new URL("tools/project_probe.ts", project),
+      `import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { writeFileSync } from "node:fs";
+import process from "node:process";
+export default tool({ id: "project_probe", description: "Inspect approved data",
+  inputSchema: defineSchema(v => v.object({ query: v.string() }))(),
+  execute(input, context) {
+    writeFileSync("project-tool.json", JSON.stringify({ pid: process.pid, input, context: {
+      agentId: context.agentId, projectId: context.projectId, runId: context.runId, toolCallId: context.toolCallId,
+    } }));
+    return { text: "project-ok" };
+  }
+});`,
+    );
+  }
+
+  const secrets = Object.fromEntries(["authorization", "api", "inference", "events"].map(
+    (name) => [name, `synthetic-broker-private-${name}-${randomUUID()}`],
+  ));
   const canaries = Object.values(secrets);
   const runId = `run-${kind}`;
   const path = directAgUi
@@ -197,7 +222,9 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
   let server;
   let shutdown;
   let transportClosed = false;
-  const broker = createManagedExecutorBroker({ maxActive: 1 });
+  const broker = trusted
+    ? createTrustedManagedExecutorBroker({ maxActive: 1 })
+    : createManagedExecutorBroker({ maxActive: 1 });
 
   // A real HTTP endpoint checks the persistence wire contract. No live API or
   // provider is contacted; credentials are freshly generated synthetic canaries.
@@ -277,6 +304,14 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
                 toolName: "host_probe",
                 input: {},
               });
+              if (trusted) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "project-call",
+                  toolName: "project_probe",
+                  input: { query: "approved" },
+                });
+              }
               if (steering) {
                 controller.enqueue({
                   type: "tool-call",
@@ -294,7 +329,9 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
             } else {
               controller.enqueue({
                 type: "text-delta",
-                text: "Host tool completed.",
+                text: trusted
+                  ? `Host tool completed. ${privateRuntimeMarker}`
+                  : "Host tool completed.",
               });
               secondModelCall.resolve();
               if (kind === "kill" || kind === "disconnect") {
@@ -435,6 +472,7 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
             child = spawn(process.execPath, [
               fileURLToPath(new URL("./executor.mjs", import.meta.url)),
               fileURLToPath(project),
+              trusted ? "project-tools" : "runtime",
             ], {
               cwd: fileURLToPath(project),
               stdio: ["pipe", "pipe", "pipe"],
@@ -493,6 +531,14 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
         };
         return Promise.resolve({
           start: {
+            ...(trusted
+              ? {
+                trustedRuntime: {
+                  projectToolNames: ["project_probe"],
+                  sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+                },
+              }
+              : {}),
             bindSessionOwnedWork: persistence.bindSessionOwnedWork,
             session: {
               request: allocationRequest,
@@ -521,17 +567,17 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
                 agentId: "probe",
                 defaultModelId: modelId,
                 maxSteps: 4,
-                models: [{
-                  id: modelId,
-                  maxOutputTokens: 100,
-                  providerToolNames,
-                }],
-                allowedToolNames: steering ? ["host_probe", "update_file"] : ["host_probe"],
+                models: [{ id: modelId, maxOutputTokens: 100, providerToolNames }],
+                allowedToolNames: trusted
+                  ? ["host_probe", "project_probe"]
+                  : steering
+                  ? ["host_probe", "update_file"]
+                  : ["host_probe"],
                 hostToolFacadeIds: ["host"],
-                remoteToolSourceIds: steering ? ["state-tools"] : [],
+                remoteToolSourceIds: trusted ? ["project"] : steering ? ["state-tools"] : [],
                 execution: {
                   kind: "canonical",
-                  projectId: steering ? projectId : null,
+                  projectId: steering || trusted ? projectId : null,
                   conversationId,
                   runId,
                   messageId,
@@ -539,11 +585,8 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
                 },
               },
               capabilities: {
-                persistence: {
-                  publishParentRunEvents: "parent",
-                  toolExposureCheckpoint: "tools",
-                },
-                ...(steering ? { projectSteering: "steering" } : {}),
+                persistence: { publishParentRunEvents: "parent", toolExposureCheckpoint: "tools" },
+                ...(steering || trusted ? { projectSteering: "steering" } : {}),
               },
             },
             prepare: { agentId: "probe" },
@@ -567,6 +610,7 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
             tools: {
               catalog: new Map([
                 ["host_probe", {}],
+                ...(trusted ? [["project_probe", {}]] : []),
                 ...(steering ? [["update_file", {}]] : []),
               ]),
               maxCalls: 8,
@@ -589,7 +633,10 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
                       }]),
                     executeTool(name) {
                       tools.push(name);
-                      return Promise.resolve({ text: "host-ok" });
+                      return Promise.resolve({
+                        text: "host-ok",
+                        ...(trusted ? { privateValue: privateRuntimeMarker } : {}),
+                      });
                     },
                   },
                 }],
@@ -626,7 +673,16 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
               persistToolExposureCheckpoint: persistence.persistToolExposureCheckpoint,
               initialProviderReplayCheckpoints: [],
             },
-            state: steering
+            state: trusted
+              ? {
+                prepareProjectSteering: ({ definition }) =>
+                  Promise.resolve({
+                    agent: definition,
+                    initialProjectInstructions: privateRuntimeMarker,
+                  }),
+                refreshProjectSteering: () => Promise.resolve(privateRuntimeMarker),
+              }
+              : steering
               ? {
                 prepareProjectSteering: ({ definition }) => Promise.resolve({ agent: definition }),
                 refreshProjectSteering(_signal, names) {
@@ -824,11 +880,16 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
       headers: true,
       tee: true,
     });
-    assertEquals(
-      observation.observations,
-      0,
-      "Project hooks observed a broker canary",
-    );
+    assertEquals(observation.observations, 0, "Project hooks observed a broker canary");
+    if (trusted) {
+      assertEquals(JSON.parse(await readFile(new URL("project-tool.json", project), "utf8")), {
+        pid: child.pid,
+        input: { query: "approved" },
+        context: { agentId: "probe", projectId, runId, toolCallId: "project-call" },
+      });
+      assert(JSON.stringify(modelCalls[0].prompt).includes(privateRuntimeMarker));
+      assert(wire.includes(privateRuntimeMarker));
+    }
     for (const canary of canaries) {
       assert(
         !`${wire}${childOutput}`.includes(canary),
@@ -870,3 +931,9 @@ for (
     () => scenario(kind),
   );
 }
+
+it(
+  "packed trusted broker: private runtime with an isolated project tool",
+  { timeout: 90_000 },
+  () => scenario("sse", true),
+);

@@ -1,32 +1,40 @@
+import { createTrustedManagedExecutorBroker } from "../service/trusted-managed-broker.ts";
 import {
   type ExecutorRuntimeInstall,
   getExecutorRuntimeInstallSchema,
   parseExecutorInstallation,
-} from "./executor-runtime-install-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import type { HostedExecutorSessionOptions } from "./executor-session.ts";
-import type { HostedExecutorAllocation } from "./executor-session-schema.ts";
-import type { ExecutorNodeTransport } from "./executor-node-transport.ts";
+import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
+import type { HostedExecutorAllocation } from "#veryfront/agent/hosted/executor-session-schema.ts";
+import type { ExecutorNodeTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
 import {
   createManagedExecutorBroker,
   type ManagedExecutorStartInput,
-} from "./managed-executor-broker.ts";
-import { getExecutorRuntimePrepareResultSchema } from "./executor-runtime-prepare-schema.ts";
-import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
-import { executorStateOperations } from "./executor-state-schema.ts";
-import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
+} from "#veryfront/agent/hosted/managed-executor-broker.ts";
+import { getExecutorRuntimePrepareResultSchema } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
+import { readExecutorInitialCheckpoints } from "#veryfront/agent/hosted/executor-checkpoint-state.ts";
+import { executorStateOperations } from "#veryfront/agent/hosted/executor-state-schema.ts";
+import { createManagedBrokerPersistence } from "#veryfront/agent/hosted/managed-broker-persistence.ts";
 import { FakeTime } from "#std/testing/time";
 import { agent } from "#veryfront/agent/factory.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
-import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
-import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
-import { createExecutorDiscovery } from "./executor-discovery.ts";
-import { createExecutorRuntimePreparation } from "./executor-runtime-prepare.ts";
+import { createExecutorRuntimeInstallation } from "#veryfront/agent/hosted/executor-runtime-install.ts";
+import { createExecutorRuntimeFacades } from "#veryfront/agent/hosted/executor-runtime-facades.ts";
+import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
+import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
+import { createExecutorProjectToolRuntime } from "#veryfront/agent/hosted/executor-project-runtime.ts";
+import { tool } from "#veryfront/tool/factory.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-managed-runtime.ts";
+import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "project-test" };
@@ -1112,5 +1120,641 @@ describe("managed executor broker", () => {
       }).success,
       false,
     );
+  });
+});
+
+function trustedFixture(
+  blockSteering?: Promise<void>,
+  includeHost = false,
+  projectExecute?: Tool["execute"],
+  projectAliases?: { name: string; shortName: string }[],
+) {
+  const f = fixture({ allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
+  const privateMarker = "synthetic-private-broker-runtime";
+  const steeringEntered = Promise.withResolvers<void>();
+  configureCanonical(f.input, () => Promise.resolve(), () => {});
+  f.input.installation.grant.execution.projectId = "project-test";
+  f.input.installation.capabilities.projectSteering = "steering";
+  f.input.installation.grant.allowedToolNames = ["inspect"];
+  f.input.installation.grant.remoteToolSourceIds = ["project"];
+  f.input.tools.catalog = new Map([["inspect", {}]]);
+  f.input.tools.maxCalls = 32;
+  const trustedInput = Object.assign(f.input, {
+    trustedRuntime: {
+      projectToolNames: ["inspect"],
+      sourceIntegrationPolicy: { schemaVersion: 1 as const, mode: "unrestricted" as const },
+    },
+  });
+  f.input.state = {
+    prepareProjectSteering: async ({ definition }) => {
+      steeringEntered.resolve();
+      await blockSteering;
+      return { agent: definition, initialProjectInstructions: privateMarker };
+    },
+    refreshProjectSteering: () => privateMarker,
+  };
+  let hostCalls = 0;
+  if (includeHost) {
+    f.input.installation.grant.allowedToolNames.push("host-private");
+    f.input.installation.grant.hostToolFacadeIds = ["host"];
+    f.input.tools.catalog = new Map([["inspect", {}], ["host-private", {}]]);
+    f.input.tools.sources = new Map([["host", {
+      allowedToolNames: new Set(["host-private"]),
+      context: {},
+      source: {
+        id: "host",
+        listTools: () =>
+          Promise.resolve([{
+            name: "host-private",
+            description: "Read broker-owned data",
+            parameters: { type: "object", properties: {} },
+          }]),
+        executeTool: () => {
+          hostCalls++;
+          return Promise.resolve({ value: privateMarker });
+        },
+      },
+    }]]);
+  }
+  const model = scriptedModel([
+    ...(includeHost ? [{ toolCalls: [{ id: "host-call", name: "host-private", input: {} }] }] : []),
+    { toolCalls: [{ id: "inspect-call", name: "inspect", input: { query: "approved" } }] },
+    { text: privateMarker },
+  ], { only: "stream" });
+  f.input.model.resolver = () => model;
+  let executions = 0;
+  let projectWire = "";
+  let peer: ReturnType<typeof createExecutorChannel> | undefined;
+  let peerCleanup: Promise<void> = Promise.resolve();
+  let installedProjectMode = false;
+  f.input.session.connectTransport = ({ binding }) => {
+    const decoder = new TextDecoder();
+    const outbound = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        projectWire += decoder.decode(chunk, { stream: true });
+        controller.enqueue(chunk);
+      },
+    });
+    const inbound = new TransformStream<Uint8Array, Uint8Array>();
+    const installation = createExecutorRuntimeInstallation({
+      mode: "project-tools",
+      binding,
+      artifact: { version: 1, owner, source, root: "project" },
+      async install(input, signal, context) {
+        installedProjectMode = input.mode === "project-tools";
+        const registered = tool({
+          id: "inspect",
+          description: "Inspect an approved argument",
+          inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+          execute: (args, call) => {
+            executions++;
+            assertEquals(args, { query: "approved" });
+            assertEquals(call?.projectId, "project-test");
+            assertEquals(call?.runId, "run-1");
+            return projectExecute ? projectExecute(args, call) : { ok: true };
+          },
+        });
+        const discovery = createExecutorDiscovery({
+          binding,
+          source,
+          projectDir: "/synthetic-project",
+          signal,
+          backend: {
+            load: () =>
+              Promise.resolve({
+                agents: new Map([[
+                  "coder",
+                  agent({
+                    id: "coder",
+                    model: modelId,
+                    system: "Use the project tool",
+                    tools: includeHost ? { inspect: true, "host-private": true } : true,
+                    skills: false,
+                  }),
+                ]]),
+                tools: new Map([["inspect", registered]]),
+                skills: new Map(),
+                prompts: new Map(),
+                resources: new Map(),
+                workflows: new Map(),
+                tasks: new Map(),
+                schedules: new Map(),
+                webhooks: new Map(),
+                evals: new Map(),
+                errors: [],
+                sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+              }),
+            cleanup: () => Promise.resolve(),
+          },
+        });
+        const runtime = await createExecutorProjectToolRuntime({
+          input,
+          discovery,
+          signal,
+          deadline: context.deadline,
+        });
+        if (projectAliases) {
+          return {
+            ...runtime,
+            operations: new Map([...runtime.operations, ["project.tool-aliases", {
+              mode: "unary",
+              handle: () => ({ agentId: "coder", aliases: projectAliases }),
+            }]]),
+          };
+        }
+        return runtime;
+      },
+    });
+    peer = createExecutorChannel({
+      binding,
+      transport: { readable: outbound.readable, writable: inbound.writable },
+      operations: installation.operations,
+    });
+    return Promise.resolve({
+      readable: inbound.readable,
+      writable: outbound.writable,
+      close() {
+        peer?.close();
+        peerCleanup = installation.close();
+        void peerCleanup.catch(() => {});
+      },
+    });
+  };
+  return {
+    ...f,
+    input: trustedInput,
+    privateMarker,
+    model,
+    steeringEntered: steeringEntered.promise,
+    get hostCalls() {
+      return hostCalls;
+    },
+    get executions() {
+      return executions;
+    },
+    get projectWire() {
+      return projectWire;
+    },
+    get projectPeer() {
+      return peer;
+    },
+    get peerCleanup() {
+      return peerCleanup;
+    },
+    get installedProjectMode() {
+      return installedProjectMode;
+    },
+  };
+}
+
+async function drainTrustedFixture(f: ReturnType<typeof trustedFixture>) {
+  const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+  let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+  try {
+    runtime = await broker.start(f.input);
+    runtime.accept({ kind: "execution" });
+    const stream = await runtime.agent.stream({
+      messages: [{
+        id: "user",
+        role: "user",
+        parts: [{ type: "text", text: "Complete the task" }],
+        timestamp: 1,
+      }],
+      abortSignal: new AbortController().signal,
+    });
+    return await Array.fromAsync(stream.toUIMessageStream());
+  } finally {
+    await runtime?.close("completed");
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+  }
+}
+
+async function withTrustedToolOperations(
+  f: ReturnType<typeof trustedFixture>,
+  test: (
+    execute: (sourceId: string, signal?: AbortSignal) => Promise<JsonValue[]>,
+  ) => Promise<void>,
+) {
+  let local: Awaited<ReturnType<typeof createTrustedManagedRuntime>> | undefined;
+  let binding: ExecutorBinding | undefined;
+  const broker = createManagedExecutorBroker({ maxActive: 1 }, async (options) => {
+    binding = options.binding;
+    local = await createTrustedManagedRuntime(options);
+    return local;
+  });
+  let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+  try {
+    runtime = await broker.start(f.input);
+    runtime.accept({ kind: "execution" });
+    assert(local && binding);
+    local.gate.beginExecution();
+    const operation = local.gate.operations.get("tool.execute");
+    assert(operation?.mode === "stream");
+    const fixedBinding = binding;
+    await test((sourceId, signal = new AbortController().signal) =>
+      Array.fromAsync(operation.handle({
+        sourceId,
+        toolName: sourceId === "project" ? "inspect" : "host-private",
+        toolCallId: `${sourceId}-call`,
+        args: sourceId === "project" ? { query: "approved" } : {},
+      }, { binding: fixedBinding, signal, deadline: Date.now() + 10_000 }))
+    );
+  } finally {
+    await runtime?.close("completed");
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+  }
+}
+
+describe("broker-local trusted runtime", () => {
+  it("preserves retirement authority for preconfigured remote source snapshots", async () => {
+    const f = trustedFixture(undefined, true);
+    const retired = Promise.withResolvers<void>();
+    const host = f.input.tools.sources.get("host")!;
+    f.input.tools.sources = new Map([["host", {
+      ...host,
+      retired: retired.promise,
+      source: {
+        ...host.source,
+        async executeTool() {
+          throw new TypeError("Unknown remote outcome");
+        },
+      },
+    }]]);
+    try {
+      await withTrustedToolOperations(f, async (execute) => {
+        assertEquals(await execute("host"), [{ type: "failure" }]);
+        assertEquals(await execute("project"), [{
+          type: "failure",
+          code: "RESOURCE_LIMIT_EXCEEDED",
+        }]);
+        assertEquals(f.executions, 0);
+        retired.resolve();
+        await tick();
+        assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
+        assertEquals(f.executions, 1);
+      });
+    } finally {
+      retired.resolve();
+    }
+  });
+
+  it("requires trusted runtime configuration in the public start type", () => {
+    type Start = Parameters<ReturnType<typeof createTrustedManagedExecutorBroker>["start"]>[0];
+    const required: undefined extends Start["trustedRuntime"] ? false : true = true;
+    assertEquals(required, true);
+  });
+
+  it("carries approved identity and current skill availability across both channel hops", async () => {
+    const observed: ToolExecutionContext[] = [];
+    const f = trustedFixture(undefined, false, async (_args, call) => {
+      assert(call);
+      observed.push(call);
+      return { ok: true };
+    });
+    f.input.installation.grant.execution.userId = "synthetic-user";
+    f.input.installation.grant.execution.projectSlug = "synthetic-slug";
+    await drainTrustedFixture(f);
+    assertEquals(observed.length, 1);
+    assertEquals(observed[0]!.userId, "synthetic-user");
+    assertEquals(observed[0]!.projectSlug, "synthetic-slug");
+    assertEquals(observed[0]!.activeSkillToolAvailability, {
+      hasActiveSkill: false,
+      references: [],
+      scripts: [],
+    });
+    assertEquals(Object.hasOwn(observed[0]!, "authToken"), false);
+    assert(f.projectWire.includes('"projectContext"'));
+  });
+
+  it("reserves project aliases within the combined host and project metadata budget", async () => {
+    for (const includeAliases of [false, true]) {
+      const aliases = includeAliases
+        ? Array.from(
+          { length: 30 },
+          (_, index) => ({ name: "inspect", shortName: `inspect-alias-${index}` }),
+        )
+        : [];
+      const f = trustedFixture(undefined, true, undefined, aliases);
+      f.input.tools.sources.get("host")!.source.listTools = async () => [{
+        name: "host-private",
+        description: "x".repeat(3_000),
+        parameters: { type: "object", properties: {} },
+      }];
+      f.input.tools.limits = { maxMetadataBytes: 4_096 };
+      if (includeAliases) {
+        let admitted = false;
+        await assertRejects(() =>
+          withTrustedToolOperations(f, async () => {
+            admitted = true;
+          })
+        );
+        assertEquals(admitted, false);
+        assertEquals(f.executions, 0);
+        assertEquals(f.hostCalls, 0);
+      } else {
+        await withTrustedToolOperations(f, async (execute) => {
+          assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
+          assertEquals(await execute("host"), [{
+            type: "result",
+            result: { value: f.privateMarker },
+          }]);
+        });
+        assertEquals(f.executions, 1);
+        assertEquals(f.hostCalls, 1);
+      }
+    }
+  });
+
+  it("shares concurrency between held host work and project calls", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const f = trustedFixture(undefined, true);
+    const host = f.input.tools.sources.get("host")!;
+    const original = host.source.executeTool;
+    host.source.executeTool = async (...args) => {
+      entered.resolve();
+      await release.promise;
+      return await original(...args);
+    };
+    await withTrustedToolOperations(f, async (execute) => {
+      const first = execute("host");
+      try {
+        await entered.promise;
+        assertEquals(await execute("project"), [{
+          type: "failure",
+          code: "RESOURCE_LIMIT_EXCEEDED",
+        }]);
+        assertEquals(f.executions, 0);
+      } finally {
+        release.resolve();
+        await first;
+      }
+      assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
+      assertEquals(f.executions, 1);
+    });
+  });
+
+  it("holds shared concurrency after project cancellation until allocation retirement", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const f = trustedFixture(undefined, true, async () => {
+      entered.resolve();
+      await release.promise;
+      return { ok: true };
+    });
+    await withTrustedToolOperations(f, async (execute) => {
+      const controller = new AbortController();
+      const first = assertRejects(() => execute("project", controller.signal));
+      try {
+        await entered.promise;
+        controller.abort();
+        assertEquals(await execute("host"), [{ type: "failure", code: "RESOURCE_LIMIT_EXCEEDED" }]);
+        assertEquals(f.hostCalls, 0);
+      } finally {
+        release.resolve();
+        await first;
+      }
+      // Local response settlement is not an authenticated remote retirement acknowledgement.
+      assertEquals(await execute("host"), [{ type: "failure", code: "RESOURCE_LIMIT_EXCEEDED" }]);
+      assertEquals(f.hostCalls, 0);
+    });
+  });
+
+  it("releases shared concurrency after an ordinary project-tool failure", async () => {
+    let projectAttempts = 0;
+    const f = trustedFixture(undefined, true, async () => {
+      projectAttempts++;
+      if (projectAttempts === 1) throw new ExecutorAgentError("PERMISSION_DENIED");
+      return { ok: true };
+    });
+    await withTrustedToolOperations(f, async (execute) => {
+      assertEquals(await execute("project"), [{ type: "failure", code: "PERMISSION_DENIED" }]);
+      assertEquals(await execute("host"), [{ type: "result", result: { value: f.privateMarker } }]);
+      assertEquals(projectAttempts, 1);
+      assertEquals(f.hostCalls, 1);
+    });
+  });
+
+  it("enforces tightened progress limits inside the project executor", async () => {
+    const f = trustedFixture(undefined, false, async (_args, call) => {
+      await call?.publishDataEvent?.({ type: "data-tool-progress", data: { text: "one" } });
+      await call?.publishDataEvent?.({ type: "data-tool-progress", data: { text: "two" } });
+      return { ok: true };
+    });
+    f.input.tools.limits = { maxProgressEvents: 1 };
+    const events = await drainTrustedFixture(f);
+    assertEquals(f.executions, 1);
+    assert(
+      events.some((event) =>
+        event.type === "tool-output-error" && event.toolCallId === "inspect-call"
+      ),
+    );
+    assertEquals(f.projectWire.includes('"text":"two"'), false);
+  });
+
+  it("shares one call allowance across host and project tools", async () => {
+    const f = trustedFixture(undefined, true);
+    f.input.tools.maxCalls = 6;
+    await drainTrustedFixture(f);
+    assertEquals(f.hostCalls, 1);
+    assertEquals(f.executions, 0);
+  });
+
+  it("rejects oversized project arguments before they cross the project channel", async () => {
+    const f = trustedFixture();
+    f.input.tools.limits = { maxArgumentBytes: 8 };
+    await drainTrustedFixture(f);
+    assertEquals(f.executions, 0);
+    assertEquals(f.projectWire.includes('"query":"approved"'), false);
+  });
+
+  it("enforces tightened project result limits", async () => {
+    const f = trustedFixture();
+    f.input.tools.limits = { maxResultBytes: 8 };
+    const events = await drainTrustedFixture(f);
+    assertEquals(f.executions, 1);
+    assert(
+      events.some((event) =>
+        event.type === "tool-output-error" && event.toolCallId === "inspect-call"
+      ),
+    );
+  });
+
+  for (const limits of [{ maxSources: 1 }, { maxTotalTools: 1 }, { maxToolsPerSource: 1 }]) {
+    it(`validates combined host/project inventory before allocation ${JSON.stringify(limits)}`, async () => {
+      const f = trustedFixture(undefined, true);
+      f.input.tools.limits = limits;
+      if ("maxToolsPerSource" in limits) {
+        assert(f.input.trustedRuntime);
+        f.input.trustedRuntime.projectToolNames = ["inspect", "second"];
+        f.input.installation.grant.allowedToolNames.push("second");
+        f.input.tools.catalog = new Map([...f.input.tools.catalog, ["second", {}]]);
+      }
+      await assertRejects(() => drainTrustedFixture(f), TypeError, "Combined tool catalog");
+      assertEquals(f.calls, []);
+    });
+  }
+  for (const includeHost of [false, true]) {
+    it(`keeps private instructions and output local with host tools ${includeHost}`, async () => {
+      const f = trustedFixture(undefined, includeHost);
+      const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+      let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+      try {
+        runtime = await broker.start(f.input);
+        assertEquals(f.installedProjectMode, true);
+        await assertRejects(() => f.projectPeer!.request("model.prepare", {}));
+        runtime.accept({ kind: "execution" });
+        const stream = await runtime.agent.stream({
+          messages: [{
+            id: "user",
+            role: "user",
+            parts: [{ type: "text", text: "Complete the task" }],
+            timestamp: 1,
+          }],
+          abortSignal: new AbortController().signal,
+        });
+        const events = await Array.fromAsync(stream.toUIMessageStream());
+        assert(
+          events.some((event) => event.type === "text-delta" && event.delta === f.privateMarker),
+        );
+        assert(events.some((event) => event.type === "finish"));
+        assertEquals(f.executions, 1);
+        assert(JSON.stringify(f.model.calls[0]?.prompt).includes(f.privateMarker));
+        assertEquals(f.model.callCount, includeHost ? 3 : 2);
+        assertEquals(f.hostCalls, includeHost ? 1 : 0);
+        assertEquals(f.projectWire.includes(f.privateMarker), false);
+        await assertRejects(() => f.projectPeer!.request("model.generate", {}));
+        await assertRejects(() =>
+          f.projectPeer!.request(executorStateOperations.refreshProjectSteering, {})
+        );
+        await assertRejects(() =>
+          Array.fromAsync(f.projectPeer!.stream("tool.execute", {
+            sourceId: "host",
+            toolName: "host-private",
+            toolCallId: "forged",
+            args: {},
+          }))
+        );
+        assertEquals(f.hostCalls, includeHost ? 1 : 0);
+      } finally {
+        await runtime?.close("completed");
+        await broker.shutdown();
+        await broker.settled;
+        await f.peerCleanup;
+      }
+      assertEquals(broker.active, 0);
+    });
+  }
+  it("requires a construction-time trusted entrypoint rather than a request-only mode switch", async () => {
+    const f = trustedFixture();
+    const broker = createManagedExecutorBroker({ maxActive: 1 });
+    try {
+      await assertRejects(() => broker.start(f.input), TypeError, "dedicated broker entrypoint");
+      assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+  it("rejects project tool authority outside the normalized grant before allocation", async () => {
+    const f = trustedFixture();
+    Object.assign(f.input, {
+      trustedRuntime: {
+        projectToolNames: ["ungranted"],
+        sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      },
+    });
+    const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    try {
+      await assertRejects(() => broker.start(f.input), TypeError, "normalized invocation grant");
+      assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+  it("preserves admitted streaming beyond the default thirty-second channel timeout", async () => {
+    using time = new FakeTime();
+    const f = trustedFixture();
+    const entered = Promise.withResolvers<void>();
+    const firstText = Promise.withResolvers<void>();
+    let controller: ReadableStreamDefaultController<unknown> | undefined;
+    let providerSignal: AbortSignal | undefined;
+    const model = scriptedModel([{ text: "unused" }], { only: "stream" });
+    model.doStream = (options) => {
+      providerSignal = options.abortSignal;
+      return Promise.resolve({
+        stream: new ReadableStream({
+          start(value) {
+            controller = value;
+            value.enqueue({ type: "text-delta", text: "start" });
+            entered.resolve();
+          },
+        }),
+      });
+    };
+    f.input.model.resolver = () => model;
+    const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    const runtime = await broker.start(f.input);
+    let consumed: Promise<void> = Promise.resolve();
+    let consumptionError: unknown;
+    try {
+      runtime.accept({ kind: "execution" });
+      const stream = await runtime.agent.stream({
+        messages: [],
+        abortSignal: new AbortController().signal,
+      });
+      consumed = (async () => {
+        for await (const event of stream.toUIMessageStream()) {
+          if (event.type === "text-delta") firstText.resolve();
+        }
+      })().catch((error) => {
+        consumptionError = error;
+      });
+      await entered.promise;
+      await firstText.promise;
+      for (let index = 0; index < 4; index++) {
+        controller!.enqueue({ type: "text-delta", text: "tick" });
+        await time.tickAsync(9_000);
+      }
+      assertEquals(
+        providerSignal?.aborted,
+        false,
+        "The admitted run must survive the channel default",
+      );
+      assertEquals(consumptionError, undefined);
+      controller!.enqueue({ type: "finish", finishReason: "stop" });
+      controller!.close();
+      await consumed;
+      assertEquals(consumptionError, undefined);
+    } finally {
+      const closing = runtime.close();
+      await time.tickAsync(50);
+      await closing;
+      await broker.shutdown();
+      await broker.settled;
+      await consumed;
+      await f.peerCleanup;
+    }
+  });
+  it("returns bounded cancellation while retaining noncooperative broker-local preparation", async () => {
+    const release = Promise.withResolvers<void>();
+    const f = trustedFixture(release.promise);
+    const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    const starting = broker.start(f.input);
+    const rejected = assertRejects(() => starting);
+    await f.steeringEntered;
+    f.preparation.abort();
+    await rejected;
+    assertEquals(broker.active, 1);
+    release.resolve();
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+    assertEquals(broker.active, 0);
   });
 });

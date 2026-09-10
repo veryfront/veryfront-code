@@ -1,3 +1,18 @@
+import {
+  parseSourceIntegrationPolicyManifest,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
+import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
+import { reserveExecutorToolMetadata } from "#veryfront/agent/hosted/executor-tool-schema.ts";
+import type {
+  TrustedManagedRuntime,
+  TrustedManagedRuntimeFactory,
+} from "#veryfront/agent/hosted/trusted-managed-runtime-contract.ts";
+import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
+import {
+  type ExecutorProjectToolInstall,
+  getExecutorProjectToolInstallSchema,
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -6,23 +21,28 @@ import {
   type ExecutorOperationGate,
 } from "../executor/operation-gate.ts";
 import type { ExecutorBinding } from "../executor/protocol.ts";
-import type { HostedChatRuntimeAgent } from "./chat-runtime-contract.ts";
+import type { HostedChatRuntimeAgent } from "#veryfront/agent/hosted/chat-runtime-contract.ts";
 import {
   createHostedExecutorSessionPool,
   type HostedExecutorSessionPoolOptions,
-} from "./executor-session-pool.ts";
-import type {
-  HostedExecutorOwnedWork,
-  HostedExecutorSessionCloseResult,
-  HostedExecutorSessionOptions,
-} from "./executor-session.ts";
-import { sameHostedExecutorOwner } from "./executor-session-schema.ts";
-import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
+} from "#veryfront/agent/hosted/executor-session-pool.ts";
+import {
+  createHostedExecutorSessionClock,
+  type HostedExecutorOwnedWork,
+  type HostedExecutorSessionCloseResult,
+  type HostedExecutorSessionOptions,
+} from "#veryfront/agent/hosted/executor-session.ts";
+import {
+  getHostedExecutorAllocationRequestSchema,
+  parseHostedExecutorData,
+  sameHostedExecutorOwner,
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
+import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
   type ExecutorRuntimeInstall,
   getExecutorRuntimeInstallSchema,
   parseExecutorInstallation,
-} from "./executor-runtime-install-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import {
   ExecutorRuntimePreparationError,
   type ExecutorRuntimePrepareRequest,
@@ -30,24 +50,31 @@ import {
   getExecutorRuntimePrepareResultSchema,
   isExecutorRuntimePreparationFailureCode,
   parseRuntimePreparationData,
-} from "./executor-runtime-prepare-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import {
   ExecutorDiscoveryError,
   getExecutorAgentDescribeResultSchema,
   parseDiscoveryData,
-} from "./executor-discovery-schema.ts";
-import { ExecutorAgentError } from "./executor-agent-schema.ts";
-import { createExecutorHostedChatRuntimeAgent } from "./executor-agent-bridge.ts";
+} from "#veryfront/agent/hosted/executor-discovery-schema.ts";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { createExecutorHostedChatRuntimeAgent } from "#veryfront/agent/hosted/executor-agent-bridge.ts";
 import {
   createEphemeralHostedExecutorModelBroker,
   createHostedExecutorModelBroker,
-} from "./executor-model-dispatch.ts";
-import type { ExecutorModelGrant } from "./executor-model-grant.ts";
-import { createExecutorToolBroker, type ExecutorToolCapability } from "./executor-tool-bridge.ts";
-import { createExecutorPersistenceBroker } from "./executor-persistence-bridge.ts";
-import { executorInitialCheckpointsOperation } from "./executor-checkpoint-state.ts";
-import { createExecutorStateBroker } from "./executor-state-bridge.ts";
-import { executorStateOperations } from "./executor-state-schema.ts";
+} from "#veryfront/agent/hosted/executor-model-dispatch.ts";
+import type { ExecutorModelGrant } from "#veryfront/agent/hosted/executor-model-grant.ts";
+import {
+  createExecutorToolBroker,
+  type ExecutorToolCapability,
+} from "#veryfront/agent/hosted/executor-tool-bridge.ts";
+import {
+  type ExecutorToolLimits,
+  executorToolLimits,
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
+import { createExecutorPersistenceBroker } from "#veryfront/agent/hosted/executor-persistence-bridge.ts";
+import { executorInitialCheckpointsOperation } from "#veryfront/agent/hosted/executor-checkpoint-state.ts";
+import { createExecutorStateBroker } from "#veryfront/agent/hosted/executor-state-bridge.ts";
+import { executorStateOperations } from "#veryfront/agent/hosted/executor-state-schema.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
 
 type SessionInput = Omit<HostedExecutorSessionOptions, "createOperations">;
@@ -81,6 +108,11 @@ export interface ManagedExecutorRuntime {
  * the corresponding installed grant. Startup rejects mismatches before allocation.
  */
 export interface ManagedExecutorStartInput {
+  /** Trusted ingress configuration; never selected by a project protocol message. */
+  trustedRuntime?: {
+    projectToolNames: readonly string[];
+    sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  };
   /** Bind canonical persistence to the admitted session before readiness work starts. */
   bindSessionOwnedWork?: (owner: HostedExecutorOwnedWork) => void;
   session: SessionInput;
@@ -102,10 +134,12 @@ export interface ManagedExecutorStartInput {
   persistence: PersistenceInput;
   state: StateInput;
 }
-type ManagedExecutorOperationInput = Pick<
-  ManagedExecutorStartInput,
-  "model" | "tools" | "persistence" | "state"
->;
+type ManagedExecutorOperationInput =
+  & Pick<
+    ManagedExecutorStartInput,
+    "model" | "persistence" | "state"
+  >
+  & { tools: ManagedExecutorStartInput["tools"] & { limits: ExecutorToolLimits } };
 
 /** Process admission and shutdown limits for a managed broker. */
 export type ManagedExecutorBrokerOptions = Omit<
@@ -114,19 +148,33 @@ export type ManagedExecutorBrokerOptions = Omit<
 >;
 
 /** Compose an executor pool with authenticated installation and operation gates. */
-export function createManagedExecutorBroker(options: ManagedExecutorBrokerOptions) {
+export function createManagedExecutorBroker(
+  options: ManagedExecutorBrokerOptions,
+  trustedRuntimeFactory?: TrustedManagedRuntimeFactory,
+) {
+  if (trustedRuntimeFactory !== undefined && typeof trustedRuntimeFactory !== "function") {
+    throw new TypeError("Invalid trusted runtime composition");
+  }
   const pool = createHostedExecutorSessionPool(options);
 
   async function start(
     input: ManagedExecutorStartInput,
     lifecycle: { onAdmitted?(settled: Promise<void>): void } = {},
   ): Promise<ManagedExecutorRuntime> {
+    if (Boolean(trustedRuntimeFactory) !== (input.trustedRuntime !== undefined)) {
+      throw new TypeError("Trusted runtime configuration requires its dedicated broker entrypoint");
+    }
+    const request = parseHostedExecutorData(
+      getHostedExecutorAllocationRequestSchema(),
+      input.session.request,
+    );
+    const clock = input.session.clock ?? createHostedExecutorSessionClock(Date.now());
     // Generation one is used only to validate local operation descriptors.
     // Actual authority is rebuilt against the allocator's authenticated binding.
     const validationBinding: ExecutorBinding = {
-      allocationId: input.session.request.allocationId,
+      allocationId: request.allocationId,
       generation: 1,
-      invocationId: input.session.request.invocationId,
+      invocationId: request.invocationId,
     };
     let installation = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
       ...input.installation,
@@ -138,8 +186,8 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     );
     const selectedModelId = prepare.modelId ?? installation.grant.defaultModelId;
     if (
-      !sameHostedExecutorOwner(installation.owner, input.session.request.owner) ||
-      verifyHostedRuntimeSourceBinding(input.session.request.source, installation.source) !==
+      !sameHostedExecutorOwner(installation.owner, request.owner) ||
+      verifyHostedRuntimeSourceBinding(request.source, installation.source) !==
         undefined ||
       prepare.agentId !== installation.grant.agentId
     ) throw new TypeError("Managed executor installation does not match its session");
@@ -147,6 +195,9 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     const operationInput = snapshotOperationInput(input);
     constrainInstalledOperationGrants(operationInput, installation);
     installation = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), installation);
+    const trusted = input.trustedRuntime === undefined
+      ? undefined
+      : snapshotTrustedRuntime(input.trustedRuntime, installation, operationInput);
     const bindSessionOwnedWork = input.bindSessionOwnedWork;
     if (
       installation.grant.execution.kind === "ephemeral" &&
@@ -174,9 +225,21 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     );
 
     let gate: ExecutorOperationGate | undefined;
+    let localRuntime: TrustedManagedRuntime | undefined;
     const session = pool.start({
       ...input.session,
+      request,
+      clock,
       createOperations(binding, signal) {
+        if (trusted) {
+          return {
+            operations: new Map<string, ExecutorOperation>(),
+            revoke() {
+              gate?.revoke();
+              void localRuntime?.close().catch(() => {});
+            },
+          };
+        }
         const channelBinding = toChannelBinding(binding);
         const operations = buildBrokerOperations(
           channelBinding,
@@ -203,13 +266,21 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
       lifecycle.onAdmitted?.(session.settled);
       const channel = await session.ready;
       const binding = session.binding;
-      if (!binding || !gate) throw new Error("Managed executor session is not bound");
+      if (!binding || (!trusted && !gate)) throw new Error("Managed executor session is not bound");
       const channelBinding = toChannelBinding(binding);
       const installRequest = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
         ...installation,
         binding: channelBinding,
       });
-      const installed = await channel.request("runtime.install", installRequest);
+      const installed = await channel.request(
+        "runtime.install",
+        trusted
+          ? {
+            ...trusted.projectInstallation,
+            binding: channelBinding,
+          }
+          : installRequest,
+      );
       if (
         !installed || typeof installed !== "object" || Array.isArray(installed) ||
         Object.keys(installed).length !== 1 || installed.installed !== true
@@ -225,9 +296,67 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
         verifyHostedRuntimeSourceBinding(installation.source, description.value.source) !==
           undefined
       ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+      if (trusted) {
+        localRuntime = await session.runOwned(() =>
+          trustedRuntimeFactory!({
+            binding: channelBinding,
+            defaultTimeoutMs: Math.max(1, request.hardDeadlineAt - clock.now()),
+            installation: installRequest,
+            projectChannel: channel,
+            projectToolNames: trusted.projectInstallation.allowedToolNames,
+            toolLimits: operationInput.tools.limits,
+            sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
+            createGate(projectTools) {
+              const localOperations = buildBrokerOperations(
+                channelBinding,
+                session.signal,
+                {
+                  ...operationInput,
+                  tools: {
+                    ...operationInput.tools,
+                    limits: reserveExecutorToolMetadata(
+                      operationInput.tools.limits,
+                      projectTools.aliasMetadataBytes,
+                    ),
+                    sources: new Map([...operationInput.tools.sources, [projectTools.id, {
+                      source: projectTools,
+                      retired: session.settled,
+                      allowedToolNames: new Set(trusted.projectInstallation.allowedToolNames),
+                      projectContext: "skill",
+                      context: {
+                        ...trusted.projectInstallation.context,
+                        runIdBindsToolAuthorization: true,
+                      },
+                    }]]),
+                  },
+                },
+                installation,
+                allowedModelIds,
+                selectedModelId,
+              );
+              return createExecutorOperationGate({
+                binding: channelBinding,
+                signal: session.signal,
+                operations: localOperations,
+                preparationOperations: new Set([
+                  ...Object.values(executorStateOperations),
+                  executorInitialCheckpointsOperation,
+                ].filter((name) => localOperations.has(name))),
+              });
+            },
+            signal: session.signal,
+            runOwned: session.runOwned.bind(session),
+            requestSessionClose: () => {
+              void session.close("canceled");
+            },
+          })
+        );
+        gate = localRuntime.gate;
+      }
+      const executionChannel = localRuntime?.channel ?? channel;
       const prepared = parseRuntimePreparationData(
         getExecutorRuntimePrepareResultSchema(),
-        await channel.request("runtime.prepare", prepare),
+        await executionChannel.request("runtime.prepare", prepare),
       );
       if (!prepared.ok) {
         if (isExecutorRuntimePreparationFailureCode(prepared.code)) {
@@ -240,9 +369,9 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
       ) {
         throw new ExecutorRuntimePreparationError("EXECUTOR_RUNTIME_NOT_GRANTED");
       }
-      gate.markPrepared();
+      gate!.markPrepared();
       const remoteAgent = createExecutorHostedChatRuntimeAgent({
-        channel,
+        channel: executionChannel,
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
       });
       const agent: HostedChatRuntimeAgent = {
@@ -254,7 +383,9 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
           return await remoteAgent.stream(streamInput);
         },
       };
-      const settled = Promise.all([session.settled, gate.settled]).then(() => undefined);
+      const settled = Promise.all([session.settled, gate!.settled, localRuntime?.settled]).then(
+        () => undefined,
+      );
       return {
         definition: description.value.definition,
         modelId: prepared.value.modelId,
@@ -292,6 +423,70 @@ export function createManagedExecutorBroker(options: ManagedExecutorBrokerOption
     settled: pool.settled,
     start,
     shutdown: pool.shutdown.bind(pool),
+  };
+}
+
+function snapshotTrustedRuntime(
+  input: NonNullable<ManagedExecutorStartInput["trustedRuntime"]>,
+  installation: ExecutorRuntimeInstall,
+  operations: ManagedExecutorOperationInput,
+): {
+  projectInstallation: ExecutorProjectToolInstall;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+} {
+  const execution = installation.grant.execution;
+  if (
+    execution.kind !== "canonical" || execution.projectId === null ||
+    !installation.grant.remoteToolSourceIds.includes(EXECUTOR_PROJECT_TOOL_SOURCE_ID) ||
+    installation.grant.hostToolFacadeIds.includes(EXECUTOR_PROJECT_TOOL_SOURCE_ID) ||
+    operations.tools.sources.has(EXECUTOR_PROJECT_TOOL_SOURCE_ID) ||
+    input.sourceIntegrationPolicy === undefined
+  ) {
+    throw new TypeError("Trusted runtime project configuration is incomplete");
+  }
+  const projectInstallation = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), {
+    version: 1,
+    mode: "project-tools",
+    binding: installation.binding,
+    owner: installation.owner,
+    source: installation.source,
+    root: installation.root,
+    context: {
+      agentId: installation.grant.agentId,
+      projectId: execution.projectId,
+      runId: execution.runId,
+      ...(execution.userId === undefined ? {} : { userId: execution.userId }),
+      ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
+    },
+    allowedToolNames: input.projectToolNames,
+    maxCalls: operations.tools.maxCalls,
+    maxConcurrent: operations.tools.maxConcurrent,
+    limits: operations.tools.limits,
+  });
+  const limits = operations.tools.limits;
+  const totalTools = projectInstallation.allowedToolNames.length +
+    [...operations.tools.sources.values()].reduce(
+      (count, source) => count + source.allowedToolNames.size,
+      0,
+    );
+  if (
+    operations.tools.sources.size + 1 > limits.maxSources || totalTools > limits.maxTotalTools ||
+    projectInstallation.allowedToolNames.length > limits.maxToolsPerSource
+  ) {
+    throw new TypeError("Combined tool catalog exceeds the invocation limits");
+  }
+  if (
+    projectInstallation.allowedToolNames.some((name) =>
+      !installation.grant.allowedToolNames.includes(name)
+    )
+  ) {
+    throw new TypeError("Project tool authority exceeds the normalized invocation grant");
+  }
+  return {
+    projectInstallation,
+    sourceIntegrationPolicy: parseSourceIntegrationPolicyManifest(
+      snapshotOwnDataRecords(input.sourceIntegrationPolicy),
+    ),
   };
 }
 
@@ -455,6 +650,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
         executeTool: source.executeTool.bind(source),
       }),
       allowedToolNames: new Set(capability.allowedToolNames),
+      retired: capability.retired,
       context: Object.freeze({
         ...context,
         ...(context.publishDataEvent
@@ -481,7 +677,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
       sources,
       maxCalls: input.tools.maxCalls,
       maxConcurrent: input.tools.maxConcurrent,
-      ...(input.tools.limits ? { limits: { ...input.tools.limits } } : {}),
+      limits: executorToolLimits(input.tools.limits),
     },
     persistence: {
       ...(input.persistence.initialToolExposureCheckpoint

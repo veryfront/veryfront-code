@@ -11,9 +11,12 @@ const setHas = Set.prototype.has;
 const setDelete = Set.prototype.delete;
 const setClear = Set.prototype.clear;
 const setValues = Set.prototype.values;
+const setForEach = Set.prototype.forEach;
 const iteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
 const iteratorNext = Object.getPrototypeOf(new SetConstructor().values()).next;
 const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const isSafeInteger = Number.isSafeInteger;
+const maxSafeInteger = Number.MAX_SAFE_INTEGER;
 
 /** Internal selector set whose used operations do not consult mutable prototypes. */
 export function createPrivateSet<T>(values?: Iterable<T>): Set<T> {
@@ -52,4 +55,14 @@ export function createPrivateSet<T>(values?: Iterable<T>): Set<T> {
     for (const value of values) add(value);
   }
   return freeze(set);
+}
+
+/** Copy native membership without consulting a caller-replaceable iterator or method. */
+export function copyPrivateSet<T>(source: ReadonlySet<T>, maximum = maxSafeInteger): Set<T> {
+  if (!isSafeInteger(maximum) || maximum < 0 || apply(setSize, source, []) > maximum) {
+    throw new TypeError("Private set limit exceeded");
+  }
+  const result = createPrivateSet<T>();
+  apply(setForEach, source, [(value: T) => result.add(value)]);
+  return result;
 }

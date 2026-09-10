@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { it } from "#veryfront/testing/bdd.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
+import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { createExecutorChannel } from "../executor/channel.ts";
 import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.ts";
 import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
@@ -42,6 +43,7 @@ function channels(
   const toBroker = new TransformStream<Uint8Array, Uint8Array>();
   const toExecutor = new TransformStream<Uint8Array, Uint8Array>();
   let executions = 0;
+  const toolCalls: JsonValue[] = [];
   let writes = 0;
   const operations = new Map<string, ExecutorOperation>([
     ["persistence.initial-checkpoints", {
@@ -92,7 +94,8 @@ function channels(
     }],
     ["tool.execute", {
       mode: "stream",
-      async *handle() {
+      async *handle(input) {
+        toolCalls.push(input);
         executions++;
         yield { type: "result", result: "synthetic-result" };
       },
@@ -111,6 +114,7 @@ function channels(
   return {
     broker,
     executor,
+    toolCalls,
     get executions() {
       return executions;
     },
@@ -139,11 +143,65 @@ it("constructs model and host/remote tool facades only for the installed IDs", a
     assertEquals(read.inputSchemaJson, { type: "object", properties: {} });
     assertEquals(await read.execute!({}, { toolCallId: "call-1" }), "synthetic-result");
     assertEquals(pair.executions, 1);
+    const remote = facades.remoteToolSources.get("remote")!;
+    assertEquals((await remote.listTools()).length, 1);
+    assertEquals(await remote.executeTool("read", {}), "synthetic-result");
     await facades.cleanup();
     await assertRejects(async () => {
       await read.execute!({}, { toolCallId: "late" });
     });
-    assertEquals(pair.executions, 1);
+    await assertRejects(() => remote.listTools());
+    await assertRejects(() => remote.executeTool("read", {}));
+    assertEquals(pair.executions, 2);
+  } finally {
+    await pair.close();
+  }
+});
+
+it("snapshots project context source grants and forwards only each current call's skill fields", async () => {
+  const pair = channels();
+  const projectContextSources = new Set(["remote"]);
+  try {
+    const pending = createExecutorRuntimeFacades({
+      input: installation(),
+      channel: pair.executor,
+      signal: pair.executor.signal,
+      projectContextSources,
+    });
+    projectContextSources.clear();
+    projectContextSources.add("host");
+    const facades = await pending;
+    try {
+      const currentContexts: ToolExecutionContext[] = [
+        {
+          activeSkillId: "skill",
+          activeSkillToolAvailability: { hasActiveSkill: true, scripts: ["scripts/check.ts"] },
+        },
+        { activeSkillToolAvailability: { hasActiveSkill: false, references: [], scripts: [] } },
+        {},
+      ];
+      for (const current of currentContexts) {
+        await facades.remoteToolSources.get("remote")!.executeTool("read", {}, {
+          ...current,
+          authToken: "<TOKEN>",
+          userId: "caller-user",
+        });
+        const call = pair.toolCalls.at(-1);
+        assert(call && typeof call === "object" && !Array.isArray(call));
+        assertEquals<unknown>(
+          call.projectContext,
+          Object.keys(current).length ? current : undefined,
+        );
+        assertEquals(Object.hasOwn(call, "authToken"), false);
+        assertEquals(Object.hasOwn(call, "userId"), false);
+        await facades.hostTools.get("host")!.read!.execute!({}, current);
+        const hostCall = pair.toolCalls.at(-1);
+        assert(hostCall && typeof hostCall === "object" && !Array.isArray(hostCall));
+        assertEquals(Object.hasOwn(hostCall, "projectContext"), false);
+      }
+    } finally {
+      await facades.cleanup();
+    }
   } finally {
     await pair.close();
   }
@@ -164,6 +222,39 @@ it("rejects an incomplete or expanded tool source grant", async () => {
     } finally {
       await pair.close();
     }
+  }
+});
+
+it("rejects local source injection in place of a granted channel source", async () => {
+  const pair = channels(["host"]);
+  let localCalls = 0;
+  const pending = createExecutorRuntimeFacades(Object.assign({
+    input: installation(),
+    channel: pair.executor,
+    signal: pair.executor.signal,
+  }, {
+    localRemoteSources: [{
+      id: "remote",
+      async listTools() {
+        localCalls++;
+        return [];
+      },
+      async executeTool() {
+        localCalls++;
+        return null;
+      },
+    }],
+  }));
+  try {
+    await assertRejects(
+      () => pending,
+      TypeError,
+      "Executor tool sources do not match installation",
+    );
+    assertEquals(localCalls, 0);
+  } finally {
+    await pending.then((facades) => facades.cleanup(), () => {});
+    await pair.close();
   }
 });
 

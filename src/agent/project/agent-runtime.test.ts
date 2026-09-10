@@ -16,6 +16,7 @@ import {
   discoverProjectAgentRuntime as discoverProjectAgentRuntimeRaw,
   doesProjectAgentRuntimeAgentMatchSource,
   getProjectAgentRuntimeAgentIdCandidates,
+  getProjectAgentRuntimeInlineTools,
   resolveSingleProjectAgentRuntimeAgentId,
   runWithProjectAgentRuntime,
 } from "./agent-runtime.ts";
@@ -592,12 +593,30 @@ async function assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint(): Promi
         resolve(agentsDir, fileName),
         [
           'import { agent } from "veryfront/agent";',
+          ...(id === "reviewer"
+            ? [
+              'import { tool } from "veryfront/tool";',
+              'import { defineSchema } from "veryfront/schemas";',
+            ]
+            : []),
           "",
           "export default agent({",
           `  id: "${id}",`,
           `  name: "${name}",`,
           '  model: "openai/gpt-5.4",',
           `  system: "You are the ${name.toLowerCase()} agent.",`,
+          ...(id === "reviewer"
+            ? [
+              "  tools: {",
+              "    inline_lookup: tool({",
+              '      id: "inline_lookup",',
+              `      description: "${id} inline lookup",`,
+              "      inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),",
+              "      execute: ({ value }) => ({ value }),",
+              "    }),",
+              "  },",
+            ]
+            : []),
           "});",
           "",
         ].join("\n"),
@@ -636,6 +655,11 @@ async function assertMultiAgentProjectDiscoveryWithoutServiceEntrypoint(): Promi
 
     assertEquals([...result.agents.keys()].sort(), ["reviewer", "support"]);
     assertEquals([...result.tools.keys()].sort(), ["echo", "lookup"]);
+    assertEquals(
+      getProjectAgentRuntimeInlineTools(result, "reviewer").get("inline_lookup")?.description,
+      "reviewer inline lookup",
+    );
+    assertEquals(getProjectAgentRuntimeInlineTools(result, "support").size, 0);
     assertEquals(getProjectAgentRuntimeAgentIdCandidates(result), {
       codeAgentIds: ["reviewer", "support"],
       markdownAgentIds: [],

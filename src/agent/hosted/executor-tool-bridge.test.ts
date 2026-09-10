@@ -16,7 +16,10 @@ import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
-import { executorToolBytes } from "./executor-tool-schema.ts";
+import {
+  executorToolBytes,
+  throwExecutorToolFailure,
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 const binding = { allocationId: "allocation-test", generation: 1, invocationId: "invocation-test" };
 const definition: ToolDefinition = {
@@ -31,6 +34,7 @@ function fixture(
   sourceOverrides: Partial<RemoteToolSource> = {},
   overrides: Partial<Parameters<typeof createExecutorToolBroker>[0]> = {},
   context: ToolExecutionContext = { projectId: "project-test" },
+  capabilityOverrides: { retired?: Promise<void> } = {},
 ) {
   const lifetime = new AbortController();
   const source: RemoteToolSource = {
@@ -47,6 +51,7 @@ function fixture(
     source,
     allowedToolNames: new Set(["lookup"]),
     context,
+    ...capabilityOverrides,
   }]]);
   const operations = createExecutorToolBroker({
     scope: { binding, signal: lifetime.signal, assertActive() {} },
@@ -104,6 +109,111 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
+  it("requires an own data property to grant project context", async () => {
+    let executions = 0;
+    let grantReads = 0;
+    const source: RemoteToolSource = {
+      id: call.sourceId,
+      async listTools() {
+        return [definition];
+      },
+      async executeTool() {
+        executions++;
+        return null;
+      },
+    };
+    const capability = Object.assign(Object.create({ projectContext: "skill" }), {
+      source,
+      allowedToolNames: new Set(["lookup"]),
+      context: {},
+    });
+    const sources = new Map([[source.id, capability]]);
+    const f = fixture({}, { sources });
+    assertEquals(
+      await collect(f.stream("tool.execute", {
+        ...call,
+        projectContext: { activeSkillId: "forged" },
+      })),
+      [{ type: "failure" }],
+    );
+    assertEquals(executions, 0);
+    Object.defineProperty(capability, "projectContext", {
+      get() {
+        grantReads++;
+        return "skill";
+      },
+    });
+    assertThrows(() => fixture({}, { sources }), TypeError);
+    assertEquals(grantReads, 0);
+  });
+
+  it("rejects caller skill context for ordinary host capabilities and retains host-owned context", async () => {
+    const observed: ToolExecutionContext[] = [];
+    const trusted = { activeSkillId: "host-skill", projectId: "host-project" };
+    const f = fixture(
+      {
+        async executeTool(_name, _args, context) {
+          observed.push(context!);
+          return null;
+        },
+      },
+      {},
+      trusted,
+    );
+    const forged: JsonValue[] = [{}, { activeSkillId: "forged-skill" }];
+    for (const projectContext of forged) {
+      assertEquals(await collect(f.stream("tool.execute", { ...call, projectContext })), [
+        { type: "failure" },
+      ]);
+    }
+    assertEquals(observed.length, 0);
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      await facade.executeTool("lookup", {}, { activeSkillId: "ignored-caller-skill" });
+      assertEquals(observed.length, 1);
+      assertEquals(observed[0]!.activeSkillId, "host-skill");
+      assertEquals(observed[0]!.projectId, "host-project");
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("rejects extra authority inside project context before executing an opted-in capability", async () => {
+    let executions = 0;
+    const source: RemoteToolSource = {
+      id: call.sourceId,
+      async listTools() {
+        return [definition];
+      },
+      async executeTool() {
+        executions++;
+        return null;
+      },
+    };
+    const f = fixture({}, {
+      sources: new Map([[source.id, {
+        source,
+        allowedToolNames: new Set(["lookup"]),
+        context: {},
+        projectContext: "skill",
+      }]]),
+    });
+    const forged: JsonValue[] = [
+      { authToken: "<TOKEN>" },
+      { userId: "forged-user" },
+      { activeSkillToolAvailability: { authToken: "<TOKEN>" } },
+      { activeSkillToolAvailability: { scripts: ["../outside.ts"] } },
+    ];
+    for (const projectContext of forged) {
+      assertEquals(await collect(f.stream("tool.execute", { ...call, projectContext })), [
+        { type: "failure" },
+      ]);
+    }
+    assertEquals(executions, 0);
+  });
+
   it("completes void tools as null and preserves other falsy results without replay", async () => {
     for (const result of [undefined, null, false, 0, ""]) {
       let executions = 0;
@@ -411,6 +521,39 @@ describe("executor tool bridge", () => {
       assertThrows(() => fixture({}, { maxCalls: value }), TypeError);
       assertThrows(() => fixture({}, { maxConcurrent: value }), TypeError);
     }
+  });
+
+  it("releases admission after a confirmed terminal remote failure without waiting for retirement", async () => {
+    const retired = Promise.withResolvers<void>();
+    let executions = 0;
+    const f = fixture(
+      {
+        async executeTool() {
+          executions++;
+          if (executions === 1) {
+            throwExecutorToolFailure({ type: "failure", code: "PERMISSION_DENIED" }, true);
+          }
+          return { recovered: true };
+        },
+      },
+      { maxConcurrent: 1 },
+      {},
+      { retired: retired.promise },
+    );
+
+    assertEquals(f.sources.get("source-test")!.retired, retired.promise);
+    const first = await collect(f.stream("tool.execute", call));
+    assertEquals(first, [{
+      type: "failure",
+      code: "PERMISSION_DENIED",
+    }]);
+    const second = await collect(f.stream("tool.execute", call));
+    assertEquals(second, [{
+      type: "result",
+      result: { recovered: true },
+    }]);
+    assertEquals(executions, 2);
+    retired.resolve();
   });
 
   it("streams a catalog larger than one frame and preserves schema property names", async () => {

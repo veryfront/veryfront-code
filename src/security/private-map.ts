@@ -17,6 +17,8 @@ const mapEntries = Map.prototype.entries;
 const iteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
 const iteratorNext = Object.getPrototypeOf(new MapConstructor().values()).next;
 const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const isSafeInteger = Number.isSafeInteger;
+const maxSafeInteger = Number.MAX_SAFE_INTEGER;
 
 function protectEntry<K, V>(entry: [K, V]): [K, V] {
   defineOwnDataProperty(entry, iteratorSymbol, () => {
@@ -85,4 +87,17 @@ export function createPrivateMap<K, V>(): Map<K, V> {
   const sizeDescriptor = { __proto__: null, get: () => apply(mapSize, map, []) as number };
   defineProperty(map, "size", sizeDescriptor);
   return freeze(map);
+}
+
+/** Copy native entries without consulting a caller-replaceable iterator or method. */
+export function copyPrivateMap<K, V>(
+  source: ReadonlyMap<K, V>,
+  maximum = maxSafeInteger,
+): Map<K, V> {
+  if (!isSafeInteger(maximum) || maximum < 0 || apply(mapSize, source, []) > maximum) {
+    throw new TypeError("Private map limit exceeded");
+  }
+  const result = createPrivateMap<K, V>();
+  apply(mapForEach, source, [(value: V, key: K) => result.set(key, value)]);
+  return result;
 }
