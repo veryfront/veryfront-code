@@ -7,9 +7,22 @@
  * the envelope and row schemas, and one payload schema per type. Import it
  * instead of writing the names or shapes out again.
  *
- * Schemas materialize through the registered `SchemaValidator`, so a
- * standalone consumer must register one (`@veryfront/ext-schema-zod`) before
- * the first `get*Schema()` call. Inside a Veryfront app, bootstrap does it.
+ * Every schema here is lazy and materializes through the registered
+ * `SchemaValidator` contract, so a consumer outside a Veryfront app must
+ * register one before the first `get*Schema()` call or
+ * `parseTypedRunEventRow`. Registration is idempotent and takes one line at
+ * startup:
+ *
+ * ```ts
+ * import { register } from "veryfront/extensions/contracts";
+ * import { createZodAdapter } from "@veryfront/ext-schema-zod";
+ *
+ * register("SchemaValidator", createZodAdapter());
+ * ```
+ *
+ * Inside a Veryfront app, bootstrap does this before handlers run. This module
+ * ships no fallback validator: calling a getter with nothing registered throws
+ * an error naming the contract and this registration call.
  *
  * @module run-events
  *
@@ -36,6 +49,12 @@
  * }
  * ```
  */
+
+export {
+  assertRunEventSchemaValidator,
+  RUN_EVENT_SCHEMA_VALIDATOR_CONTRACT,
+  RUN_EVENT_SCHEMA_VALIDATOR_PACKAGE,
+} from "./schema-validator.ts";
 
 export {
   type ConversationTypedRunEventRow,

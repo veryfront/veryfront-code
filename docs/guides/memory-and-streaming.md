@@ -353,9 +353,23 @@ What the module exports:
 - One payload schema per type, such as `getUrlCitedPayloadSchema`, plus
   `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime.
 
-Every schema materializes through the registered `SchemaValidator`. Inside a
-Veryfront app, bootstrap registers it. A standalone script must register one
-itself before the first `get*Schema()` call.
+Every schema is lazy and materializes through the registered `SchemaValidator`
+contract. Inside a Veryfront app, bootstrap registers it before handlers run.
+Anywhere else, including a browser bundle that reads run events directly,
+register one yourself before the first `get*Schema()` call or
+`parseTypedRunEventRow`:
+
+```ts
+import { register } from "veryfront/extensions/contracts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+register("SchemaValidator", createZodAdapter());
+```
+
+Registration is idempotent, so calling it once at startup is enough and calling
+it again is safe. The module ships no fallback validator: with nothing
+registered, a getter throws an error naming the `SchemaValidator` contract and
+this registration call.
 
 `event_type` is validated as a non-empty string, not as the closed catalog, so
 a type the API adds after your build still parses. Narrow it with

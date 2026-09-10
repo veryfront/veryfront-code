@@ -12,7 +12,10 @@
  * untyped `title`, an absent `sourceId`) so that a frame the legacy `Custom`
  * wrapper would have rendered still decodes; that leniency belongs to the
  * decoder and must not be copied here, because a payload these schemas accept
- * is a payload the API's append route accepts.
+ * is a payload the API's append route accepts. The decoder's inline schemas
+ * are deliberately looser rather than accidentally different, and a later
+ * change may narrow that gap by having the decoder consume these catalog
+ * shapes and apply its own leniency on top.
  *
  * The sixteen control plane types (`AGENT_RUN_*`) have no getter. Their shapes
  * are owned by the API's own types and sanitized before they ever reach a
@@ -22,8 +25,8 @@
  * @module run-events/payload
  */
 
-import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { defineRunEventSchema } from "./schema-validator.ts";
 import type { RunEventType } from "./vocabulary.ts";
 
 /**
@@ -60,12 +63,12 @@ function unknownRecord(v: SchemaValidator): Schema<Record<string, unknown>> {
 }
 
 /** Payload of a run that started. */
-export const getRunStartedPayloadSchema = defineSchema((v) =>
+export const getRunStartedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "RUN_STARTED", { runId: optionalString(v) })
 );
 
 /** Payload of a run that finished, carrying provider and usage metadata. */
-export const getRunFinishedPayloadSchema = defineSchema((v) =>
+export const getRunFinishedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "RUN_FINISHED", {
     runId: optionalString(v),
     metadata: unknownRecord(v).optional(),
@@ -73,7 +76,7 @@ export const getRunFinishedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a run that failed. */
-export const getRunErrorPayloadSchema = defineSchema((v) =>
+export const getRunErrorPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "RUN_ERROR", {
     runId: optionalString(v),
     code: optionalString(v),
@@ -86,7 +89,7 @@ export const getRunErrorPayloadSchema = defineSchema((v) =>
  * Payload that opens an assistant message. `contentId` is required: the API's
  * public normalization rejects a row without one rather than degrading it.
  */
-export const getTextMessageStartPayloadSchema = defineSchema((v) =>
+export const getTextMessageStartPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TEXT_MESSAGE_START", {
     messageId: requiredString(v),
     contentId: requiredString(v),
@@ -95,7 +98,7 @@ export const getTextMessageStartPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload carrying one text delta. Apply deltas in event id order. */
-export const getTextMessageContentPayloadSchema = defineSchema((v) =>
+export const getTextMessageContentPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TEXT_MESSAGE_CONTENT", {
     messageId: requiredString(v),
     contentId: optionalString(v),
@@ -104,7 +107,7 @@ export const getTextMessageContentPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload that closes an assistant message. */
-export const getTextMessageEndPayloadSchema = defineSchema((v) =>
+export const getTextMessageEndPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TEXT_MESSAGE_END", {
     messageId: requiredString(v),
     contentId: optionalString(v),
@@ -112,7 +115,7 @@ export const getTextMessageEndPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload that opens a tool call. `parentMessageId` names the assistant turn. */
-export const getToolCallStartPayloadSchema = defineSchema((v) =>
+export const getToolCallStartPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_START", {
     toolCallId: requiredString(v),
     toolCallName: requiredString(v),
@@ -121,17 +124,17 @@ export const getToolCallStartPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload carrying one tool argument delta. */
-export const getToolCallArgsPayloadSchema = defineSchema((v) =>
+export const getToolCallArgsPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_ARGS", { toolCallId: requiredString(v), delta: v.string() })
 );
 
 /** Payload carrying one streamed tool chunk. */
-export const getToolCallChunkPayloadSchema = defineSchema((v) =>
+export const getToolCallChunkPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_CHUNK", { toolCallId: requiredString(v), delta: v.string() })
 );
 
 /** Payload that closes a tool call's argument stream. */
-export const getToolCallEndPayloadSchema = defineSchema((v) =>
+export const getToolCallEndPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_END", { toolCallId: requiredString(v) })
 );
 
@@ -139,7 +142,7 @@ export const getToolCallEndPayloadSchema = defineSchema((v) =>
  * Payload of a tool result. `isError` is `null` when no producer evidence
  * exists; the API never defaults it to false.
  */
-export const getToolCallResultPayloadSchema = defineSchema((v) =>
+export const getToolCallResultPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_RESULT", {
     toolCallId: requiredString(v),
     messageId: optionalString(v),
@@ -150,7 +153,7 @@ export const getToolCallResultPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload carrying the whole client state. */
-export const getStateSnapshotPayloadSchema = defineSchema((v) =>
+export const getStateSnapshotPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "STATE_SNAPSHOT", { snapshot: unknownRecord(v) })
 );
 
@@ -158,17 +161,17 @@ export const getStateSnapshotPayloadSchema = defineSchema((v) =>
  * Payload carrying a state change. The delta stays `unknown`: the public
  * profile accepts both a legacy object delta and a JSON Patch operation array.
  */
-export const getStateDeltaPayloadSchema = defineSchema((v) =>
+export const getStateDeltaPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "STATE_DELTA", { delta: v.unknown() })
 );
 
 /** Payload carrying the authoritative message list for a stream's start. */
-export const getMessagesSnapshotPayloadSchema = defineSchema((v) =>
+export const getMessagesSnapshotPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "MESSAGES_SNAPSHOT", { messages: v.array(unknownRecord(v)) })
 );
 
 /** Payload that opens a step, or a runtime turn when `runtime` is set. */
-export const getStepStartedPayloadSchema = defineSchema((v) =>
+export const getStepStartedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "STEP_STARTED", {
     stepId: optionalString(v),
     stepName: optionalString(v),
@@ -177,7 +180,7 @@ export const getStepStartedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload that closes a step, or a runtime turn when `runtime` is set. */
-export const getStepFinishedPayloadSchema = defineSchema((v) =>
+export const getStepFinishedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "STEP_FINISHED", {
     stepId: optionalString(v),
     stepName: optionalString(v),
@@ -187,17 +190,17 @@ export const getStepFinishedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload that opens a reasoning block. */
-export const getReasoningStartPayloadSchema = defineSchema((v) =>
+export const getReasoningStartPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_START", { messageId: optionalString(v) })
 );
 
 /** Payload that opens a reasoning message. */
-export const getReasoningMessageStartPayloadSchema = defineSchema((v) =>
+export const getReasoningMessageStartPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_MESSAGE_START", { messageId: requiredString(v) })
 );
 
 /** Payload carrying one reasoning delta. */
-export const getReasoningMessageContentPayloadSchema = defineSchema((v) =>
+export const getReasoningMessageContentPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_MESSAGE_CONTENT", {
     messageId: requiredString(v),
     delta: v.string(),
@@ -205,12 +208,12 @@ export const getReasoningMessageContentPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload that closes a reasoning message. */
-export const getReasoningMessageEndPayloadSchema = defineSchema((v) =>
+export const getReasoningMessageEndPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_MESSAGE_END", { messageId: requiredString(v) })
 );
 
 /** Payload carrying one reasoning content delta. */
-export const getReasoningContentPayloadSchema = defineSchema((v) =>
+export const getReasoningContentPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_CONTENT", {
     messageId: optionalString(v),
     delta: v.string(),
@@ -218,24 +221,26 @@ export const getReasoningContentPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload that closes a reasoning block. */
-export const getReasoningEndPayloadSchema = defineSchema((v) =>
+export const getReasoningEndPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "REASONING_END", { messageId: optionalString(v) })
 );
 
 /** Payload carrying an activity snapshot. Reserved: no producer emits it yet. */
-export const getActivitySnapshotPayloadSchema = defineSchema((v) =>
+export const getActivitySnapshotPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "ACTIVITY_SNAPSHOT", {})
 );
 
 /** Payload carrying an activity delta. Reserved: no producer emits it yet. */
-export const getActivityDeltaPayloadSchema = defineSchema((v) => variant(v, "ACTIVITY_DELTA", {}));
+export const getActivityDeltaPayloadSchema = defineRunEventSchema((v) =>
+  variant(v, "ACTIVITY_DELTA", {})
+);
 
 /**
  * Payload of a tool call status transition (`pending_input`,
  * `streaming_input`, `in_progress`, `completed`, `failed`). `toolCallName` is
  * null when the runtime reported a status before naming the call.
  */
-export const getToolCallStatusChangedPayloadSchema = defineSchema((v) =>
+export const getToolCallStatusChangedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_STATUS_CHANGED", {
     toolCallId: requiredString(v),
     status: requiredString(v),
@@ -244,21 +249,21 @@ export const getToolCallStatusChangedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a form or approval input request opened for the run. */
-export const getInputRequestCreatedPayloadSchema = defineSchema((v) =>
+export const getInputRequestCreatedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "INPUT_REQUEST_CREATED", {
     inputRequest: v.object({ id: requiredString(v) }).passthrough(),
   })
 );
 
 /** Payload of an open input request that changed. */
-export const getInputRequestUpdatedPayloadSchema = defineSchema((v) =>
+export const getInputRequestUpdatedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "INPUT_REQUEST_UPDATED", {
     inputRequest: v.object({ id: requiredString(v) }).passthrough(),
   })
 );
 
 /** Payload of an `invoke_agent` child run's lifecycle transition. */
-export const getChildRunStatusChangedPayloadSchema = defineSchema((v) =>
+export const getChildRunStatusChangedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "CHILD_RUN_STATUS_CHANGED", {
     toolCallId: requiredString(v),
     childRunId: requiredString(v),
@@ -271,7 +276,7 @@ export const getChildRunStatusChangedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a run parked waiting for integration authentication. Live only. */
-export const getRunParkedPayloadSchema = defineSchema((v) =>
+export const getRunParkedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "RUN_PARKED", {
     runId: requiredString(v),
     reason: requiredString(v),
@@ -280,12 +285,12 @@ export const getRunParkedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload carrying captured runtime execution logs. */
-export const getRunLogCapturedPayloadSchema = defineSchema((v) =>
+export const getRunLogCapturedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "RUN_LOG_CAPTURED", { logs: v.string() })
 );
 
 /** Payload of a live stream heartbeat. Never persisted. */
-export const getStreamHeartbeatEmittedPayloadSchema = defineSchema((v) =>
+export const getStreamHeartbeatEmittedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "STREAM_HEARTBEAT_EMITTED", {
     runId: requiredString(v),
     lastEventId: v.number().int().nonnegative(),
@@ -293,7 +298,7 @@ export const getStreamHeartbeatEmittedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a URL citation attached to assistant output. */
-export const getUrlCitedPayloadSchema = defineSchema((v) =>
+export const getUrlCitedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "URL_CITED", {
     url: requiredString(v),
     sourceId: requiredString(v),
@@ -302,7 +307,7 @@ export const getUrlCitedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a document citation attached to assistant output. */
-export const getDocumentCitedPayloadSchema = defineSchema((v) =>
+export const getDocumentCitedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "DOCUMENT_CITED", {
     mediaType: requiredString(v),
     sourceId: requiredString(v),
@@ -312,7 +317,7 @@ export const getDocumentCitedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a file reference the run emitted. */
-export const getFileAttachedPayloadSchema = defineSchema((v) =>
+export const getFileAttachedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "FILE_ATTACHED", {
     mediaType: requiredString(v),
     url: optionalString(v),
@@ -321,7 +326,7 @@ export const getFileAttachedPayloadSchema = defineSchema((v) =>
 );
 
 /** Payload of a file change set a runtime proposed or applied. */
-export const getFilesChangedPayloadSchema = defineSchema((v) =>
+export const getFilesChangedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "FILES_CHANGED", {
     id: nullableString(v),
     status: nullableString(v),
@@ -334,7 +339,7 @@ export const getFilesChangedPayloadSchema = defineSchema((v) =>
  * diagnostics. `value` is unconstrained JSON: this is the catch-all the
  * runtime context snapshot and the codex thread and session events use.
  */
-export const getRuntimeEventRecordedPayloadSchema = defineSchema((v) =>
+export const getRuntimeEventRecordedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "RUNTIME_EVENT_RECORDED", {
     runtime: requiredString(v),
     kind: requiredString(v),
@@ -347,7 +352,7 @@ export const getRuntimeEventRecordedPayloadSchema = defineSchema((v) =>
  * `originalType` and `raw` carry what the row actually held.
  */
 // legacy: removed in Phase F -- nothing projects to UNKNOWN once CUSTOM rows stop existing.
-export const getUnknownRunEventPayloadSchema = defineSchema((v) =>
+export const getUnknownRunEventPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "UNKNOWN", {
     originalType: requiredString(v),
     name: nullableString(v),

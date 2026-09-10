@@ -10,8 +10,8 @@
  * @module run-events/envelope
  */
 
-import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { defineRunEventSchema } from "./schema-validator.ts";
 import { RUN_EVENT_CLASSES } from "./vocabulary.ts";
 
 /**
@@ -27,7 +27,7 @@ import { RUN_EVENT_CLASSES } from "./vocabulary.ts";
  * heartbeat, a synthetic terminal frame). Every stored row has one, and it is
  * the cursor value to resume from.
  */
-export const getRunEventEnvelopeSchema = defineSchema((v) =>
+export const getRunEventEnvelopeSchema = defineRunEventSchema((v) =>
   v.object({
     event_id: v.number().int().nonnegative().nullable(),
     event_type: v.string().min(1),
@@ -58,7 +58,7 @@ export type RunEventEnvelope = InferSchema<ReturnType<typeof getRunEventEnvelope
  * strictly at this level would reject rows the contract says to keep. Use
  * `RUN_EVENT_PAYLOAD_SCHEMAS` or a per-type getter for the narrow check.
  */
-export const getTypedRunEventRowSchema = defineSchema((v) =>
+export const getTypedRunEventRowSchema = defineRunEventSchema((v) =>
   getRunEventEnvelopeSchema().extend({
     payload: v.object({ type: v.string().min(1) }).passthrough(),
   })
@@ -75,7 +75,7 @@ export type TypedRunEventRow = InferSchema<ReturnType<typeof getTypedRunEventRow
  * spelling; the run-scoped route and the SSE frames use `payload`.
  */
 // legacy: removed in Phase F -- the `event` key belongs to the pre-cutover conversation row.
-export const getConversationTypedRunEventRowSchema = defineSchema((v) =>
+export const getConversationTypedRunEventRowSchema = defineRunEventSchema((v) =>
   getRunEventEnvelopeSchema().extend({
     event: v.object({ type: v.string().min(1) }).passthrough(),
   })
