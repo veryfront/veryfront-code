@@ -102,6 +102,8 @@ an optimization.
   profiling is not an offline or hermetic benchmark. Generated projects and
   runtime caches are removed after each trial. Dependency resolution uses the
   frozen lockfile and normal Deno cache where the runtime supports them.
+- HTTP workers enforce a 100-second deadline and terminate stalled clients so
+  fixture cleanup runs before the runner's 120-second process timeout.
 - HTTP workers allow subprocesses for the separate Deno client and the runtime's
   compiler executables, whose locations depend on the platform and dependency
   cache. They receive no FFI permission. Run these repository-owned fixtures in

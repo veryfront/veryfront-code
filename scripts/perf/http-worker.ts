@@ -51,6 +51,14 @@ async function prepareFixture() {
 
 let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
 let child: Deno.ChildProcess | undefined;
+const deadline = new AbortController();
+// Leave cleanup time before the runner's 120-second process timeout.
+const timeout = setTimeout(() => {
+  deadline.abort(new Error("HTTP performance client deadline expired"));
+  try {
+    child?.kill("SIGKILL");
+  } catch { /* Already exited. */ }
+}, 100000);
 const session = new Session();
 const post = (method: string) =>
   new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -95,6 +103,7 @@ try {
   await server.ready;
   const startupMs = performance.now() - started;
   if (!port) throw new Error("HTTP fixture did not bind a port");
+  deadline.signal.throwIfAborted();
   child = new Deno.Command(Deno.execPath(), {
     args: [
       "run",
@@ -115,7 +124,7 @@ try {
   const writer = child.stdin.getWriter();
   let cpuStart = cpuUsage();
   let measurement: Record<string, unknown> | undefined;
-  for await (const message of readMessages(child.stdout)) {
+  for await (const message of readMessages(child.stdout, deadline.signal)) {
     if (message.stage === "ready") {
       cpuStart = cpuUsage();
       await writer.write(encodeMessage({ stage: "measure" }));
@@ -153,6 +162,7 @@ try {
   }
   await Deno.stdout.write(encodeMessage(measurement));
 } finally {
+  clearTimeout(timeout);
   session.disconnect();
   try {
     child?.kill("SIGKILL");
