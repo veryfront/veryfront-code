@@ -203,6 +203,13 @@ function runtimeCwd(): string {
 
 export function portableNormalize(path: string, windows: boolean): string {
   if (path === "") return ".";
+  // Most host filesystem paths are already canonical POSIX paths. Avoid
+  // splitting and rebuilding them; traversal, duplicate separators, backslashes,
+  // trailing separators, and Windows roots keep the full normalization path.
+  if (
+    !windows && path[0] === "/" && path[path.length - 1] !== "/" &&
+    matches(/[\\]|\/\/|\/\.{1,2}(?:\/|$)/, path) === null
+  ) return path;
 
   const root = analyzeRoot(path, windows);
   const tail = arrayJoin(normalizeTail(root.rest, root.absolute), "/");
@@ -310,9 +317,26 @@ export function portableResolve(
   paths: readonly string[],
   windows: boolean,
 ): string {
-  let resolved = runtimeCwd();
+  // A fully qualified segment discards everything to its left, including cwd.
+  // Windows root-relative and drive-relative segments still need the preceding
+  // drive, so only a root with a device can start resolution on Windows.
+  let resolved: string | undefined;
+  let start = 0;
+  for (let index = paths.length - 1; index >= 0; index--) {
+    const path = paths[index]!;
+    const root = windows ? analyzeRoot(path, true) : undefined;
+    const qualified = windows
+      ? root!.absolute && root!.device !== ""
+      : path[0] === "/" || path[0] === "\\";
+    if (qualified) {
+      resolved = toPortableSeparators(path);
+      start = index + 1;
+      break;
+    }
+  }
+  resolved ??= runtimeCwd();
 
-  for (let index = 0; index < paths.length; index++) {
+  for (let index = start; index < paths.length; index++) {
     const rawPath = paths[index]!;
     if (rawPath.length === 0) continue;
 
