@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   ConversationRunEventEncoder,
@@ -8,7 +8,10 @@ import {
   normalizeEncodedConversationRunEvents,
   serializeConversationToolResultContent,
 } from "./run-events.ts";
-import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-normalization.ts";
+import {
+  getConversationRunEventJsonByteLength,
+  MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+} from "./run-event-normalization.ts";
 
 describe("agent/conversation-run-events", () => {
   it("stores a textual rendering for tool output JSON cannot encode", () => {
@@ -201,24 +204,124 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
-  it("encodes data-* chunks as custom events", () => {
+  it("encodes native data-* chunks as native durable records", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(
       encoder.encode({
         type: "data-tool-call-status",
-        data: { toolCallId: "tc-1", status: "pending_input" },
+        data: { toolCallId: "tc-1", toolCallName: "create_file", status: "pending_input" },
       }),
       [
         {
-          type: conversationRunEventTypes.custom,
-          name: "tool-call-status",
-          value: { toolCallId: "tc-1", status: "pending_input" },
+          type: conversationRunEventTypes.toolCallStatusChanged,
+          toolCallId: "tc-1",
+          status: "pending_input",
+          toolCallName: "create_file",
         },
       ],
     );
   });
 
-  it("encodes source documents as durable custom events", () => {
+  it("carries tool result, error, and argument fields through a native tool-call-status record", () => {
+    // The legacy `Custom` wrapper passed the whole value through unchanged, and
+    // src/eval/agent-service.ts's applyToolCallStatusEvent still reads these
+    // fields off the native record when a standard tool result is absent.
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "data-tool-call-status",
+        data: {
+          toolCallId: "tc-1",
+          toolCallName: "write",
+          status: "completed",
+          arguments: { path: "file.txt" },
+          result: { ok: false },
+          error: { message: "write denied" },
+          exitCode: 1,
+        },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStatusChanged,
+          toolCallId: "tc-1",
+          status: "completed",
+          toolCallName: "write",
+          arguments: { path: "file.txt" },
+          result: { ok: false },
+          error: { message: "write denied" },
+          exitCode: 1,
+        },
+      ],
+    );
+  });
+
+  it("encodes native child-run lifecycle chunks as native durable records", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "data-veryfront.invoke_agent.lifecycle",
+        data: {
+          toolCallId: "toolu_child_1",
+          childRunId: "run_child_1",
+          status: "running",
+        },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.childRunStatusChanged,
+          toolCallId: "toolu_child_1",
+          childRunId: "run_child_1",
+          status: "running",
+        },
+      ],
+    );
+  });
+
+  it("encodes native runtime event chunks as native durable records", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "data-veryfront.runtime_context",
+        data: {
+          currentTimeUtc: "2026-09-09T00:00:00.000Z",
+          currentDateUtc: "2026-09-09",
+          runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+        },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.runtimeEventRecorded,
+          runtime: "veryfront",
+          kind: "runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
+        },
+      ],
+    );
+  });
+
+  it("keeps state chunks and unknown data names custom", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({ type: "data-state-delta", data: { ops: [] } }),
+      [
+        {
+          type: conversationRunEventTypes.custom,
+          name: "state-delta",
+          value: { ops: [] },
+        },
+      ],
+    );
+    assertEquals(
+      encoder.encode({ type: "data-foo", data: { a: 1 } }),
+      [{ type: conversationRunEventTypes.custom, name: "foo", value: { a: 1 } }],
+    );
+  });
+
+  it("encodes source documents as native document citations", () => {
     const encoder = new ConversationRunEventEncoder();
     const path = "knowledge/knowledge-ingest-20260723131451088-source.md";
 
@@ -231,49 +334,98 @@ describe("agent/conversation-run-events", () => {
         filename: path,
       }),
       [{
-        type: conversationRunEventTypes.custom,
-        name: "source-document",
-        value: {
-          type: "source-document",
-          sourceId: path,
-          mediaType: "text/markdown",
-          title: path,
-          filename: path,
-        },
+        type: conversationRunEventTypes.documentCited,
+        sourceId: path,
+        mediaType: "text/markdown",
+        title: path,
+        filename: path,
       }],
     );
   });
 
-  it("encodes source URLs as durable custom events", () => {
+  it("encodes source URLs as native URL citations", () => {
     const encoder = new ConversationRunEventEncoder();
-    const sourceUrl = {
-      type: "source-url" as const,
-      sourceId: "web-1",
-      url: "https://example.com/reference",
-      title: "Reference",
-    };
 
-    assertEquals(encoder.encode(sourceUrl), [{
-      type: conversationRunEventTypes.custom,
-      name: "source-url",
-      value: sourceUrl,
-    }]);
+    assertEquals(
+      encoder.encode({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      }),
+      [{
+        type: conversationRunEventTypes.urlCited,
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      }],
+    );
   });
 
-  it("encodes files as durable custom events", () => {
+  it("encodes files as native file attachments", () => {
     const encoder = new ConversationRunEventEncoder();
-    const file = {
-      type: "file" as const,
-      url: "https://cdn.example.com/report.pdf",
-      mediaType: "application/pdf",
-      filename: "report.pdf",
-    };
 
-    assertEquals(encoder.encode(file), [{
-      type: conversationRunEventTypes.custom,
-      name: "file",
-      value: file,
-    }]);
+    assertEquals(
+      encoder.encode({
+        type: "file",
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      }),
+      [{
+        type: conversationRunEventTypes.fileAttached,
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      }],
+    );
+  });
+
+  it("names the parent message on tool records inside an open message", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+    assertEquals(
+      encoder.encode({
+        type: "data-tool-call-status",
+        data: { toolCallId: "tc-1", toolCallName: "create_file", status: "streaming_input" },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStatusChanged,
+          toolCallId: "tc-1",
+          status: "streaming_input",
+          toolCallName: "create_file",
+          parentMessageId: "assistant-1",
+        },
+      ],
+    );
+    // The API derives tool spans from the rows it stores, and these are those
+    // rows, so the start record names its turn too.
+    assertEquals(
+      encoder.encode({ type: "tool-input-start", toolCallId: "tc-1", toolName: "create_file" }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStart,
+          toolCallId: "tc-1",
+          toolCallName: "create_file",
+          parentMessageId: "assistant-1",
+        },
+      ],
+    );
+  });
+
+  it("leaves a tool call start outside any message unchanged", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({ type: "tool-input-start", toolCallId: "tc-1", toolName: "create_file" }),
+      [
+        {
+          type: conversationRunEventTypes.toolCallStart,
+          toolCallId: "tc-1",
+          toolCallName: "create_file",
+        },
+      ],
+    );
   });
 
   it("gives an unresolved provider-executed tool call a durable terminal result", () => {
@@ -501,6 +653,81 @@ describe("agent/conversation-run-events", () => {
       contentParts.every((event) => event.elapsedMs === 250),
       true,
       "every split part keeps the elapsed of the event it came from",
+    );
+  });
+
+  it("keeps an oversized native file record valid by truncating its url, not its required fields", () => {
+    // An inline `data:` url can push a FILE_ATTACHED record over the byte
+    // budget. The generic summary this used to fall through to drops
+    // `mediaType`, which the API catalog requires, and fails append.
+    const events = [{
+      type: "file",
+      url: "data:image/png;base64," + "A".repeat(250 * 1024),
+      mediaType: "image/png",
+    }];
+    const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+    assertExists(normalized);
+
+    assertEquals(normalized.type, conversationRunEventTypes.fileAttached);
+    assertEquals(normalized.mediaType, "image/png");
+    assertEquals(
+      typeof normalized.url === "string" && (normalized.url as string).length < 250 * 1024,
+      true,
+      "the oversized url must be truncated",
+    );
+  });
+
+  it("re-derives sourceId from the truncated url when a URL_CITED citation had none of its own", () => {
+    // M1: buildUrlCitedEvent falls back to sourceId = url when the chunk has
+    // no source id. If that url is the oversized value, truncating url alone
+    // leaves sourceId mirroring the untouched oversized string, so the
+    // record stays over the limit and degrades to the CUSTOM omission event
+    // -- lossier than it needs to be.
+    const oversizedUrl = "data:image/png;base64," + "A".repeat(250 * 1024);
+    const events = [{ type: "source-url", url: oversizedUrl }];
+    const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+    assertExists(normalized);
+
+    assertEquals(
+      normalized.type,
+      conversationRunEventTypes.urlCited,
+      "the citation must survive as URL_CITED, not degrade to the omission event",
+    );
+    assertEquals(
+      typeof normalized.url === "string" && (normalized.url as string).length < 250 * 1024,
+      true,
+      "the oversized url must be truncated",
+    );
+    assertEquals(
+      normalized.sourceId,
+      normalized.url,
+      "sourceId must be re-derived from the truncated url, not left mirroring the untruncated one",
+    );
+    assertEquals(
+      getConversationRunEventJsonByteLength(normalized) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
+    );
+  });
+
+  it("does not attempt to truncate an oversized DOCUMENT_CITED citation's absent url field", () => {
+    // M2: ChatSourceDocumentUiPart has no url field, so DOCUMENT_CITED always
+    // falls to the always-valid omission event for an oversized record --
+    // dropped from the url-truncation case rather than left to fail its
+    // `typeof event.url === "string"` check, since the two behave
+    // identically.
+    const events = [{
+      type: "source-document",
+      sourceId: "doc-1",
+      mediaType: "text/markdown",
+      title: "A".repeat(250 * 1024),
+    }];
+    const [normalized] = normalizeEncodedConversationRunEvents(events as never);
+    assertExists(normalized);
+
+    assertEquals(normalized.type, conversationRunEventTypes.custom);
+    assertEquals(
+      getConversationRunEventJsonByteLength(normalized) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+      true,
     );
   });
 });

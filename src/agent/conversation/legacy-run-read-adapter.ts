@@ -7,7 +7,117 @@ import {
   type StreamProtocolEvent,
   type StreamReducerState,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import { NATIVE_RUN_EVENTS, type NativeRunEventDefinition } from "../ag-ui/native-run-events.ts";
 import type { StreamProtocolVersion } from "./durable-contracts.ts";
+
+const NATIVE_STORED_TYPE_TO_LEGACY: ReadonlyMap<string, NativeRunEventDefinition> = new Map(
+  NATIVE_RUN_EVENTS.map((definition) => [definition.storedType as string, definition]),
+);
+
+// Which native events carry their CUSTOM twin's whole original chunk (type
+// field included) as the value, rather than a synthesized shape. That split
+// is a domain fact about each builder (buildUrlCitedEvent,
+// buildDocumentCitedEvent, and buildFileAttachedEvent all destructure a
+// source chunk), not something recorded on NativeRunEventDefinition itself,
+// so it cannot be derived from NATIVE_RUN_EVENTS without adding a field to
+// that module. Keep this trio in sync with those three builders if a new
+// citation- or file-shaped native event is ever added.
+const NATIVE_CITATION_AND_FILE_STORED_TYPES: ReadonlySet<string> = new Set([
+  "URL_CITED",
+  "DOCUMENT_CITED",
+  "FILE_ATTACHED",
+]);
+
+// Stamped onto every durable event's own top level -- native records
+// included -- by both writers: the version 2 writer's `publish()`
+// (lifecycle-run-event-adapter.ts) adds the five protocol envelope fields,
+// and the version 1 `ConversationRunEventEncoder.stampElapsed()`
+// (run-events.ts), which also builds the native durable records for
+// TOOL_CALL_STATUS_CHANGED/URL_CITED/DOCUMENT_CITED/FILE_ATTACHED, adds
+// `elapsedMs`/`emittedAt`. A CUSTOM record never leaks any of these into its
+// `value` because that value is nested; a native record's payload sits at
+// the same level as these, so they must be stripped explicitly here or they
+// would leak into the rebuilt CUSTOM value.
+const DURABLE_ENVELOPE_KEYS = [
+  "type",
+  "stream_protocol_version",
+  "attempt_id",
+  "attempt_index",
+  "logical_sequence",
+  "idempotency_key",
+  "elapsedMs",
+  "emittedAt",
+] as const;
+
+/**
+ * Reads a natively stored extension record back as the custom lifecycle event
+ * its CUSTOM twin produced, so consumers of this adapter see one shape.
+ * legacy: removed in Phase F - consumers then read the native types directly.
+ */
+function readNativeAsLegacyCustom(
+  event: Record<string, unknown>,
+): { name: string; value: unknown } | null {
+  const definition = typeof event.type === "string"
+    ? NATIVE_STORED_TYPE_TO_LEGACY.get(event.type)
+    : undefined;
+  if (!definition) return null;
+  const value = { ...event };
+  for (const key of DURABLE_ENVELOPE_KEYS) {
+    delete value[key];
+  }
+  if (definition.storedType === "RUNTIME_EVENT_RECORDED") {
+    // The legacy `veryfront.runtime_context` CUSTOM twin carried the bare
+    // AgentRunRuntimeContext object as its value, produced only for the
+    // veryfront/runtime_context pair; the native payload wraps that same
+    // object as `{ runtime, kind, value }` to match the API catalog's
+    // generic diagnostics shape (RUNTIME_EVENT_RECORDED has other producers
+    // with other runtimes/kinds, e.g. the codex runtime, so the wrapper is
+    // required there). Only that exact pair unwraps to the legacy twin here,
+    // the same way the citation/file case below restores a field the native
+    // payload dropped; any other runtime/kind becomes its own generic custom
+    // record instead of a false veryfront.runtime_context.
+    if (value.runtime === "veryfront" && value.kind === "runtime_context") {
+      return { name: definition.legacyCustomName, value: value.value };
+    }
+    return { name: `${String(value.runtime)}.${String(value.kind)}`, value: value.value };
+  }
+  if (
+    definition.storedType === "INPUT_REQUEST_CREATED" ||
+    definition.storedType === "INPUT_REQUEST_UPDATED"
+  ) {
+    // `...value` first so a key smuggled inside the stored value (e.g. an
+    // "action" field the native builders never write) cannot win over the
+    // action this reader derives from the stored type -- mirrors this same
+    // reader's `{ ...value, type: definition.legacyCustomName }` in the
+    // citation/file case below.
+    return {
+      name: definition.legacyCustomName,
+      value: {
+        ...value,
+        action: definition.storedType === "INPUT_REQUEST_CREATED" ? "created" : "updated",
+      },
+    };
+  }
+  if (NATIVE_CITATION_AND_FILE_STORED_TYPES.has(definition.storedType)) {
+    // The citation and file twins carried the whole chunk, type field
+    // included, as their CUSTOM value. The native builders strip that field
+    // before storing, so it must be reinstated here to make the twin exact.
+    // `...value` first for the same reason as the input-request case above.
+    //
+    // An empty title/filename/url never reaches this stored value in the
+    // first place (native-run-events.ts's omitInvalidOptionalStrings drops
+    // it from the one payload both the live frame and this durable record share,
+    // I1), so there is nothing to restore here: a replayed record renders
+    // exactly the way the chat decoder's own fallback (source id for a
+    // missing DOCUMENT_CITED title, a raw data chunk for a missing
+    // FILE_ATTACHED url) already renders the live frame.
+    return {
+      name: definition.legacyCustomName,
+      value: { ...value, type: definition.legacyCustomName },
+    };
+  }
+  return { name: definition.legacyCustomName, value };
+}
 
 /** Projection-only repairs applied while reading historical run events. */
 export type ConversationRunLifecycleRepair =
@@ -211,9 +321,15 @@ function readVersion1(
           data: event.value,
         });
         break;
-      default:
+      default: {
+        const native = readNativeAsLegacyCustom(event);
+        if (native) {
+          reduce({ type: "custom", name: native.name, data: native.value });
+          break;
+        }
         rejectUnknown();
         break;
+      }
     }
   }
 
@@ -511,8 +627,14 @@ function readVersion2(
           data: event.value,
         });
         break;
-      default:
+      default: {
+        const native = readNativeAsLegacyCustom(event);
+        if (native) {
+          push({ type: "custom", name: native.name, data: native.value });
+          break;
+        }
         return invalid("UNSUPPORTED_DURABLE_EVENT");
+      }
     }
   }
 

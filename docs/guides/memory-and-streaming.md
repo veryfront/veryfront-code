@@ -208,6 +208,28 @@ export async function GET() {
 }
 ```
 
+## Native run events
+
+Veryfront emits native AG-UI events for tool status, input requests, child-run
+status, citations, and attachments. Live SSE frames carry names such as
+`ChildRunStatusChanged`; durable records use `CHILD_RUN_STATUS_CHANGED`. Readers
+also accept the earlier `Custom` events. Tool-status frames can omit the tool name
+or set it to `null`; the chat decoder preserves the status in either case. Native
+event payloads reserve `type`, `elapsedMs`, and `emittedAt` for transport metadata.
+Put application timing data in nested fields.
+
+The public `buildInvokeAgentChildRunLifecycleCustomEvent` and
+`buildInvokeAgentChildRunProgressEvents` helpers retain the `{ type: "CUSTOM",
+name, value }` lifecycle shape. Their schemas and publisher callbacks keep that
+contract. Veryfront converts these lifecycle events to native records when it
+prepares them for durable publication.
+
+An oversized tool-status, input-request, or child-run record becomes a
+`conversation-run-event-omitted` marker. The marker records the original event
+type and tool call ID when available; it does not retain the oversized payload.
+You must keep lifecycle payloads within the run event size limit to preserve their
+full content in stored history.
+
 ## Streaming
 
 ### Server-side streaming
@@ -282,6 +304,111 @@ export default function ChatPage() {
   );
 }
 ```
+
+### Reading run events
+
+A run's durable event log is available from the Veryfront API. Read it with
+`format=typed` and every row carries a catalogued `event_type`, a payload named
+by that type, and a span envelope (`run_id`, `event_class`, `span_id`,
+`parent_span_id`, `turn_id`, `origin_event_type`, `origin_custom_name`,
+`unrecoverable_fields`). No typed row uses `event_type: "CUSTOM"`.
+
+The `veryfront/run-events` module owns the reader's half of that contract, so
+you do not restate the vocabulary or the payload shapes in your own code:
+
+```ts
+import { register, tryResolve } from "veryfront/extensions/contracts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+import {
+  isRunEventType,
+  parseTypedRunEventRow,
+  RUN_EVENT_PAYLOAD_SCHEMAS,
+} from "veryfront/run-events";
+
+// Register a validator only when nothing has (details below the export
+// list): outside a Veryfront app this installs the Zod adapter, inside one
+// it keeps the validator bootstrap owns.
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
+
+const apiUrl = "https://api.veryfront.example";
+const runId = "<RUN_ID>";
+const token = "<TOKEN>";
+
+const response = await fetch(
+  `${apiUrl}/runs/${runId}/events?format=typed`,
+  { headers: { Authorization: `Bearer ${token}` } },
+);
+const body = await response.json() as { data: unknown[] };
+
+for (const raw of body.data) {
+  const row = parseTypedRunEventRow(raw);
+  if (!isRunEventType(row.event_type)) {
+    console.log(row.event_type, row.span_id, row.payload); // a type this build predates
+    continue;
+  }
+  // The sixteen control-plane `AGENT_RUN_*` types have no payload schema (see
+  // "What the module exports" below), so look one up rather than assume one
+  // exists, and render the already-validated payload as-is when it does not.
+  const schema = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type];
+  const result = schema?.().safeParse(row.payload);
+  console.log(row.event_type, row.span_id, result?.success ? result.data : row.payload);
+}
+```
+
+Render or pass through every row rather than filtering to the ones with a
+payload schema: skipping unmatched rows would silently drop the control-plane
+types below, and the durable log has no "irrelevant" row to discard.
+
+What the module exports:
+
+- `RUN_EVENT_TYPES`, `isRunEventType`, and `RUN_EVENT_CLASSES` for the
+  catalogued vocabulary, and `getRunEventClass` to tell a self-contained
+  `fact` from an order-dependent `delta`.
+- `toRunEventWireName` and `fromRunEventWireName` to move between a stored
+  type such as `URL_CITED` and the SSE wire name `UrlCited`.
+- `getRunEventEnvelopeSchema`, `getTypedRunEventRowSchema`, and
+  `parseTypedRunEventRow` for the row itself. Conversation-scoped surfaces
+  (GraphQL, MCP, and the conversation events route) key the payload as `event`
+  rather than `payload`; use `getConversationTypedRunEventRowSchema` there.
+- One payload schema per type, such as `getUrlCitedPayloadSchema`, plus
+  `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime. The exception
+  is the sixteen control-plane `AGENT_RUN_*` types: the API owns their shape
+  and sanitizes it before a reader ever sees it, so `RUN_EVENT_PAYLOAD_SCHEMAS`
+  has no entry for them and `row.payload` is already the value to use.
+
+Every schema is lazy and materializes through the registered `SchemaValidator`
+contract. Inside a Veryfront app, bootstrap registers it before handlers run.
+Anywhere else, including a browser bundle that reads run events directly,
+register one yourself before the first `get*Schema()` call or
+`parseTypedRunEventRow`:
+
+```ts
+import { register, tryResolve } from "veryfront/extensions/contracts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
+```
+
+`register` replaces whatever is registered, so the `tryResolve` gate is what
+makes this safe to paste into an app that already owns a validator: it installs
+the adapter only when nothing has. The module ships no fallback validator: with nothing
+registered, a getter throws an error naming the `SchemaValidator` contract and
+this registration call.
+
+`event_type` is validated as a non-empty string, not as the closed catalog, so
+a type the API adds after your build still parses. Narrow it with
+`isRunEventType` when you need the closed set, and ignore what you do not
+handle. Do the same for the wire names on a stream: advance the durable cursor
+for every frame that carries an id, including the ones you do not render.
+
+Eight of these types come from the Veryfront Code runtime itself:
+`TOOL_CALL_STATUS_CHANGED`, `INPUT_REQUEST_CREATED`, `INPUT_REQUEST_UPDATED`,
+`CHILD_RUN_STATUS_CHANGED`, `URL_CITED`, `DOCUMENT_CITED`, `FILE_ATTACHED`, and
+`RUNTIME_EVENT_RECORDED`. `NATIVE_RUN_EVENT_TYPES` lists them.
 
 ### Non-streaming generation
 

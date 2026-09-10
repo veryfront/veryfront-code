@@ -77,7 +77,11 @@ describe("internal-agents/ag-ui-sse", () => {
         },
         {
           event: "ToolCallStart",
-          payload: { toolCallId: "tool-1", toolCallName: "studio_focus_component" },
+          payload: {
+            toolCallId: "tool-1",
+            toolCallName: "studio_focus_component",
+            parentMessageId: "assistant-1",
+          },
         },
       ],
     );
@@ -384,6 +388,77 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("declares RuntimeEventRecorded in the payload allow-list with extra fields intact", () => {
+    // The eighth native wire name (see native-run-events.ts's P12 decision):
+    // an API-catalog diagnostics record with no fixed shape beyond
+    // runtime/kind/value, so this allow-list entry is `.passthrough()`-ed
+    // like its seven siblings rather than declaring extra fields.
+    const payload = new TextDecoder().decode(
+      formatAgUiEvent("RuntimeEventRecorded", {
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: { currentTimeUtc: "2026-09-09T00:00:00.000Z" },
+        emittedAt: 8,
+      }),
+    );
+
+    assertEquals(
+      payload,
+      'event: RuntimeEventRecorded\ndata: {"runtime":"veryfront","kind":"runtime_context",' +
+        '"value":{"currentTimeUtc":"2026-09-09T00:00:00.000Z"},"emittedAt":8}\n\n',
+    );
+  });
+
+  it("declares the seven native run event names in the payload allow-list with extra fields intact", () => {
+    // M3: the seven native wire names used to have no schema entry, so they
+    // took formatAgUiEvent's unvalidated pass-through branch instead of this
+    // allow-list. Nothing was dropped by that, but the next person to add a
+    // partial schema entry for one of them would reintroduce the elapsedMs
+    // bug this file's allow-list exists to prevent. Each entry is
+    // `.passthrough()`-ed, so an extension field a builder attaches (like
+    // ToolCallStatusChanged's `result`) must still reach the wire.
+    const payload = new TextDecoder().decode(
+      formatAgUiEvent("ToolCallStatusChanged", {
+        toolCallId: "tool-1",
+        status: "completed",
+        toolCallName: "web_search",
+        result: { ok: true },
+        emittedAt: 8,
+      }),
+    );
+
+    assertEquals(
+      payload,
+      'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","status":"completed",' +
+        '"toolCallName":"web_search","emittedAt":8,"result":{"ok":true}}\n\n',
+    );
+  });
+
+  it("does not throw when a ToolCallStatusChanged frame omits toolCallName", () => {
+    // N2: the API catalog declares toolCallName a required `nullableString`,
+    // and buildToolCallStatusChangedEvent always writes it as a string or
+    // null today, so a frame missing it entirely is unreachable from this
+    // producer. But this allow-list's job is to validate, not to newly
+    // reject what the unvalidated pass-through it replaces never rejected
+    // either -- a required-key throw here is uncaught by some callers and
+    // aborts the whole run stream over one missing field, worse than the
+    // dropped-field failure mode this file exists to prevent. Optional
+    // keeps a frame without it reaching the wire instead.
+    const payload = new TextDecoder().decode(
+      formatAgUiEvent("ToolCallStatusChanged", {
+        toolCallId: "tool-1",
+        status: "completed",
+        emittedAt: 8,
+      }),
+    );
+
+    assertEquals(
+      payload,
+      'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","status":"completed",' +
+        '"emittedAt":8}\n\n',
+    );
+  });
+
   it("carries elapsedMs through to the wire without widening the allow-list", () => {
     // These payload schemas are an allow-list and `parse` returns only what
     // they declare, so a stamped field missing from a schema is dropped
@@ -598,6 +673,7 @@ describe("internal-agents/ag-ui-sse", () => {
         payload: {
           toolCallId: CANONICAL_TOOL_CALL_ID,
           toolCallName: CANONICAL_TOOL_NAME,
+          parentMessageId: "assistant-msg-1",
         },
       },
       {

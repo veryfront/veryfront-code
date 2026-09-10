@@ -221,11 +221,14 @@ export function reduceStreamSignal(
           typeof data.toolCallId === "string" &&
           (data.status === "pending_input" || data.status === "streaming_input")
         ) {
+          const toolCallId = data.toolCallId;
           emit({
             class: "telemetry",
             event: {
               type: "tool_input_status",
-              toolCallId: data.toolCallId,
+              toolCallId,
+              toolCallName: state.snapshot.tools.find((entry) => entry.id === toolCallId)?.name ??
+                null,
               status: data.status,
             },
           });

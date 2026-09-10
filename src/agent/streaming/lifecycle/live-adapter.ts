@@ -48,6 +48,7 @@ export function createStreamLifecycleLiveAdapter(
             type: "data-tool-call-status",
             data: {
               toolCallId: frame.event.toolCallId,
+              toolCallName: frame.event.toolCallName,
               status: frame.event.status,
             },
           } as ChatStreamEvent]

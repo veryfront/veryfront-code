@@ -1,4 +1,5 @@
 import type { AgentResponse } from "../types.ts";
+import { buildNativeRunEventFrame } from "./native-run-events.ts";
 
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
@@ -717,6 +718,20 @@ export function mapRuntimeStreamEventToAgUiEvents(
   );
 }
 
+/**
+ * The transport timing fields `stampAgUiEventTiming` writes onto a live
+ * event's own flat payload. Exported only so a reader that reconstructs a
+ * native frame's whole payload as legacy data -- e.g. the chat client's
+ * `stripAgUiTimingStamps` in `ag-ui.ts` -- can assert its strip list still
+ * covers every stamped field, instead of a third stamped field silently
+ * leaking into legacy `data` the way `elapsedMs`/`emittedAt` already did
+ * once on the durable-record read path (fixed in `legacy-run-read-adapter.ts`,
+ * commit 3ee902fb12) before this export existed to catch it in a test.
+ * `stampAgUiEventTiming` below keeps its own literals; this export adds no
+ * dependency to the runtime stamping path.
+ */
+export const AG_UI_EVENT_TIMING_STAMP_FIELDS = ["elapsedMs", "emittedAt"] as const;
+
 export function stampAgUiEventTiming(
   state: AgUiEncoderState,
   events: AgUiEncodedEvent[],
@@ -786,15 +801,23 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     }
 
     state.sawVisibleOutput = true;
-    return [createCustomDataEvent(name, "data" in event ? event.data : null)];
+    const value = "data" in event ? event.data : null;
+    const native = buildNativeRunEventFrame({
+      name,
+      value,
+      parentMessageId: state.messageId,
+    });
+    return [native ? native.live : createCustomDataEvent(name, value)];
   }
 
   switch (event.type) {
     case "source-document":
     case "source-url":
-    case "file":
+    case "file": {
       state.sawVisibleOutput = true;
-      return [createCustomDataEvent(event.type, event)];
+      const native = buildNativeRunEventFrame({ name: event.type, value: event });
+      return [native ? native.live : createCustomDataEvent(event.type, event)];
+    }
 
     case "message-start":
       getMessageId(state, event);
@@ -892,6 +915,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         payload: {
           toolCallId: event.toolCallId,
           toolCallName: event.toolName,
+          ...(state.messageId ? { parentMessageId: state.messageId } : {}),
         },
       });
       return events;
@@ -1013,9 +1037,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       ];
 
     default:
-      if (typeof event.type === "string" && event.type.startsWith("data-")) {
-        return [createCustomDataEvent(event.type.slice(5), event.data)];
-      }
+      // The `data-` guard at the top of this function already returns for
+      // any event.type starting with "data-", so that case can never reach
+      // here -- this was a second, unreachable copy of the native routing.
       return [];
   }
 }

@@ -17,6 +17,13 @@ export const BROWSER_SAFE_EXPORTS = [
   "./markdown",
   "./mdx",
   "./agent/identity",
+  // The typed run event contract. Studio reads a run's event log in the
+  // browser bundle. The entry point is vocabulary and schemas only: no npm
+  // dependency, no server module, and the single Node builtin it reaches
+  // (node:async_hooks, via the contract registry) is the same one ./chat and
+  // ./chat/ag-ui already reach and is rewritten to a no-op browser polyfill.
+  // browser-safe-exports.test.ts pins that set so nothing worse creeps in.
+  "./run-events",
 ];
 
 export const BROWSER_SAFE_DNT_TIMER_MODULES = [

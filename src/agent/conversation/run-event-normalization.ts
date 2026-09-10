@@ -5,6 +5,10 @@ import {
   isPrivateConversationRunEvent,
 } from "./private-run-event.ts";
 import { AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE } from "#veryfront/agent/runtime/provider-replay.ts";
+import {
+  buildNativeRunEventFrame,
+  isNativeRunEventStoredType,
+} from "#veryfront/agent/ag-ui/native-run-events.ts";
 
 export { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
@@ -33,6 +37,21 @@ export function getConversationRunEventJsonByteLength(value: unknown): number {
   }
 }
 
+function normalizeChildRunLifecycleEvent(
+  event: ConversationRunEventRecord,
+): ConversationRunEventRecord {
+  // Public child-run builders and publisher callbacks retain their Custom
+  // contract. Convert at the shared direct-append and mirror boundary.
+  if (event.type === "CUSTOM" && event.name === "veryfront.invoke_agent.lifecycle") {
+    const native = buildNativeRunEventFrame({ name: event.name, value: event.value });
+    if (native) {
+      const { name: _name, value: _value, ...metadata } = event;
+      event = { ...metadata, ...native.durable };
+    }
+  }
+  return event;
+}
+
 /** Event emitted for normalize conversation run. */
 export function normalizeConversationRunEvent(
   event: ConversationRunEventRecord,
@@ -51,6 +70,7 @@ export function normalizeConversationRunEvent(
     }
     return [event];
   }
+  event = normalizeChildRunLifecycleEvent(event);
   if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
     return [event];
   }
@@ -73,8 +93,42 @@ function summarizeOversizedEvent(
     case "TOOL_CALL_RESULT":
       return [summarizeToolResultEvent(event)];
 
+    // The `url` field is where these two carry an oversized value (typically
+    // an inline `data:` URL); truncating it keeps every API-catalog-required
+    // field (`mediaType`, `sourceId`, ...) intact, unlike the generic summary.
+    // DOCUMENT_CITED has no `url` field (ChatSourceDocumentUiPart carries
+    // none), so it always falls straight to the omission event below --
+    // dropped from this case rather than left to fail the `typeof` check,
+    // since it behaves identically either way.
+    case "URL_CITED":
+    case "FILE_ATTACHED": {
+      if (typeof event.url === "string") {
+        // buildUrlCitedEvent falls back to `sourceId = url` when the source
+        // chunk has no id of its own, so a citation's sourceId can mirror an
+        // oversized url exactly; truncate both together in that case (see
+        // truncateEventStringFieldToLimit's mirrorField).
+        const sourceIdMirrorsUrl = event.type === "URL_CITED" && event.sourceId === event.url;
+        const truncated = truncateEventStringFieldToLimit(
+          event,
+          "url",
+          " [truncated]",
+          sourceIdMirrorsUrl ? "sourceId" : undefined,
+        );
+        if (truncated) return [truncated];
+      }
+      return [buildOmittedEvent(event)];
+    }
+
     default:
-      return [summarizeGenericEvent(event)];
+      // A native record type (TOOL_CALL_STATUS_CHANGED, INPUT_REQUEST_*,
+      // CHILD_RUN_STATUS_CHANGED) carries API-catalog-required fields beyond
+      // `type`. summarizeGenericEvent's `{ type, truncated, note, summary }`
+      // shape drops those and fails validation, unlike the permissive legacy
+      // `CUSTOM` wrapper it replaced -- so a native type falls back to the
+      // always-valid omission event instead.
+      return isNativeRunEventStoredType(event.type)
+        ? [buildOmittedEvent(event)]
+        : [summarizeGenericEvent(event)];
   }
 }
 
@@ -157,21 +211,32 @@ function summarizeToolResultEvent(event: ConversationRunEventRecord): Conversati
  * Measures the JSON-serialized event (not the raw string), so it stays correct
  * for escape-heavy content that expands under JSON.stringify — the same unit the
  * API enforces. Returns null when the envelope alone already exceeds the limit.
+ *
+ * `mirrorField`, when given, is set to the same truncated string as `field`
+ * in every candidate the search tries -- for a URL_CITED record whose
+ * `sourceId` mirrors an oversized `url` (buildUrlCitedEvent's fallback when
+ * the chunk had no source id of its own), truncating `url` alone would leave
+ * `sourceId` unchanged and the record still over the limit, so both fields
+ * must shrink together rather than being sized independently.
  */
 function truncateEventStringFieldToLimit(
   event: ConversationRunEventRecord,
   field: string,
   suffix: string,
+  mirrorField?: string,
 ): ConversationRunEventRecord | null {
   const value = event[field];
   if (typeof value !== "string") {
     return null;
   }
 
-  const buildCandidate = (prefixLength: number): ConversationRunEventRecord =>
-    prefixLength >= value.length
-      ? event
-      : { ...event, [field]: `${value.slice(0, prefixLength)}${suffix}` };
+  const buildCandidate = (prefixLength: number): ConversationRunEventRecord => {
+    if (prefixLength >= value.length) return event;
+    const truncatedValue = `${value.slice(0, prefixLength)}${suffix}`;
+    return mirrorField
+      ? { ...event, [field]: truncatedValue, [mirrorField]: truncatedValue }
+      : { ...event, [field]: truncatedValue };
+  };
 
   if (
     getConversationRunEventJsonByteLength(buildCandidate(value.length)) <=

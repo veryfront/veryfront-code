@@ -141,6 +141,7 @@ export type StreamTelemetryEvent =
   | {
     type: "tool_input_status";
     toolCallId: string;
+    toolCallName: string | null;
     status: "pending_input" | "streaming_input";
   }
   | { type: "live_heartbeat" }

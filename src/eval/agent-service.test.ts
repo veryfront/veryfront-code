@@ -788,28 +788,22 @@ describe("eval/agent-service", () => {
         createSseResponse([
           { event: "RunStarted", data: { runId: "run_123" } },
           {
-            event: "Custom",
+            event: "ToolCallStatusChanged",
             data: {
-              name: "tool-call-status",
-              value: {
-                toolCallId: "tool_1",
-                toolCallName: "veryfront_agent.github_get_implementation_frontier",
-                status: "in_progress",
-                arguments: {},
-              },
+              toolCallId: "tool_1",
+              toolCallName: "veryfront_agent.github_get_implementation_frontier",
+              status: "in_progress",
+              arguments: {},
             },
           },
           {
-            event: "Custom",
+            event: "ToolCallStatusChanged",
             data: {
-              name: "tool-call-status",
-              value: {
-                toolCallId: "tool_1",
-                toolCallName: "veryfront_agent.github_get_implementation_frontier",
-                status: "completed",
-                arguments: {},
-                result: { nextAction: { kind: "agent-brief-repair" } },
-              },
+              toolCallId: "tool_1",
+              toolCallName: "veryfront_agent.github_get_implementation_frontier",
+              status: "completed",
+              arguments: {},
+              result: { nextAction: { kind: "agent-brief-repair" } },
             },
           },
           { event: "TextMessageContent", data: { delta: '{"nextAction":{}}' } },
@@ -871,16 +865,13 @@ describe("eval/agent-service", () => {
         createSseResponse([
           { event: "RunStarted", data: { runId: "run_123" } },
           {
-            event: "Custom",
+            event: "ToolCallStatusChanged",
             data: {
-              name: "tool-call-status",
-              value: {
-                toolCallId: "tool_1",
-                toolCallName: "veryfront_agent.github_update_issue",
-                status: "failed",
-                arguments: { issue_number: 27 },
-                error: { message: "write denied" },
-              },
+              toolCallId: "tool_1",
+              toolCallName: "veryfront_agent.github_update_issue",
+              status: "failed",
+              arguments: { issue_number: 27 },
+              error: { message: "write denied" },
             },
           },
           { event: "RunFinished", data: {} },
@@ -908,7 +899,10 @@ describe("eval/agent-service", () => {
     assertEquals(record.metrics?.[0]?.pass, false);
   });
 
-  it("keeps standard AG-UI tool results authoritative in mixed hosted streams", async () => {
+  it("still recognizes a legacy CUSTOM tool-call-status frame with no toolCallId", async () => {
+    // The live encoder falls back to the legacy CUSTOM shape when it cannot
+    // build a native TOOL_CALL_STATUS_CHANGED frame (buildNativeRunEventFrame
+    // requires a toolCallId), so a name-only status must still be read.
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
       authToken: "token",
@@ -920,12 +914,44 @@ describe("eval/agent-service", () => {
             data: {
               name: "tool-call-status",
               value: {
-                toolCallId: "tool_1",
-                toolCallName: "search",
+                toolCallName: "write",
                 status: "failed",
-                result: { source: "custom" },
-                error: { message: "custom failure" },
+                error: { message: "write denied" },
               },
+            },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:legacy-name-only-tool-status",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "mutation", input: "Write a file" }]),
+      metrics: [metrics.agent.noFailedTools()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    assertEquals(report.records[0]?.metrics?.[0]?.pass, false);
+  });
+
+  it("keeps standard AG-UI tool results authoritative in mixed hosted streams", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallStatusChanged",
+            data: {
+              toolCallId: "tool_1",
+              toolCallName: "search",
+              status: "failed",
+              result: { source: "custom" },
+              error: { message: "custom failure" },
             },
           },
           {
@@ -946,15 +972,12 @@ describe("eval/agent-service", () => {
             },
           },
           {
-            event: "Custom",
+            event: "ToolCallStatusChanged",
             data: {
-              name: "tool-call-status",
-              value: {
-                toolCallId: "tool_2",
-                toolCallName: "write",
-                status: "completed",
-                result: { source: "custom" },
-              },
+              toolCallId: "tool_2",
+              toolCallName: "write",
+              status: "completed",
+              result: { source: "custom" },
             },
           },
           { event: "RunFinished", data: {} },

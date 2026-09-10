@@ -78,7 +78,11 @@ describe("agent/ag-ui-encoder", () => {
         },
         {
           event: "ToolCallStart",
-          payload: { toolCallId: "tool-1", toolCallName: "web_search" },
+          payload: {
+            toolCallId: "tool-1",
+            toolCallName: "web_search",
+            parentMessageId: "assistant-1",
+          },
         },
       ],
     );
@@ -269,9 +273,10 @@ describe("agent/ag-ui-encoder", () => {
         data: { runStartedAtUtc: "2026-07-19T07:30:00.000Z" },
       }),
       [{
-        event: "Custom",
+        event: "RuntimeEventRecorded",
         payload: {
-          name: "veryfront.runtime_context",
+          runtime: "veryfront",
+          kind: "runtime_context",
           value: { runStartedAtUtc: "2026-07-19T07:30:00.000Z" },
         },
       }],
@@ -279,13 +284,14 @@ describe("agent/ag-ui-encoder", () => {
     assertEquals(
       mapRuntimeStreamEventToAgUiEvents(state, {
         type: "data-tool-call-status",
-        data: { toolCallId: "tool-1", status: "pending_input" },
+        data: { toolCallId: "tool-1", toolCallName: "create_file", status: "pending_input" },
       }),
       [{
-        event: "Custom",
+        event: "ToolCallStatusChanged",
         payload: {
-          name: "tool-call-status",
-          value: { toolCallId: "tool-1", status: "pending_input" },
+          toolCallId: "tool-1",
+          status: "pending_input",
+          toolCallName: "create_file",
         },
       }],
     );
@@ -320,6 +326,116 @@ describe("agent/ag-ui-encoder", () => {
         event: "ToolCallResult",
         payload: { toolCallId: "tool-3", result: { error: "Tool output denied" }, isError: true },
       }],
+    );
+  });
+
+  it("emits native frames for citations, attachments, and lifecycle names", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      }),
+      [{
+        event: "UrlCited",
+        payload: {
+          sourceId: "web-1",
+          url: "https://example.com/reference",
+          title: "Reference",
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "source-document",
+        sourceId: "knowledge/report.md",
+        mediaType: "text/markdown",
+        title: "Report",
+        filename: "knowledge/report.md",
+      }),
+      [{
+        event: "DocumentCited",
+        payload: {
+          sourceId: "knowledge/report.md",
+          mediaType: "text/markdown",
+          title: "Report",
+          filename: "knowledge/report.md",
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "file",
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      }),
+      [{
+        event: "FileAttached",
+        payload: {
+          url: "https://cdn.example.com/report.pdf",
+          mediaType: "application/pdf",
+          filename: "report.pdf",
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "data-veryfront.input_request.lifecycle",
+        data: {
+          action: "created",
+          inputRequest: { id: "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f", status: "open" },
+        },
+      }),
+      [{
+        event: "InputRequestCreated",
+        payload: {
+          inputRequest: { id: "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f", status: "open" },
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "data-veryfront.invoke_agent.lifecycle",
+        data: {
+          toolCallId: "toolu_child_1",
+          childRunId: "run_child_1",
+          status: "running",
+        },
+      }),
+      [{
+        event: "ChildRunStatusChanged",
+        payload: {
+          toolCallId: "toolu_child_1",
+          childRunId: "run_child_1",
+          status: "running",
+        },
+      }],
+    );
+  });
+
+  it("keeps state chunks and unknown data names custom", () => {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "data-state-delta",
+        data: [{ op: "replace", path: "/a", value: 1 }],
+      }),
+      [{
+        event: "Custom",
+        payload: {
+          name: "state-delta",
+          value: [{ op: "replace", path: "/a", value: 1 }],
+        },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiEvents(state, { type: "data-foo", data: { a: 1 } }),
+      [{ event: "Custom", payload: { name: "foo", value: { a: 1 } } }],
     );
   });
 
@@ -543,7 +659,11 @@ describe("agent/ag-ui-encoder", () => {
         },
         {
           event: "ToolCallStart",
-          payload: { toolCallId: "tool-4", toolCallName: "web_search" },
+          payload: {
+            toolCallId: "tool-4",
+            toolCallName: "web_search",
+            parentMessageId: "assistant-3",
+          },
         },
       ],
     );

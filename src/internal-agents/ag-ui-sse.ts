@@ -84,7 +84,11 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
     ReasoningMessageEnd: withTiming({ messageId: v.string().min(1) }),
     StepStarted: withTiming({ stepName: v.string().min(1) }),
     StepFinished: withTiming({ stepName: v.string().min(1) }),
-    ToolCallStart: withTiming({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
+    ToolCallStart: withTiming({
+      toolCallId: v.string().min(1),
+      toolCallName: v.string().min(1),
+      parentMessageId: v.string().min(1).optional(),
+    }),
     ToolCallArgs: withTiming({ toolCallId: v.string().min(1), delta: v.string() }),
     ToolCallEnd: withTiming({ toolCallId: v.string().min(1) }),
     ToolCallResult: withTiming({
@@ -122,6 +126,65 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         finishReason: v.string().optional(),
       }),
     }),
+    // The seven native run event wire names replace the AG-UI `Custom`
+    // wrapper (see native-run-events.ts). They carry API-catalog-required
+    // fields beyond `type` and mirror the shapes declared in
+    // src/chat/ag-ui.ts's decoder schema, each `.passthrough()`-ed so the
+    // extension fields I1 and answer A depend on (result, error, exitCode,
+    // parentMessageId, ...) survive this allow-list rather than being
+    // silently dropped the way elapsedMs once was.
+    ToolCallStatusChanged: withTiming({
+      toolCallId: v.string().min(1),
+      status: v.string().min(1),
+      // Optional despite the API catalog declaring it a required
+      // `nullableString`: buildToolCallStatusChangedEvent always writes it
+      // as a string or null today, but this allow-list must not throw (and
+      // abort the run stream) on a frame that omits it -- an uncaught throw
+      // here is worse than a field the API rejects downstream, since the
+      // unvalidated pass-through this entry replaces never rejected a
+      // missing field either.
+      toolCallName: v.string().nullable().optional(),
+    }).passthrough(),
+    InputRequestCreated: withTiming({
+      inputRequest: v.object({ id: v.string().min(1) }).passthrough(),
+    }).passthrough(),
+    InputRequestUpdated: withTiming({
+      inputRequest: v.object({ id: v.string().min(1) }).passthrough(),
+    }).passthrough(),
+    ChildRunStatusChanged: withTiming({
+      toolCallId: v.string().min(1),
+      childRunId: v.string().min(1),
+      status: v.string().min(1),
+    }).passthrough(),
+    UrlCited: withTiming({
+      // sourceId is optional here for the same reason it is in the chat
+      // decoder: toRenderableCustomChunk falls back to url when it is absent
+      // or empty. title is undeclared in the API catalog and passed through
+      // unguarded like its DocumentCited and FileAttached siblings.
+      sourceId: v.string().optional(),
+      url: v.string().min(1),
+      title: v.unknown().optional(),
+    }).passthrough(),
+    DocumentCited: withTiming({
+      sourceId: v.string().min(1),
+      mediaType: v.string().min(1),
+      title: v.unknown().optional(),
+      filename: v.unknown().optional(),
+    }).passthrough(),
+    FileAttached: withTiming({
+      mediaType: v.string().min(1),
+      url: v.unknown().optional(),
+      filename: v.unknown().optional(),
+    }).passthrough(),
+    // The eighth native run event wire name (see native-run-events.ts):
+    // an API-catalog diagnostics record with no AG-UI equivalent. `value`
+    // is unconstrained JSON per the catalog's `requiredUnknown`, so it is
+    // passed through unvalidated the same way Custom's own `value` is.
+    RuntimeEventRecorded: withTiming({
+      runtime: v.string().min(1),
+      kind: v.string().min(1),
+      value: v.unknown(),
+    }).passthrough(),
   };
   return schemas;
 }
@@ -155,7 +218,15 @@ type AgUiEventName =
   | "ToolCallResult"
   | "Custom"
   | "RunError"
-  | "RunFinished";
+  | "RunFinished"
+  | "ToolCallStatusChanged"
+  | "InputRequestCreated"
+  | "InputRequestUpdated"
+  | "ChildRunStatusChanged"
+  | "UrlCited"
+  | "DocumentCited"
+  | "FileAttached"
+  | "RuntimeEventRecorded";
 
 export function formatAgUiEvent(event: string, payload: Record<string, unknown>): Uint8Array {
   const eventNameMatch = AG_UI_EVENT_NAME_PATTERN.exec(event);
