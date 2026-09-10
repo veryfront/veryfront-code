@@ -445,11 +445,69 @@ parser, then supplies the Operator allocation environment and image
 manifest. Missing runtime contracts fail startup.
 
 The executor accepts one authenticated `runtime.install` message bound to its
-allocation, invocation, generation, owner, and immutable source. Discovery and
-runtime preparation remain unavailable until installation succeeds. The
-installation carries runtime grants and capability IDs. Initial checkpoint
-state uses a separate bounded stream so durable replay state can exceed the
-installation message limit.
+allocation, invocation, generation, owner, and immutable source. Discovery remains
+unavailable until installation succeeds. The trusted image launcher selects the
+profile at startup; channel messages cannot change it.
+
+### Installation profiles
+
+| Startup `mode`      | Installation data                                                                      | Operations after installation                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `runtime` (default) | Runtime grant, capability IDs, optional host-tool aliases                              | `discovery.describe`, `agent.describe`, `runtime.prepare`, `agent.stream`                                   |
+| `project-tools`     | Fixed agent/project/run context, canonical tool allowlist, call and concurrency limits | `discovery.describe`, `agent.describe`, `project.tool-aliases`, `tool.sources`, `tool.list`, `tool.execute` |
+
+The full-runtime profile uses a separate bounded stream for initial checkpoint
+state, so durable replay state can exceed the installation message limit.
+
+The project-tools profile is selected by
+`startExecutorRuntimeEntrypoint({ mode: "project-tools" })`. Its installation has
+the following shape; the broker supplies the actual allocation and source identities:
+
+```json
+{
+  "version": 1,
+  "mode": "project-tools",
+  "binding": {
+    "allocationId": "allocation-example",
+    "generation": 1,
+    "invocationId": "invocation-example"
+  },
+  "owner": { "scopeKind": "project", "projectId": "project-example" },
+  "source": { "type": "release", "releaseId": "release-example" },
+  "root": "project",
+  "context": {
+    "agentId": "assistant",
+    "projectId": "project-example",
+    "runId": "run-example"
+  },
+  "allowedToolNames": ["inspect"],
+  "maxCalls": 32,
+  "maxConcurrent": 2
+}
+```
+
+`allowedToolNames` contains unique canonical names, with at most 1024 entries.
+`maxCalls` is an integer from 1 to 4096; `maxConcurrent` is an integer from 1 to 32.
+The fixed context binds tool calls to the admitted canonical run. Correlation IDs,
+cancellation and progress use the authenticated channel. This payload accepts no
+runtime grants, private credentials or host capability IDs, and rejects unknown
+fields. This profile exposes neither runtime preparation nor agent streaming;
+the trusted broker owns the agent loop and privileged operations.
+
+The fixed context also accepts optional `userId` and `projectSlug` from the approved
+execution grant. Project tools receive those captured values; caller conflicts fail.
+An explicitly enabled project source can receive the current call's `activeSkillId`
+and bounded `activeSkillToolAvailability`. Omitted skill fields clear prior values.
+Credentials and other caller context fields do not cross the project channel.
+Unknown startup `mode` values fail before bootstrap configuration or artifact access.
+Selected inline tools and discovered tools are combined under the exact project
+source policy, including metadata access and later execution. Framework-generated
+agent runtime tools are excluded from the project-only catalog, even when their
+names appear in a grant.
+The full-runtime profile applies the same source-policy scope while extracting
+inline tools and reading their metadata during preparation.
+
+### Broker composition
 
 The broker owns HTTP authentication, credentials, model and tool authorization,
 and durable persistence. Executor facades call these capabilities through the

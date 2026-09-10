@@ -12,8 +12,10 @@ import { sameHostedExecutorOwner } from "./executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
 import {
   type ExecutorArtifactManifest,
+  type ExecutorProjectToolInstall,
   type ExecutorRuntimeInstall,
   getExecutorArtifactManifestSchema,
+  getExecutorProjectToolInstallSchema,
   getExecutorRuntimeInstallSchema,
   parseExecutorInstallation,
 } from "./executor-runtime-install-schema.ts";
@@ -24,32 +26,86 @@ export interface InstalledExecutorRuntime {
   readonly settled: Promise<void>;
 }
 
-const operationModes = {
+const runtimeOperationModes = {
   "discovery.describe": "unary",
   "agent.describe": "unary",
   "runtime.prepare": "unary",
   "agent.stream": "stream",
 } as const;
-const operationEntries = Object.entries(operationModes);
 const apply = Reflect.apply;
+
+const projectToolOperationModes = {
+  "discovery.describe": "unary",
+  "agent.describe": "unary",
+  "project.tool-aliases": "unary",
+  "tool.sources": "stream",
+  "tool.list": "stream",
+  "tool.execute": "stream",
+} as const;
+
+type InstallationIdentity = {
+  binding: ExecutorBinding;
+  artifact: ExecutorArtifactManifest;
+  signal?: AbortSignal;
+};
+type InstallationOptions =
+  & InstallationIdentity
+  & ({
+    mode?: "runtime";
+    install(
+      input: ExecutorRuntimeInstall,
+      signal: AbortSignal,
+      context: ExecutorOperationContext,
+    ): Promise<InstalledExecutorRuntime>;
+  } | {
+    mode: "project-tools";
+    install(
+      input: ExecutorProjectToolInstall,
+      signal: AbortSignal,
+      context: ExecutorOperationContext,
+    ): Promise<InstalledExecutorRuntime>;
+  });
 
 /**
  * Executor-only installation gate. Register its fixed map before starting the
  * authenticated bootstrap; project discovery belongs exclusively in install().
  * The broker remains authoritative for grants and operation phases.
  */
-export function createExecutorRuntimeInstallation(options: {
-  binding: ExecutorBinding;
-  artifact: ExecutorArtifactManifest;
-  signal?: AbortSignal;
-  install(input: ExecutorRuntimeInstall, signal: AbortSignal): Promise<InstalledExecutorRuntime>;
-}) {
+export function createExecutorRuntimeInstallation(options: InstallationOptions) {
+  const operationModes = options.mode === "project-tools"
+    ? projectToolOperationModes
+    : runtimeOperationModes;
+  const operationEntries = Object.entries(operationModes);
+  const prepareInstallation = (() => {
+    if (options.mode === "project-tools") {
+      const install = options.install;
+      return (value: unknown, context: ExecutorOperationContext) => {
+        const input = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), value);
+        return {
+          input,
+          start: (signal: AbortSignal): Promise<InstalledExecutorRuntime> =>
+            apply(install, options, [input, signal, context]),
+        };
+      };
+    }
+    if (options.mode !== undefined && options.mode !== "runtime") {
+      throw new TypeError("Invalid executor installation profile");
+    }
+    const install = options.install;
+    return (value: unknown, context: ExecutorOperationContext) => {
+      const input = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), value);
+      return {
+        input,
+        start: (signal: AbortSignal): Promise<InstalledExecutorRuntime> =>
+          apply(install, options, [input, signal, context]),
+      };
+    };
+  })();
   const binding = parseExecutorInstallation(getExecutorBindingSchema(), options.binding);
   const artifact = parseExecutorInstallation(getExecutorArtifactManifestSchema(), options.artifact);
   const lifetime = new AbortController();
   const settled = createPrivateDeferred<void>();
   void chainPrivatePromise(settled.promise, () => {}, () => {});
-  const install = options.install;
   let phase: "empty" | "installing" | "installed" | "closed" = "empty";
   let setup: Promise<InstalledExecutorRuntime> | undefined;
   let dispatch: ReadonlyMap<string, ExecutorOperation> | undefined;
@@ -124,7 +180,7 @@ export function createExecutorRuntimeInstallation(options: {
     async handle(value, context) {
       assertActive(context);
       if (phase !== "empty") throw new Error("Executor runtime already installed");
-      const input = parseExecutorInstallation(getExecutorRuntimeInstallSchema(), value);
+      const { input, start } = prepareInstallation(value, context);
       if (
         !sameBinding(input.binding) || !sameHostedExecutorOwner(input.owner, artifact.owner) ||
         verifyHostedRuntimeSourceBinding(artifact.source, input.source) !== undefined ||
@@ -132,13 +188,10 @@ export function createExecutorRuntimeInstallation(options: {
       ) throw new Error("Executor installation not granted");
       phase = "installing";
       context.signal.addEventListener("abort", abort, { once: true });
-      setup = chainPrivatePromise(
-        resolvePrivatePromise(),
-        (): Promise<InstalledExecutorRuntime> => {
-          assertActive(context);
-          return apply(install, options, [input, lifetime.signal]);
-        },
-      );
+      setup = chainPrivatePromise(resolvePrivatePromise(), () => {
+        assertActive(context);
+        return start(lifetime.signal);
+      });
       try {
         const loaded = await setup;
         assertActive(context);

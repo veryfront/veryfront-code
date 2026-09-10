@@ -19,6 +19,7 @@ import {
   isRuntimeAgentMarkdownAgent,
 } from "../runtime/agent-markdown-adapter.ts";
 import type { Agent, AgentConfig } from "../types.ts";
+import type { Tool } from "#veryfront/tool/types.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import {
@@ -32,11 +33,13 @@ import {
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
 const objectSetPrototypeOf = Object.setPrototypeOf;
 const objectEntries = Object.entries;
 const arraySort = Array.prototype.sort;
 const apply = Reflect.apply;
+const mapGet = Map.prototype.get;
 
 function selectedConfigToolNames(
   tools: Exclude<AgentConfig["tools"], true | undefined>,
@@ -166,6 +169,29 @@ function clearProjectAgentRuntimePrimitiveRegistries(): void {
   workflowRegistry.clear();
 }
 
+/** Return inline tools for one selected project agent without sharing names across agents. */
+export function getProjectAgentRuntimeInlineTools(
+  result: Pick<DiscoveryResult, "agents">,
+  agentId: string,
+): Map<string, Tool> {
+  const tools = createPrivateMap<string, Tool>();
+  const selected: Agent | undefined = apply(mapGet, result.agents, [agentId]);
+  const configuredTools = selected?.config.tools;
+  if (configuredTools === undefined || configuredTools === true) return tools;
+  const entries = objectEntries(configuredTools);
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    const name = entry[0], value = entry[1];
+    if (
+      value !== false && value !== undefined && typeof value === "object" &&
+      typeof (value as Tool).execute === "function"
+    ) {
+      tools.set(name, value as Tool);
+    }
+  }
+  return tools;
+}
+
 /** Discover project agent runtime helper. */
 export async function discoverProjectAgentRuntime(
   input: DiscoverProjectAgentRuntimeInput,
@@ -198,12 +224,13 @@ export async function discoverProjectAgentRuntime(
             // that publishes its replacement. Concurrent readers therefore see
             // either complete generation, never an empty or partially updated one.
             clearProjectAgentRuntimePrimitiveRegistries();
-            return await replaceDiscoveredProjectPrimitives(discoveryOptions, {
+            const discovery = await replaceDiscoveredProjectPrimitives(discoveryOptions, {
               // Preserve the one-shot runtime contract: callers receive every
               // discovery error alongside the valid primitives and decide
               // whether those errors are fatal. Publication is still atomic.
               errorPolicy: "publish-valid",
             });
+            return discovery;
           });
           return { ...discovery, sourceIntegrationPolicy };
         },
