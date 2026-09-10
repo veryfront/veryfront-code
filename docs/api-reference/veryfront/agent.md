@@ -2035,3 +2035,22 @@ import {
 | `ManagedExecutorStartInput`          | Trusted per-invocation source, model, tool, persistence, and state authority. Broker model limits, provider tools, and tool capabilities must not exceed the corresponding installed grant. Startup rejects mismatches before allocation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/managed-executor-broker.ts)    |
 | `ManagedNodeBrokerHandler`           | Trusted broker route handler and optional retirement hook.                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-node-broker.ts)       |
 | `ManagedNodeBrokerPool`              | Broker admission and settlement lifecycle retained by the HTTP server.                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/managed-node-broker.ts)       |
+
+### `veryfront/agent/trusted-broker`
+
+```ts
+import { createTrustedManagedExecutorBroker } from "veryfront/agent/trusted-broker";
+```
+
+#### Functions
+
+| Name                                 | Description                                                                                                                                                                                                                        | Source                                                                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `createTrustedManagedExecutorBroker` | Construct a trusted agent-loop broker with project-tools-only executors. Every start requires canonical fixed-project trustedRuntime configuration. This process must never load or execute project-authored modules or callbacks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/trusted-managed-broker.ts) |
+
+#### Types
+
+| Name                               | Description                                                                                 | Source                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `TrustedManagedExecutorBroker`     | Managed broker lifecycle with a required trusted-runtime start contract.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/trusted-managed-broker.ts) |
+| `TrustedManagedExecutorStartInput` | Canonical project execution requires explicit project-tool and source-policy configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/trusted-managed-broker.ts) |

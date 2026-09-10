@@ -57,7 +57,7 @@ export async function createExecutorProjectToolRuntime(options: {
     const allowedToolNames = createPrivateSet(input.allowedToolNames);
     const maxCalls = input.maxCalls;
     const maxConcurrent = input.maxConcurrent;
-    const limits = executorToolLimits();
+    const limits = executorToolLimits(input.limits);
     const discoveryOperations = copyPrivateMap(discovery.operations);
     const getRuntime = discovery.getRuntime;
     const retainRuntimeTask = discovery.retainRuntimeTask;

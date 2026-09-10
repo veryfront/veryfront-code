@@ -507,6 +507,33 @@ names appear in a grant.
 The full-runtime profile applies the same source-policy scope while extracting
 inline tools and reading their metadata during preparation.
 
+The optional installation `limits` object contains every field below. Each value
+is a positive integer no greater than its default. Omission selects the defaults;
+partial overrides are accepted by the trusted broker's `tools.limits` option,
+which normalizes a complete object for installation.
+
+| Field                    | Default ceiling |
+| ------------------------ | --------------: |
+| `maxSources`             |              32 |
+| `maxToolsPerSource`      |            1024 |
+| `maxTotalTools`          |            4096 |
+| `maxMetadataBytes`       |         8388608 |
+| `maxDescriptorBytes`     |          262144 |
+| `maxArgumentBytes`       |          262144 |
+| `maxResultBytes`         |         1046400 |
+| `maxProgressEvents`      |            1024 |
+| `maxProgressBytes`       |         1048576 |
+| `maxProgressEventBytes`  |           65536 |
+| `maxQueuedProgress`      |              16 |
+| `maxQueuedProgressBytes` |          262144 |
+
+`maxCalls` counts source enumeration, listing and execution, including admitted
+failures. The trusted broker shares call and concurrency accounting across host
+and project tools. Cancellation holds an admitted slot until original work settles.
+`maxMetadataBytes` includes the validated project alias frame plus the combined
+host and project source/definition frames. Repeated listings keep consuming the
+same invocation budget.
+
 ### Broker composition
 
 The broker owns HTTP authentication, credentials, model and tool authorization,
