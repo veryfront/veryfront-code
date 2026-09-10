@@ -107,6 +107,23 @@ async function digest(text: string) {
     (n) => n.toString(16).padStart(2, "0"),
   ).join("");
 }
+export async function workloadHash(
+  readSource: (path: string) => Promise<string> = Deno.readTextFile,
+) {
+  const source = await Promise.all(
+    [
+      "run.ts",
+      "report.ts",
+      "worker.ts",
+      "workloads.ts",
+      "scenarios.ts",
+      "http-worker.ts",
+      "http-client.ts",
+      "protocol.ts",
+    ].map((name) => readSource(`scripts/perf/${name}`)),
+  );
+  return await digest(source.join("\n"));
+}
 function table(results: Results): string {
   return [
     "| Workload | Median us/op | Min-max us/op | CPU us/op | Change |",
@@ -148,16 +165,7 @@ async function main() {
     );
   }
   const output = `.cache/perf/${opts.label}`;
-  const workloadSource = await Promise.all(
-    [
-      "worker.ts",
-      "workloads.ts",
-      "scenarios.ts",
-      "http-worker.ts",
-      "http-client.ts",
-      "protocol.ts",
-    ].map((name) => Deno.readTextFile(`scripts/perf/${name}`)),
-  );
+  const workloadSha256 = await workloadHash();
   const [revision, status, diff] = await Promise.all([
     git(["rev-parse", "HEAD"]),
     git(["status", "--porcelain"]),
@@ -171,7 +179,7 @@ async function main() {
     revision: decoder.decode(revision.stdout).trim(),
     dirty: status.stdout.length > 0,
     sourceDiffSha256: await digest(decoder.decode(diff.stdout)),
-    workloadSha256: await digest(workloadSource.join("\n")),
+    workloadSha256,
     environment: {
       deno: Deno.version.deno,
       v8: Deno.version.v8,
@@ -207,6 +215,10 @@ async function main() {
       );
     }
   }
+  // Read and validate the baseline before replacing a reused output label.
+  await Deno.remove(output, { recursive: true }).catch((error) => {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  });
   await Deno.mkdir(output, { recursive: true });
   // Clear credentials and ambient framework flags. HTTP bootstrap may fetch CDN
   // dependencies; inference provider origins remain denied.

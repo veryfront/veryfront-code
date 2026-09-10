@@ -13,7 +13,7 @@ import {
   summarizeProfile,
   summarizeRuns,
 } from "./report.ts";
-import { options } from "./run.ts";
+import { options, workloadHash } from "./run.ts";
 
 describe("performance reports", () => {
   const profile: CpuProfile = {
@@ -121,6 +121,17 @@ describe("performance reports", () => {
     assertThrows(() => options(["--duration-ms=0"]));
     assertThrows(() => options(["--scenario=unknown"]));
     assertThrows(() => options(["--unknown"]));
+  });
+  it("invalidates baselines when orchestration or report calculations change", async () => {
+    const sources = new Map<string, string>();
+    const readSource = (path: string) =>
+      Promise.resolve(sources.get(path) ?? "unchanged");
+    const baseline = await workloadHash(readSource);
+    for (const file of ["run.ts", "report.ts"]) {
+      sources.set(`scripts/perf/${file}`, "changed measurement logic");
+      assertEquals(await workloadHash(readSource) === baseline, false, file);
+      sources.clear();
+    }
   });
   it("accepts full HTTP workloads with explicit cache and compile modes", () => {
     for (

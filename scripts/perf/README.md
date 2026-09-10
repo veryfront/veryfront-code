@@ -15,6 +15,10 @@ full graph. Load a `.cpuprofile` in Chrome DevTools for timeline and bottom-up
 analysis. No service, browser extension, dependency, or Deno upgrade is
 required.
 
+Reusing a label replaces its previous reports and profiles when capture starts.
+Use distinct labels to retain baselines. A failed capture leaves no previous
+report under that label.
+
 Keep generated profiles, benchmark results, and experiment notes in the ignored
 `.cache/perf/` directory. Use CI artifacts to share captures. Do not commit
 them.
@@ -74,9 +78,10 @@ an optimization.
 - A separate two-second-or-longer pass captures the CPU profile after timing.
   Profile percentages are diagnostic. Unprofiled measurements determine impact.
 - The report records all trials, medians, spreads, runtime, CPU model, commit,
-  working tree state, tracked runtime diff hash, and workload hash. Comparisons
-  reject different runtimes, hardware labels, workloads, or trial settings. CPU
-  model equality does not guarantee identical thermal or load conditions.
+  working tree state, tracked runtime diff hash, and workload hash. The workload
+  hash includes orchestration and report calculations. Comparisons reject
+  different runtimes, hardware labels, workloads, or trial settings. CPU model
+  equality does not guarantee identical thermal or load conditions.
 - Warm throughput is sequential and expressed as time per operation. The spread
   describes trial averages, not p95 or p99. HTTP results are full-response
   averages.
@@ -110,12 +115,12 @@ through recursion and must not be summed across rows.
 
 ## Automation
 
-The `Framework performance` workflow runs for relevant pull requests, every
-Monday, and on manual dispatch. Pull requests measure their base with the same
-harness on the same runner before profiling the exact head. The job summary
-shows deltas; the `framework-performance` artifact contains the full reports.
-Scheduled and manual runs produce standalone baselines. Download the artifact
-and open `ci/index.html` locally.
+The `Framework performance` workflow runs for framework pull requests from
+branches in this repository, every Monday, and on manual dispatch. Pull requests
+measure their base with the same harness on the same runner before profiling the
+exact head. The job summary shows deltas; the `framework-performance` artifact
+contains the full reports. Scheduled and manual runs produce standalone
+baselines. Download the artifact and open `ci/index.html` locally.
 
 The workflow has read-only repository permissions and does not post comments.
 Timing deltas are informational; harness or correctness failures still fail the

@@ -8,16 +8,8 @@ on:
     paths:
       - "scripts/perf/**"
       - "tests/integration/perf/**"
-      - "src/rendering/**"
-      - "src/server/**"
-      - "src/platform/**"
-      - "src/modules/**"
-      - "src/transforms/**"
-      - "extensions/ext-parser-babel/**"
-      - "extensions/ext-css-tailwind/**"
-      - "src/react/compat/ssr-adapter/**"
-      - "src/observability/**"
-      - "src/utils/logger/**"
+      - "src/**"
+      - "extensions/**"
       - "deno.json"
       - "deno.lock"
       - ".tool-versions"
@@ -32,6 +24,7 @@ concurrency:
 
 jobs:
   profile:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
