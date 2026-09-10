@@ -73,6 +73,32 @@ function runtime() {
 }
 
 describe("executor runtime installation", () => {
+  it("observes retirement rejection while original cleanup remains pending", async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const retirement = Promise.withResolvers<void>();
+    const installation = createExecutorRuntimeInstallation({
+      binding,
+      artifact,
+      install: () =>
+        Promise.resolve({
+          ...runtime(),
+          close: () => cleanup.promise,
+          settled: retirement.promise,
+        }),
+    });
+    await call(installation.operations, "runtime.install", request());
+    const closing = assertRejects(() => installation.close(), Error, "cleanup failed");
+    try {
+      retirement.reject(new Error("Synthetic retirement failure"));
+      // Let unhandled-rejection reporting run while the independent cleanup is held.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    } finally {
+      cleanup.resolve();
+      await closing;
+      await assertRejects(() => installation.settled);
+    }
+  });
+
   it("accepts host aliases only for the installed owner, source, and canonical tool", () => {
     const alias = {
       sourceId: "host",

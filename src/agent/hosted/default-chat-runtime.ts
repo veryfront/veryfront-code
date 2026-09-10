@@ -312,6 +312,8 @@ async function buildToolAssembly(
 
 /** @internal Shared runtime construction after transport-free tool assembly. */
 export type PreparedHostedRuntimeAgentOptions = {
+  /** Internal caller identity for a separately prepared trusted project runtime. */
+  runtimeAgentId?: string;
   options: Omit<DefaultHostedChatRuntimeCreationOptions, "authToken">;
   taskContext: HostedRuntimeStateResolverContext;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
@@ -333,7 +335,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     refreshSystem,
   });
   const runtimeConfig: RuntimeToolFilterConfig = {
-    id: "veryfront-hosted-runtime",
+    id: input.runtimeAgentId ?? "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,

@@ -86,7 +86,7 @@ function invalidSnapshotPath(path: SnapshotPathNode | undefined): InvalidSnapsho
 
 function invalidJsonSnapshot(
   path: SnapshotPathNode | undefined,
-): BoundedJsonSnapshot {
+): Extract<BoundedJsonSnapshot, { success: false }> {
   let segmentCount = 0;
   for (let current = path; current !== undefined; current = current.parent) {
     segmentCount += 1;
@@ -134,6 +134,19 @@ function encodedByteLength(value: string): number {
  * code.
  */
 export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
+  const result = snapshotBoundedJsonWithSize(value);
+  return result.success ? { success: true, value: result.value } : result;
+}
+
+/** Exact serialized UTF-8 size under the snapshot's existing limits, without serialization hooks. */
+export function boundedJsonByteLength(value: unknown): number | undefined {
+  const result = snapshotBoundedJsonWithSize(value);
+  return result.success ? result.serializedBytes : undefined;
+}
+
+function snapshotBoundedJsonWithSize(value: unknown):
+  | { success: true; value: BoundedJsonValue; serializedBytes: number }
+  | { success: false; path: readonly BoundedJsonPathSegment[] } {
   let activePath: SnapshotPathNode | undefined;
   try {
     const activeAncestors = new NativeSet<object>();
@@ -241,7 +254,7 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
     }
 
     return rootAssigned
-      ? { success: true, value: canonicalRoot as BoundedJsonValue }
+      ? { success: true, value: canonicalRoot as BoundedJsonValue, serializedBytes }
       : invalidJsonSnapshot(undefined);
   } catch {
     // Proxy traps and reflective operations can throw. Such values are not

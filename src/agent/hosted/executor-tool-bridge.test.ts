@@ -104,6 +104,111 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>, maxConcurrentC
 }
 
 describe("executor tool bridge", () => {
+  it("requires an own data property to grant project context", async () => {
+    let executions = 0;
+    let grantReads = 0;
+    const source: RemoteToolSource = {
+      id: call.sourceId,
+      async listTools() {
+        return [definition];
+      },
+      async executeTool() {
+        executions++;
+        return null;
+      },
+    };
+    const capability = Object.assign(Object.create({ projectContext: "skill" }), {
+      source,
+      allowedToolNames: new Set(["lookup"]),
+      context: {},
+    });
+    const sources = new Map([[source.id, capability]]);
+    const f = fixture({}, { sources });
+    assertEquals(
+      await collect(f.stream("tool.execute", {
+        ...call,
+        projectContext: { activeSkillId: "forged" },
+      })),
+      [{ type: "failure" }],
+    );
+    assertEquals(executions, 0);
+    Object.defineProperty(capability, "projectContext", {
+      get() {
+        grantReads++;
+        return "skill";
+      },
+    });
+    assertThrows(() => fixture({}, { sources }), TypeError);
+    assertEquals(grantReads, 0);
+  });
+
+  it("rejects caller skill context for ordinary host capabilities and retains host-owned context", async () => {
+    const observed: ToolExecutionContext[] = [];
+    const trusted = { activeSkillId: "host-skill", projectId: "host-project" };
+    const f = fixture(
+      {
+        async executeTool(_name, _args, context) {
+          observed.push(context!);
+          return null;
+        },
+      },
+      {},
+      trusted,
+    );
+    const forged: JsonValue[] = [{}, { activeSkillId: "forged-skill" }];
+    for (const projectContext of forged) {
+      assertEquals(await collect(f.stream("tool.execute", { ...call, projectContext })), [
+        { type: "failure" },
+      ]);
+    }
+    assertEquals(observed.length, 0);
+    const channels = pair(f.operations);
+    try {
+      const [facade] = await createExecutorRemoteToolSources({ channel: channels.caller });
+      assert(facade);
+      await facade.executeTool("lookup", {}, { activeSkillId: "ignored-caller-skill" });
+      assertEquals(observed.length, 1);
+      assertEquals(observed[0]!.activeSkillId, "host-skill");
+      assertEquals(observed[0]!.projectId, "host-project");
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("rejects extra authority inside project context before executing an opted-in capability", async () => {
+    let executions = 0;
+    const source: RemoteToolSource = {
+      id: call.sourceId,
+      async listTools() {
+        return [definition];
+      },
+      async executeTool() {
+        executions++;
+        return null;
+      },
+    };
+    const f = fixture({}, {
+      sources: new Map([[source.id, {
+        source,
+        allowedToolNames: new Set(["lookup"]),
+        context: {},
+        projectContext: "skill",
+      }]]),
+    });
+    const forged: JsonValue[] = [
+      { authToken: "<TOKEN>" },
+      { userId: "forged-user" },
+      { activeSkillToolAvailability: { authToken: "<TOKEN>" } },
+      { activeSkillToolAvailability: { scripts: ["../outside.ts"] } },
+    ];
+    for (const projectContext of forged) {
+      assertEquals(await collect(f.stream("tool.execute", { ...call, projectContext })), [
+        { type: "failure" },
+      ]);
+    }
+    assertEquals(executions, 0);
+  });
+
   it("completes void tools as null and preserves other falsy results without replay", async () => {
     for (const result of [undefined, null, false, 0, ""]) {
       let executions = 0;

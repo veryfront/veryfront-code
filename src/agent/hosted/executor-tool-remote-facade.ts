@@ -5,6 +5,8 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool/types.ts";
 import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
+import { copyPrivateSet, createPrivateSet } from "#veryfront/security/private-set.ts";
+import { captureExecutorProjectCallContext } from "#veryfront/agent/hosted/executor-project-context.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import {
   executorToolBytes,
@@ -38,10 +40,15 @@ export async function createExecutorRemoteToolSources(options: {
   channel: ExecutorChannel;
   signal?: AbortSignal;
   limits?: Partial<ExecutorToolLimits>;
+  /** Only these trusted source slots may receive dynamic project skill context. */
+  projectContextSources?: ReadonlySet<string>;
 }): Promise<RemoteToolSource[]> {
   const channel = options.channel;
   const lifetime = options.signal ?? channel.signal;
   const limits = executorToolLimits(options.limits);
+  const projectContextSources = options.projectContextSources
+    ? copyPrivateSet(options.projectContextSources, limits.maxSources)
+    : createPrivateSet<string>();
   let metadataBytes = 0;
   let metadataTools = 0;
   const accountMetadata = (frame: JsonValue) => {
@@ -115,7 +122,7 @@ export async function createExecutorRemoteToolSources(options: {
     }
   }
 
-  const ids = new Set<string>();
+  const ids = createPrivateSet<string>();
   await consume("tool.sources", {}, (frame) => {
     if (frame.type !== "source" || ids.has(frame.sourceId) || ids.size >= limits.maxSources) {
       throw new TypeError("Invalid executor tool sources");
@@ -123,12 +130,15 @@ export async function createExecutorRemoteToolSources(options: {
     accountMetadata(frame);
     ids.add(frame.sourceId);
   });
+  for (const sourceId of projectContextSources) {
+    if (!ids.has(sourceId)) throw new TypeError("Project context source is unavailable");
+  }
   return [...ids].map((sourceId): RemoteToolSource =>
     Object.freeze({
       id: sourceId,
       async listTools(context?: ToolExecutionContext) {
         const definitions: ToolDefinition[] = [];
-        const names = new Set<string>();
+        const names = createPrivateSet<string>();
         const request = parseExecutorToolData(getExecutorToolListSchema(), {
           sourceId,
           ...callerCorrelation(context),
@@ -153,11 +163,15 @@ export async function createExecutorRemoteToolSources(options: {
         args: Record<string, unknown>,
         context?: ToolExecutionContext,
       ) {
+        const projectContext = projectContextSources.has(sourceId)
+          ? captureExecutorProjectCallContext(context)
+          : undefined;
         const request = parseExecutorToolData(getExecutorToolCallSchema(), {
           sourceId,
           toolName,
           args: executorToolJson(args, limits.maxArgumentBytes),
           ...callerCorrelation(context),
+          ...(projectContext === undefined ? {} : { projectContext }),
         });
         return await consume("tool.execute", request, () => {
           throw new TypeError("Invalid executor tool execution frame");

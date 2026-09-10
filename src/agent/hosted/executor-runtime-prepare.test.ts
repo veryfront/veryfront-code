@@ -204,6 +204,38 @@ describe("executor runtime preparation", () => {
     });
   }
 
+  it("normalizes a synchronous discovery result before private promise observation", async () => {
+    const f = fixture();
+    const context = {
+      binding,
+      signal: new AbortController().signal,
+      deadline: Date.now() + 30_000,
+    };
+    const describe = f.discovery.operations.get("agent.describe");
+    assert(describe?.mode === "unary");
+    const description = await describe.handle({ agentId: "coder" }, context);
+    (f.discovery.operations as Map<
+      string,
+      import("#veryfront/agent/executor/channel.ts").ExecutorOperation
+    >).set("agent.describe", { mode: "unary", handle: () => description });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let completed = false;
+    try {
+      const result = await Promise.race([
+        prepare(f.owner),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 500);
+        }),
+      ]);
+      completed = result !== null;
+      assert(completed, "Synchronous discovery must not leave preparation pending");
+      assertEquals((result as { ok: boolean }).ok, true);
+    } finally {
+      clearTimeout(timer);
+      if (completed) await f.owner.close();
+      else void f.owner.close().catch(() => {});
+    }
+  });
   for (const selection of [undefined, [], ["load_skill"]]) {
     it(`normalizes implicit disabled skill tools while retaining explicit rejection (${JSON.stringify(selection)})`, async () => {
       const f = fixture({

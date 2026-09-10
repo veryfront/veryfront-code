@@ -1,7 +1,10 @@
 import type { InferSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, getJsonValueSchema, type JsonValue } from "#veryfront/schemas/index.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { boundedJsonByteLength, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getEnumerableOwnStringDataEntries } from "#veryfront/tool/data-properties.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { findLastPrivateArrayIndex, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { isToolAnnotations } from "#veryfront/tool/mcp-metadata.ts";
 import type { ToolDefinition, ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
@@ -12,6 +15,19 @@ import {
   executorAgentFailureCode,
 } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { executorModelFailure } from "#veryfront/agent/hosted/executor-model-errors.ts";
+import { getExecutorProjectCallContextSchema } from "#veryfront/agent/hosted/executor-project-context.ts";
+
+const objectKeys = Object.keys;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isArray = Array.isArray;
+const freeze = Object.freeze;
+const definitionKeys = createPrivateSet([
+  "name",
+  "description",
+  "parameters",
+  "title",
+  "annotations",
+]);
 
 // Reserve the channel envelope, including escaped binding strings and the prefix.
 export const EXECUTOR_TOOL_MAX_PAYLOAD_BYTES = EXECUTOR_MAX_FRAME_BYTES - 2048;
@@ -43,10 +59,12 @@ export function executorToolLimits(
   overrides: Partial<ExecutorToolLimits> = {},
 ): ExecutorToolLimits {
   const limits: ExecutorToolLimits = { ...EXECUTOR_TOOL_LIMITS };
-  for (const key of Object.keys(limits) as (keyof ExecutorToolLimits)[]) {
+  const keys = objectKeys(limits) as (keyof ExecutorToolLimits)[];
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
     limits[key] = executorToolLimit(overrides[key] ?? limits[key], limits[key]);
   }
-  return Object.freeze(limits);
+  return freeze(limits);
 }
 
 export const getExecutorToolIdSchema = defineSchema((v) => v.string().min(1).max(256));
@@ -65,6 +83,7 @@ export const getExecutorToolCallSchema = defineSchema((v) =>
     sourceId: getExecutorToolIdSchema(),
     toolName: getExecutorToolIdSchema(),
     args: v.record(v.string(), getJsonValueSchema()),
+    projectContext: getExecutorProjectCallContextSchema().optional(),
     ...correlationShape(v),
   }).strict()
 );
@@ -89,10 +108,10 @@ export const getExecutorToolFrameSchema = defineSchema((v) =>
 );
 export type ExecutorToolFrame = InferSchema<ReturnType<typeof getExecutorToolFrameSchema>>;
 
-const JSON_BYTE_ENCODER = new TextEncoder();
-
 export function executorToolBytes(value: JsonValue): number {
-  return JSON_BYTE_ENCODER.encode(JSON.stringify(value)).byteLength;
+  const size = boundedJsonByteLength(value);
+  if (size === undefined) throw new TypeError("Executor tool data exceeds its JSON limits");
+  return size;
 }
 
 /** Snapshot before validation or serialization. Never invoke toJSON or coerce non-data values. */
@@ -115,28 +134,26 @@ export function parseExecutorToolData<T>(schema: Schema<T>, value: unknown): T {
 }
 
 export function executorToolDefinition(value: unknown, limits: ExecutorToolLimits): ToolDefinition {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || isArray(value)) {
     throw new TypeError("Invalid executor tool definition");
   }
   // ToolDefinition permits explicit undefined for optional metadata. Omit only
   // these top-level values; schema properties themselves remain strict JSON.
   const entries = getEnumerableOwnStringDataEntries(value, "Executor tool definition");
-  const data = executorToolJson(
-    Object.fromEntries(
-      entries.filter(([key, entry]) =>
-        entry !== undefined || (key !== "title" && key !== "annotations")
-      ),
-    ),
-    limits.maxDescriptorBytes,
-  );
+  const record = {};
+  for (let index = 0; index < entries.length; index++) {
+    const key = entries[index]![0], entry = entries[index]![1];
+    if (entry !== undefined || (key !== "title" && key !== "annotations")) {
+      defineOwnDataProperty(record, key, entry, { enumerable: true });
+    }
+  }
+  const data = executorToolJson(record, limits.maxDescriptorBytes);
   if (
-    !data || typeof data !== "object" || Array.isArray(data) ||
-    Object.keys(data).some((key) =>
-      !["name", "description", "parameters", "title", "annotations"].includes(key)
-    ) ||
+    !data || typeof data !== "object" || isArray(data) ||
+    somePrivateArray(objectKeys(data), (key) => !definitionKeys.has(key)) ||
     typeof data.name !== "string" || !getExecutorToolIdSchema().safeParse(data.name).success ||
     typeof data.description !== "string" ||
-    !data.parameters || typeof data.parameters !== "object" || Array.isArray(data.parameters) ||
+    !data.parameters || typeof data.parameters !== "object" || isArray(data.parameters) ||
     (data.title !== undefined && typeof data.title !== "string") ||
     (data.annotations !== undefined && !isToolAnnotations(data.annotations))
   ) throw new TypeError("Invalid executor tool definition");
@@ -155,7 +172,7 @@ export function executorToolProgress(
 ): ToolExecutionDataEvent {
   const event = executorToolJson(value, limits.maxProgressEventBytes);
   if (
-    !event || typeof event !== "object" || Array.isArray(event) ||
+    !event || typeof event !== "object" || isArray(event) ||
     typeof event.type !== "string" || !event.type.length || event.type.length > 256
   ) {
     throw new TypeError("Invalid executor tool progress");
@@ -168,12 +185,14 @@ export function executorToolFailure(error: unknown): ExecutorToolFrame {
   // an unknown error authority to classify a reply. Agent codes need an
   // explicit code or registered error; model codes use the curated helper.
   const explicit = error !== null && typeof error === "object"
-    ? Object.getOwnPropertyDescriptor(error, "code")?.value
+    ? getOwnPropertyDescriptor(error, "code")?.value
     : undefined;
-  const classified = snapshotVeryfrontError(error) || failureCodes.some((code) => code === explicit)
-    ? executorAgentFailureCode(error, "EXECUTOR_AGENT_STREAM_FAILED")
-    : executorModelFailure(error)?.code;
-  const code = failureCodes.find((code) => code === classified);
+  const classified =
+    snapshotVeryfrontError(error) || somePrivateArray(failureCodes, (code) => code === explicit)
+      ? executorAgentFailureCode(error, "EXECUTOR_AGENT_STREAM_FAILED")
+      : executorModelFailure(error)?.code;
+  const index = findLastPrivateArrayIndex(failureCodes, (code) => code === classified);
+  const code = index < 0 ? undefined : failureCodes[index];
   return { type: "failure", ...(code ? { code } : {}) };
 }
 
