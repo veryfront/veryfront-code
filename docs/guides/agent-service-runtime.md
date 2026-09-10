@@ -487,6 +487,21 @@ after decoding. Run IDs contain 1 to 128 ASCII letters, digits, underscores,
 or hyphens. Valid encoded run IDs are decoded before the handler receives them.
 Signed stream requests must sign the original encoded request path.
 
+To verify the packaged broker and executor locally, use Node.js 22.3.0 or newer:
+
+```bash
+deno task build:npm
+deno task test:e2e:managed-broker
+```
+
+This suite installs the built packages and exercises signed HTTP ingress, a
+separate executor over TLS, model and tool calls, SSE and detached responses,
+executor termination, client cancellation, and delayed terminal persistence.
+Project-controlled hooks use synthetic credential canaries with positive
+controls. The npm smoke jobs run the suite on the minimum supported Node version
+and the current CI version. These checks use local synthetic services. Verify
+the deployed artifact and isolation configuration separately before traffic cutover.
+
 ## Verify it worked
 
 Start the service entrypoint and call the run route directly. The default

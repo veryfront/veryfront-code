@@ -21,6 +21,9 @@
  *   9. a packed agent workflow reaches a non-responsive provider, respects
  *      its configured deadline, persists failure, and leaves the server
  *      healthy
+ *  10. the managed broker executes through a separate executor process,
+ *      retains persistence during shutdown, and keeps synthetic credentials
+ *      out of project-controlled hooks
  *
  * The runtime under test stays the packed npm artifact under the ambient Node
  * version: this orchestrator only spawns `npm`, `node`, and `deno eval`
@@ -90,6 +93,7 @@ async function run(
   options: {
     cwd?: string;
     env?: Record<string, string>;
+    clearEnv?: boolean;
     timeoutMs: number;
   },
 ): Promise<RunResult> {
@@ -100,6 +104,7 @@ async function run(
       args,
       cwd: options.cwd,
       env: options.env,
+      clearEnv: options.clearEnv,
       stdin: "null",
       stdout: "piped",
       stderr: "piped",
@@ -124,7 +129,12 @@ async function runChecked(
   step: string,
   command: string,
   args: string[],
-  options: { cwd?: string; env?: Record<string, string>; timeoutMs: number },
+  options: {
+    cwd?: string;
+    env?: Record<string, string>;
+    clearEnv?: boolean;
+    timeoutMs: number;
+  },
 ): Promise<RunResult> {
   const result = await run(command, args, options);
   if (result.code !== 0) {
@@ -1177,6 +1187,33 @@ async function checkWorkflowTimeout(
   }
 }
 
+async function checkManagedBroker(workDir: string): Promise<void> {
+  console.log("== packed managed broker: process boundary and settlement");
+  const fixtureDir = `${workDir}/managed-broker`;
+  await Deno.mkdir(fixtureDir, { recursive: true });
+  for (const name of ["journey.mjs", "executor.mjs", "project-hooks.mjs"]) {
+    await Deno.copyFile(
+      `${ROOT_DIR}/tests/e2e/agent/managed-broker/${name}`,
+      `${fixtureDir}/${name}`,
+    );
+  }
+  const result = await runChecked("managed broker journey", "node", [
+    "--test",
+    "--test-concurrency=1",
+    `${fixtureDir}/journey.mjs`,
+  ], {
+    cwd: workDir,
+    clearEnv: true,
+    env: {
+      PATH: Deno.env.get("PATH") ?? "",
+      NODE_ENV: "production",
+      VF_DISABLE_LRU_INTERVAL: "1",
+    },
+    timeoutMs: 480_000,
+  });
+  console.log(result.stdout);
+}
+
 async function runSmoke(workDir: string): Promise<void> {
   let devServer: DevServer | undefined;
   const shutdown = async () => {
@@ -1209,6 +1246,11 @@ async function runSmoke(workDir: string): Promise<void> {
     });
     await npmInstall(workDir, plan, plan.rootInstallSpecs);
 
+    if (Deno.args.includes("--managed-broker-only")) {
+      await checkManagedBroker(workDir);
+      return;
+    }
+
     await checkRootInstall(workDir);
     await checkOptionalPeer(workDir);
     await checkMissingExtension(workDir);
@@ -1225,6 +1267,7 @@ async function runSmoke(workDir: string): Promise<void> {
     await checkWorkflowTimeout(devServer, devUrl, csrfToken);
 
     await shutdown();
+    await checkManagedBroker(workDir);
     console.log("npm install smoke: all checks passed");
   } finally {
     for (const [signal, handler] of signalHandlers) {
