@@ -504,6 +504,8 @@ Selected inline tools and discovered tools are combined under the exact project
 source policy, including metadata access and later execution. Framework-generated
 agent runtime tools are excluded from the project-only catalog, even when their
 names appear in a grant.
+The full-runtime profile applies the same source-policy scope while extracting
+inline tools and reading their metadata during preparation.
 
 ### Broker composition
 

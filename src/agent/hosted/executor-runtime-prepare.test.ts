@@ -18,6 +18,8 @@ import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/mo
 import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { agent } from "#veryfront/agent/factory.ts";
+import { tool } from "#veryfront/tool/factory.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
 import { createExecutorDiscovery } from "./executor-discovery.ts";
 import {
@@ -164,6 +166,35 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  it("extracts inline tools under the source policy in the full-runtime profile", async () => {
+    const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+    const observed: unknown[] = [];
+    const registered = tool({
+      id: "inspect",
+      description: "Inspect inline scope",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => null,
+    });
+    const execute = registered.execute;
+    const discovered = runtime({ tools: { inspect: registered } });
+    discovered.sourceIntegrationPolicy = policy;
+    Object.defineProperty(registered, "execute", {
+      get() {
+        observed.push(getActiveSourceIntegrationPolicy());
+        return execute;
+      },
+    });
+    const f = fixture({ load: () => Promise.resolve(discovered) });
+    try {
+      const result = await prepare(f.owner);
+      assert(result && typeof result === "object" && !Array.isArray(result) && result.ok === true);
+      assert(observed.length > 0);
+      for (const active of observed) assertEquals(active, policy);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   for (
     const request of [
       { thinking: { enabled: true, budgetTokens: 8192 } },
