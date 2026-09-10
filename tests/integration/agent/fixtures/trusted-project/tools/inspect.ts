@@ -26,7 +26,10 @@ export default tool({
         projectId: context?.projectId,
         toolCallId: context?.toolCallId,
       },
-      fields: Object.keys(context ?? {}).sort(),
+      fields: Object.keys(context ?? {}).sort((left, right) => {
+        if (left < right) return -1;
+        return left > right ? 1 : 0;
+      }),
       observations: observations(),
       hasParentSecret: Object.hasOwn(process.env, "VF_NATIVE_PARENT_SECRET"),
     });
