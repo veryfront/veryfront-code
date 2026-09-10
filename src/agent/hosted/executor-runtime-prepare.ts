@@ -752,7 +752,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         modelId,
         sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
         refreshSystem: facades.projectSteering
-          ? () => facades.projectSteering!.refresh(streamSignal, allowedToolNames)
+          ? () => facades.projectSteering!.refresh(streamSignal, toolAssembly.modelVisibleToolNames)
           : undefined,
       };
       const runtimeOptions: NonNullable<Parameters<typeof createPreparedHostedRuntimeAgent>[1]> = {

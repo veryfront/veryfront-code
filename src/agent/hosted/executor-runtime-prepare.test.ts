@@ -2071,6 +2071,70 @@ Synthetic source instructions.`,
     });
   }
 
+  for (const extraToolCount of [0, 128]) {
+    it(`refreshes steering with the model-visible provider-compatible tools (${extraToolCount} extra tools)`, async () => {
+      const remoteNames = [
+        "update_file",
+        ...Array.from({ length: extraToolCount }, (_, index) => `zz_tool_${index}`),
+      ];
+      const visible: string[][] = [];
+      let refreshedTools: readonly string[] | undefined;
+      const f = fixture({
+        config: { providerTools: ["web_search"] },
+        grant: {
+          ...grant,
+          models: new Map([[modelId, { maxOutputTokens: 200, providerToolNames: ["web_search"] }]]),
+          allowedToolNames: remoteNames,
+          remoteToolSourceIds: ["api"],
+          execution: { kind: "ephemeral", projectId: "synthetic-project" },
+        },
+        facades: {
+          projectSteering: {
+            prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+            refresh: (_signal, availableToolNames) => {
+              refreshedTools = availableToolNames;
+              return "Updated synthetic steering";
+            },
+          },
+          remoteToolSources: new Map([["api", {
+            id: "api",
+            listTools: () =>
+              Promise.resolve(remoteNames.map((name) => ({
+                ...syntheticRemoteTool(name),
+                parameters: {
+                  type: "object",
+                  properties: { path: { type: "string" }, project_reference: { type: "string" } },
+                  required: ["project_reference"],
+                },
+              }))),
+            executeTool: () => Promise.resolve({ success: true }),
+          }]]),
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream: (options) => {
+              visible.push(
+                (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
+              );
+              return finishStream(visible.length === 1 ? "update_file" : undefined, {
+                path: "AGENTS.md",
+              });
+            },
+          }),
+        },
+      });
+      try {
+        await Array.fromAsync(await preparedStream(f));
+        assertEquals(visible.length, 2);
+        assertEquals(visible[0]!.length, Math.min(extraToolCount + 2, 128));
+        assert(visible[0]!.includes("web_search"));
+        assertEquals(visible[1], visible[0]);
+        assertEquals([...(refreshedTools ?? [])].sort(), [...visible[1]!].sort());
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   it("reserves the catalog thinking budget when the request omits thinking and output limits", async () => {
     const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
     let captured: ModelRuntimeCallOptions | undefined;

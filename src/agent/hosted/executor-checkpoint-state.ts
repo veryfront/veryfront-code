@@ -70,7 +70,7 @@ export function createExecutorCheckpointStateOperations(
   const binding = Object.freeze(getExecutorBindingSchema().parse(options.expectedBinding));
   if (
     options.initialToolExposureCheckpoint && !ids.toolExposureCheckpoint ||
-    options.initialProviderReplayCheckpoints && !ids.providerReplayCheckpoint
+    (options.initialProviderReplayCheckpoints?.length ?? 0) > 0 && !ids.providerReplayCheckpoint
   ) throw new TypeError("Executor checkpoint state is not granted");
   const tool = options.initialToolExposureCheckpoint === undefined
     ? undefined

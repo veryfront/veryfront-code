@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
@@ -104,6 +104,36 @@ it("rejects wrong binding and capability before consuming a snapshot grant", asy
   );
   assertEquals((await consume({ kind: "provider-replay", capabilityId: "replay" })).length, 2);
   await assertRejects(() => consume({ kind: "provider-replay", capabilityId: "replay" }));
+});
+
+it("accepts an empty replay snapshot without granting replay access", async () => {
+  for (const capabilityIds of [{}, { toolExposureCheckpoint: "tools" }]) {
+    const operations = createExecutorCheckpointStateOperations({
+      expectedBinding: binding,
+      capabilityIds,
+      initialProviderReplayCheckpoints: [],
+    });
+    assertEquals(operations.size, capabilityIds.toolExposureCheckpoint ? 1 : 0);
+    const operation = operations.get(executorInitialCheckpointsOperation);
+    if (capabilityIds.toolExposureCheckpoint) {
+      assert(operation?.mode === "stream");
+      await assertRejects(
+        async () => {
+          for await (
+            const _frame of operation.handle({ kind: "provider-replay", capabilityId: "tools" }, {
+              binding,
+              signal: new AbortController().signal,
+              deadline: Date.now() + 10_000,
+            })
+          ) {
+            throw new Error("Replay access was not granted");
+          }
+        },
+        TypeError,
+        "Executor checkpoint state is not authorized",
+      );
+    }
+  }
 });
 
 it("rejects duplicate anchors and missing grants instead of silently dropping state", () => {
