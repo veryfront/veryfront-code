@@ -1,18 +1,26 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
+import { resolve } from "node:path";
 
 describe("framework profiling command", () => {
   it("distinguishes compatible baseline metadata, dependency changes, and read errors", async () => {
     await Deno.mkdir(".cache/perf", { recursive: true });
-    const base = await makeTempDirWithOptions({ dir: ".cache/perf", prefix: "metadata-" });
+    const base = resolve(await makeTempDirWithOptions({ dir: ".cache/perf", prefix: "metadata-" }));
     const config = JSON.parse(
       await Deno.readTextFile(new URL("../../../deno.json", import.meta.url)),
     );
     const lock = await Deno.readTextFile(new URL("../../../deno.lock", import.meta.url));
-    const check = async () => {
+    const check = async (cwd?: string) => {
       const result = await new Deno.Command("deno", {
-        args: ["run", "--frozen", "--allow-read", "scripts/perf/baseline.ts", base],
+        args: [
+          "run",
+          "--frozen",
+          "--allow-read",
+          new URL("../../../scripts/perf/baseline.ts", import.meta.url).href,
+          base,
+        ],
+        cwd,
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -22,6 +30,32 @@ describe("framework profiling command", () => {
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, tasks: {} }));
       await Deno.writeTextFile(`${base}/deno.lock`, lock);
       assertEquals(await check(), 0);
+      await Deno.writeTextFile(
+        `${base}/deno.json`,
+        JSON.stringify({ ...config, lock: "alternate.lock" }),
+      );
+      await Deno.writeTextFile(`${base}/alternate.lock`, lock);
+      assertEquals(await check(), 1);
+      const head = `${base}/head`;
+      await Deno.mkdir(head);
+      await Deno.writeTextFile(`${head}/deno.lock`, lock);
+      await Deno.writeTextFile(`${head}/alternate.lock`, lock);
+      for (const setting of ["alternate.lock", { path: "alternate.lock", frozen: true }]) {
+        const configured = JSON.stringify({ ...config, lock: setting });
+        await Deno.writeTextFile(`${head}/deno.json`, configured);
+        await Deno.writeTextFile(`${base}/deno.json`, configured);
+        await Deno.writeTextFile(`${base}/alternate.lock`, lock);
+        assertEquals(await check(head), 0);
+        await Deno.writeTextFile(`${base}/alternate.lock`, "changed selected dependency graph");
+        assertEquals(await check(head), 1);
+      }
+      for (const directory of [head, base]) {
+        await Deno.writeTextFile(
+          `${directory}/deno.json`,
+          JSON.stringify({ ...config, lock: false }),
+        );
+      }
+      assertEquals(await check(head), 1);
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, imports: {} }));
       assertEquals(await check(), 1);
       await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify(config));

@@ -11,6 +11,7 @@ on:
       - "tests/integration/perf/**"
       - "src/**"
       - "extensions/**"
+      - "react/**"
       - "deno.json"
       - "deno.lock"
       - ".tool-versions"

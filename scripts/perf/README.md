@@ -125,13 +125,13 @@ through recursion and must not be summed across rows.
 ## Automation
 
 The `Framework performance` workflow runs for framework pull requests from
-branches in this repository, every Monday, and on manual dispatch. Pull requests
-measure their common ancestor with the base branch using the same harness and
-runner before profiling the exact head. This keeps later changes on the base
-branch out of the comparison. The job summary shows deltas; the
-`framework-performance` artifact contains the full reports. Scheduled and manual
-runs produce standalone baselines. Download the artifact and open
-`ci/index.html` locally.
+branches in this repository, including React runtime wrapper changes, every
+Monday, and on manual dispatch. Pull requests measure their common ancestor with
+the base branch using the same harness and runner before profiling the exact
+head. This keeps later changes on the base branch out of the comparison. The job
+summary shows deltas; the `framework-performance` artifact contains the full
+reports. Scheduled and manual runs produce standalone baselines. Download the
+artifact and open `ci/index.html` locally.
 
 The workflow has read-only repository permissions and does not post comments.
 Timing deltas are informational; harness or correctness failures still fail the
@@ -139,4 +139,7 @@ job. Do not make noisy hosted-runner latency a merge requirement. Changes to the
 runtime pin, dependency lockfile, or dependency-related Deno configuration skip
 the base comparison and establish a new baseline from the head. Task-only
 configuration changes remain comparable. Workload changes also require a new
-local baseline. Compare dependency and runtime migrations separately.
+local baseline. The metadata check compares the configured lock setting and the
+selected lockfile contents; disabled lockfiles skip the base comparison. When
+changing the lockfile location, update the workflow path filter to include it.
+Compare dependency and runtime migrations separately.

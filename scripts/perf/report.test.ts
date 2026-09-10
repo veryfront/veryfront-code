@@ -166,6 +166,7 @@ describe("performance reports", () => {
         "unstable",
         "compilerOptions",
         "minimumDependencyAge",
+        "lock",
       ]
     ) {
       assertEquals(

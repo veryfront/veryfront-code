@@ -173,7 +173,7 @@ async function main() {
   const [revision, status, diff] = await Promise.all([
     git(["rev-parse", "HEAD"]),
     git(["status", "--porcelain"]),
-    git(["diff", "HEAD", "--", "src", "extensions"]),
+    git(["diff", "HEAD", "--", "src", "extensions", "react"]),
   ]);
   if (!revision.success) {
     throw new Error("Run this command from a Git checkout");
