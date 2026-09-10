@@ -474,6 +474,7 @@ describe("client/spa/ClientApp (reactive)", () => {
       testGlobal.MODULE_SERVER_URL = `file://${tempDir}`;
       clearComponentCache();
       const originalError = console.error;
+      let mountedRoot: ReturnType<typeof createRoot> | undefined;
       console.error = () => {};
       try {
         const initialData: PageDataResponse = {
@@ -491,6 +492,7 @@ describe("client/spa/ClientApp (reactive)", () => {
 
         const rootElement = document.getElementById("root")!;
         const root = createRoot(rootElement);
+        mountedRoot = root;
         flushSync(() => root.render(<ClientApp initialData={initialData} />));
         await tick();
 
@@ -501,12 +503,12 @@ describe("client/spa/ClientApp (reactive)", () => {
             (_, index) => ({ kind: "tsx" as const, path: `layouts/${index}.tsx` }),
           ),
         });
-        await tick();
+        await waitForText(rootElement, "at most 256 entries");
 
         assertStringIncludes(rootElement.textContent ?? "", "at most 256 entries");
         assertEquals((rootElement.textContent ?? "").includes("Loading"), false);
-        root.unmount();
       } finally {
+        mountedRoot?.unmount();
         console.error = originalError;
         clearComponentCache();
         delete testGlobal.MODULE_SERVER_URL;
