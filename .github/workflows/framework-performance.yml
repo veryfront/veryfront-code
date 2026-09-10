@@ -47,7 +47,8 @@ jobs:
         run: |
           set -euo pipefail
           perf_base_dir="${RUNNER_TEMP}/framework-perf-base"
-          git worktree add --detach "${perf_base_dir}" "${PERF_BASE_SHA}"
+          perf_base_sha="$(git merge-base "${PERF_BASE_SHA}" HEAD)"
+          git worktree add --detach "${perf_base_dir}" "${perf_base_sha}"
           if ! cmp -s .tool-versions "${perf_base_dir}/.tool-versions"; then
             echo "Runtime pin changed. This run establishes a new baseline." >> "${GITHUB_STEP_SUMMARY}"
             exit 0

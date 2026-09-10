@@ -117,10 +117,12 @@ through recursion and must not be summed across rows.
 
 The `Framework performance` workflow runs for framework pull requests from
 branches in this repository, every Monday, and on manual dispatch. Pull requests
-measure their base with the same harness on the same runner before profiling the
-exact head. The job summary shows deltas; the `framework-performance` artifact
-contains the full reports. Scheduled and manual runs produce standalone
-baselines. Download the artifact and open `ci/index.html` locally.
+measure their common ancestor with the base branch using the same harness and
+runner before profiling the exact head. This keeps later changes on the base
+branch out of the comparison. The job summary shows deltas; the
+`framework-performance` artifact contains the full reports. Scheduled and manual
+runs produce standalone baselines. Download the artifact and open
+`ci/index.html` locally.
 
 The workflow has read-only repository permissions and does not post comments.
 Timing deltas are informational; harness or correctness failures still fail the
