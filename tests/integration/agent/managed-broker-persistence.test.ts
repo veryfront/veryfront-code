@@ -400,6 +400,51 @@ for (const authority of ["token", "capability"] as const) {
 }
 
 describe("managed persistence capability authorization", () => {
+  for (const authority of ["token", "capability"] as const) {
+    it(`normalizes canonical snake_case run input (${authority})`, async () => {
+      const calls: Record<string, unknown>[] = [];
+      const fetch = successfulFetch(calls);
+      const canonical = {
+        run_id: run.runId,
+        conversation_id: conversationId,
+        message_id: messageId,
+        latest_event_id: 0,
+        latest_external_event_sequence: 0,
+        status: "running",
+        stream_protocol_version: 2,
+      };
+      const input = {
+        apiUrl: "https://api.example.test",
+        runEventToken: "synthetic-token",
+        fetch,
+        run: canonical,
+        modelId: "model",
+        resolveProvider: () => "provider",
+        capability: createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.test",
+          runId: run.runId,
+          runEventAppendToken: "synthetic-token",
+          fetch,
+        }),
+      };
+      // Model an existing JavaScript caller: the runtime schema accepts wire aliases.
+      const persistence = bindForTest(Reflect.apply(
+        authority === "token"
+          ? createManagedBrokerPersistence
+          : createManagedBrokerPersistenceFromCapability,
+        undefined,
+        [input],
+      ));
+      try {
+        await persistence.publishParentRunEvents([{ type: "STEP_STARTED" }]);
+        await persistence.output.finish({ completed: true });
+        assertEquals(calls.length, 2);
+        assertEquals(calls.at(-1)?.status, "completed");
+      } finally {
+        await persistence.cleanup();
+      }
+    });
+  }
   it("does not expose private terminal options as callback receivers", async () => {
     const receivers: unknown[] = [];
     const capability = createHostedRunEventWriterCapability({

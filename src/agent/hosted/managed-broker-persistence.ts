@@ -43,14 +43,15 @@ export function createManagedBrokerPersistence(input: {
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
 }) {
+  const run = getConversationRunProjectionSchema().parse(input.run);
   return createManagedBrokerPersistenceFromCapability({
     capability: createHostedRunEventWriterCapability({
       apiUrl: input.apiUrl,
-      runId: input.run.runId,
+      runId: run.runId,
       runEventAppendToken: input.runEventToken,
       fetch: input.fetch,
     }),
-    run: input.run,
+    run,
     modelId: input.modelId,
     resolveProvider: input.resolveProvider,
   });
