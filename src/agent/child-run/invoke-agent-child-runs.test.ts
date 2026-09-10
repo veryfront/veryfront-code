@@ -2,10 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildInvokeAgentChildRunLifecycleCustomEvent,
   buildInvokeAgentChildRunProgressEvents,
   buildInvokeAgentChildRunStateDelta,
+  getInvokeAgentChildRunLifecycleCustomEventSchema,
+  InvokeAgentChildRunLifecycleCustomEventSchema,
   publishInvokeAgentChildRunProgress,
 } from "./invoke-agent-child-runs.ts";
+
+import { prepareConversationRunExternalEvents } from "../conversation/run-event-preparation.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -119,20 +124,47 @@ describe("agent/invoke-agent-child-runs", () => {
       {
         type: "CUSTOM",
         name: "veryfront.invoke_agent.lifecycle",
-        value: {
-          toolCallId: "tool/call~1",
-          childConversationId: CHILD_CONVERSATION_ID,
-          childRunId: "run_child_1",
-          childMessageId: CHILD_MESSAGE_ID,
-          childAgentId: "researcher",
-          description: "Inspect logs",
-          status: "pending",
-          sourceTargetKind: "project",
-          runtimeTargetKind: "main_branch",
-          targetBranchId: null,
-        },
+        value: BASE_INPUT,
       },
     ]);
+  });
+
+  it("preserves the public Custom event builder and schema contract", () => {
+    const events = buildInvokeAgentChildRunProgressEvents({ ...BASE_INPUT, status: "completed" });
+
+    assertEquals(events.length, 2);
+    assertEquals(events[0]?.type, "STATE_DELTA");
+    assertEquals(events[1]?.type, "CUSTOM");
+    const expected = {
+      type: "CUSTOM",
+      name: "veryfront.invoke_agent.lifecycle",
+      value: { ...BASE_INPUT, status: "completed" },
+    } as const;
+    assertEquals(events[1], expected);
+    assertEquals(getInvokeAgentChildRunLifecycleCustomEventSchema().parse(expected), expected);
+    assertEquals(InvokeAgentChildRunLifecycleCustomEventSchema.parse(expected), expected);
+    assertEquals(
+      buildInvokeAgentChildRunLifecycleCustomEvent({ ...BASE_INPUT, status: "completed" }),
+      events[1],
+    );
+  });
+
+  it("converts a public child-run event to native form at external publication", () => {
+    const event = {
+      type: "CUSTOM",
+      name: "veryfront.invoke_agent.lifecycle",
+      value: BASE_INPUT,
+      elapsedMs: 12,
+      emittedAt: "2026-09-09T12:00:00.000Z",
+    };
+    assertEquals(prepareConversationRunExternalEvents([event]), [{
+      ...BASE_INPUT,
+      type: "CHILD_RUN_STATUS_CHANGED",
+      elapsedMs: 12,
+      emittedAt: event.emittedAt,
+    }]);
+    assertEquals(event.type, "CUSTOM");
+    assertEquals(event.value, BASE_INPUT);
   });
 
   it("uses a shared publisher when provided", async () => {
@@ -191,7 +223,10 @@ describe("agent/invoke-agent-child-runs", () => {
     assertEquals(JSON.parse(String(calls[0]?.[1]?.body)), {
       expected_previous_event_id: 3,
       expected_previous_external_event_sequence: 4,
-      events: [...buildInvokeAgentChildRunProgressEvents(BASE_INPUT)],
+      events: [buildInvokeAgentChildRunStateDelta(BASE_INPUT), {
+        ...BASE_INPUT,
+        type: "CHILD_RUN_STATUS_CHANGED",
+      }],
     });
   });
 

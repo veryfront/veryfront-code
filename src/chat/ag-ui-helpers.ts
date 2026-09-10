@@ -19,27 +19,49 @@ export function toRenderableCustomChunk(value: unknown): ParsedRenderableCustomC
   }
 
   if (value.type === "source-url" && typeof value.url === "string") {
+    const resolvedSourceId = typeof value.sourceId === "string" && value.sourceId.length > 0
+      ? value.sourceId
+      : value.url;
+    // Only a genuinely absent title falls back to the resolved source id --
+    // the same fallback, under the same condition, the AG-UI decoder's
+    // native UrlCited case applies. This function decodes the reconstructed
+    // CUSTOM twin a replayed native URL_CITED durable record produces too,
+    // and that record never carries an empty title
+    // (native-run-events.ts's omitInvalidOptionalStrings drops it, I1), so
+    // it must render the same fallback the live frame does. A
+    // present-but-wrong-typed title is still dropped rather than defaulted,
+    // matching this function's own `typeof === "string"` guard on every
+    // other optional field, and matching the native decoder's own
+    // absent-vs-wrong-typed distinction so the two paths render the same
+    // chat event for the same logical value.
+    const resolvedTitle = value.title === undefined
+      ? resolvedSourceId
+      : typeof value.title === "string"
+      ? value.title
+      : undefined;
     return {
       type: "source-url",
-      sourceId: typeof value.sourceId === "string" && value.sourceId.length > 0
-        ? value.sourceId
-        : value.url,
+      sourceId: resolvedSourceId,
       url: value.url,
-      ...(typeof value.title === "string" ? { title: value.title } : {}),
+      ...(resolvedTitle !== undefined ? { title: resolvedTitle } : {}),
     };
   }
 
   if (
     value.type === "source-document" &&
     typeof value.sourceId === "string" &&
-    typeof value.mediaType === "string" &&
-    typeof value.title === "string"
+    typeof value.mediaType === "string"
   ) {
+    // ChatSourceDocumentUiPart.title is a required chat UI field, unlike
+    // source-url's title or this event's own filename, so an absent title
+    // falls back to the source id instead of making the whole citation
+    // unrenderable -- see the source-url case above for why this must hold
+    // for a replayed native DOCUMENT_CITED record too, not just a live one.
     return {
       type: "source-document",
       sourceId: value.sourceId,
       mediaType: value.mediaType,
-      title: value.title,
+      title: typeof value.title === "string" ? value.title : value.sourceId,
       ...(typeof value.filename === "string" ? { filename: value.filename } : {}),
     };
   }

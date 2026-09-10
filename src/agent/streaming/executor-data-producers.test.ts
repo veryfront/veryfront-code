@@ -139,7 +139,12 @@ describe("executor data compatibility with runtime producers", () => {
             class: "telemetry",
             sequence: semantic.length,
             elapsedMs: semantic.length,
-            event: { type: "tool_input_status", toolCallId: "local-1", status: "pending_input" },
+            event: {
+              type: "tool_input_status",
+              toolCallId: "local-1",
+              toolCallName: null,
+              status: "pending_input",
+            },
           })
         ) emitter.emit(output);
         emitter.emitFinish();

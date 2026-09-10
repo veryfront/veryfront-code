@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getConversationRunEventJsonByteLength,
@@ -246,6 +246,34 @@ describe("agent/conversation-run-event-normalization", () => {
       );
     }
   });
+
+  for (
+    const type of [
+      "TOOL_CALL_STATUS_CHANGED",
+      "INPUT_REQUEST_CREATED",
+      "INPUT_REQUEST_UPDATED",
+      "CHILD_RUN_STATUS_CHANGED",
+    ]
+  ) {
+    it(`replaces oversized ${type} records with a bounded omission marker`, () => {
+      const [event] = normalizeConversationRunEvent({
+        type,
+        toolCallId: "tool-1",
+        status: "running",
+        arguments: "x".repeat(MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES),
+      });
+      assert(event);
+      assertEquals(event.type, "CUSTOM");
+      assertEquals(event.name, "conversation-run-event-omitted");
+      assertEquals(event.originalType, type);
+      assertEquals(event.originalToolCallId, "tool-1");
+      assertEquals(event.truncated, true);
+      assertEquals(
+        getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+        true,
+      );
+    });
+  }
 
   it("normalizes whole event lists", () => {
     const events = [

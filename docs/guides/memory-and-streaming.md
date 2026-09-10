@@ -208,6 +208,28 @@ export async function GET() {
 }
 ```
 
+## Native run events
+
+Veryfront emits native AG-UI events for tool status, input requests, child-run
+status, citations, and attachments. Live SSE frames carry names such as
+`ChildRunStatusChanged`; durable records use `CHILD_RUN_STATUS_CHANGED`. Readers
+also accept the earlier `Custom` events. Tool-status frames can omit the tool name
+or set it to `null`; the chat decoder preserves the status in either case. Native
+event payloads reserve `type`, `elapsedMs`, and `emittedAt` for transport metadata.
+Put application timing data in nested fields.
+
+The public `buildInvokeAgentChildRunLifecycleCustomEvent` and
+`buildInvokeAgentChildRunProgressEvents` helpers retain the `{ type: "CUSTOM",
+name, value }` lifecycle shape. Their schemas and publisher callbacks keep that
+contract. Veryfront converts these lifecycle events to native records when it
+prepares them for durable publication.
+
+An oversized tool-status, input-request, or child-run record becomes a
+`conversation-run-event-omitted` marker. The marker records the original event
+type and tool call ID when available; it does not retain the oversized payload.
+You must keep lifecycle payloads within the run event size limit to preserve their
+full content in stored history.
+
 ## Streaming
 
 ### Server-side streaming

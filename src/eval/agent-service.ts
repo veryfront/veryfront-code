@@ -384,15 +384,21 @@ function applyToolCallStatusEvent(
   event: Record<string, unknown>,
   index: number,
 ): boolean {
-  if (
-    getAgUiSseStringField(event, "type") !== agUiSseEventTypes.custom ||
-    getAgUiSseStringField(event, "name") !== "tool-call-status" ||
-    !isRecord(event.value)
-  ) {
+  const isNative = getAgUiSseStringField(event, "type") === agUiSseEventTypes.toolCallStatusChanged;
+  const isLegacyCustom = !isNative &&
+    getAgUiSseStringField(event, "type") === agUiSseEventTypes.custom &&
+    getAgUiSseStringField(event, "name") === "tool-call-status" &&
+    isRecord(event.value);
+  if (!isNative && !isLegacyCustom) {
     return false;
   }
 
-  const value = event.value;
+  // The native payload is the value itself: TOOL_CALL_STATUS_CHANGED replaced
+  // the Custom wrapper that used to nest it under `value`. The legacy CUSTOM
+  // shape stays reachable when the native builder rejects an incomplete
+  // payload (for example, a status update with no toolCallId), so both are
+  // read here.
+  const value = isNative ? event : (event.value as Record<string, unknown>);
   const id = getAgUiSseStringField(value, "toolCallId");
   const name = getAgUiSseStringField(value, "toolCallName");
   if (!id && !name) return true;

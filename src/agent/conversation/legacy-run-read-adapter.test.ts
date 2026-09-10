@@ -13,6 +13,15 @@ import { createLifecycleRunEventAdapter } from "./lifecycle-run-event-adapter.ts
 import { readConversationRunLifecycleFrames } from "./legacy-run-read-adapter.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { type ConversationRunEvent, normalizeEncodedConversationRunEvents } from "./run-events.ts";
+import {
+  buildChildRunStatusChangedEvent,
+  buildDocumentCitedEvent,
+  buildFileAttachedEvent,
+  buildInputRequestLifecycleEvent,
+  buildToolCallStatusChangedEvent,
+  buildUrlCitedEvent,
+  NATIVE_RUN_EVENTS,
+} from "../ag-ui/native-run-events.ts";
 
 function frames(
   entries: readonly {
@@ -1426,5 +1435,285 @@ describe("conversation run lifecycle read adapter", () => {
         },
       }],
     );
+  });
+
+  describe("native stored types read back as their CUSTOM twin", () => {
+    function v2Envelope(sequence: number, key: string) {
+      return { stream_protocol_version: 2, logical_sequence: sequence, idempotency_key: key };
+    }
+
+    function customFramesFor(
+      streamProtocolVersion: 1 | 2,
+      event: Record<string, unknown>,
+    ) {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion,
+        events: [event],
+      });
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") return [];
+      return result.frames
+        .filter((frame) => frame.class === "semantic" && frame.event.type === "custom")
+        .map((frame) => frame.event);
+    }
+
+    const cases: Array<{
+      description: string;
+      native: Record<string, unknown>;
+      customTwin: Record<string, unknown>;
+    }> = [
+      {
+        description: "TOOL_CALL_STATUS_CHANGED",
+        native: buildToolCallStatusChangedEvent({
+          toolCallId: "tool-1",
+          status: "completed",
+          toolCallName: "web_search",
+          parentMessageId: "message-1",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "tool-call-status",
+          value: {
+            toolCallId: "tool-1",
+            status: "completed",
+            toolCallName: "web_search",
+            parentMessageId: "message-1",
+          },
+        },
+      },
+      {
+        description: "INPUT_REQUEST_CREATED",
+        native: buildInputRequestLifecycleEvent({
+          action: "created",
+          inputRequest: { id: "req-1", kind: "form" },
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.input_request.lifecycle",
+          value: { action: "created", inputRequest: { id: "req-1", kind: "form" } },
+        },
+      },
+      {
+        description: "INPUT_REQUEST_UPDATED",
+        native: buildInputRequestLifecycleEvent({
+          action: "updated",
+          inputRequest: { id: "req-1", kind: "form" },
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.input_request.lifecycle",
+          value: { action: "updated", inputRequest: { id: "req-1", kind: "form" } },
+        },
+      },
+      {
+        description: "CHILD_RUN_STATUS_CHANGED",
+        native: buildChildRunStatusChangedEvent({
+          toolCallId: "tool-2",
+          childRunId: "run-2",
+          status: "running",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.invoke_agent.lifecycle",
+          value: { toolCallId: "tool-2", childRunId: "run-2", status: "running" },
+        },
+      },
+      {
+        description: "URL_CITED",
+        native: buildUrlCitedEvent({
+          type: "source-url",
+          sourceId: "web-1",
+          url: "https://example.com/a",
+          title: "Example",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/a",
+            title: "Example",
+          },
+        },
+      },
+      {
+        description: "DOCUMENT_CITED",
+        native: buildDocumentCitedEvent({
+          type: "source-document",
+          sourceId: "doc-1",
+          mediaType: "application/pdf",
+          title: "Doc",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "source-document",
+          value: {
+            type: "source-document",
+            sourceId: "doc-1",
+            mediaType: "application/pdf",
+            title: "Doc",
+          },
+        },
+      },
+      {
+        description: "FILE_ATTACHED",
+        native: buildFileAttachedEvent({
+          type: "file",
+          mediaType: "text/plain",
+          path: "notes.txt",
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "file",
+          value: { type: "file", mediaType: "text/plain", path: "notes.txt" },
+        },
+      },
+    ];
+
+    it("covers every native type with a legacy reconstruction case", () => {
+      assertEquals(
+        [...new Set(cases.map(({ native }) => native.type))].sort(),
+        NATIVE_RUN_EVENTS.map(({ storedType }) => storedType).sort(),
+      );
+    });
+
+    for (const { description, native, customTwin } of cases) {
+      it(`reads a ${description} durable record as its CUSTOM twin on the version 2 reader`, () => {
+        const nativeFrames = customFramesFor(2, {
+          ...native,
+          ...v2Envelope(1, `native:${description}`),
+        });
+        const twinFrames = customFramesFor(2, {
+          ...customTwin,
+          ...v2Envelope(1, `twin:${description}`),
+        });
+        assertEquals(nativeFrames, twinFrames);
+      });
+    }
+
+    it("reads a URL_CITED durable record as its CUSTOM twin on the version 1 reader", () => {
+      const { native, customTwin } = cases.find((entry) => entry.description === "URL_CITED")!;
+      assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
+    });
+
+    it("reads a TOOL_CALL_STATUS_CHANGED durable record as its CUSTOM twin on the version 1 reader", () => {
+      const { native, customTwin } = cases.find((entry) =>
+        entry.description === "TOOL_CALL_STATUS_CHANGED"
+      )!;
+      assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
+    });
+
+    it("strips version 1 timing stamps from the rebuilt CUSTOM twin's value", () => {
+      // ConversationRunEventEncoder.stampElapsed() (run-events.ts), which also
+      // builds this native record in production, stamps elapsedMs/emittedAt
+      // onto every durable event's own top level -- native records included --
+      // whenever it has a real timing anchor. Mirror that shape here rather
+      // than relying on the builder's bare durable output.
+      //
+      // URL_CITED, not TOOL_CALL_STATUS_CHANGED: the version 1 reducer
+      // special-cases a "custom" signal named "tool-call-status"
+      // (reducer.ts's `case "custom":"), turning a "pending_input"/
+      // "streaming_input" status into a telemetry frame and swallowing every
+      // other status without emitting any semantic "custom" frame at all --
+      // so a tool-call-status case here would compare `[]` against `[]` on
+      // both sides and could never catch a value-leak regression.
+      const { native, customTwin } = cases.find((entry) => entry.description === "URL_CITED")!;
+      const stampedNative = { ...native, elapsedMs: 42, emittedAt: 1757400000000 };
+
+      const frames = customFramesFor(1, stampedNative);
+      assertEquals(frames.length > 0, true, "the case must exercise a real semantic custom frame");
+      assertEquals(frames, customFramesFor(1, customTwin));
+      for (const frame of frames) {
+        const data = (frame as { data: unknown }).data as Record<string, unknown>;
+        assertEquals(Object.hasOwn(data, "elapsedMs"), false);
+        assertEquals(Object.hasOwn(data, "emittedAt"), false);
+      }
+    });
+
+    it("still rejects an unrelated unknown type for version 2", () => {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 2,
+        events: [{
+          type: "SOME_UNRELATED_UNKNOWN_TYPE",
+          ...v2Envelope(1, "unrelated:1"),
+        }],
+      });
+      assertEquals(result.status, "invalid");
+      if (result.status === "invalid") {
+        assertEquals(result.code, "UNSUPPORTED_DURABLE_EVENT");
+      }
+    });
+
+    // M5: both twin-reconstruction sites rebuild `{ authoritativeKey, ...value
+    // }`, so a key smuggled inside the stored value wins over the value the
+    // reader derived from the stored type. No native builder writes these
+    // fields today, but a corrupted or hand-built durable record could still
+    // carry one, so the reader must not trust it over its own derivation --
+    // the citation/file case in the same reader makes the same call for the
+    // stored `type` field.
+    it("keeps the derived action instead of one smuggled inside a corrupted INPUT_REQUEST_CREATED value", () => {
+      const frames = customFramesFor(2, {
+        type: "INPUT_REQUEST_CREATED",
+        inputRequest: { id: "req-1", kind: "form" },
+        action: "updated",
+        ...v2Envelope(1, "smuggle:action"),
+      });
+      assertEquals(frames.length, 1);
+      const data = (frames[0] as { data: Record<string, unknown> }).data;
+      assertEquals(
+        data.action,
+        "created",
+        "the action derived from the stored INPUT_REQUEST_CREATED type must win over one smuggled inside the stored value",
+      );
+    });
+
+    it("keeps the derived type as the CUSTOM twin's type field for a citation record", () => {
+      const native = buildUrlCitedEvent({
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/a",
+      }).durable;
+      const frames = customFramesFor(2, { ...native, ...v2Envelope(1, "smuggle:type") });
+      assertEquals(frames.length, 1);
+      const data = (frames[0] as { data: Record<string, unknown> }).data;
+      assertEquals(
+        data.type,
+        "source-url",
+        "the rebuilt CUSTOM twin's type field must be the legacy custom name derived from the stored type",
+      );
+    });
+
+    // Regression guard: a DOCUMENT_CITED chunk built with an empty title has
+    // no title key at all in the durable record (native-run-events.ts's
+    // omitInvalidOptionalStrings drops it from the one payload both shapes
+    // share, I1), and there is nothing for this reader to restore -- the
+    // replayed CUSTOM twin must keep it just as absent, matching the live
+    // frame the encoder produced. Rendering a fallback title for a citation
+    // with no title is the chat decoder's job (src/chat/ag-ui.ts), exercised
+    // there against both the live and replayed shapes since they are now
+    // identical.
+    it("replays a DOCUMENT_CITED citation built with an empty title with no title key, matching the live frame", () => {
+      const durable = buildDocumentCitedEvent({
+        type: "source-document",
+        sourceId: "doc-1",
+        mediaType: "text/markdown",
+        title: "",
+      }).durable;
+      assertEquals(
+        Object.hasOwn(durable, "title"),
+        false,
+        "the durable record must not carry the empty title",
+      );
+
+      const frames = customFramesFor(2, { ...durable, ...v2Envelope(1, "empty-title-dropped") });
+      assertEquals(frames.length, 1);
+      const data = (frames[0] as { data: Record<string, unknown> }).data;
+      assertEquals(
+        Object.hasOwn(data, "title"),
+        false,
+        "the replayed CUSTOM twin must not have a title key either",
+      );
+    });
   });
 });

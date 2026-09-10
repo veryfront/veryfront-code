@@ -1,0 +1,216 @@
+[
+  {
+    "storedType": "TOOL_CALL_STATUS_CHANGED",
+    "legacyCustomName": "tool-call-status",
+    "live": {
+      "event": "ToolCallStatusChanged",
+      "payload": {
+        "toolCallId": "toolu_01",
+        "status": "pending_input",
+        "toolCallName": "create_file",
+        "parentMessageId": "33333333-3333-4333-a333-333333333333"
+      }
+    },
+    "durable": {
+      "toolCallId": "toolu_01",
+      "status": "pending_input",
+      "toolCallName": "create_file",
+      "parentMessageId": "33333333-3333-4333-a333-333333333333",
+      "type": "TOOL_CALL_STATUS_CHANGED"
+    }
+  },
+  {
+    "storedType": "INPUT_REQUEST_CREATED",
+    "legacyCustomName": "veryfront.input_request.lifecycle",
+    "live": {
+      "event": "InputRequestCreated",
+      "payload": {
+        "inputRequest": {
+          "id": "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f",
+          "conversationId": "a7c53a3d-feb2-4404-86e2-5c562455e46c",
+          "runId": "run_native_events_1",
+          "toolCallId": "toolu_form_1",
+          "kind": "form",
+          "status": "open",
+          "requestedResponderType": "human",
+          "title": "Choose a deployment target",
+          "description": null,
+          "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+          "recommendations": null,
+          "metadata": null,
+          "createdAt": "2026-09-09T00:00:00.000Z",
+          "expiresAt": "2026-09-09T00:15:00.000Z",
+          "submittedAt": null,
+          "cancelledAt": null,
+          "expiredAt": null,
+          "latestResponse": null
+        }
+      }
+    },
+    "durable": {
+      "inputRequest": {
+        "id": "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f",
+        "conversationId": "a7c53a3d-feb2-4404-86e2-5c562455e46c",
+        "runId": "run_native_events_1",
+        "toolCallId": "toolu_form_1",
+        "kind": "form",
+        "status": "open",
+        "requestedResponderType": "human",
+        "title": "Choose a deployment target",
+        "description": null,
+        "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+        "recommendations": null,
+        "metadata": null,
+        "createdAt": "2026-09-09T00:00:00.000Z",
+        "expiresAt": "2026-09-09T00:15:00.000Z",
+        "submittedAt": null,
+        "cancelledAt": null,
+        "expiredAt": null,
+        "latestResponse": null
+      },
+      "type": "INPUT_REQUEST_CREATED"
+    }
+  },
+  {
+    "storedType": "INPUT_REQUEST_UPDATED",
+    "legacyCustomName": "veryfront.input_request.lifecycle",
+    "live": {
+      "event": "InputRequestUpdated",
+      "payload": {
+        "inputRequest": {
+          "id": "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f",
+          "conversationId": "a7c53a3d-feb2-4404-86e2-5c562455e46c",
+          "runId": "run_native_events_1",
+          "toolCallId": "toolu_form_1",
+          "kind": "form",
+          "status": "submitted",
+          "requestedResponderType": "human",
+          "title": "Choose a deployment target",
+          "description": null,
+          "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+          "recommendations": null,
+          "metadata": null,
+          "createdAt": "2026-09-09T00:00:00.000Z",
+          "expiresAt": "2026-09-09T00:15:00.000Z",
+          "submittedAt": "2026-09-09T00:05:00.000Z",
+          "cancelledAt": null,
+          "expiredAt": null,
+          "latestResponse": null
+        }
+      }
+    },
+    "durable": {
+      "inputRequest": {
+        "id": "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f",
+        "conversationId": "a7c53a3d-feb2-4404-86e2-5c562455e46c",
+        "runId": "run_native_events_1",
+        "toolCallId": "toolu_form_1",
+        "kind": "form",
+        "status": "submitted",
+        "requestedResponderType": "human",
+        "title": "Choose a deployment target",
+        "description": null,
+        "fields": [{ "type": "confirm", "name": "confirmed", "label": "Confirm?" }],
+        "recommendations": null,
+        "metadata": null,
+        "createdAt": "2026-09-09T00:00:00.000Z",
+        "expiresAt": "2026-09-09T00:15:00.000Z",
+        "submittedAt": "2026-09-09T00:05:00.000Z",
+        "cancelledAt": null,
+        "expiredAt": null,
+        "latestResponse": null
+      },
+      "type": "INPUT_REQUEST_UPDATED"
+    }
+  },
+  {
+    "storedType": "CHILD_RUN_STATUS_CHANGED",
+    "legacyCustomName": "veryfront.invoke_agent.lifecycle",
+    "live": {
+      "event": "ChildRunStatusChanged",
+      "payload": {
+        "toolCallId": "toolu_child_1",
+        "childConversationId": "22222222-2222-4222-a222-222222222222",
+        "childRunId": "run_child_1",
+        "childMessageId": "33333333-3333-4333-a333-333333333333",
+        "childAgentId": "researcher",
+        "description": "Inspect logs",
+        "status": "running",
+        "sourceTargetKind": "project",
+        "runtimeTargetKind": "main_branch",
+        "targetEnvironmentId": null,
+        "targetBranchId": null
+      }
+    },
+    "durable": {
+      "toolCallId": "toolu_child_1",
+      "childConversationId": "22222222-2222-4222-a222-222222222222",
+      "childRunId": "run_child_1",
+      "childMessageId": "33333333-3333-4333-a333-333333333333",
+      "childAgentId": "researcher",
+      "description": "Inspect logs",
+      "status": "running",
+      "sourceTargetKind": "project",
+      "runtimeTargetKind": "main_branch",
+      "targetEnvironmentId": null,
+      "targetBranchId": null,
+      "type": "CHILD_RUN_STATUS_CHANGED"
+    }
+  },
+  {
+    "storedType": "URL_CITED",
+    "legacyCustomName": "source-url",
+    "live": {
+      "event": "UrlCited",
+      "payload": {
+        "sourceId": "web-1",
+        "url": "https://example.com/reference",
+        "title": "Reference"
+      }
+    },
+    "durable": {
+      "sourceId": "web-1",
+      "url": "https://example.com/reference",
+      "title": "Reference",
+      "type": "URL_CITED"
+    }
+  },
+  {
+    "storedType": "DOCUMENT_CITED",
+    "legacyCustomName": "source-document",
+    "live": {
+      "event": "DocumentCited",
+      "payload": {
+        "sourceId": "knowledge/report.md",
+        "mediaType": "text/markdown",
+        "title": "Report",
+        "filename": "knowledge/report.md"
+      }
+    },
+    "durable": {
+      "sourceId": "knowledge/report.md",
+      "mediaType": "text/markdown",
+      "title": "Report",
+      "filename": "knowledge/report.md",
+      "type": "DOCUMENT_CITED"
+    }
+  },
+  {
+    "storedType": "FILE_ATTACHED",
+    "legacyCustomName": "file",
+    "live": {
+      "event": "FileAttached",
+      "payload": {
+        "url": "https://cdn.example.com/report.pdf",
+        "mediaType": "application/pdf",
+        "filename": "report.pdf"
+      }
+    },
+    "durable": {
+      "url": "https://cdn.example.com/report.pdf",
+      "mediaType": "application/pdf",
+      "filename": "report.pdf",
+      "type": "FILE_ATTACHED"
+    }
+  }
+]

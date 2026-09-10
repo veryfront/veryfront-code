@@ -2856,11 +2856,11 @@ describe("active mode heartbeat regression", () => {
       [
         {
           type: "data-tool-call-status",
-          data: { toolCallId: "t1", status: "pending_input" },
+          data: { toolCallId: "t1", toolCallName: "create_file", status: "pending_input" },
         },
         {
           type: "data-tool-call-status",
-          data: { toolCallId: "t1", status: "pending_input" },
+          data: { toolCallId: "t1", toolCallName: "create_file", status: "pending_input" },
         },
       ],
     );

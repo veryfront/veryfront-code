@@ -1,5 +1,6 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
+import { nativeRunEventStoredTypesByWireName, nativeRunEventTypes } from "./native-run-events.ts";
 
 /** AG-UI runtime event type constants normalized from legacy SSE event names. */
 export const agUiSseEventTypes = {
@@ -21,6 +22,7 @@ export const agUiSseEventTypes = {
   stepFinished: "STEP_FINISHED",
   runError: "RUN_ERROR",
   runFinished: "RUN_FINISHED",
+  ...nativeRunEventTypes,
 } as const;
 
 /** Normalized AG-UI runtime event type value. */
@@ -190,8 +192,10 @@ function coerceWireEvent(
       return { type: agUiSseEventTypes.runError, ...payload };
     case "RunFinished":
       return { type: agUiSseEventTypes.runFinished, ...payload };
-    default:
-      return { type: eventName, ...payload };
+    default: {
+      const nativeType = nativeRunEventStoredTypesByWireName.get(eventName);
+      return nativeType ? { type: nativeType, ...payload } : { type: eventName, ...payload };
+    }
   }
 }
 
