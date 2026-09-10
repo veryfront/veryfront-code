@@ -533,6 +533,10 @@ and project tools. Cancellation holds an admitted slot until original work settl
 `maxMetadataBytes` includes the validated project alias frame plus the combined
 host and project source/definition frames. Repeated listings keep consuming the
 same invocation budget.
+An ordinary project-tool failure releases its shared slot after the failure frame
+and normal channel end are confirmed. Cancellation, malformed or incomplete
+responses, and unknown transport failures retain that slot until allocation
+retirement, even when the caller's cancellation signal remains live.
 
 ### Broker composition
 

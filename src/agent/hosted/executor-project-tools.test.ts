@@ -1,3 +1,4 @@
+import { createExecutorToolBroker } from "#veryfront/agent/hosted/executor-tool-bridge.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -13,7 +14,7 @@ import {
   createExecutorProjectToolOperations,
   createExecutorProjectToolSource,
   type ExecutorProjectToolContext,
-} from "./executor-project-tools.ts";
+} from "#veryfront/agent/hosted/executor-project-tools.ts";
 
 const binding = {
   allocationId: "synthetic-allocation",
@@ -108,6 +109,74 @@ function fixture(
 }
 
 describe("executor project tools", () => {
+  it("shares host admission while project work is active and after cancellation until retirement", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const f = fixture(async () => {
+      entered.resolve();
+      await release.promise;
+      return { ok: true };
+    });
+    let hostCalls = 0;
+    const source = await f.source();
+    const host = createExecutorToolBroker({
+      scope: { binding, signal: f.lifetime.signal, assertActive() {} },
+      maxCalls: 32,
+      maxConcurrent: 1,
+      sources: new Map([["host", {
+        allowedToolNames: new Set(["host-probe"]),
+        context: {},
+        source: {
+          id: "host",
+          listTools: () => Promise.resolve([]),
+          executeTool: () => {
+            hostCalls++;
+            return Promise.resolve({ ok: true });
+          },
+        },
+      }], [source.id, {
+        source,
+        allowedToolNames: new Set(["inspect"]),
+        context: { ...fixed, runIdBindsToolAuthorization: true },
+        retired: f.project.settled,
+      }]]),
+    });
+    const execute = host.get("tool.execute");
+    assert(execute?.mode === "stream");
+    const callHost = () =>
+      Array.fromAsync(execute.handle({
+        sourceId: "host",
+        toolName: "host-probe",
+        toolCallId: "host-call",
+        args: {},
+      }, { binding, signal: f.lifetime.signal, deadline: Date.now() + 10_000 }));
+    let pending: Promise<unknown> | undefined;
+    try {
+      const cancellation = new AbortController();
+      pending = Array.fromAsync(execute.handle({
+        sourceId: source.id,
+        toolName: "inspect",
+        args: { query: "hello" },
+        ...correlation,
+      }, { binding, signal: cancellation.signal, deadline: Date.now() + 10_000 }));
+      void pending.catch(() => {});
+      await entered.promise;
+      assertEquals(await callHost(), [{ type: "failure", code: "RESOURCE_LIMIT_EXCEEDED" }]);
+      cancellation.abort();
+      await assertRejects(() => pending!);
+      assertEquals(await callHost(), [{ type: "failure", code: "RESOURCE_LIMIT_EXCEEDED" }]);
+      assertEquals(hostCalls, 0);
+      release.resolve();
+      await f.close();
+      assertEquals(await callHost(), [{ type: "result", result: { ok: true } }]);
+      assertEquals(hostCalls, 1);
+    } finally {
+      release.resolve();
+      await pending?.catch(() => {});
+      await f.close();
+    }
+  });
+
   it("preserves fixed user and project scope and only the current call's skill data", async () => {
     const scope = { ...projectContext, userId: "synthetic-user", projectSlug: "synthetic-slug" };
     const observed: ToolExecutionContext[] = [];

@@ -5,6 +5,7 @@ import { getEnumerableOwnStringDataEntries } from "#veryfront/tool/data-properti
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { findLastPrivateArrayIndex, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { isToolAnnotations } from "#veryfront/tool/mcp-metadata.ts";
 import type { ToolDefinition, ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { CURATED_PROVIDER_FAILURE_CODES } from "#veryfront/chat/provider-error-registry.ts";
@@ -21,6 +22,7 @@ const objectKeys = Object.keys;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const isArray = Array.isArray;
 const freeze = Object.freeze;
+const settledToolFailures = createPrivateWeakStore<object, true>();
 const definitionKeys = createPrivateSet([
   "name",
   "description",
@@ -139,6 +141,16 @@ export const getExecutorToolFrameSchema = defineSchema((v) =>
 );
 export type ExecutorToolFrame = InferSchema<ReturnType<typeof getExecutorToolFrameSchema>>;
 
+/** Materialize protocol schemas before project code can replace collection methods. */
+export function warmExecutorToolSchemas(): void {
+  getExecutorToolLimitsSchema();
+  getExecutorToolIdSchema();
+  getExecutorToolEmptySchema();
+  getExecutorToolListSchema();
+  getExecutorToolCallSchema();
+  getExecutorToolFrameSchema();
+}
+
 export function executorToolBytes(value: JsonValue): number {
   const size = boundedJsonByteLength(value);
   if (size === undefined) throw new TypeError("Executor tool data exceeds its JSON limits");
@@ -227,9 +239,18 @@ export function executorToolFailure(error: unknown): ExecutorToolFrame {
   return { type: "failure", ...(code ? { code } : {}) };
 }
 
-export function throwExecutorToolFailure(frame: ExecutorToolFrame): void {
+/** Only the local decoder can confirm a failure after normal channel completion. */
+export function isExecutorToolSettledFailure(error: unknown): error is Error {
+  return typeof error === "object" && error !== null && settledToolFailures.get(error) === true;
+}
+
+/** Pass settled only after the validated terminal frame is followed by a normal channel end. */
+export function throwExecutorToolFailure(frame: ExecutorToolFrame, settled = false): void {
   if (frame.type === "failure") {
-    if (frame.code) throw new ExecutorAgentError(frame.code);
-    throw new TypeError("Executor tool operation failed");
+    const error = frame.code
+      ? new ExecutorAgentError(frame.code)
+      : new TypeError("Executor tool operation failed");
+    if (settled) settledToolFailures.set(error, true);
+    throw error;
   }
 }

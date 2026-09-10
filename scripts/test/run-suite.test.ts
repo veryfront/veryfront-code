@@ -815,6 +815,9 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
+      "tests/integration/agent/executor-tool-promise-intrinsics.test.ts",
+      "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
+      "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
@@ -839,6 +842,9 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
+      "tests/integration/agent/executor-tool-promise-intrinsics.test.ts",
+      "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
+      "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];

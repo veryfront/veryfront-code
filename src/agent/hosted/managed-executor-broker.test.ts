@@ -3,37 +3,38 @@ import {
   type ExecutorRuntimeInstall,
   getExecutorRuntimeInstallSchema,
   parseExecutorInstallation,
-} from "./executor-runtime-install-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
-import type { HostedExecutorSessionOptions } from "./executor-session.ts";
-import type { HostedExecutorAllocation } from "./executor-session-schema.ts";
-import type { ExecutorNodeTransport } from "./executor-node-transport.ts";
+import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
+import type { HostedExecutorAllocation } from "#veryfront/agent/hosted/executor-session-schema.ts";
+import type { ExecutorNodeTransport } from "#veryfront/agent/hosted/executor-node-transport.ts";
 import {
   createManagedExecutorBroker,
   type ManagedExecutorStartInput,
-} from "./managed-executor-broker.ts";
-import { getExecutorRuntimePrepareResultSchema } from "./executor-runtime-prepare-schema.ts";
-import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
-import { executorStateOperations } from "./executor-state-schema.ts";
-import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
+} from "#veryfront/agent/hosted/managed-executor-broker.ts";
+import { getExecutorRuntimePrepareResultSchema } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
+import { readExecutorInitialCheckpoints } from "#veryfront/agent/hosted/executor-checkpoint-state.ts";
+import { executorStateOperations } from "#veryfront/agent/hosted/executor-state-schema.ts";
+import { createManagedBrokerPersistence } from "#veryfront/agent/hosted/managed-broker-persistence.ts";
 import { FakeTime } from "#std/testing/time";
 import { agent } from "#veryfront/agent/factory.ts";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
-import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
-import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
-import { createExecutorDiscovery } from "./executor-discovery.ts";
-import { createExecutorRuntimePreparation } from "./executor-runtime-prepare.ts";
-import { createExecutorProjectToolRuntime } from "./executor-project-runtime.ts";
+import { createExecutorRuntimeInstallation } from "#veryfront/agent/hosted/executor-runtime-install.ts";
+import { createExecutorRuntimeFacades } from "#veryfront/agent/hosted/executor-runtime-facades.ts";
+import { createExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
+import { createExecutorRuntimePreparation } from "#veryfront/agent/hosted/executor-runtime-prepare.ts";
+import { createExecutorProjectToolRuntime } from "#veryfront/agent/hosted/executor-project-runtime.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
-import { createTrustedManagedRuntime } from "./trusted-managed-runtime.ts";
+import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-managed-runtime.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "project-test" };
@@ -1369,6 +1370,38 @@ async function withTrustedToolOperations(
 }
 
 describe("broker-local trusted runtime", () => {
+  it("preserves retirement authority for preconfigured remote source snapshots", async () => {
+    const f = trustedFixture(undefined, true);
+    const retired = Promise.withResolvers<void>();
+    const host = f.input.tools.sources.get("host")!;
+    f.input.tools.sources = new Map([["host", {
+      ...host,
+      retired: retired.promise,
+      source: {
+        ...host.source,
+        async executeTool() {
+          throw new TypeError("Unknown remote outcome");
+        },
+      },
+    }]]);
+    try {
+      await withTrustedToolOperations(f, async (execute) => {
+        assertEquals(await execute("host"), [{ type: "failure" }]);
+        assertEquals(await execute("project"), [{
+          type: "failure",
+          code: "RESOURCE_LIMIT_EXCEEDED",
+        }]);
+        assertEquals(f.executions, 0);
+        retired.resolve();
+        await tick();
+        assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
+        assertEquals(f.executions, 1);
+      });
+    } finally {
+      retired.resolve();
+    }
+  });
+
   it("requires trusted runtime configuration in the public start type", () => {
     type Start = Parameters<ReturnType<typeof createTrustedManagedExecutorBroker>["start"]>[0];
     const required: undefined extends Start["trustedRuntime"] ? false : true = true;
@@ -1465,7 +1498,7 @@ describe("broker-local trusted runtime", () => {
     });
   });
 
-  it("holds shared concurrency until canceled project work actually settles", async () => {
+  it("holds shared concurrency after project cancellation until allocation retirement", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const f = trustedFixture(undefined, true, async () => {
@@ -1485,7 +1518,23 @@ describe("broker-local trusted runtime", () => {
         release.resolve();
         await first;
       }
+      // Local response settlement is not an authenticated remote retirement acknowledgement.
+      assertEquals(await execute("host"), [{ type: "failure", code: "RESOURCE_LIMIT_EXCEEDED" }]);
+      assertEquals(f.hostCalls, 0);
+    });
+  });
+
+  it("releases shared concurrency after an ordinary project-tool failure", async () => {
+    let projectAttempts = 0;
+    const f = trustedFixture(undefined, true, async () => {
+      projectAttempts++;
+      if (projectAttempts === 1) throw new ExecutorAgentError("PERMISSION_DENIED");
+      return { ok: true };
+    });
+    await withTrustedToolOperations(f, async (execute) => {
+      assertEquals(await execute("project"), [{ type: "failure", code: "PERMISSION_DENIED" }]);
       assertEquals(await execute("host"), [{ type: "result", result: { value: f.privateMarker } }]);
+      assertEquals(projectAttempts, 1);
       assertEquals(f.hostCalls, 1);
     });
   });

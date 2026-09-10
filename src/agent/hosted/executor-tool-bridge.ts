@@ -32,6 +32,7 @@ import {
   getExecutorToolEmptySchema,
   getExecutorToolIdSchema,
   getExecutorToolListSchema,
+  isExecutorToolSettledFailure,
   parseExecutorToolData,
 } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
@@ -45,6 +46,9 @@ export interface ExecutorToolCapability {
   readonly source: RemoteToolSource;
   readonly allowedToolNames: ReadonlySet<string>;
   readonly context: ToolExecutionContext;
+  /** Remote failures retain admission until the allocation has retired. */
+  readonly retired?: Promise<void>;
+
   /** Explicit permission for caller-supplied skill context; ordinary host capabilities reject it. */
   readonly projectContext?: "skill";
 }
@@ -85,6 +89,8 @@ export function createExecutorToolBroker(options: {
     context: ToolExecutionContext;
     publisher: ToolExecutionContext["publishDataEvent"];
     publisherReceiver: ToolExecutionContext;
+    retired?: Promise<void>;
+
     projectContext: "skill" | undefined;
   }>();
   let allowedTools = 0;
@@ -128,6 +134,8 @@ export function createExecutorToolBroker(options: {
       context: { ...capability.context },
       publisher: capability.context.publishDataEvent,
       publisherReceiver: capability.context,
+      retired: capability.retired,
+
       projectContext,
     });
   }
@@ -153,6 +161,7 @@ export function createExecutorToolBroker(options: {
     operation: ExecutorOperationContext,
   ): AsyncGenerator<JsonValue> {
     let admitted = false;
+    let remoteRetirement: Promise<void> | undefined;
     try {
       assertScope(operation);
       if (calls >= maxCalls || active >= maxConcurrent) {
@@ -193,10 +202,24 @@ export function createExecutorToolBroker(options: {
         executorToolJson(call.args, limits.maxArgumentBytes);
       }
       const result = yield* callWithProgress({
-        invoke: (context) =>
-          call
-            ? apply(capability.execute, capability.source, [call.toolName, call.args, context])
-            : apply(capability.list, capability.source, [context]),
+        async invoke(context) {
+          remoteRetirement = capability.retired;
+          try {
+            const result = await observePrivatePromise(
+              call
+                ? apply(capability.execute, capability.source, [call.toolName, call.args, context])
+                : apply(capability.list, capability.source, [context]),
+            );
+            remoteRetirement = undefined;
+            return result;
+          } catch (error) {
+            // A live caller signal says nothing about remote work after a
+            // protocol/transport error. Release only with local decoder proof
+            // of a validated terminal failure followed by normal channel end.
+            if (isExecutorToolSettledFailure(error)) remoteRetirement = undefined;
+            throw error;
+          }
+        },
         context: capability.projectContext === "skill"
           ? {
             ...capability.context,
@@ -256,7 +279,16 @@ export function createExecutorToolBroker(options: {
       assertScope(operation);
       yield executorToolJson(executorToolFailure(error));
     } finally {
-      if (admitted) active--;
+      if (admitted) {
+        if (remoteRetirement) {
+          // A canceled or failed channel response does not prove remote work stopped.
+          // Do not join retirement here: session cleanup also joins this handler.
+          const release = () => {
+            active--;
+          };
+          void chainPrivatePromise(remoteRetirement, release, release);
+        } else active--;
+      }
     }
   }
 

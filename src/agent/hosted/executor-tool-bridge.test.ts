@@ -16,7 +16,10 @@ import { createExecutorToolBroker } from "./executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
 import { EXECUTOR_MAX_FRAME_BYTES } from "#veryfront/agent/executor/protocol.ts";
-import { executorToolBytes } from "./executor-tool-schema.ts";
+import {
+  executorToolBytes,
+  throwExecutorToolFailure,
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 const binding = { allocationId: "allocation-test", generation: 1, invocationId: "invocation-test" };
 const definition: ToolDefinition = {
@@ -31,6 +34,7 @@ function fixture(
   sourceOverrides: Partial<RemoteToolSource> = {},
   overrides: Partial<Parameters<typeof createExecutorToolBroker>[0]> = {},
   context: ToolExecutionContext = { projectId: "project-test" },
+  capabilityOverrides: { retired?: Promise<void> } = {},
 ) {
   const lifetime = new AbortController();
   const source: RemoteToolSource = {
@@ -47,6 +51,7 @@ function fixture(
     source,
     allowedToolNames: new Set(["lookup"]),
     context,
+    ...capabilityOverrides,
   }]]);
   const operations = createExecutorToolBroker({
     scope: { binding, signal: lifetime.signal, assertActive() {} },
@@ -516,6 +521,39 @@ describe("executor tool bridge", () => {
       assertThrows(() => fixture({}, { maxCalls: value }), TypeError);
       assertThrows(() => fixture({}, { maxConcurrent: value }), TypeError);
     }
+  });
+
+  it("releases admission after a confirmed terminal remote failure without waiting for retirement", async () => {
+    const retired = Promise.withResolvers<void>();
+    let executions = 0;
+    const f = fixture(
+      {
+        async executeTool() {
+          executions++;
+          if (executions === 1) {
+            throwExecutorToolFailure({ type: "failure", code: "PERMISSION_DENIED" }, true);
+          }
+          return { recovered: true };
+        },
+      },
+      { maxConcurrent: 1 },
+      {},
+      { retired: retired.promise },
+    );
+
+    assertEquals(f.sources.get("source-test")!.retired, retired.promise);
+    const first = await collect(f.stream("tool.execute", call));
+    assertEquals(first, [{
+      type: "failure",
+      code: "PERMISSION_DENIED",
+    }]);
+    const second = await collect(f.stream("tool.execute", call));
+    assertEquals(second, [{
+      type: "result",
+      result: { recovered: true },
+    }]);
+    assertEquals(executions, 2);
+    retired.resolve();
   });
 
   it("streams a catalog larger than one frame and preserves schema property names", async () => {

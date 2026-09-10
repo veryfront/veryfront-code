@@ -2,10 +2,10 @@ import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import type { ExecutorOperationGate } from "#veryfront/agent/executor/operation-gate.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import type { HostedExecutorOwnedWork } from "./executor-session.ts";
-import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.ts";
-import type { ExecutorProjectToolSource } from "./executor-project-tools.ts";
-import type { ExecutorToolLimits } from "./executor-tool-schema.ts";
+import type { HostedExecutorOwnedWork } from "#veryfront/agent/hosted/executor-session.ts";
+import type { ExecutorRuntimeInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
+import type { ExecutorProjectToolSource } from "#veryfront/agent/hosted/executor-project-tools.ts";
+import type { ExecutorToolLimits } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 /** Internal trusted-process composition, supplied only at broker construction. */
 export interface TrustedManagedRuntimeOptions {

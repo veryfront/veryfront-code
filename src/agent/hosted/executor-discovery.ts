@@ -14,6 +14,8 @@ import type {
 import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { type ExecutorBinding, getExecutorBindingSchema } from "../executor/protocol.ts";
+import { warmExecutorProjectToolSchemas } from "#veryfront/agent/hosted/executor-project-tools.ts";
+import { warmExecutorToolSchemas } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 import {
   discoveryFailureCode,
   discoverySuccess,
@@ -22,6 +24,7 @@ import {
   type ExecutorDiscoverySource,
   getExecutorAgentDefinitionSchema,
   getExecutorAgentDescribeRequestSchema,
+  getExecutorAgentDescribeResultSchema,
   getExecutorAgentDescriptionSchema,
   getExecutorDiscoveryAgentSourceSchema,
   getExecutorDiscoveryCandidatesSchema,
@@ -30,7 +33,7 @@ import {
   getExecutorDiscoveryRequestSchema,
   getExecutorDiscoverySourceSchema,
   parseDiscoveryData,
-} from "./executor-discovery-schema.ts";
+} from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 
 const apply = Reflect.apply;
 const MapConstructor = Map;
@@ -96,6 +99,18 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
     typeof input.projectDir !== "string" || !isAbsolute(input.projectDir) ||
     !(input.signal instanceof AbortSignal)
   ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_INPUT");
+  // Materialize every schema that can be reached after project code runs before
+  // project modules can replace the process intrinsics. Project agents execute in
+  // this dedicated executor and may patch collection prototypes; lazy schema
+  // construction after that point would let those patches alter validation.
+  const agentDefinitionSchema = getExecutorAgentDefinitionSchema();
+  const discoveryRequestSchema = getExecutorDiscoveryRequestSchema();
+  const agentDescribeRequestSchema = getExecutorAgentDescribeRequestSchema();
+  const agentDescriptionSchema = getExecutorAgentDescriptionSchema();
+  getExecutorAgentDescribeResultSchema();
+  const discoveryDescriptionSchema = getExecutorDiscoveryDescriptionSchema();
+  warmExecutorToolSchemas();
+  warmExecutorProjectToolSchemas();
   const projectDir = input.projectDir;
   const lifetime = new AbortController();
   const settled = createPrivateDeferred<void>();
@@ -226,7 +241,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       }
     }
     assertActive();
-    const parsed = parseDiscoveryData(getExecutorAgentDefinitionSchema(), definition, true);
+    const parsed = parseDiscoveryData(agentDefinitionSchema, definition, true);
     if (parsed.id !== agentId) {
       throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
     }
@@ -290,7 +305,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       mode: "unary",
       handle(value, context) {
         return execute(context, async () => {
-          parseDiscoveryData(getExecutorDiscoveryRequestSchema(), value);
+          parseDiscoveryData(discoveryRequestSchema, value);
           const discovery = await observePrivatePromise(discover());
           const module = await observePrivatePromise(helpers());
           const candidates = module.getProjectAgentRuntimeAgentIdCandidates(discovery);
@@ -299,7 +314,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
           if (!defaultAgentId) throw new ExecutorDiscoveryError("CONFIG_INVALID");
           const definition = await observePrivatePromise(describeAgent(discovery, defaultAgentId));
           return discoverySuccess(
-            parseDiscoveryData(getExecutorDiscoveryDescriptionSchema(), {
+            parseDiscoveryData(discoveryDescriptionSchema, {
               source,
               candidates,
               defaultAgentId,
@@ -314,11 +329,11 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       mode: "unary",
       handle(value, context) {
         return execute(context, async () => {
-          const request = parseDiscoveryData(getExecutorAgentDescribeRequestSchema(), value);
+          const request = parseDiscoveryData(agentDescribeRequestSchema, value);
           const discovery = await observePrivatePromise(discover());
           const definition = await observePrivatePromise(describeAgent(discovery, request.agentId));
           return discoverySuccess(
-            parseDiscoveryData(getExecutorAgentDescriptionSchema(), { source, definition }, true),
+            parseDiscoveryData(agentDescriptionSchema, { source, definition }, true),
           );
         });
       },
