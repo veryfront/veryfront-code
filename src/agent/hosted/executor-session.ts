@@ -82,6 +82,9 @@ export interface HostedExecutorSessionCloseResult {
   release: "not-allocated" | "released" | "reaper-required";
 }
 
+/** Retain broker-local asynchronous work through complete session settlement. */
+export type HostedExecutorOwnedWork = <T>(operation: () => Promise<T>) => Promise<T>;
+
 export interface HostedExecutorSession {
   /** TLS and invocation-channel readiness, before remote runtime preparation/acceptance. */
   readonly ready: Promise<ExecutorChannel>;
@@ -94,6 +97,11 @@ export interface HostedExecutorSession {
   readonly accepted: boolean;
   /** Call after remote preparation. Execution ownership detaches the preparation request before 202. */
   accept(ownership: { kind: "request" } | { kind: "execution"; signal?: AbortSignal }): void;
+  /**
+   * Retain broker-local work outside channel handlers until its original promise settles.
+   * Owned work must not await this session's own close or settled promise.
+   */
+  runOwned<T>(operation: () => Promise<T>): Promise<T>;
   close(reason?: "completed" | "canceled"): Promise<HostedExecutorSessionCloseResult>;
 }
 
@@ -271,6 +279,14 @@ class Session implements HostedExecutorSession {
     }
     this.#accepted = true;
     this.#cancelTimer("preparation");
+  }
+
+  async runOwned<T>(operation: () => Promise<T>): Promise<T> {
+    this.#assertActive();
+    if (typeof operation !== "function") {
+      throw new TypeError("Executor owned work requires an operation");
+    }
+    return await this.#track(operation);
   }
 
   close(reason: "completed" | "canceled" = "canceled"): Promise<HostedExecutorSessionCloseResult> {

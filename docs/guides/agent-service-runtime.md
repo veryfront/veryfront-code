@@ -50,12 +50,11 @@ trace hooks, or application-error reporters. The framework-owned
 `veryfront serve` runtime owns this setup on shared and managed dedicated
 servers.
 
-The service captures request accessors and routing primitives before project
-modules load. Routing and CORS checks use those captured operations so later
-changes to shared web prototypes cannot inspect the run-event or inference
-credentials on an incoming request. Import the framework service runtime before
-loading project modules. Custom host route handlers still receive the original
-request and remain responsible for authentication and credential handling.
+The standalone service shares a process with the Agent code it loads. Use it
+for trusted code. Captured request accessors protect specific ingress operations;
+they do not provide process isolation for request bodies or credentials.
+Custom host route handlers receive the original request and remain responsible
+for authentication and credential handling.
 Dispatch visits the host route table and matched path segments by index so a
 replaced array iterator cannot inject a handler before host authentication.
 CORS allowlist membership, response header writes, and route path parsing also
@@ -300,6 +299,23 @@ Services that use Veryfront Cloud project steering can reuse
 `fetchDefaultAgentServiceProjectSteering()` for the initial fetch and
 `createDefaultAgentServiceProjectSteeringRefresh()` for step-boundary refresh.
 
+Managed brokers can use `createManagedBrokerProjectState()` from
+`veryfront/agent/managed-broker` for project instructions and skill catalogs.
+The executor sends its effective tool selection on each steering refresh. The
+broker validates that selection against the installed grant before constructing
+instructions, and includes skills only when `load_skill` remains available.
+Refreshes without a tool selection omit the skill catalog.
+
+Managed broker ingress checks application strings and property names for known
+credentials after URI decoding. Malformed escapes do not suppress checks on valid
+encoded segments. Decoding is limited to 16 passes; ingress rejects strings that
+still require decoding after that limit. Keep credentials out of executor data,
+including encoded URLs and metadata.
+
+Closing the managed broker handler or aborting its service signal returns 503
+`BROKER_UNAVAILABLE` for pending admission. Request-only cancellation returns 499
+`BROKER_INGRESS_ABORTED`.
+
 ## Keep inference authority separate
 
 Signed runtime invocations may include an optional
@@ -418,6 +434,76 @@ A durable execution without authority bound to the expected run fails before
 provider dispatch. Token exchange failures are bounded, sanitized, and fail
 closed; callers must not retry by falling back to a user API token.
 
+## Managed executor startup
+
+`startExecutorRuntimeEntrypoint` is available from
+`veryfront/agent/executor-runtime`. It starts the executor side of a managed
+broker/executor deployment on Node.js 22 or newer. Your trusted image launcher
+calls `initializeExecutorRuntimeContracts()` from the same export to initialize
+the first-party schema validator, bundler, module lexer, and Skill document
+parser, then supplies the Operator allocation environment and image
+manifest. Missing runtime contracts fail startup.
+
+The executor accepts one authenticated `runtime.install` message bound to its
+allocation, invocation, generation, owner, and immutable source. Discovery and
+runtime preparation remain unavailable until installation succeeds. The
+installation carries runtime grants and capability IDs. Initial checkpoint
+state uses a separate bounded stream so durable replay state can exceed the
+installation message limit.
+
+The broker owns HTTP authentication, credentials, model and tool authorization,
+and durable persistence. Executor facades call these capabilities through the
+authenticated channel. Closing a runtime revokes its facades; admission remains
+held until the original work and cleanup settle. This entrypoint requires the
+broker and isolation infrastructure to be configured separately.
+
+Use `veryfront/agent/managed-broker` for the broker composition and signed
+control-plane HTTP adapter. The broker installs invocation grants, describes
+the selected agent, and prepares the executor before accepting a run. It keeps
+model and tool execution unavailable during preparation. Configure detached
+202 responses or request-owned SSE responses in trusted service configuration.
+Signed, direct durable, and direct AG-UI ingress reject application strings or property
+names containing a known broker credential, including credentials embedded in messages
+or attachment URLs.
+Detached runs require output persistence callbacks; their finalization remains
+part of the session's owned work until all writes settle.
+
+Canonical runs must pass the persistence adapter's `bindSessionOwnedWork`
+callback in `ManagedExecutorStartInput`. The broker binds it after reserving a
+session and before installation or preparation. Scheduled, retry, and explicit
+event-queue writes use that session owner. A persistence timeout can return
+promptly while pool capacity stays reserved until the original write settles.
+
+`startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
+and cancel/resume handlers to a Node server. Supply every handler, the broker
+pool, and a readiness check explicitly. It preserves `/liveness` and
+`/readiness`; shutdown stops admission before waiting for handlers and broker
+work to retire. This server adapter does not configure product policy,
+registration, credentials, or executor images.
+
+Managed run routes return HTTP 400 with `BROKER_INGRESS_TARGET_MISMATCH` when
+a run ID contains malformed URL encoding or fails the canonical run ID schema
+after decoding. Run IDs contain 1 to 128 ASCII letters, digits, underscores,
+or hyphens. Valid encoded run IDs are decoded before the handler receives them.
+Signed stream requests must sign the original encoded request path.
+
+To verify the packaged broker and executor locally, use Node.js 22.3.0 or newer:
+
+```bash
+deno task build:npm
+deno task test:e2e:managed-broker
+```
+
+This suite installs the built packages and exercises signed HTTP ingress, a
+separate executor over TLS, model and tool calls, SSE and detached responses,
+executor termination, client cancellation, delayed terminal persistence, and
+steering refresh with provider-native tools. Empty replay snapshots remain valid
+when provider replay is disabled.
+Project-controlled hooks use synthetic credential canaries with positive
+controls. The npm smoke jobs run the suite on the minimum supported Node version
+and the current CI version. These checks use local synthetic services. Verify
+the deployed artifact and isolation configuration separately before traffic cutover.
+
 ## Verify it worked
 
 Start the service entrypoint and call the run route directly. The default
@@ -434,3 +520,22 @@ A working service streams AG-UI events back. If Veryfront Cloud registration
 is enabled, the service should also appear in the cloud dashboard's agent
 service list after the first heartbeat
 (`VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS`).
+
+Broker model output limits and provider-tool descriptors must stay within the installed model grant.
+Each broker tool capability must also stay within the installed tool allowlist. Startup rejects broader
+broker authority before allocating an executor. Preparation uses the narrower broker model output
+limits and provider-tool list, so its default model requests fit the broker policy. Anthropic thinking
+with an additive token budget reserves that budget from the total allowance before preparation chooses
+the completion limit. Adaptive thinking uses the total allowance without an additive reservation.
+Preparation rejects an explicit completion limit that exceeds the remainder. Source IDs must
+belong to the installed host-facade or remote-source grants. Owner-scoped tool selectors use the same
+canonical names for capability checks and steering refreshes.
+
+Trusted ingress must provide `tools.catalog` with the complete tool inventory and ownership metadata,
+including project-local tools that have no broker capability. The broker resolves short selectors to
+owned tools first, then validates source capabilities against those exact IDs. Preparation and steering
+refreshes receive the same resolved grant. A shadowed global tool does not gain authority from an owned
+tool's short selector. The catalog must come from trusted source metadata before executor discovery.
+For selected host tools, the broker includes the catalog's owner and short-name mapping in the
+validated installation. Rebuilt executor facades retain that mapping, so an agent's short selector
+continues to select the same canonical tool. Remote source listings do not supply ownership authority.

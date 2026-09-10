@@ -1398,5 +1398,6 @@ export async function finalizeConversationAgentRun(
     },
     responseSchema: CompleteConversationRunResponseSchema,
     operation: "Complete canonical durable run",
+    fetch: input.fetch,
   });
 }

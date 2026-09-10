@@ -653,6 +653,32 @@ describe("executor managed model bridge", () => {
     }
   });
 
+  it("contains provider stream errors during abort without an uncaught event rejection", async () => {
+    const channels = await connected(stubModel({
+      doStream: ({ abortSignal }) =>
+        Promise.resolve({
+          stream: new ReadableStream({
+            start(controller) {
+              abortSignal!.addEventListener("abort", () => {
+                controller.error(new Error("Synthetic provider abort failure"));
+              }, { once: true });
+            },
+          }),
+        }),
+    }));
+    try {
+      const controller = new AbortController();
+      const { stream } = await channels.proxy.doStream({ prompt, abortSignal: controller.signal });
+      controller.abort();
+      await assertRejects(() => stream.getReader().read(), Error, "cancelled");
+      // Node reports rejected promises returned by EventTarget listeners as
+      // uncaught exceptions, even when the original promise has a catch handler.
+      await tick();
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("retains admission until asynchronous provider stream cleanup settles", async () => {
     const cleanup = Promise.withResolvers<void>();
     const cancelStarted = Promise.withResolvers<void>();

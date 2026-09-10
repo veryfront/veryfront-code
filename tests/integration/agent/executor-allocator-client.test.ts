@@ -123,6 +123,23 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
 } else {
   const tls = certificate();
   describe("executor allocator HTTPS client", () => {
+    it("accepts native Node with a Deno compatibility namespace", () => {
+      const original = Object.getOwnPropertyDescriptor(globalThis, "Deno");
+      Object.defineProperty(globalThis, "Deno", {
+        configurable: true,
+        value: { version: { deno: "compatibility" } },
+      });
+      try {
+        const client = createHostedExecutorAllocatorClient({
+          baseUrl: "https://allocator.example.test",
+          readBrokerToken: () => Promise.resolve("synthetic-token"),
+        });
+        assertEquals(typeof client.allocate, "function");
+      } finally {
+        if (original) Object.defineProperty(globalThis, "Deno", original);
+        else Reflect.deleteProperty(globalThis, "Deno");
+      }
+    });
     it("retains allocator DNS work until the native lookup settles", async () => {
       if (process.env.VF_EXECUTOR_DNS_RETIREMENT_TEST === "1") {
         let nativeWorkDone = false;

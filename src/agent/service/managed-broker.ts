@@ -1,0 +1,43 @@
+/** Managed broker composition without project runtime or application imports. */
+export {
+  createManagedExecutorBroker,
+  type ManagedExecutorBrokerOptions,
+  type ManagedExecutorRuntime,
+  type ManagedExecutorStartInput,
+} from "../hosted/managed-executor-broker.ts";
+export {
+  createManagedBrokerPersistence,
+  type ManagedBrokerOutput,
+} from "../hosted/managed-broker-persistence.ts";
+export { createManagedBrokerProjectState } from "../hosted/managed-broker-project-state.ts";
+export { createHostedExecutorAllocatorClient } from "../hosted/executor-allocator-client.ts";
+export {
+  connectExecutorTransport,
+  type ConnectExecutorTransportOptions,
+} from "../hosted/executor-node-transport.ts";
+export {
+  createManagedBrokerHandler,
+  type ManagedExecutorStarter,
+} from "./managed-broker-handler.ts";
+export {
+  BrokerIngressError,
+  type BrokerIngressErrorCode,
+  type BrokerIngressScopeInput,
+  type BrokerRuntimeAgentExecutorInput,
+  type BrokerRuntimeAgentIngress,
+  type BrokerRuntimeAgentIngressOptions,
+  type BrokerRuntimeAgentPrivateAuthority,
+  parseBrokerRuntimeAgentIngress,
+} from "./broker-ingress.ts";
+export {
+  type ManagedAgentBrokerIngressAuthority,
+  type ManagedAgentExecutorRequest,
+  type ManagedAgentIngressResult,
+  parseManagedAgUiAgentIngress,
+  parseManagedDurableAgentIngress,
+} from "./managed-hosted-ingress.ts";
+export {
+  type ManagedNodeBrokerHandler,
+  type ManagedNodeBrokerPool,
+  startNodeManagedAgentBroker,
+} from "./managed-node-broker.ts";

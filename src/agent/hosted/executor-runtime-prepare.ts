@@ -181,7 +181,10 @@ export interface ExecutorRuntimeFacades {
         signal: AbortSignal;
       },
     ): Promise<HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>>;
-    refresh(signal: AbortSignal): Promise<AgentSystem> | AgentSystem;
+    refresh(
+      signal: AbortSignal,
+      availableToolNames?: readonly string[],
+    ): Promise<AgentSystem> | AgentSystem;
   };
   latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
   publishParentRunEvents?: NonNullable<CreationOptions["publishParentRunEvents"]>;
@@ -749,7 +752,7 @@ export function createExecutorRuntimePreparation(input: Options) {
         modelId,
         sourceIntegrationPolicy: runtime.sourceIntegrationPolicy,
         refreshSystem: facades.projectSteering
-          ? () => facades.projectSteering!.refresh(streamSignal)
+          ? () => facades.projectSteering!.refresh(streamSignal, toolAssembly.modelVisibleToolNames)
           : undefined,
       };
       const runtimeOptions: NonNullable<Parameters<typeof createPreparedHostedRuntimeAgent>[1]> = {

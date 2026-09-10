@@ -227,7 +227,12 @@ export function createExecutorModelBroker(options: {
           }
           return cancellation;
         };
-        context.signal.addEventListener("abort", cancel, { once: true });
+        // Node EventTarget reports a rejected promise returned by a listener
+        // as an uncaught exception. Cleanup is observed and joined separately.
+        const onAbort = () => {
+          void cancel();
+        };
+        context.signal.addEventListener("abort", onAbort, { once: true });
         let complete = false;
         try {
           if (context.signal.aborted) {
@@ -255,7 +260,7 @@ export function createExecutorModelBroker(options: {
         } catch (error) {
           yield modelFailureOrThrow(error, context);
         } finally {
-          context.signal.removeEventListener("abort", cancel);
+          context.signal.removeEventListener("abort", onAbort);
           if (!complete) await cancel().catch(() => {});
           reader.releaseLock();
         }

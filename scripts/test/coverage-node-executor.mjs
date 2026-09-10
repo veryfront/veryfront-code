@@ -10,6 +10,7 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SOURCE_FILES = [
   "src/agent/hosted/executor-allocator-client.ts",
   "src/agent/hosted/executor-node-bootstrap.ts",
+  "src/agent/hosted/executor-runtime-entrypoint.ts",
   "src/agent/hosted/executor-node-transport.ts",
   "src/security/http/native-header-processing.ts",
   "src/security/http/native-request-processing.ts",
@@ -69,7 +70,11 @@ export async function validateNativeCoverage(
       if (match) record.lines.set(Number(match[1]), Number(match[2]));
     } else if (record && line.startsWith("FN:")) {
       const match = /^FN:(\d+),(.+)$/.exec(line);
-      if (match) record.functions.set(match[2], Number(match[1]));
+      if (match) {
+        const positions = record.functions.get(match[2]) ?? [];
+        positions.push(Number(match[1]));
+        record.functions.set(match[2], positions);
+      }
     } else if (record && line === "end_of_record") {
       records.set(record.source, record);
       record = undefined;
@@ -100,11 +105,20 @@ export async function validateNativeCoverage(
       first--;
     }
     first = Math.max(1, first - 1);
-    const mappedLine = anchor && entry.functions.get(anchor.name);
+    const functionEndOffset = anchor &&
+      lines.slice(anchor.line).findIndex((line) => line === "}");
+    const functionEnd = functionEndOffset === -1 || !anchor
+      ? undefined
+      : anchor.line + functionEndOffset + 1;
+    const mappedLines = anchor && entry.functions.get(anchor.name);
+    const hasOriginalFunctionPosition = mappedLines?.some((line) =>
+      functionEnd !== undefined && line >= first && line <= functionEnd
+    ) === true;
     if (
-      !anchor || mappedLine === undefined || mappedLine < first ||
-      mappedLine > anchor.line ||
-      [...entry.lines.keys()].some((line) => line < 1 || line > lines.length)
+      !anchor || !hasOriginalFunctionPosition ||
+      [...entry.lines.keys()].some((line) =>
+        line < 1 || line > lines.length
+      )
     ) {
       throw new Error(
         `Native coverage is not mapped to original source: ${basename(source)}`,

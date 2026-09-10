@@ -1047,6 +1047,7 @@ Deno.test("strict runtime project files preserve timeout identity across request
 
 Deno.test("strict project file requests enforce monotonic timeouts around synchronous fetch work", async () => {
   const responseCancelled = createDeferred<void>();
+  let fetchCalls = 0;
   const response = streamResponse(
     [new TextEncoder().encode('{"path":"src/index.ts","content":"ok"}')],
     {},
@@ -1055,9 +1056,10 @@ Deno.test("strict project file requests enforce monotonic timeouts around synchr
   const error = await assertRejects(() =>
     getStrictRuntimeProjectFile({
       ...baseOptions,
-      timeoutMs: 1,
+      timeoutMs: TEST_IN_FLIGHT_DEADLINE_MS,
       fetch: async () => {
-        const busyUntil = performance.now() + 20;
+        fetchCalls += 1;
+        const busyUntil = performance.now() + TEST_IN_FLIGHT_DEADLINE_MS + 20;
         while (performance.now() < busyUntil) {
           // Deliberately block timer delivery to verify the monotonic check.
         }
@@ -1069,6 +1071,7 @@ Deno.test("strict project file requests enforce monotonic timeouts around synchr
 
   assertEquals((error as Error).name, "TimeoutError");
   assertStringIncludes(getErrorMessage(error), "request timed out");
+  assertEquals(fetchCalls, 1, "the deadline must expire after synchronous fetch work starts");
   await responseCancelled.promise;
 });
 

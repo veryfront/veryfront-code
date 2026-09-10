@@ -10,6 +10,7 @@ import {
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorSnapshot,
   type ConversationRunMirrorStoppedState,
+  type ConversationRunQueueFlush,
   createConversationRunMirror,
 } from "./run-mirror.ts";
 import {
@@ -71,6 +72,7 @@ interface ConversationRunChunkMirrorSharedOptions {
   onHighBacklog?: (state: ConversationRunMirrorHighBacklogState) => Promise<void> | void;
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
+  runQueueFlush?: ConversationRunQueueFlush;
   prepareChunkEvents?: (
     input: ConversationRunChunkMirrorPrepareChunkEventsInput,
   ) => Promise<ConversationRunEvent[]> | ConversationRunEvent[];
@@ -135,6 +137,7 @@ export interface HostedConversationRunChunkMirrorOptions {
   batchSize?: number;
   highBacklogEventCount?: number;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+  runQueueFlush?: ConversationRunQueueFlush;
   /** Explicit host-owned transport for trusted runtime composition and tests. */
   fetch?: typeof globalThis.fetch;
 }
@@ -188,6 +191,7 @@ export function createConversationRunChunkMirror(
     ...(input.onHighBacklog ? { onHighBacklog: input.onHighBacklog } : {}),
     ...(input.onRetryScheduled ? { onRetryScheduled: input.onRetryScheduled } : {}),
     ...(input.onStopped ? { onStopped: input.onStopped } : {}),
+    ...(input.runQueueFlush ? { runQueueFlush: input.runQueueFlush } : {}),
   });
 
   return {
@@ -418,6 +422,7 @@ export function createHostedConversationRunChunkMirror(
     immediateFlushEventCount: batchSize,
     highBacklogEventCount,
     fetch: input.fetch,
+    ...(input.runQueueFlush ? { runQueueFlush: input.runQueueFlush } : {}),
     prepareChunkEvents: ({ chunk, defaultPrepare }) =>
       runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorChunk", async () => {
         const events = defaultPrepare();

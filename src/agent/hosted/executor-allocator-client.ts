@@ -4,6 +4,7 @@ import { Buffer } from "node:buffer";
 import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import process from "node:process";
+import { isNodeRuntime } from "#veryfront/platform/compat/runtime.ts";
 import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-session.ts";
 import {
   getHostedExecutorAllocationRequestSchema,
@@ -54,7 +55,7 @@ export function createHostedExecutorAllocatorClient(options: {
   timeoutMs?: number;
 }): HostedExecutorAllocatorClient {
   if (
-    "Deno" in globalThis || "Bun" in globalThis || process.release.name !== "node" ||
+    !isNodeRuntime() || process.release.name !== "node" ||
     Number(process.versions.node.split(".")[0]) < 22
   ) {
     throw new Error("Executor allocator client requires Node.js 22 or newer");
