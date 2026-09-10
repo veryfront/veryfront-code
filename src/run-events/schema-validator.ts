@@ -33,10 +33,10 @@ const REGISTRATION_GUIDANCE = [
   `veryfront/run-events needs the "${RUN_EVENT_SCHEMA_VALIDATOR_CONTRACT}" contract to build a schema,`,
   "and nothing has registered one.",
   `Add ${RUN_EVENT_SCHEMA_VALIDATOR_PACKAGE} and register it once at startup:`,
-  'import { register } from "veryfront/extensions/contracts";',
+  'import { register, tryResolve } from "veryfront/extensions/contracts";',
   `import { createZodAdapter } from "${RUN_EVENT_SCHEMA_VALIDATOR_PACKAGE}";`,
-  `register("${RUN_EVENT_SCHEMA_VALIDATOR_CONTRACT}", createZodAdapter());`,
-  "Registration is idempotent, and inside a Veryfront app bootstrap does it before handlers run.",
+  `if (!tryResolve("${RUN_EVENT_SCHEMA_VALIDATOR_CONTRACT}")) register("${RUN_EVENT_SCHEMA_VALIDATOR_CONTRACT}", createZodAdapter());`,
+  "The gate keeps an existing validator: register replaces whatever is registered, and inside a Veryfront app bootstrap owns it.",
 ].join(" ");
 
 /**

@@ -317,7 +317,7 @@ The `veryfront/run-events` module owns the reader's half of that contract, so
 you do not restate the vocabulary or the payload shapes in your own code:
 
 ```ts
-import { register } from "veryfront/extensions/contracts";
+import { register, tryResolve } from "veryfront/extensions/contracts";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 import {
   isRunEventType,
@@ -325,9 +325,12 @@ import {
   RUN_EVENT_PAYLOAD_SCHEMAS,
 } from "veryfront/run-events";
 
-// Outside a Veryfront app, register a validator once at startup (details
-// below the export list); inside one this is an idempotent no-op.
-register("SchemaValidator", createZodAdapter());
+// Register a validator only when nothing has (details below the export
+// list): outside a Veryfront app this installs the Zod adapter, inside one
+// it keeps the validator bootstrap owns.
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
 
 const apiUrl = "https://api.veryfront.example";
 const runId = "<RUN_ID>";
@@ -382,14 +385,17 @@ register one yourself before the first `get*Schema()` call or
 `parseTypedRunEventRow`:
 
 ```ts
-import { register } from "veryfront/extensions/contracts";
+import { register, tryResolve } from "veryfront/extensions/contracts";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
-register("SchemaValidator", createZodAdapter());
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
 ```
 
-Registration is idempotent, so calling it once at startup is enough and calling
-it again is safe. The module ships no fallback validator: with nothing
+`register` replaces whatever is registered, so the `tryResolve` gate is what
+makes this safe to paste into an app that already owns a validator: it installs
+the adapter only when nothing has. The module ships no fallback validator: with nothing
 registered, a getter throws an error naming the `SchemaValidator` contract and
 this registration call.
 

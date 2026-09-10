@@ -10,17 +10,21 @@
  * Every schema here is lazy and materializes through the registered
  * `SchemaValidator` contract, so a consumer outside a Veryfront app must
  * register one before the first `get*Schema()` call or
- * `parseTypedRunEventRow`. Registration is idempotent and takes one line at
- * startup:
+ * `parseTypedRunEventRow`. `register` replaces whatever is registered, so gate
+ * it on `tryResolve` to leave an existing validator in place:
  *
  * ```ts
- * import { register } from "veryfront/extensions/contracts";
+ * import { register, tryResolve } from "veryfront/extensions/contracts";
  * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  *
- * register("SchemaValidator", createZodAdapter());
+ * if (!tryResolve("SchemaValidator")) {
+ *   register("SchemaValidator", createZodAdapter());
+ * }
  * ```
  *
- * Inside a Veryfront app, bootstrap does this before handlers run. This module
+ * Inside a Veryfront app, bootstrap registers the app's validator before
+ * handlers run, and the gate keeps it; never call `register` unconditionally
+ * there, since that would replace a lifecycle-owned validator. This module
  * ships no fallback validator: calling a getter with nothing registered throws
  * an error naming the contract and this registration call.
  *
@@ -28,7 +32,7 @@
  *
  * @example
  * ```ts
- * import { register } from "veryfront/extensions/contracts";
+ * import { register, tryResolve } from "veryfront/extensions/contracts";
  * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  * import {
  *   isRunEventType,
@@ -36,9 +40,11 @@
  *   RUN_EVENT_PAYLOAD_SCHEMAS,
  * } from "veryfront/run-events";
  *
- * // Outside a Veryfront app, register a validator once at startup; inside
- * // one, bootstrap already has and this line is an idempotent no-op.
- * register("SchemaValidator", createZodAdapter());
+ * // Register a validator only when nothing has: outside a Veryfront app this
+ * // installs the Zod adapter, inside one it keeps the validator bootstrap owns.
+ * if (!tryResolve("SchemaValidator")) {
+ *   register("SchemaValidator", createZodAdapter());
+ * }
  *
  * const apiUrl = "https://api.veryfront.example";
  * const runId = "<RUN_ID>";
