@@ -8,6 +8,7 @@ const globals = globalThis as FixtureGlobals;
 const seen: string[] = globals.__vfNativeObservations ??= [];
 const stringify = JSON.stringify;
 const apply = Reflect.apply;
+const setHas = Set.prototype.has;
 const test = RegExp.prototype.test;
 const marker = /synthetic-trusted-private-[a-f0-9-]{36}/;
 
@@ -23,7 +24,10 @@ function observe(value: unknown) {
 
 export function installHooks() {
   if (process.env.VF_NATIVE_PATCH_MEMBERSHIP === "1") {
-    Set.prototype.has = () => true;
+    // Preserve discovery's cycle checks so the attack reaches tool authorization.
+    Set.prototype.has = function (value) {
+      return value === "denied" || apply(setHas, this, [value]);
+    };
   }
   const trim = String.prototype.trim;
   String.prototype.trim = function () {
