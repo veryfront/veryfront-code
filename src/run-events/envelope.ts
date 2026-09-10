@@ -153,7 +153,14 @@ export type ConversationTypedRunEventRow = InferSchema<
  * ```ts
  * import { parseTypedRunEventRow } from "veryfront/run-events";
  *
- * const response = await fetch(`${apiUrl}/runs/${runId}/events?format=typed`);
+ * // Requires a registered `SchemaValidator`; see the module docs.
+ * const apiUrl = "https://api.veryfront.example";
+ * const runId = "<RUN_ID>";
+ * const token = "<TOKEN>";
+ *
+ * const response = await fetch(`${apiUrl}/runs/${runId}/events?format=typed`, {
+ *   headers: { Authorization: `Bearer ${token}` },
+ * });
  * const body = await response.json();
  * const rows = (body.data as unknown[]).map(parseTypedRunEventRow);
  * ```

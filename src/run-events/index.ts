@@ -28,11 +28,17 @@
  *
  * @example
  * ```ts
+ * import { register } from "veryfront/extensions/contracts";
+ * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  * import {
  *   isRunEventType,
  *   parseTypedRunEventRow,
  *   RUN_EVENT_PAYLOAD_SCHEMAS,
  * } from "veryfront/run-events";
+ *
+ * // Outside a Veryfront app, register a validator once at startup; inside
+ * // one, bootstrap already has and this line is an idempotent no-op.
+ * register("SchemaValidator", createZodAdapter());
  *
  * const apiUrl = "https://api.veryfront.example";
  * const runId = "<RUN_ID>";
