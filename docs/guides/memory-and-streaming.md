@@ -325,8 +325,8 @@ import {
   RUN_EVENT_PAYLOAD_SCHEMAS,
 } from "veryfront/run-events";
 
-// Outside a Veryfront app, register a validator once at startup (see
-// "Registering a validator" below); inside one this is an idempotent no-op.
+// Outside a Veryfront app, register a validator once at startup (details
+// below the export list); inside one this is an idempotent no-op.
 register("SchemaValidator", createZodAdapter());
 
 const apiUrl = "https://api.veryfront.example";
