@@ -6,7 +6,11 @@ import type {
   ManagedExecutorRuntime,
   ManagedExecutorStartInput,
 } from "../hosted/managed-executor-broker.ts";
-import { createManagedBrokerHandler } from "./managed-broker-handler.ts";
+import {
+  createManagedAgUiBrokerHandler,
+  createManagedBrokerHandler,
+  createManagedDurableBrokerHandler,
+} from "./managed-broker.ts";
 import { ExecutorAgentError } from "../hosted/executor-agent-schema.ts";
 import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
 import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts";
@@ -14,6 +18,338 @@ import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts"
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
+
+describe("managed AG-UI broker handler", () => {
+  it("streams authenticated direct AG-UI through the executor and retires it", async () => {
+    const fixture = runtimeFixture();
+    const managed = createManagedAgUiBrokerHandler({
+      owner: { scopeKind: "global", serviceName: "test-service" },
+      broker: { start: () => Promise.resolve(fixture.runtime) },
+      ingress: {
+        authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+      defaultAgentId: "builder",
+      prepare: ({ ingress }) => {
+        assertEquals(ingress.kind, "ag-ui");
+        assertEquals(JSON.stringify(ingress.executor).includes("synthetic-private-token"), false);
+        return Promise.resolve({
+          start: { session: {} } as ManagedExecutorStartInput,
+          messages: [],
+          executionSignal: new AbortController().signal,
+        });
+      },
+    });
+    try {
+      const response = await managed.handle(
+        new Request("https://broker.test/api/ag-ui", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            threadId: "00000000-0000-4000-8000-000000000001",
+            runId: "run-1",
+            messages: [],
+            tools: [],
+            context: [],
+          }),
+        }),
+      );
+      assertEquals(
+        response.status,
+        200,
+        response.status === 200 ? undefined : await response.text(),
+      );
+      fixture.release();
+      const events = await parseAgUiSseResponse(response);
+      assertEquals(events.eventTypes.includes(agUiSseEventTypes.runStarted), true);
+      assertEquals(fixture.acceptKinds, ["request"]);
+    } finally {
+      fixture.release();
+      await managed.close();
+    }
+    assertEquals(fixture.closeReasons, ["completed"]);
+  });
+});
+
+for (const kind of ["durable", "ag-ui"] as const) {
+  describe(`direct ${kind} broker authorization`, () => {
+    for (const shutdown of ["service", "handler"] as const) {
+      it(`stops an incomplete body when ${shutdown} shuts down`, async () => {
+        const service = new AbortController();
+        const started = Promise.withResolvers<void>();
+        let bodyController: ReadableStreamDefaultController<Uint8Array>;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodyController = controller;
+            controller.enqueue(new TextEncoder().encode("{"));
+          },
+          pull() {
+            started.resolve();
+          },
+        });
+        const options = {
+          owner: { scopeKind: "global" as const, serviceName: "test-service" },
+          signal: service.signal,
+          broker: { start: () => Promise.reject(new Error("Unexpected allocation")) },
+          ingress: {
+            authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+            verifyRunEventAppendToken: () => Promise.resolve(true),
+          },
+          prepare: () => Promise.reject(new Error("Unexpected preparation")),
+        };
+        const managed = kind === "durable"
+          ? createManagedDurableBrokerHandler(options)
+          : createManagedAgUiBrokerHandler({ ...options, defaultAgentId: "builder" });
+        const pending = managed.handle(
+          new Request(
+            `https://broker.test/api/${kind === "durable" ? "runs" : "ag-ui"}`,
+            {
+              method: "POST",
+              body,
+              headers: { "x-veryfront-run-event-token": "synthetic-event-token" },
+            },
+          ),
+        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await started.promise;
+          if (shutdown === "service") service.abort();
+          else await managed.close();
+          const response = await Promise.race([
+            pending,
+            new Promise<undefined>((resolve) => {
+              timer = setTimeout(() => resolve(undefined), 100);
+            }),
+          ]);
+          assertEquals(response?.status, 503);
+        } finally {
+          clearTimeout(timer);
+          try {
+            bodyController!.close();
+          } catch { /* Body may already be canceled. */ }
+          await pending;
+          await managed.close();
+        }
+      });
+    }
+    for (const rejection of ["method", "path", "authentication", "project", "owner"] as const) {
+      it(`rejects ${rejection} before preparation or allocation`, async () => {
+        let preparations = 0;
+        let allocations = 0;
+        const options = {
+          owner: { scopeKind: "project" as const, projectId },
+          broker: {
+            start: () => {
+              allocations++;
+              return Promise.reject(new Error("Unexpected allocation"));
+            },
+          },
+          ingress: {
+            authenticate: () =>
+              Promise.resolve(
+                rejection === "authentication"
+                  ? new Response(null, { status: 401 })
+                  : { userId, authToken: "synthetic-private-token" },
+              ),
+            verifyProjectAccess: () =>
+              Promise.resolve(
+                rejection === "project"
+                  ? {
+                    success: false as const,
+                    error: {
+                      errorCode: "FORBIDDEN",
+                      message: "Project access denied",
+                      statusCode: 403,
+                    },
+                  }
+                  : { success: true as const },
+              ),
+            verifyRunEventAppendToken: () => Promise.resolve(true),
+          },
+          prepare: () => {
+            preparations++;
+            return Promise.reject(new Error("Unexpected preparation"));
+          },
+        };
+        const managed = kind === "durable"
+          ? createManagedDurableBrokerHandler(options)
+          : createManagedAgUiBrokerHandler({ ...options, defaultAgentId: "builder" });
+        const requestedProject = rejection === "owner"
+          ? "00000000-0000-4000-8000-000000000009"
+          : projectId;
+        const context = {
+          projectId: requestedProject,
+          branchId: "branch-1",
+          conversationId: "00000000-0000-4000-8000-000000000001",
+        };
+        const body = kind === "durable"
+          ? {
+            messages: [],
+            context,
+            durableRootRun: { runId: "run-1", messageId: "00000000-0000-4000-8000-000000000002" },
+          }
+          : {
+            threadId: context.conversationId,
+            runId: "run-1",
+            messages: [],
+            tools: [],
+            context: [{
+              description: "veryfront.projectId",
+              value: JSON.stringify(requestedProject),
+            }],
+          };
+        try {
+          const response = await managed.handle(
+            new Request(
+              `https://broker.test${
+                rejection === "path" ? "/wrong" : kind === "durable" ? "/api/runs" : "/api/ag-ui"
+              }`,
+              {
+                method: rejection === "method" ? "PUT" : "POST",
+                headers: {
+                  "content-type": "application/json",
+                  "x-veryfront-run-event-token": "synthetic-event-token",
+                },
+                body: JSON.stringify(body),
+              },
+            ),
+          );
+          assertEquals(
+            response.status,
+            rejection === "method" || rejection === "path"
+              ? 400
+              : rejection === "authentication"
+              ? 401
+              : 403,
+            await response.text(),
+          );
+          assertEquals(preparations, 0);
+          assertEquals(allocations, 0);
+        } finally {
+          await managed.close();
+        }
+      });
+    }
+  });
+}
+
+describe("managed durable broker handler", () => {
+  it("requires a run-event capability before allocating a canonical executor", async () => {
+    let starts = 0;
+    const managed = createManagedDurableBrokerHandler({
+      owner: { scopeKind: "global", serviceName: "test-service" },
+      broker: {
+        start: () => {
+          starts++;
+          return Promise.reject(new Error("Unexpected admission"));
+        },
+      },
+      ingress: {
+        authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+      },
+      prepare: () => Promise.reject(new Error("Unexpected preparation")),
+    });
+    try {
+      const response = await managed.handle(
+        new Request("https://broker.test/api/runs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            messages: [],
+            context: {
+              projectId,
+              branchId: "branch-1",
+              conversationId: "00000000-0000-4000-8000-000000000001",
+            },
+            durableRootRun: { runId: "run-1", messageId: "00000000-0000-4000-8000-000000000002" },
+          }),
+        }),
+      );
+      assertEquals(response.status, 401);
+      assertEquals(starts, 0);
+    } finally {
+      await managed.close();
+    }
+  });
+
+  for (const allowed of [true, false]) {
+    it(`authenticates direct durable ingress before executor admission (allowed=${allowed})`, async () => {
+      const fixture = runtimeFixture();
+      let starts = 0;
+      let finishes = 0;
+      const controller = new AbortController();
+      const managed = createManagedDurableBrokerHandler({
+        owner: { scopeKind: "global", serviceName: "test-service" },
+        broker: {
+          start: () => {
+            starts++;
+            return Promise.resolve(fixture.runtime);
+          },
+        },
+        ingress: {
+          authenticate: () =>
+            Promise.resolve(
+              allowed
+                ? { userId, authToken: "synthetic-private-token" }
+                : new Response(null, { status: 401 }),
+            ),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+        },
+        prepare: ({ ingress }) => {
+          assertEquals(ingress.broker.getParsedRequest().authToken, "synthetic-private-token");
+          assertEquals(JSON.stringify(ingress.executor).includes("synthetic-private-token"), false);
+          return Promise.resolve({
+            start: { session: {} } as ManagedExecutorStartInput,
+            messages: [],
+            executionSignal: controller.signal,
+            output: {
+              write: () => Promise.resolve(),
+              finish: () => {
+                finishes++;
+                return Promise.resolve();
+              },
+            },
+          });
+        },
+      });
+      const makeRequest = () =>
+        new Request("https://broker.test/api/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-run-event-token": "synthetic-event-token",
+          },
+          body: JSON.stringify({
+            messages: [],
+            context: {
+              projectId,
+              branchId: "branch-1",
+              conversationId: "00000000-0000-4000-8000-000000000001",
+            },
+            durableRootRun: { runId: "run-1", messageId: "00000000-0000-4000-8000-000000000002" },
+          }),
+          signal: controller.signal,
+        });
+      try {
+        const response = await managed.handle(makeRequest());
+        assertEquals(response.status, allowed ? 202 : 401, await response.clone().text());
+        if (allowed) {
+          const duplicate = await managed.handle(makeRequest());
+          assertEquals(await duplicate.json(), { accepted: true, duplicate: true });
+          controller.abort();
+        }
+        assertEquals(starts, allowed ? 1 : 0);
+      } finally {
+        fixture.release();
+        await managed.close();
+      }
+      assertEquals(finishes, allowed ? 1 : 0);
+    });
+  }
+});
 
 async function request(signal?: AbortSignal, requestPath = path) {
   const body = JSON.stringify({

@@ -458,7 +458,18 @@ held until the original work and cleanup settle. This entrypoint requires the
 broker and isolation infrastructure to be configured separately.
 
 Use `veryfront/agent/managed-broker` for the broker composition and signed
-control-plane HTTP adapter. The broker installs invocation grants, describes
+control-plane HTTP adapter. `createManagedDurableBrokerHandler` handles direct
+`POST /api/runs` requests with detached execution and requires run-event token
+verification and output persistence. `createManagedAgUiBrokerHandler` handles
+direct `POST /api/ag-ui` requests with request-owned SSE. Configure each direct
+adapter's owner in trusted service configuration; project owners reject requests
+for other projects before preparation or allocation. Their `prepare` callbacks
+receive private broker authority and bounded executor data separately. Resolve
+immutable sources and capabilities in the broker before returning the executor
+start input. These adapters share admission, duplicate handling, and retirement
+with the signed adapter.
+
+The broker installs invocation grants, describes
 the selected agent, and prepares the executor before accepting a run. It keeps
 model and tool execution unavailable during preparation. Configure detached
 202 responses or request-owned SSE responses in trusted service configuration.
