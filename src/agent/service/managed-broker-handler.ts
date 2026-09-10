@@ -1,3 +1,4 @@
+import { isResponseLike } from "./response-like.ts";
 import type {
   HostedChatRuntimeFinishPart,
   HostedChatRuntimeStreamInput,
@@ -128,12 +129,13 @@ export function createManagedAgUiBrokerHandler(options: {
         return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
       }
       signal.throwIfAborted();
+      // Preserve the streaming body explicitly: Bun otherwise leaves the cloned body unread.
       const ingress = await parseManagedAgUiAgentIngress(
-        new Request(request, { signal }),
+        new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
         options.ingress,
       );
       signal.throwIfAborted();
-      if (ingress instanceof Response) return ingress;
+      if (isResponseLike(ingress)) return ingress;
       const parsed = ingress.broker.getParsedRequest();
       if (owner.scopeKind === "project" && parsed.projectId !== owner.projectId) {
         return Response.json({ errorCode: "BROKER_INGRESS_SCOPE_DENIED" }, { status: 403 });
@@ -183,12 +185,13 @@ export function createManagedDurableBrokerHandler(options: {
         return Response.json({ errorCode: "BROKER_INGRESS_AUTH_REQUIRED" }, { status: 401 });
       }
       signal.throwIfAborted();
+      // Preserve the streaming body explicitly: Bun otherwise leaves the cloned body unread.
       const ingress = await parseManagedDurableAgentIngress(
-        new Request(request, { signal }),
+        new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
         options.ingress,
       );
       signal.throwIfAborted();
-      if (ingress instanceof Response) return ingress;
+      if (isResponseLike(ingress)) return ingress;
       const parsed = ingress.broker.getParsedRequest();
       if (!parsed.durableRootRun || !parsed.conversationId) {
         return Response.json({ errorCode: "BROKER_INGRESS_INVALID_BODY" }, { status: 400 });
@@ -238,7 +241,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         ...(options.signal ? [options.signal] : []),
       ]);
       const parsed = await options.parse(request, signal);
-      if (parsed instanceof Response) return parsed;
+      if (isResponseLike(parsed)) return parsed;
       const { ingress, runId, runKey } = parsed;
       assertAvailable(closed, signal);
       const existing = active.get(runKey);

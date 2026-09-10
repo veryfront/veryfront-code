@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import type {
@@ -73,6 +73,57 @@ describe("managed AG-UI broker handler", () => {
 
 for (const kind of ["durable", "ag-ui"] as const) {
   describe(`direct ${kind} broker authorization`, () => {
+    for (const native of [true, false]) {
+      it(`preserves authentication rejections before parsing (native=${native})`, async () => {
+        const rejection = native
+          ? new Response("unauthorized", { status: 401, headers: { "www-authenticate": "Bearer" } })
+          : {
+            status: 401,
+            headers: new Headers({ "www-authenticate": "Bearer" }),
+            bodyUsed: false,
+            text: () => Promise.resolve("unauthorized"),
+            json: () => Promise.resolve({ error: "unauthorized" }),
+          } as Response;
+        let preparations = 0;
+        let admissions = 0;
+        const options = {
+          owner: { scopeKind: "global" as const, serviceName: "test-service" },
+          broker: {
+            start: () => {
+              admissions++;
+              return Promise.reject(new Error("Unexpected admission"));
+            },
+          },
+          ingress: {
+            authenticate: () => Promise.resolve(rejection),
+            verifyRunEventAppendToken: () => Promise.resolve(true),
+          },
+          prepare: () => {
+            preparations++;
+            return Promise.reject(new Error("Unexpected preparation"));
+          },
+        };
+        const managed = kind === "durable"
+          ? createManagedDurableBrokerHandler(options)
+          : createManagedAgUiBrokerHandler({ ...options, defaultAgentId: "builder" });
+        try {
+          const response = await managed.handle(
+            new Request(`https://broker.test/api/${kind === "durable" ? "runs" : "ag-ui"}`, {
+              method: "POST",
+              body: "invalid json",
+              headers: { "x-veryfront-run-event-token": "synthetic-event-token" },
+            }),
+          );
+          assertEquals(response.status, 401);
+          assertStrictEquals(response, rejection);
+          assertEquals(response.headers.get("www-authenticate"), "Bearer");
+          assertEquals(preparations, 0);
+          assertEquals(admissions, 0);
+        } finally {
+          await managed.close();
+        }
+      });
+    }
     for (const shutdown of ["service", "handler"] as const) {
       it(`stops an incomplete body when ${shutdown} shuts down`, async () => {
         const service = new AbortController();
@@ -106,8 +157,9 @@ for (const kind of ["durable", "ag-ui"] as const) {
             {
               method: "POST",
               body,
+              duplex: "half",
               headers: { "x-veryfront-run-event-token": "synthetic-event-token" },
-            },
+            } as RequestInit,
           ),
         );
         let timer: ReturnType<typeof setTimeout> | undefined;
