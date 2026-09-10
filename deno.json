@@ -521,6 +521,8 @@
     "coverage:ci": "deno task test:coverage:unit && deno task coverage:gate",
     "coverage:html": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --html",
     "bench": "VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text deno bench --no-check --allow-all --unstable-worker-options --unstable-net $(find src -name '*.bench.ts')",
+    "perf": "deno run --frozen --allow-read --allow-write=.cache --allow-env --allow-sys --allow-run=deno,git scripts/perf/run.ts",
+    "perf:check": "deno run --check --frozen --allow-read --allow-env --deny-net scripts/perf/http-worker.ts --check-only && deno run --check --frozen --allow-read --allow-env --deny-net scripts/perf/worker.ts --check-only && deno run --check --frozen --deny-net scripts/perf/http-client.ts --check-only && deno check --frozen --config=scripts/test.deno.json scripts/perf/run.ts scripts/perf/report.test.ts && deno lint --config=scripts/test.deno.json scripts/perf/ && deno fmt --check --config=scripts/test.deno.json scripts/perf/ && deno task test:file scripts/perf/report.test.ts",
     "clean": "rm -rf .cache/",
     "storybook": "npm --prefix storybook run storybook",
     "build:storybook": "npm --prefix storybook run build-storybook",

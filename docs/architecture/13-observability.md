@@ -82,6 +82,15 @@ with `proxy.total` to estimate edge, ingress, and network time before the proxy
 pod receives the request. Use `proxy.upstream` minus the renderer `total` metric
 to estimate proxy-to-renderer network and response header overhead.
 
+## CPU profiling
+
+For framework CPU profiling and repeatable measurements, use
+[`deno task perf`](../../scripts/perf/README.md). It captures synthetic workloads
+on the pinned Deno version and produces browser, Markdown, and JSON reports.
+Request phase timings identify slow stages; CPU profiles explain sampled work
+inside those stages. The performance workflow publishes pull request comparisons
+and downloadable artifacts without making timing deltas a merge requirement.
+
 ## Boundaries
 
 - Observability records behavior. It does not own business logic.
