@@ -178,6 +178,8 @@ export type HostedServiceAuthOptions = {
 
 /** Public API contract for hosted service auth. */
 export type HostedServiceAuth = {
+  /** Verify the API's signed exact-run cancellation bearer; ordinary user tokens are insufficient. */
+  verifyRunCancellationToken: (input: { token: string; runId: string }) => Promise<boolean>;
   authenticateRequest: (
     request: Request,
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
@@ -466,6 +468,40 @@ export function createHostedServiceAuth(
     };
   }
 
+  async function verifyRunCancellationToken(
+    input: { token: string; runId: string },
+  ): Promise<boolean> {
+    const config = options.getConfig();
+    const { token, runId } = input;
+    if (!config.OAUTH_PUBLIC_KEY || !token || !runId) return false;
+    try {
+      const authProvider = await getAuthProvider(options);
+      if (!authProvider) return false;
+      const claims = await authProvider.verifyWithPublicKey(token, config.OAUTH_PUBLIC_KEY, {
+        algorithms: ["RS256"],
+      });
+      if (
+        claims.runId !== runId || typeof claims.userId !== "string" || !claims.userId ||
+        typeof claims.exp !== "number" || !Number.isFinite(claims.exp) ||
+        claims.exp * 1000 <= Date.now() || claims.tokenUse !== undefined ||
+        claims.scopes !== undefined
+      ) return false;
+      // Match the two existing mintRuntimeCancellationAuthToken contracts. The
+      // API authorizes the actor before minting this exact-run server authority.
+      if (claims.actorType === "service_account") {
+        return !!config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
+          claims.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
+          claims.userId === claims.serviceAccountId &&
+          typeof claims.projectId === "string" && claims.projectId.length > 0 &&
+          hasExactScopes(claims.scope, ["projects:read"]);
+      }
+      return claims.actorType === undefined && claims.serviceAccountId === undefined &&
+        claims.projectId === undefined && hasExactScopes(claims.scope, ["read", "write", "delete"]);
+    } catch {
+      return false;
+    }
+  }
+
   async function verifyRunEventAppendToken(
     input: HostedServiceRunEventAppendTokenInput,
   ): Promise<HostedServiceRunEventAppendTokenResult> {
@@ -595,6 +631,7 @@ export function createHostedServiceAuth(
   }
 
   return {
+    verifyRunCancellationToken,
     authenticateRequest,
     getTokenFromRequest: getHostedServiceTokenFromRequest,
     verifyJwt,

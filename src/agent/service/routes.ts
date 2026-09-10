@@ -159,6 +159,8 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
     projectId: string;
     runId: string;
   }) => Promise<HostedServiceRunEventAppendTokenVerification>;
+  /** Exact-run authority must be verified before cancellation, including delayed starts. */
+  verifyRunCancellationToken?: (input: { token: string; runId: string }) => Promise<boolean>;
   tracker: DetachedRunTracker<AgUiResumeValue>;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (
@@ -478,17 +480,27 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   }): Promise<Response> {
     return trace("handler.durableChatRunCancel", async () => {
       const authenticatedRequest = await authenticateAgUiRequest(input.request);
-      if (authenticatedRequest instanceof Response) {
+      if (isResponseLike(authenticatedRequest)) {
         return authenticatedRequest;
       }
 
-      if (!input.runId) {
+      const runId = input.runId;
+      if (!runId) {
         return Response.json({ errorCode: "VALIDATION_ERROR" }, { status: 400 });
       }
 
-      options.setActiveSpanAttributes?.({ "run.id": input.runId });
+      const authorized = await options.verifyRunCancellationToken?.({
+        token: authenticatedRequest.authToken,
+        runId,
+      });
+      if (authorized !== true) {
+        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+      }
+
+      options.setActiveSpanAttributes?.({ "run.id": runId });
       const hostedAgUiCancelHandler = createAgUiCancelHandler({
         sessionManager: options.tracker.sessionManager,
+        resolveRunId: () => runId,
       });
       return hostedAgUiCancelHandler(input.request);
     });

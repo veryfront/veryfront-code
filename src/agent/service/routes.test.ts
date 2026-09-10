@@ -121,6 +121,7 @@ function createRouteSet(input: {
       return { authToken: authorization.slice(7), userId: "user-1" };
     },
     verifyProjectAccess: async () => ({ success: true }),
+    verifyRunCancellationToken: () => Promise.resolve(true),
     verifyRunEventAppendToken: input.verifyRunEventAppendToken ??
       (() => Promise.resolve(false)),
     prepareExecution: async (req) => {
