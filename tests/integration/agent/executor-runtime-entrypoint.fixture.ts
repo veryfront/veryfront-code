@@ -217,7 +217,11 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           const projectSource = await createExecutorProjectToolSource({
             channel,
             signal: channel.signal,
-            context: projectContext,
+            context: {
+              agentId: projectContext.agentId,
+              projectId: projectContext.projectId,
+              execution: { kind: "canonical", runId: projectContext.runId },
+            },
             allowedToolNames: new Set(["inspect"]),
             assertActive() {},
           });
