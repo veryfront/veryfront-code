@@ -18,7 +18,9 @@ export {
   type ConnectExecutorTransportOptions,
 } from "../hosted/executor-node-transport.ts";
 export {
+  createManagedAgUiBrokerHandler,
   createManagedBrokerHandler,
+  createManagedDurableBrokerHandler,
   type ManagedExecutorStarter,
 } from "./managed-broker-handler.ts";
 export {

@@ -269,7 +269,7 @@ export async function parseManagedDurableAgentIngress(
   });
 }
 
-/** Parse the trusted broker's direct request-owned AG-UI ingress. */
+/** Parse direct request-owned AG-UI ingress; project requests require access verification. */
 export async function parseManagedAgUiAgentIngress(
   request: Request,
   options: ParseManagedAgUiAgentIngressOptions,
@@ -291,7 +291,15 @@ export async function parseManagedAgUiAgentIngress(
     authToken: principal.authToken,
     userId: principal.userId,
     forwardedConfigNamespace: options.forwardedConfigNamespace,
-    verifyProjectAccess: options.verifyProjectAccess,
+    verifyProjectAccess: options.verifyProjectAccess ?? (() =>
+      Promise.resolve({
+        success: false,
+        error: {
+          errorCode: "BROKER_INGRESS_SCOPE_DENIED",
+          message: "Project access verification is required",
+          statusCode: 403,
+        },
+      })),
   });
   if (isResponseLike(parsedRequest)) return parsedRequest;
   const executor = createExecutorRequest("ag-ui", parsedRequest, credentials, agUiInput);
