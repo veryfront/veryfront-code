@@ -39,6 +39,16 @@ async function optionalText(path: string): Promise<string | null> {
   }
 }
 
+function parseDenoConfig(source: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(source);
+  } catch {
+    // Deno accepts JSONC in both config extensions. Uncertain metadata
+    // establishes a baseline instead of using a partial parser.
+    return null;
+  }
+}
+
 async function workspaceMetadata(
   directory: string,
   config: Record<string, unknown>,
@@ -67,15 +77,10 @@ async function workspaceMetadata(
         metadata.push([member, file, null]);
         continue;
       }
-      // Unknown JSONC syntax establishes a baseline instead of approximating
-      // dependency configuration with a partial parser.
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(source);
-      } catch (error) {
-        if (file === "deno.jsonc") return null;
-        throw error;
-      }
+      const parsed = file === "package.json"
+        ? JSON.parse(source)
+        : parseDenoConfig(source);
+      if (parsed === null) return null;
       const fields = file === "package.json"
         ? [
           "name",
@@ -121,9 +126,10 @@ async function workspaceMetadata(
 }
 
 async function dependencyMetadata(directory: string) {
-  const config: Record<string, unknown> = JSON.parse(
+  const config = parseDenoConfig(
     await Deno.readTextFile(resolve(directory, "deno.json")),
   );
+  if (config === null) return { config: {}, lock: null, workspace: null };
   const workspace = await workspaceMetadata(directory, config);
   if (config.lock === false || workspace === null) {
     return { config, lock: null, workspace };

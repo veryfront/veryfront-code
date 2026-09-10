@@ -153,7 +153,7 @@ local baseline. The metadata check compares the configured lock setting and the
 selected lockfile contents, workspace member dependency configuration, package
 dependency metadata, and local import maps. Task-only member changes remain
 comparable. Disabled locking, linked packages, nested or globbed workspaces,
-remote import maps, and member JSONC syntax that requires a separate parser
+remote import maps, and JSONC syntax in root or member Deno configuration
 establish a head baseline. Dependency configuration files throughout the
 repository trigger profiling. When adding a custom lockfile or import-map
 location, update the workflow path filter to include it. Compare dependency and

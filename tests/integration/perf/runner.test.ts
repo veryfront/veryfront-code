@@ -40,6 +40,26 @@ describe("framework profiling command", () => {
       await Deno.writeTextFile(`${base}/deno.lock`, lock);
       await stageMembers(base);
       assertEquals(await check(), 0);
+      for (const relative of ["deno.json", "react/deno.json"]) {
+        const path = `${base}/${relative}`;
+        const original = await Deno.readTextFile(path);
+        for (
+          const source of [
+            `// Deno accepts comments in either configuration extension.\n${original}`,
+            JSON.stringify(JSON.parse(original)).replace(/}$/, ",}"),
+          ]
+        ) {
+          await Deno.writeTextFile(path, source);
+          assertEquals(await check(), 1, `${relative} JSONC requires a new baseline`);
+        }
+        await Deno.writeTextFile(path, original);
+      }
+      await Deno.writeTextFile(`${base}/react/deno.jsonc`, "{/* configuration comment */}");
+      assertEquals(await check(), 1);
+      await Deno.remove(`${base}/react/deno.jsonc`);
+      await Deno.writeTextFile(`${base}/package.json`, "{/* invalid package JSON */}");
+      assertEquals(await check(), 2, "Invalid package metadata must remain an error");
+      await Deno.remove(`${base}/package.json`);
       for (const member of ["react", "extensions/ext-css-tailwind"]) {
         const path = `${base}/${member}/deno.json`;
         const original = await Deno.readTextFile(path);
