@@ -497,7 +497,9 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
               ? {
                 prepareProjectSteering: ({ definition }) => Promise.resolve({ agent: definition }),
                 refreshProjectSteering(_signal, names) {
-                  steeringRefreshes.push([...names].sort());
+                  steeringRefreshes.push(
+                    [...names].sort((left, right) => left.localeCompare(right)),
+                  );
                   return Promise.resolve("Synthetic refreshed steering");
                 },
               }
@@ -593,7 +595,10 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
     assertEquals(allocations.length, 1);
     assertEquals(releases.length, 1);
     assertEquals(transportClosed, true);
-    assertEquals([...tools].sort(), steering ? ["host_probe", "update_file"] : ["host_probe"]);
+    assertEquals(
+      [...tools].sort((left, right) => left.localeCompare(right)),
+      steering ? ["host_probe", "update_file"] : ["host_probe"],
+    );
     assertEquals(modelCalls.length, 2);
     assert(JSON.stringify(modelCalls[0].prompt).includes("Run the host probe."));
     assert(JSON.stringify(modelCalls[1].prompt).includes("host-ok"));
