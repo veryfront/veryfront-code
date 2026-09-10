@@ -27,7 +27,7 @@ const install = () =>
     maxCalls: 32,
     maxConcurrent: 2,
   });
-function fixture(wait?: Promise<void>) {
+function fixture(wait?: Promise<void>, onLoad?: () => void) {
   let cleaned = 0;
   let loads = 0;
   let calls = 0;
@@ -77,6 +77,7 @@ function fixture(wait?: Promise<void>) {
     backend: {
       load: () => {
         loads++;
+        onLoad?.();
         return Promise.resolve(runtime);
       },
       cleanup: () => {
@@ -102,6 +103,62 @@ function fixture(wait?: Promise<void>) {
 }
 
 describe("installed project tool runtime", () => {
+  it("keeps original cleanup when discovery replaces the public close callback", async () => {
+    const input = install();
+    input.context.agentId = "missing";
+    const f = fixture(undefined, () => {
+      f.discovery.close = () => Promise.resolve();
+    });
+    await assertRejects(() =>
+      createExecutorProjectToolRuntime({
+        input,
+        discovery: f.discovery,
+        signal: f.lifetime.signal,
+        deadline: Date.now() + 10_000,
+      })
+    );
+    assertEquals(f.loads, 1);
+    assertEquals(f.cleaned, 1);
+  });
+
+  it("captures admitted authority before project loading can mutate the caller input", async () => {
+    const input = install();
+    const f = fixture(undefined, () => {
+      input.context.agentId = "foreign";
+      input.context.runId = "foreign-run";
+      input.allowedToolNames.length = 0;
+      input.maxCalls = 1;
+      input.binding.generation = 2;
+    });
+    const owner = await createExecutorProjectToolRuntime({
+      input,
+      discovery: f.discovery,
+      signal: f.lifetime.signal,
+      deadline: Date.now() + 10_000,
+    });
+    try {
+      const operation = owner.operations.get("tool.execute");
+      assert(operation?.mode === "stream");
+      const frames = await Array.fromAsync(operation.handle({
+        sourceId: "project",
+        toolName: "inspect",
+        toolCallId: "call",
+        args: { query: "approved" },
+      }, { binding, signal: f.lifetime.signal, deadline: Date.now() + 10_000 }));
+      assertEquals(frames, [{
+        type: "result",
+        result: {
+          query: "approved",
+          agentId: "coder",
+          projectId: "synthetic-project",
+          runId: "synthetic-run",
+        },
+      }]);
+    } finally {
+      await owner.close();
+    }
+  });
+
   it("loads the bound project and executes only an explicitly granted project tool", async () => {
     const f = fixture();
     const owner = await createExecutorProjectToolRuntime({

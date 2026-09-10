@@ -56,6 +56,8 @@ async function readFixedArtifact() {
  * first-party SchemaValidator, Bundler, ModuleLexer and SkillDocumentParserProvider before calling
  * this function. The fixed image
  * manifest is outside the project tree and is never selected by channel input.
+ * The default runtime profile installs agent grants and capabilities. The project-tools
+ * profile installs only fixed-context project tool operations; it cannot prepare or stream agents.
  */
 export async function startExecutorRuntimeEntrypoint(
   options: Pick<ExecutorNodeBootstrapOptions, "environment" | "readKey" | "signal"> & {
