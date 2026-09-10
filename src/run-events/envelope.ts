@@ -151,9 +151,16 @@ export type ConversationTypedRunEventRow = InferSchema<
  *
  * @example
  * ```ts
+ * import { register, tryResolve } from "veryfront/extensions/contracts";
+ * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  * import { parseTypedRunEventRow } from "veryfront/run-events";
  *
- * // Requires a registered `SchemaValidator`; see the module docs.
+ * // Register a validator only when nothing has (inside a Veryfront app,
+ * // bootstrap already owns one and this leaves it in place).
+ * if (!tryResolve("SchemaValidator")) {
+ *   register("SchemaValidator", createZodAdapter());
+ * }
+ *
  * const apiUrl = "https://api.veryfront.example";
  * const runId = "<RUN_ID>";
  * const token = "<TOKEN>";

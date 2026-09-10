@@ -45,7 +45,12 @@ const body = await response.json() as { data: unknown[] };
 
 for (const raw of body.data) {
   const row = parseTypedRunEventRow(raw);
-  if (!isRunEventType(row.event_type)) continue;
+  if (!isRunEventType(row.event_type)) {
+    // A type this build predates: the envelope is still valid, so keep the
+    // row and render its raw payload rather than dropping it.
+    console.log(row.event_type, row.span_id, row.payload);
+    continue;
+  }
   // The sixteen control-plane `AGENT_RUN_*` types have no payload schema:
   // the API owns their shape and sanitizes it before a reader ever sees
   // it, so fall back to the already-validated raw payload for those.
