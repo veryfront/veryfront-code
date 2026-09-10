@@ -24,6 +24,7 @@ import {
 import { createExecutorRemoteToolSources } from "#veryfront/agent/hosted/executor-tool-remote-facade.ts";
 import {
   EXECUTOR_TOOL_LIMITS,
+  executorToolBytes,
   executorToolDefinition,
   type ExecutorToolLimits,
   executorToolLimits,
@@ -266,7 +267,23 @@ export async function createExecutorProjectToolSource(
     };
   };
   check();
-  const sources = await createExecutorRemoteToolSources({ channel, signal, limits });
+  const metadata = parseExecutorToolData(
+    getAliasesSchema(),
+    await channel.request(TOOL_ALIASES_OPERATION, {}, { signal }),
+  );
+  check();
+  const remainingMetadataBytes = limits.maxMetadataBytes - executorToolBytes(metadata);
+  if (
+    metadata.agentId !== fixed.agentId || metadata.aliases.length > limits.maxToolsPerSource ||
+    remainingMetadataBytes < 1
+  ) {
+    throw new TypeError("Project tool metadata owner mismatch");
+  }
+  const sources = await createExecutorRemoteToolSources({
+    channel,
+    signal,
+    limits: { ...limits, maxMetadataBytes: remainingMetadataBytes },
+  });
   check();
   if (sources.length !== 1 || sources[0]?.id !== EXECUTOR_PROJECT_TOOL_SOURCE_ID) {
     throw new TypeError("Invalid project tool source");
@@ -274,14 +291,6 @@ export async function createExecutorProjectToolSource(
   const remote = sources[0];
   const definitions = await remote.listTools();
   check();
-  const metadata = parseExecutorToolData(
-    getAliasesSchema(),
-    await channel.request(TOOL_ALIASES_OPERATION, {}, { signal }),
-  );
-  check();
-  if (metadata.agentId !== fixed.agentId) {
-    throw new TypeError("Project tool metadata owner mismatch");
-  }
   const catalog = createPrivateMap<string, (typeof definitions)[number]>();
   for (let index = 0; index < definitions.length; index++) {
     const definition = definitions[index]!;

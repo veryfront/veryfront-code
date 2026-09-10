@@ -13,6 +13,7 @@ import {
   createExecutorProjectToolSource,
 } from "#veryfront/agent/hosted/executor-project-tools.ts";
 import { createTrustedRuntimePreparation } from "#veryfront/agent/hosted/trusted-runtime-prepare.ts";
+import { ExecutorRuntimePreparationError } from "./executor-runtime-prepare-schema.ts";
 import type {
   ExecutorRuntimeFacades,
   ExecutorRuntimePreparationGrant,
@@ -271,7 +272,12 @@ describe("trusted runtime preparation", () => {
         ok: boolean;
         value: { preparedRuntimeHandle: string };
       };
-      if (prepared.ok) await f.stream(prepared.value.preparedRuntimeHandle);
+      assertEquals(
+        prepared.ok,
+        true,
+        "Preparation must succeed for the alias guard to be exercised",
+      );
+      await f.stream(prepared.value.preparedRuntimeHandle);
       assertEquals(executed, 0, "Peer-owned aliases cannot authorize host capabilities");
     } finally {
       await f.owner.close();
@@ -443,9 +449,15 @@ describe("trusted runtime preparation", () => {
     const f = await fixture({
       closeProject: () => Promise.reject(new Error("Synthetic cleanup failure")),
     });
-    await assertRejects(() => f.owner.close());
-    await assertRejects(() => f.owner.settled);
-    await assertRejects(() => f.owner.close());
+    const errors = [
+      await assertRejects(() => f.owner.close(), ExecutorRuntimePreparationError),
+      await assertRejects(() => f.owner.settled, ExecutorRuntimePreparationError),
+      await assertRejects(() => f.owner.close(), ExecutorRuntimePreparationError),
+    ];
+    for (const error of errors) {
+      assert(error instanceof ExecutorRuntimePreparationError);
+      assertEquals(error.code, "EXECUTOR_RUNTIME_CLEANUP_FAILED");
+    }
     assertEquals(f.closed, 1);
   });
 });

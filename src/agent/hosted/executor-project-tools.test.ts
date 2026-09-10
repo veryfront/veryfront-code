@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema, type JsonValue } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { executorToolBytes } from "./executor-tool-schema.ts";
 import {
   createExecutorChannel,
   type ExecutorOperation,
@@ -107,6 +108,32 @@ function fixture(
 }
 
 describe("executor project tools", () => {
+  it("charges aliases, source frames and definitions to one metadata budget", async () => {
+    for (const includeAliases of [false, true]) {
+      const f = fixture();
+      try {
+        const list = f.operations.get("tool.list");
+        assert(list?.mode === "stream");
+        const frames = await Array.fromAsync(list.handle({ sourceId: "project" }, {
+          binding,
+          signal: f.lifetime.signal,
+          deadline: Date.now() + 10_000,
+        }));
+        const definition = frames[0]!;
+        const catalogBytes = executorToolBytes({ type: "source", sourceId: "project" }) +
+          executorToolBytes(definition);
+        const aliasBytes = executorToolBytes({ agentId: fixed.agentId, aliases: [] });
+        const pending = f.source({
+          limits: { maxMetadataBytes: catalogBytes + (includeAliases ? aliasBytes : 0) },
+        });
+        if (includeAliases) assertEquals((await (await pending).listTools()).length, 1);
+        else await assertRejects(() => pending, TypeError);
+      } finally {
+        await f.close();
+      }
+    }
+  });
+
   it("executes through the channel with only fixed identity and local call adapters", async () => {
     let executions = 0;
     const f = fixture(async (args, context) => {
@@ -445,9 +472,13 @@ describe("executor project tools", () => {
       }];
       if (problem === "duplicate tool") tools.push(tools[0]!);
       const f = pair(
-        new Map([
+        new Map<string, ExecutorOperation>([
           ["tool.sources", stream([...sources, { type: "complete" }])],
           ["tool.list", stream([...tools, { type: "complete" }])],
+          ["project.tool-aliases", {
+            mode: "unary",
+            handle: () => ({ agentId: fixed.agentId, aliases: [] }),
+          }],
         ]),
       );
       try {
