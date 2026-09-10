@@ -1,12 +1,15 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 
 describe("framework profiling command", () => {
   it("distinguishes compatible baseline metadata, dependency changes, and read errors", async () => {
     await Deno.mkdir(".cache/perf", { recursive: true });
-    const base = await Deno.makeTempDir({ dir: ".cache/perf", prefix: "metadata-" });
-    const config = JSON.parse(await Deno.readTextFile("deno.json"));
-    const lock = await Deno.readTextFile("deno.lock");
+    const base = await makeTempDirWithOptions({ dir: ".cache/perf", prefix: "metadata-" });
+    const config = JSON.parse(
+      await Deno.readTextFile(new URL("../../../deno.json", import.meta.url)),
+    );
+    const lock = await Deno.readTextFile(new URL("../../../deno.lock", import.meta.url));
     const check = async () => {
       const result = await new Deno.Command("deno", {
         args: ["run", "--frozen", "--allow-read", "scripts/perf/baseline.ts", base],
