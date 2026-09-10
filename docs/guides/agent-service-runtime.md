@@ -563,6 +563,15 @@ session and before installation or preparation. Scheduled, retry, and explicit
 event-queue writes use that session owner. A persistence timeout can return
 promptly while pool capacity stays reserved until the original write settles.
 
+`createManagedBrokerPersistenceFromCapability` accepts the opaque writer returned
+by managed ingress's `createRunEventWriterCapability` together with the canonical
+run projection, model ID and provider resolver. It binds both event append and
+terminal completion to that capability's run, API endpoint and transport. Missing,
+fabricated or different-run authority is rejected before persistence starts.
+The raw credential stays private; the existing `createManagedBrokerPersistence`
+constructor remains available for trusted callers that already hold a verified
+run-event token. Both constructors require the same session binding and cleanup.
+
 `startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
 and cancel/resume handlers to a Node server. Supply every handler, the broker
 pool, and a readiness check explicitly. It preserves `/liveness` and

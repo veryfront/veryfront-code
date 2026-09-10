@@ -4,14 +4,13 @@ import {
   type ConversationRunProjection,
   getConversationRunProjectionSchema,
 } from "../conversation/durable-contracts.ts";
-import {
-  createConversationHostedTerminalAdapter,
-  resolveConversationHostedStreamErrorState,
-} from "../conversation/hosted-terminal.ts";
+import { resolveConversationHostedStreamErrorState } from "../conversation/hosted-terminal.ts";
 import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
+  createHostedConversationTerminalFromCapability,
   createHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import {
   createToolExposureCheckpointEvent,
@@ -44,6 +43,26 @@ export function createManagedBrokerPersistence(input: {
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
 }) {
+  return createManagedBrokerPersistenceFromCapability({
+    capability: createHostedRunEventWriterCapability({
+      apiUrl: input.apiUrl,
+      runId: input.run.runId,
+      runEventAppendToken: input.runEventToken,
+      fetch: input.fetch,
+    }),
+    run: input.run,
+    modelId: input.modelId,
+    resolveProvider: input.resolveProvider,
+  });
+}
+
+/** Create exact-run persistence from opaque broker authority with pinned API transport. */
+export function createManagedBrokerPersistenceFromCapability(input: {
+  capability: HostedRunEventWriterCapability;
+  run: ConversationRunProjection;
+  modelId: string;
+  resolveProvider(modelId: string): string;
+}) {
   const run = getConversationRunProjectionSchema().parse(input.run);
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
     throw new TypeError("Managed broker persistence requires an active run");
@@ -61,13 +80,13 @@ export function createManagedBrokerPersistence(input: {
     retainedPersistenceTail = Promise.all([retainedPersistenceTail, settled]).then(() => undefined);
     return owned;
   };
-  const capability = createHostedRunEventWriterCapability({
-    apiUrl: input.apiUrl,
-    runId: run.runId,
-    runEventAppendToken: input.runEventToken,
-    fetch: input.fetch,
+  const terminal = createHostedConversationTerminalFromCapability(input.capability, {
+    run,
+    fallbackModelId: input.modelId,
+    resolveProvider: input.resolveProvider,
   });
-  const mirror = createHostedConversationRunChunkMirrorFromCapability(capability, {
+  if (!terminal) throw new TypeError("Managed broker run-event capability is not bound");
+  const mirror = createHostedConversationRunChunkMirrorFromCapability(input.capability, {
     expectedRunId: run.runId,
     conversationId: run.conversationId,
     latestEventId: run.latestEventId,
@@ -76,14 +95,6 @@ export function createManagedBrokerPersistence(input: {
   });
   if (!mirror) throw new TypeError("Managed broker run-event capability is not bound");
   const durableMirror = mirror;
-  const terminal = createConversationHostedTerminalAdapter({
-    authToken: input.runEventToken,
-    apiUrl: input.apiUrl,
-    run,
-    fallbackModelId: input.modelId,
-    resolveProvider: input.resolveProvider,
-    fetch: input.fetch,
-  });
   const durableSink = createDurableRunEventSink({ mirror: durableMirror });
   let tail = Promise.resolve();
   let failure: unknown;

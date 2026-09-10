@@ -7,6 +7,7 @@ export {
 } from "../hosted/managed-executor-broker.ts";
 export {
   createManagedBrokerPersistence,
+  createManagedBrokerPersistenceFromCapability,
   type ManagedBrokerOutput,
 } from "../hosted/managed-broker-persistence.ts";
 export { createManagedBrokerProjectState } from "../hosted/managed-broker-project-state.ts";

@@ -5,6 +5,15 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
+  type ConversationHostedTerminalAdapter,
+  createConversationHostedTerminalAdapter,
+  type CreateConversationHostedTerminalAdapterOptions,
+} from "../conversation/hosted-terminal.ts";
+import {
+  type ConversationRunProjection,
+  getConversationRunProjectionSchema,
+} from "../conversation/durable-contracts.ts";
+import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
   type HostedConversationRunChunkMirrorOptions,
@@ -372,6 +381,34 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
     runId: state.runId,
+    fetch: state.fetch,
+  });
+}
+
+/** Build exact-run terminal persistence without exposing the capability's credential. */
+export function createHostedConversationTerminalFromCapability(
+  capability: HostedRunEventWriterCapability | undefined,
+  input:
+    & Omit<CreateConversationHostedTerminalAdapterOptions, "apiUrl" | "authToken" | "fetch" | "run">
+    & { run: ConversationRunProjection },
+): ConversationHostedTerminalAdapter | undefined {
+  if (!capability) return undefined;
+  const state = getWeakMapValue(capabilityState, capability);
+  if (!state) return undefined;
+  const run = getConversationRunProjectionSchema().parse(input.run);
+  if (state.runId !== run.runId) return undefined;
+  const { resolveProvider, onTerminalState } = input;
+  return createConversationHostedTerminalAdapter({
+    run,
+    fallbackModelId: input.fallbackModelId,
+    // The adapter invokes option callbacks as methods. Do not give caller
+    // callbacks its secret-bearing options object as their receiver.
+    resolveProvider: (modelId) => resolveProvider(modelId),
+    onTerminalState: onTerminalState
+      ? (terminalState) => onTerminalState(terminalState)
+      : undefined,
+    apiUrl: state.apiUrl,
+    authToken: state.runEventAppendToken,
     fetch: state.fetch,
   });
 }
