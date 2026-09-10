@@ -6,6 +6,7 @@ import {
   getRunEventClass,
   isRunEventType,
   NATIVE_RUN_EVENT_TYPES,
+  RUN_EVENT_CLASS_BY_TYPE,
   RUN_EVENT_CLASSES,
   RUN_EVENT_TYPES,
   type RunEventType,
@@ -27,6 +28,18 @@ import {
 const API_RUN_EVENT_TYPE_COUNT = 53;
 const API_RUN_EVENT_TYPES_SHA256 =
   "9aeb493b3010fc05f63ca401ddb92e546c3f0dca4b51000ed0cdb3cb680c5803";
+
+/**
+ * Read from the veryfront-api checkout on 2026-09-10 by importing
+ * `RUN_EVENT_TYPES` (`src/lib/types/run-event/payload.ts`) and
+ * `getRunEventClass` (`src/lib/types/run-event/envelope.ts`) with `tsx` and
+ * hashing `event_type=event_class` for every type, sorted. Same
+ * executed-verification approach as `API_RUN_EVENT_TYPES_SHA256` above: the
+ * digest is the ground truth, `RUN_EVENT_CLASS_BY_TYPE` in `vocabulary.ts` is
+ * the copy under test, and a class changed there fails the digest.
+ */
+const API_RUN_EVENT_CLASS_BY_TYPE_SHA256 =
+  "75a339e05665a7f4e90600bc94f1dfc7115b7385a03b78d50a5d62211ec602af";
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -99,5 +112,20 @@ describe("run-events/vocabulary", () => {
     assertEquals(isRunEventType("CUSTOM"), false);
     assertEquals(isRunEventType("tool-call-status"), false);
     assertEquals(isRunEventType("URL_CITED"), true);
+  });
+
+  it("carries exactly one class per catalogued type, agreeing with getRunEventClass", () => {
+    assertEquals(Object.keys(RUN_EVENT_CLASS_BY_TYPE).length, RUN_EVENT_TYPES.length);
+    for (const eventType of RUN_EVENT_TYPES) {
+      assertEquals(RUN_EVENT_CLASS_BY_TYPE[eventType], getRunEventClass(eventType));
+    }
+  });
+
+  it("matches the API catalog's per-type class derivation", async () => {
+    const canonical = RUN_EVENT_TYPES
+      .map((eventType) => `${eventType}=${RUN_EVENT_CLASS_BY_TYPE[eventType]}`)
+      .sort()
+      .join("\n");
+    assertEquals(await sha256Hex(canonical), API_RUN_EVENT_CLASS_BY_TYPE_SHA256);
   });
 });

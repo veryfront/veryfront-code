@@ -10,9 +10,9 @@
  * @module run-events/envelope
  */
 
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { defineRunEventSchema } from "./schema-validator.ts";
-import { RUN_EVENT_CLASSES } from "./vocabulary.ts";
+import { isRunEventType, RUN_EVENT_CLASS_BY_TYPE, RUN_EVENT_CLASSES } from "./vocabulary.ts";
 
 /**
  * The span envelope plus the row's own identity fields.
@@ -48,6 +48,28 @@ export const getRunEventEnvelopeSchema = defineRunEventSchema((v) =>
 export type RunEventEnvelope = InferSchema<ReturnType<typeof getRunEventEnvelopeSchema>>;
 
 /**
+ * Flags a row whose `event_class` disagrees with the one class its
+ * catalogued `event_type` is served with. An uncatalogued type has no entry
+ * in `RUN_EVENT_CLASS_BY_TYPE` and is skipped: the API's post-cutover rule
+ * leaves `event_type` open, so a type this vocabulary has not learned yet may
+ * carry any class.
+ */
+function checkEventClassAgreesWithType(
+  row: Pick<RunEventEnvelope, "event_type" | "event_class">,
+  ctx: RefinementCtx,
+) {
+  if (!isRunEventType(row.event_type)) return;
+  const expectedClass = RUN_EVENT_CLASS_BY_TYPE[row.event_type];
+  if (row.event_class !== expectedClass) {
+    ctx.addIssue({
+      message:
+        `event_class "${row.event_class}" does not match the class "${expectedClass}" for event_type "${row.event_type}"`,
+      path: ["event_class"],
+    });
+  }
+}
+
+/**
  * A typed run event row as `GET /runs/{run_id}/events?format=typed` and the
  * typed SSE frames serve it.
  *
@@ -63,6 +85,11 @@ export type RunEventEnvelope = InferSchema<ReturnType<typeof getRunEventEnvelope
  * before a row is ever served, so a row where they disagree is malformed
  * input, not a variant to tolerate. Rejecting that disagreement here means a
  * consumer never has to choose which discriminant to trust.
+ *
+ * `event_class` is checked the same way against `RUN_EVENT_CLASS_BY_TYPE`
+ * for a catalogued `event_type`: the API assigns each catalogued type
+ * exactly one class, so a row claiming a different one is malformed input. An
+ * uncatalogued type is not checked, since `event_type` stays open post-cutover.
  */
 export const getTypedRunEventRowSchema = defineRunEventSchema((v) =>
   getRunEventEnvelopeSchema().extend({
@@ -74,6 +101,7 @@ export const getTypedRunEventRowSchema = defineRunEventSchema((v) =>
         path: ["payload", "type"],
       });
     }
+    checkEventClassAgreesWithType(row, ctx);
   })
 );
 
@@ -98,6 +126,7 @@ export const getConversationTypedRunEventRowSchema = defineRunEventSchema((v) =>
         path: ["event", "type"],
       });
     }
+    checkEventClassAgreesWithType(row, ctx);
   })
 );
 

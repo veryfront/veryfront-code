@@ -128,6 +128,20 @@ export function getRunEventClass(eventType: string): RunEventClass {
 }
 
 /**
+ * The one class each catalogued type is served with, derived from
+ * `RUN_EVENT_TYPES` and `getRunEventClass` so the two can never disagree.
+ *
+ * Used to reject a typed row whose `event_class` envelope field disagrees
+ * with the class its `event_type` carries: an uncatalogued type has no entry
+ * here on purpose, since the API's post-cutover rule leaves `event_type` open
+ * and a type this vocabulary has not learned yet may carry any class.
+ */
+export const RUN_EVENT_CLASS_BY_TYPE: Readonly<Record<RunEventType, RunEventClass>> = Object
+  .fromEntries(
+    RUN_EVENT_TYPES.map((eventType) => [eventType, getRunEventClass(eventType)]),
+  ) as Record<RunEventType, RunEventClass>;
+
+/**
  * The AG-UI wire name each type carries as the SSE `event:` line.
  *
  * Written out rather than derived by PascalCasing the stored type. The two

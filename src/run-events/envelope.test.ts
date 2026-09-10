@@ -155,4 +155,66 @@ describe("run-events/envelope", () => {
       })
     );
   });
+
+  it("accepts a run-scoped row whose event_class agrees with its catalogued event_type", () => {
+    const row = parseTypedRunEventRow({
+      ...ENVELOPE,
+      event_type: "TEXT_MESSAGE_CONTENT",
+      event_class: "delta",
+      payload: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
+    });
+    assertEquals(row.event_class, "delta");
+  });
+
+  it("rejects a run-scoped row whose event_class disagrees with its catalogued event_type", () => {
+    assertThrows(() =>
+      parseTypedRunEventRow({
+        ...ENVELOPE,
+        event_type: "TEXT_MESSAGE_CONTENT",
+        event_class: "fact",
+        payload: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
+      })
+    );
+  });
+
+  it("accepts a run-scoped row whose event_type is not catalogued, regardless of event_class", () => {
+    const row = parseTypedRunEventRow({
+      ...ENVELOPE,
+      event_type: "SOMETHING_THE_API_ADDED_LATER",
+      event_class: "delta",
+      payload: { type: "SOMETHING_THE_API_ADDED_LATER" },
+    });
+    assertEquals(row.event_class, "delta");
+  });
+
+  it("accepts a conversation-scoped row whose event_class agrees with its catalogued event_type", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({
+      ...ENVELOPE,
+      event_type: "TEXT_MESSAGE_CONTENT",
+      event_class: "delta",
+      event: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
+    });
+    assertEquals(row.event_class, "delta");
+  });
+
+  it("rejects a conversation-scoped row whose event_class disagrees with its catalogued event_type", () => {
+    assertThrows(() =>
+      getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        event_type: "TEXT_MESSAGE_CONTENT",
+        event_class: "fact",
+        event: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
+      })
+    );
+  });
+
+  it("accepts a conversation-scoped row whose event_type is not catalogued, regardless of event_class", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({
+      ...ENVELOPE,
+      event_type: "SOMETHING_THE_API_ADDED_LATER",
+      event_class: "delta",
+      event: { type: "SOMETHING_THE_API_ADDED_LATER" },
+    });
+    assertEquals(row.event_class, "delta");
+  });
 });
