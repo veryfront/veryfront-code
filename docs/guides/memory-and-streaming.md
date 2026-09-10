@@ -305,6 +305,69 @@ export default function ChatPage() {
 }
 ```
 
+### Reading run events
+
+A run's durable event log is available from the Veryfront API. Read it with
+`format=typed` and every row carries a catalogued `event_type`, a payload named
+by that type, and a span envelope (`run_id`, `event_class`, `span_id`,
+`parent_span_id`, `turn_id`, `origin_event_type`, `origin_custom_name`,
+`unrecoverable_fields`). No typed row uses `event_type: "CUSTOM"`.
+
+The `veryfront/run-events` module owns the reader's half of that contract, so
+you do not restate the vocabulary or the payload shapes in your own code:
+
+```ts
+import {
+  isRunEventType,
+  parseTypedRunEventRow,
+  RUN_EVENT_PAYLOAD_SCHEMAS,
+} from "veryfront/run-events";
+
+const response = await fetch(
+  `${apiUrl}/runs/${runId}/events?format=typed`,
+  { headers: { Authorization: `Bearer <API_TOKEN>` } },
+);
+const body = await response.json() as { data: unknown[] };
+
+for (const raw of body.data) {
+  const row = parseTypedRunEventRow(raw);
+  if (!isRunEventType(row.event_type)) continue; // a type this build predates
+  const result = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type]?.().safeParse(row.payload);
+  if (result?.success) {
+    console.log(row.event_type, row.span_id, result.data);
+  }
+}
+```
+
+What the module exports:
+
+- `RUN_EVENT_TYPES`, `isRunEventType`, and `RUN_EVENT_CLASSES` for the
+  catalogued vocabulary, and `getRunEventClass` to tell a self-contained
+  `fact` from an order-dependent `delta`.
+- `toRunEventWireName` and `fromRunEventWireName` to move between a stored
+  type such as `URL_CITED` and the SSE wire name `UrlCited`.
+- `getRunEventEnvelopeSchema`, `getTypedRunEventRowSchema`, and
+  `parseTypedRunEventRow` for the row itself. Conversation-scoped surfaces
+  (GraphQL, MCP, and the conversation events route) key the payload as `event`
+  rather than `payload`; use `getConversationTypedRunEventRowSchema` there.
+- One payload schema per type, such as `getUrlCitedPayloadSchema`, plus
+  `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime.
+
+Every schema materializes through the registered `SchemaValidator`. Inside a
+Veryfront app, bootstrap registers it. A standalone script must register one
+itself before the first `get*Schema()` call.
+
+`event_type` is validated as a non-empty string, not as the closed catalog, so
+a type the API adds after your build still parses. Narrow it with
+`isRunEventType` when you need the closed set, and ignore what you do not
+handle. Do the same for the wire names on a stream: advance the durable cursor
+for every frame that carries an id, including the ones you do not render.
+
+Eight of these types come from the Veryfront Code runtime itself:
+`TOOL_CALL_STATUS_CHANGED`, `INPUT_REQUEST_CREATED`, `INPUT_REQUEST_UPDATED`,
+`CHILD_RUN_STATUS_CHANGED`, `URL_CITED`, `DOCUMENT_CITED`, `FILE_ATTACHED`, and
+`RUNTIME_EVENT_RECORDED`. `NATIVE_RUN_EVENT_TYPES` lists them.
+
 ### Non-streaming generation
 
 Use `generate()` when you need the complete response at once:
