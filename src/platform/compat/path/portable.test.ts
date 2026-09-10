@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import process from "node:process";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -30,6 +31,25 @@ describe("platform/compat/path/portable", () => {
       "/workspace/test",
     );
     assertEquals(portableJoin([""], false), "/");
+  });
+
+  it("preserves canonical POSIX paths while normalizing traversal and separators", () => {
+    for (
+      const [input, expected] of [
+        ["/workspace/.config/file.ts", "/workspace/.config/file.ts"],
+        ["/workspace/café/日本語.ts", "/workspace/café/日本語.ts"],
+        ["/workspace/.../file.ts", "/workspace/.../file.ts"],
+        ["/workspace/./src/../file.ts", "/workspace/file.ts"],
+        ["/workspace//file.ts", "/workspace/file.ts"],
+        ["/workspace/src/..", "/workspace"],
+        ["/workspace/../../file.ts", "/file.ts"],
+        ["/workspace\\src\\..\\file.ts", "/workspace/file.ts"],
+        ["/workspace/src/", "/workspace/src/"],
+        ["/", "/"],
+      ]
+    ) {
+      assertEquals(portableNormalize(input!, false), expected);
+    }
   });
 
   it("preserves Windows drive and UNC roots", () => {
@@ -76,6 +96,51 @@ describe("platform/compat/path/portable", () => {
       portableRelative("/workspace/src", "/workspace/test", false),
       "../test",
     );
+  });
+
+  it("resolves fully qualified paths without consulting the working directory", () => {
+    const runtime = typeof Deno === "undefined" ? process : Deno;
+    const descriptor = Object.getOwnPropertyDescriptor(runtime, "cwd")!;
+    let calls = 0;
+    try {
+      Object.defineProperty(runtime, "cwd", {
+        ...descriptor,
+        value: () => {
+          calls++;
+          return "/unrelated";
+        },
+      });
+      assertEquals(portableResolve(["/workspace/src", "..", "test"], false), "/workspace/test");
+      assertEquals(
+        portableResolve(["ignored", "/workspace", "file.ts"], false),
+        "/workspace/file.ts",
+      );
+      assertEquals(portableRelative("/workspace/src", "/workspace/test", false), "../test");
+      assertEquals(portableResolve(["C:/workspace", "..", "test"], true), "C:/test");
+      assertEquals(portableResolve(["C:/workspace", "/test"], true), "C:/test");
+      assertEquals(portableResolve(["//server/share", "test"], true), "//server/share/test");
+      assertEquals(calls, 0);
+    } finally {
+      Object.defineProperty(runtime, "cwd", descriptor);
+    }
+  });
+
+  it("reads the current directory afresh when resolution depends on it", () => {
+    const runtime = typeof Deno === "undefined" ? process : Deno;
+    const descriptor = Object.getOwnPropertyDescriptor(runtime, "cwd")!;
+    let current = "/first";
+    try {
+      Object.defineProperty(runtime, "cwd", { ...descriptor, value: () => current });
+      assertEquals(portableResolve(["file.ts"], false), "/first/file.ts");
+      current = "/second";
+      assertEquals(portableResolve([], false), "/second");
+      assertEquals(portableResolve(["file.ts"], false), "/second/file.ts");
+      current = "C:/workspace";
+      assertEquals(portableResolve(["C:child"], true), "C:/workspace/child");
+      assertEquals(portableResolve(["/rooted"], true), "C:/rooted");
+    } finally {
+      Object.defineProperty(runtime, "cwd", descriptor);
+    }
   });
 
   it("keeps path operations stable after post-import prototype poisoning", () => {

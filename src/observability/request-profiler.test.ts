@@ -251,6 +251,72 @@ describe("request profiler", () => {
     assertEquals(isRequestProfilingEnabled("/_veryfront/page-data/blog.json"), true);
   });
 
+  it("keeps repeated phase names sanitized and request durations independent", async () => {
+    const capture = (duration: number) =>
+      runWithRequestProfiling(
+        { category: "html", method: "GET", pathname: "/bench/phases" },
+        () => {
+          markRequestProfilePhase("render.ssr", duration);
+          markRequestProfilePhase("phase?token=<TOKEN>", duration);
+          markRequestProfilePhase("x".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 1), duration);
+          return Promise.resolve(finalizeRequestProfiling(200));
+        },
+      );
+    const first = await capture(1);
+    // Exercise more distinct names than the per-request phase budget across sessions.
+    for (let i = 0; i < MAX_REQUEST_PROFILE_PHASES + 1; i++) {
+      await runWithRequestProfiling(
+        { category: "html", method: "GET", pathname: "/bench/phases" },
+        () => {
+          markRequestProfilePhase(`other.${i}`, 1);
+          finalizeRequestProfiling(200);
+          return Promise.resolve();
+        },
+      );
+    }
+    const second = await capture(2);
+    assertExists(first);
+    assertExists(second);
+    assertEquals(first.phases["render.ssr"], 1);
+    assertEquals(second.phases["render.ssr"], 2);
+    assertEquals(first.phases["phase?token=[REDACTED]"], 1);
+    assertEquals(second.phases["phase?token=[REDACTED]"], 2);
+    assertEquals(
+      Object.keys(second.phases).every((name) => name.length <= MAX_OBSERVABILITY_NAME_LENGTH),
+      true,
+    );
+    assertEquals(JSON.stringify(second).includes("<TOKEN>"), false);
+  });
+
+  it("does not expose raw phase names to replaced Set methods", async () => {
+    const originalHas = Set.prototype.has;
+    const originalAdd = Set.prototype.add;
+    const observed: unknown[] = [];
+    const sensitiveName = "phase?token=<TOKEN>";
+    try {
+      Set.prototype.has = function (value) {
+        observed.push(value);
+        return originalHas.call(this, value);
+      };
+      Set.prototype.add = function (value) {
+        observed.push(value);
+        return originalAdd.call(this, value);
+      };
+      await runWithRequestProfiling(
+        { category: "html", method: "GET", pathname: "/bench/phases" },
+        () => {
+          markRequestProfilePhase(sensitiveName, 1);
+          finalizeRequestProfiling(200);
+          return Promise.resolve();
+        },
+      );
+    } finally {
+      Set.prototype.has = originalHas;
+      Set.prototype.add = originalAdd;
+    }
+    assertEquals(observed.includes(sensitiveName), false);
+  });
+
   it("formats a Server-Timing header from total and phase durations", () => {
     const header = buildServerTimingHeader({
       sequence: 1,

@@ -46,6 +46,26 @@ const storage = new AsyncLocalStorage<RequestProfileSession>();
 const records: RequestProfileRecord[] = [];
 const MAX_RECORDS = 200;
 let sequence = 0;
+// Retain only bounded names that the sanitizer leaves unchanged. Credential-
+// bearing input always goes through redaction and is never stored as a cache key.
+const sanitizedPhaseNames = new Set<string>();
+const apply = Reflect.apply;
+const setHas = Set.prototype.has;
+const setAdd = Set.prototype.add;
+const setClear = Set.prototype.clear;
+const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+
+function sanitizePhaseName(name: string): string {
+  if (apply(setHas, sanitizedPhaseNames, [name])) return name;
+  const sanitized = sanitizeTelemetryText(name, MAX_OBSERVABILITY_NAME_LENGTH);
+  if (
+    sanitized === name &&
+    apply(setSize, sanitizedPhaseNames, []) < MAX_REQUEST_PROFILE_PHASES
+  ) {
+    apply(setAdd, sanitizedPhaseNames, [name]);
+  }
+  return sanitized;
+}
 
 /** Round to 2 decimal places (Server-Timing millisecond precision). */
 export function roundMs(value: number): number {
@@ -59,7 +79,7 @@ function normalizeDuration(value: number): number {
 
 function addPhaseDuration(session: RequestProfileSession, name: string, durationMs: number): void {
   if (session.finalized || typeof name !== "string") return;
-  const normalizedName = sanitizeTelemetryText(name, MAX_OBSERVABILITY_NAME_LENGTH);
+  const normalizedName = sanitizePhaseName(name);
   if (
     !session.phases.has(normalizedName) &&
     session.phases.size >= MAX_REQUEST_PROFILE_PHASES
@@ -332,4 +352,5 @@ export function snapshotRequestProfiles(): {
 export function resetRequestProfiles(): void {
   records.length = 0;
   sequence = 0;
+  apply(setClear, sanitizedPhaseNames, []);
 }
