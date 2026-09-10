@@ -323,9 +323,13 @@ import {
   RUN_EVENT_PAYLOAD_SCHEMAS,
 } from "veryfront/run-events";
 
+const apiUrl = "https://api.veryfront.example";
+const runId = "<RUN_ID>";
+const token = "<TOKEN>";
+
 const response = await fetch(
   `${apiUrl}/runs/${runId}/events?format=typed`,
-  { headers: { Authorization: `Bearer <API_TOKEN>` } },
+  { headers: { Authorization: `Bearer ${token}` } },
 );
 const body = await response.json() as { data: unknown[] };
 
