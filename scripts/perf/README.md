@@ -100,6 +100,11 @@ an optimization.
   profiling is not an offline or hermetic benchmark. Generated projects and
   runtime caches are removed after each trial. Dependency resolution uses the
   frozen lockfile and normal Deno cache where the runtime supports them.
+- HTTP workers allow subprocesses for the separate Deno client and the runtime's
+  compiler executables, whose locations depend on the platform and dependency
+  cache. They receive no FFI permission. Run these repository-owned fixtures in
+  a trusted checkout; Deno permissions here support reproducible setup and do
+  not provide isolation for untrusted code.
 
 Keep the machine quiet during measurement. Repeat meaningful changes in reverse
 order to detect warm-machine and scheduling bias. Treat small deltas within the
@@ -126,5 +131,8 @@ runs produce standalone baselines. Download the artifact and open
 
 The workflow has read-only repository permissions and does not post comments.
 Timing deltas are informational; harness or correctness failures still fail the
-job. Do not make noisy hosted-runner latency a merge requirement. Runtime pin or
-workload changes require a new baseline. Compare those migrations separately.
+job. Do not make noisy hosted-runner latency a merge requirement. Changes to the
+runtime pin, dependency lockfile, or dependency-related Deno configuration skip
+the base comparison and establish a new baseline from the head. Task-only
+configuration changes remain comparable. Workload changes also require a new
+local baseline. Compare dependency and runtime migrations separately.

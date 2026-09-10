@@ -53,6 +53,14 @@ jobs:
             echo "Runtime pin changed. This run establishes a new baseline." >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
+          perf_metadata_status=0
+          deno run --frozen --allow-read scripts/perf/baseline.ts "${perf_base_dir}" || perf_metadata_status=$?
+          if [[ "${perf_metadata_status}" -eq 1 ]]; then
+            echo "Dependency metadata changed. This run establishes a new baseline." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          elif [[ "${perf_metadata_status}" -ne 0 ]]; then
+            exit "${perf_metadata_status}"
+          fi
           mkdir -p "${perf_base_dir}/scripts/perf"
           cp scripts/perf/*.ts "${perf_base_dir}/scripts/perf/"
           (

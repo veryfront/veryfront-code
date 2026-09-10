@@ -2,6 +2,35 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("framework profiling command", () => {
+  it("distinguishes compatible baseline metadata, dependency changes, and read errors", async () => {
+    await Deno.mkdir(".cache/perf", { recursive: true });
+    const base = await Deno.makeTempDir({ dir: ".cache/perf", prefix: "metadata-" });
+    const config = JSON.parse(await Deno.readTextFile("deno.json"));
+    const lock = await Deno.readTextFile("deno.lock");
+    const check = async () => {
+      const result = await new Deno.Command("deno", {
+        args: ["run", "--frozen", "--allow-read", "scripts/perf/baseline.ts", base],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      return result.code;
+    };
+    try {
+      await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, tasks: {} }));
+      await Deno.writeTextFile(`${base}/deno.lock`, lock);
+      assertEquals(await check(), 0);
+      await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify({ ...config, imports: {} }));
+      assertEquals(await check(), 1);
+      await Deno.writeTextFile(`${base}/deno.json`, JSON.stringify(config));
+      await Deno.writeTextFile(`${base}/deno.lock`, "changed dependency graph");
+      assertEquals(await check(), 1);
+      await Deno.remove(`${base}/deno.lock`);
+      assertEquals(await check(), 2);
+    } finally {
+      await Deno.remove(base, { recursive: true });
+    }
+  });
+
   it("launches workers with task permissions and writes usable reports", async () => {
     const label = `test-${crypto.randomUUID()}`;
     const directory = `.cache/perf/${label}`;

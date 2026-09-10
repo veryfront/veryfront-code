@@ -270,7 +270,6 @@ async function main() {
               "--allow-net",
               PROVIDER_EGRESS_DENY_NET,
               "--allow-run",
-              "--allow-ffi",
               "--unstable-worker-options",
             ]
             : ["--deny-net"]),

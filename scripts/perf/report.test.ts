@@ -14,6 +14,7 @@ import {
   summarizeRuns,
 } from "./report.ts";
 import { options, workloadHash } from "./run.ts";
+import { baselineCompatible } from "./baseline.ts";
 
 describe("performance reports", () => {
   const profile: CpuProfile = {
@@ -138,6 +139,34 @@ describe("performance reports", () => {
       const scenario of ["http-api", "http-cached", "http-ssr", "http-dev"]
     ) {
       assertEquals(options([`--scenario=${scenario}`]).scenario, scenario);
+    }
+  });
+  it("keeps task-only changes comparable and rejects incompatible dependencies", () => {
+    const base = {
+      imports: { fixture: "./fixture.ts" },
+      tasks: { test: "old" },
+    };
+    const head = { ...base, tasks: { test: "new", perf: "profile" } };
+    assertEquals(baselineCompatible(head, base, "lock", "lock"), true);
+    assertEquals(baselineCompatible(head, base, "new lock", "old lock"), false);
+    for (
+      const key of [
+        "imports",
+        "scopes",
+        "workspace",
+        "importMap",
+        "nodeModulesDir",
+        "vendor",
+        "unstable",
+        "compilerOptions",
+        "minimumDependencyAge",
+      ]
+    ) {
+      assertEquals(
+        baselineCompatible({ ...head, [key]: "changed" }, base, "lock", "lock"),
+        false,
+        key,
+      );
     }
   });
 });
