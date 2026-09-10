@@ -20,6 +20,58 @@ const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
 
 describe("managed AG-UI broker handler", () => {
+  for (const scopeKind of ["global", "project"] as const) {
+    for (const namespace of ["veryfront", "custom"]) {
+      it(`rejects project requests without a verifier (${scopeKind}, ${namespace})`, async () => {
+        let preparations = 0;
+        let admissions = 0;
+        const managed = createManagedAgUiBrokerHandler({
+          owner: scopeKind === "project"
+            ? { scopeKind, projectId }
+            : { scopeKind, serviceName: "test-service" },
+          defaultAgentId: "builder",
+          broker: {
+            start: () => {
+              admissions++;
+              return Promise.reject(new Error("Unexpected admission"));
+            },
+          },
+          ingress: {
+            authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+            forwardedConfigNamespace: namespace,
+          },
+          prepare: () => {
+            preparations++;
+            return Promise.reject(new Error("Unexpected preparation"));
+          },
+        });
+        try {
+          const response = await managed.handle(
+            new Request("https://broker.test/api/ag-ui", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                threadId: "00000000-0000-4000-8000-000000000001",
+                runId: "run-1",
+                messages: [],
+                tools: [],
+                context: [{
+                  description: `${namespace}.projectId`,
+                  value: JSON.stringify(projectId),
+                }],
+              }),
+            }),
+          );
+          assertEquals(response.status, 403, await response.text());
+          assertEquals(preparations, 0);
+          assertEquals(admissions, 0);
+        } finally {
+          await managed.close();
+        }
+      });
+    }
+  }
+
   it("streams authenticated direct AG-UI through the executor and retires it", async () => {
     const fixture = runtimeFixture();
     const managed = createManagedAgUiBrokerHandler({
@@ -27,7 +79,6 @@ describe("managed AG-UI broker handler", () => {
       broker: { start: () => Promise.resolve(fixture.runtime) },
       ingress: {
         authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
-        verifyProjectAccess: () => Promise.resolve({ success: true }),
       },
       defaultAgentId: "builder",
       prepare: ({ ingress }) => {

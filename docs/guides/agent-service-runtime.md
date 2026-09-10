@@ -550,7 +550,10 @@ Use `veryfront/agent/managed-broker` for the broker composition and signed
 control-plane HTTP adapter. `createManagedDurableBrokerHandler` handles direct
 `POST /api/runs` requests with detached execution and requires run-event token
 verification and output persistence. `createManagedAgUiBrokerHandler` handles
-direct `POST /api/ag-ui` requests with request-owned SSE. Configure each direct
+direct `POST /api/ag-ui` requests with request-owned SSE. Its ingress must supply
+`verifyProjectAccess` for requests containing a project ID. Without that verifier,
+project requests return HTTP 403 before preparation or allocation; projectless
+requests can still proceed. Configure each direct
 adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
 receive private broker authority and bounded executor data separately. Resolve
