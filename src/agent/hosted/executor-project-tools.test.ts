@@ -20,6 +20,11 @@ const binding = {
   invocationId: "synthetic-invocation",
 };
 const fixed = { agentId: "coder", runId: "synthetic-run", projectId: "synthetic-project" };
+const projectContext: ExecutorProjectToolContext = {
+  agentId: fixed.agentId,
+  projectId: fixed.projectId,
+  execution: { kind: "canonical", runId: fixed.runId },
+};
 const correlation = { toolCallId: "synthetic-call", progressToken: "synthetic-progress" };
 const inputSchema = defineSchema((v) => v.object({ query: v.string() }))();
 
@@ -66,7 +71,7 @@ function fixture(
   const registered = tool({ id: "inspect", description: "Inspect a query", inputSchema, execute });
   const tools = new Map([["inspect", registered]]);
   const allowedToolNames = new Set(["inspect"]);
-  const context = { ...fixed };
+  const context = { ...projectContext };
   const operations = createExecutorProjectToolOperations({
     scope: { binding, signal: lifetime.signal, assertActive },
     context,
@@ -92,7 +97,7 @@ function fixture(
       return createExecutorProjectToolSource({
         channel: channels.trusted,
         signal: lifetime.signal,
-        context: { ...fixed },
+        context: { ...projectContext },
         allowedToolNames: new Set(["inspect"]),
         assertActive,
         ...options,
@@ -113,6 +118,7 @@ describe("executor project tools", () => {
         fields: Object.keys(context).sort(),
         agentId: context.agentId,
         runId: context.runId,
+        runIdBindsToolAuthorization: context.runIdBindsToolAuthorization,
         projectId: context.projectId,
         toolCallId: context.toolCallId,
         progressToken: context.progressToken,
@@ -149,10 +155,12 @@ describe("executor project tools", () => {
           "projectId",
           "publishDataEvent",
           "runId",
+          "runIdBindsToolAuthorization",
           "toolCallId",
         ],
         ...fixed,
         ...correlation,
+        runIdBindsToolAuthorization: true,
       });
       assertEquals(executions, 1);
       for (
@@ -167,6 +175,44 @@ describe("executor project tools", () => {
         assert(!f.wire.join("").includes(marker));
       }
       await assertRejects(() => source.executeTool("inspect", { query: 7 }, correlation));
+      assertEquals(executions, 1);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("keeps ephemeral project tools unbound to control-plane run authority", async () => {
+    const context: ExecutorProjectToolContext = {
+      agentId: fixed.agentId,
+      projectId: fixed.projectId,
+      execution: { kind: "ephemeral" },
+    };
+    let executions = 0;
+    const f = fixture(async (_args, call) => {
+      executions++;
+      assert(call);
+      return {
+        hasRunId: Object.hasOwn(call, "runId"),
+        runIdBindsToolAuthorization: call.runIdBindsToolAuthorization,
+        projectId: call.projectId,
+      };
+    }, { context });
+    try {
+      const source = await f.source({ context });
+      assertEquals(await source.executeTool("inspect", { query: "hello" }, correlation), {
+        hasRunId: false,
+        runIdBindsToolAuthorization: false,
+        projectId: fixed.projectId,
+      });
+      await assertRejects(() =>
+        source.executeTool("inspect", { query: "hello" }, { ...correlation, runId: fixed.runId })
+      );
+      await assertRejects(() =>
+        source.executeTool("inspect", { query: "hello" }, {
+          ...correlation,
+          runIdBindsToolAuthorization: true,
+        })
+      );
       assertEquals(executions, 1);
     } finally {
       await f.close();
@@ -231,7 +277,7 @@ describe("executor project tools", () => {
 
   it("snapshots both construction contexts, grants, tool callbacks and detached descriptors", async () => {
     const f = fixture();
-    const context = { ...fixed };
+    const context = { ...projectContext };
     const allowedToolNames = new Set(["inspect"]);
     try {
       const pending = f.source({ context, allowedToolNames });
@@ -298,11 +344,13 @@ describe("executor project tools", () => {
     try {
       for (
         const context of [
-          { ...fixed, authToken: "<TOKEN>" },
-          { ...fixed, optionalRequirement: true },
-          { ...fixed, agentId: "" },
-          { ...fixed, runId: 1 },
-          { ...fixed, projectId: "x".repeat(257) },
+          { ...projectContext, authToken: "<TOKEN>" },
+          { ...projectContext, optionalRequirement: true },
+          { ...projectContext, agentId: "" },
+          { ...projectContext, execution: { kind: "canonical", runId: 1 } },
+          { ...projectContext, execution: { kind: "canonical" } },
+          { ...projectContext, execution: { kind: "ephemeral", runId: fixed.runId } },
+          { ...projectContext, projectId: "x".repeat(257) },
           { agentId: "coder", runId: "synthetic-run" },
         ]
       ) {
@@ -407,7 +455,7 @@ describe("executor project tools", () => {
           createExecutorProjectToolSource({
             channel: f.trusted,
             signal: new AbortController().signal,
-            context: fixed,
+            context: projectContext,
             allowedToolNames: new Set(["inspect"]),
             assertActive() {},
           })

@@ -31,17 +31,30 @@ export interface ExecutorProjectToolSource extends RemoteToolSource {
 
 export interface ExecutorProjectToolContext {
   agentId: string;
-  runId: string;
   projectId: string;
+  execution: { kind: "canonical"; runId: string } | { kind: "ephemeral" };
 }
 
 const getContextSchema = defineSchema((v) =>
   v.object({
     agentId: getExecutorToolIdSchema(),
-    runId: getExecutorToolIdSchema(),
     projectId: getExecutorToolIdSchema(),
+    execution: v.discriminatedUnion("kind", [
+      v.object({ kind: v.literal("canonical"), runId: getExecutorToolIdSchema() }).strict(),
+      v.object({ kind: v.literal("ephemeral") }).strict(),
+    ]),
   }).strict()
 );
+
+function captureContext(input: ExecutorProjectToolContext) {
+  const context = parseExecutorToolData(getContextSchema(), input);
+  return Object.freeze({
+    agentId: context.agentId,
+    projectId: context.projectId,
+    runIdBindsToolAuthorization: context.execution.kind === "canonical",
+    ...(context.execution.kind === "canonical" ? { runId: context.execution.runId } : {}),
+  });
+}
 
 const getAliasesSchema = defineSchema((v) =>
   v.object({
@@ -98,7 +111,7 @@ function callField<K extends keyof ToolExecutionContext>(
 export function createExecutorProjectToolOperations(
   options: ExecutorProjectToolOperationsOptions,
 ): ReadonlyMap<string, ExecutorOperation> {
-  const fixed = Object.freeze(parseExecutorToolData(getContextSchema(), options.context));
+  const fixed = captureContext(options.context);
   const limits = executorToolLimits(options.limits);
   const allowed = captureNames(options.allowedToolNames, limits);
   if (options.tools.size > limits.maxTotalTools) {
@@ -189,7 +202,7 @@ export function createExecutorProjectToolOperations(
 export async function createExecutorProjectToolSource(
   options: ExecutorProjectToolSourceOptions,
 ): Promise<ExecutorProjectToolSource> {
-  const fixed = Object.freeze(parseExecutorToolData(getContextSchema(), options.context));
+  const fixed = captureContext(options.context);
   const limits = executorToolLimits(options.limits);
   const allowed = captureNames(options.allowedToolNames, limits);
   const { channel, signal, assertActive } = options;
@@ -200,7 +213,7 @@ export async function createExecutorProjectToolSource(
   };
   const projectContext = (context?: ToolExecutionContext): ToolExecutionContext => {
     check();
-    for (const key of ["agentId", "runId", "projectId"] as const) {
+    for (const key of ["agentId", "runId", "projectId", "runIdBindsToolAuthorization"] as const) {
       const requested = callField(context, key);
       if (requested !== undefined && requested !== fixed[key]) {
         throw new TypeError("Project tool call identity mismatch");
