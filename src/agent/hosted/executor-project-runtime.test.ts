@@ -29,10 +29,15 @@ const install = () =>
     maxCalls: 32,
     maxConcurrent: 2,
   });
-function fixture(wait?: Promise<void>, onLoad?: () => void, sourceIntegrationPolicy: SourceIntegrationPolicyManifest = {
-  schemaVersion: 1 as const,
-  mode: "unrestricted" as const,
-}, onExecute?: () => unknown) {
+function fixture(
+  wait?: Promise<void>,
+  onLoad?: () => void,
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest = {
+    schemaVersion: 1 as const,
+    mode: "unrestricted" as const,
+  },
+  onExecute?: () => unknown,
+) {
   let cleaned = 0;
   let loads = 0;
   let calls = 0;
