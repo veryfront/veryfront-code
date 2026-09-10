@@ -25,6 +25,7 @@ export default tool({
         runId: context?.runId,
         projectId: context?.projectId,
         toolCallId: context?.toolCallId,
+        activeSkillToolAvailability: context?.activeSkillToolAvailability,
       },
       fields: Object.keys(context ?? {}).sort((left, right) => {
         if (left < right) return -1;
