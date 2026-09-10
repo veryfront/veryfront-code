@@ -9,7 +9,7 @@ import {
 import { getExecutorRuntimeGrantDataSchema } from "./executor-runtime-prepare-schema.ts";
 import { getExecutorPersistenceCapabilityIdsSchema } from "./executor-persistence-schema.ts";
 import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
-import { getExecutorToolIdSchema } from "./executor-tool-schema.ts";
+import { EXECUTOR_TOOL_LIMITS, getExecutorToolIdSchema } from "./executor-tool-schema.ts";
 
 function artifactShape(v: SchemaValidator) {
   return {
@@ -78,6 +78,31 @@ export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
       grant.models.some((model) => model.id === grant.defaultModelId);
   }, "Missing or ambiguous executor installation authority")
 );
+
+/** Project-only installation. Host capabilities and private runtime state stay on the broker. */
+export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
+  v.object({
+    ...artifactShape(v),
+    mode: v.literal("project-tools"),
+    binding: getExecutorBindingSchema(),
+    context: v.object({
+      agentId: getExecutorDiscoveryIdSchema(),
+      projectId: getExecutorDiscoveryIdSchema(),
+      runId: getExecutorDiscoveryIdSchema(),
+    }).strict(),
+    allowedToolNames: v.array(getExecutorToolIdSchema()).max(
+      EXECUTOR_TOOL_LIMITS.maxToolsPerSource,
+    ),
+    maxCalls: v.number().int().min(1).max(4096),
+    maxConcurrent: v.number().int().min(1).max(32),
+  }).strict().refine(
+    (input) => new Set(input.allowedToolNames).size === input.allowedToolNames.length,
+    "Duplicate project tool grant",
+  )
+);
+export type ExecutorProjectToolInstall = InferSchema<
+  ReturnType<typeof getExecutorProjectToolInstallSchema>
+>;
 
 export type ExecutorArtifactManifest = InferSchema<
   ReturnType<typeof getExecutorArtifactManifestSchema>

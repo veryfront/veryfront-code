@@ -59,6 +59,8 @@ async function readFixedArtifact() {
  */
 export async function startExecutorRuntimeEntrypoint(
   options: Pick<ExecutorNodeBootstrapOptions, "environment" | "readKey" | "signal"> & {
+    /** Trusted image profile, fixed before project discovery. */
+    mode?: "runtime" | "project-tools";
     /** Trusted image/test boundary, never a channel field or environment path. */
     readArtifact?: () => Promise<{ manifest: ExecutorArtifactManifest; projectDir: string }>;
   } = {},
@@ -77,48 +79,76 @@ export async function startExecutorRuntimeEntrypoint(
   signal.throwIfAborted();
   const channel = Promise.withResolvers<ExecutorChannel>();
   void channel.promise.catch(() => {});
-  const installation = createExecutorRuntimeInstallation({
-    binding,
-    artifact: artifact.manifest,
-    signal,
-    async install(input, runtimeSignal) {
-      // No project discovery, runtime factories or capability construction is
-      // evaluated until the authenticated one-shot installation has passed.
-      const { createExecutorRuntimeFacades } = await import("./executor-runtime-facades.ts");
-      const facades = await createExecutorRuntimeFacades({
-        input,
-        channel: await channel.promise,
-        signal: runtimeSignal,
-      });
-      let discovery: import("./executor-discovery.ts").ExecutorDiscovery | undefined;
-      try {
-        runtimeSignal.throwIfAborted();
+  const installation = options.mode === "project-tools"
+    ? createExecutorRuntimeInstallation({
+      mode: "project-tools",
+      binding,
+      artifact: artifact.manifest,
+      signal,
+      async install(input, runtimeSignal, context) {
+        // Project-only installation never constructs model or host capability proxies.
         const { createExecutorDiscovery } = await import("./executor-discovery.ts");
-        discovery = createExecutorDiscovery({
+        const { createExecutorProjectToolRuntime } = await import("./executor-project-runtime.ts");
+        runtimeSignal.throwIfAborted();
+        const discovery = createExecutorDiscovery({
           binding,
           source: input.source,
           projectDir: artifact.projectDir,
-          defaultAgentId: input.grant.agentId,
+          defaultAgentId: input.context.agentId,
           signal: runtimeSignal,
         });
-        const { createExecutorRuntimePreparation } = await import("./executor-runtime-prepare.ts");
-        runtimeSignal.throwIfAborted();
-        return createExecutorRuntimePreparation({
-          binding,
-          source: input.source,
+        return await createExecutorProjectToolRuntime({
+          input,
           discovery,
-          facades,
-          grant: {
-            ...input.grant,
-            models: new Map(input.grant.models.map(({ id, ...policy }) => [id, policy])),
-          },
+          signal: runtimeSignal,
+          deadline: context.deadline,
         });
-      } catch (error) {
-        await Promise.allSettled([facades.cleanup(), discovery?.close()]);
-        throw error;
-      }
-    },
-  });
+      },
+    })
+    : createExecutorRuntimeInstallation({
+      binding,
+      artifact: artifact.manifest,
+      signal,
+      async install(input, runtimeSignal) {
+        // No project discovery, runtime factories or capability construction is
+        // evaluated until the authenticated one-shot installation has passed.
+        const { createExecutorRuntimeFacades } = await import("./executor-runtime-facades.ts");
+        const facades = await createExecutorRuntimeFacades({
+          input,
+          channel: await channel.promise,
+          signal: runtimeSignal,
+        });
+        let discovery: import("./executor-discovery.ts").ExecutorDiscovery | undefined;
+        try {
+          runtimeSignal.throwIfAborted();
+          const { createExecutorDiscovery } = await import("./executor-discovery.ts");
+          discovery = createExecutorDiscovery({
+            binding,
+            source: input.source,
+            projectDir: artifact.projectDir,
+            defaultAgentId: input.grant.agentId,
+            signal: runtimeSignal,
+          });
+          const { createExecutorRuntimePreparation } = await import(
+            "./executor-runtime-prepare.ts"
+          );
+          runtimeSignal.throwIfAborted();
+          return createExecutorRuntimePreparation({
+            binding,
+            source: input.source,
+            discovery,
+            facades,
+            grant: {
+              ...input.grant,
+              models: new Map(input.grant.models.map(({ id, ...policy }) => [id, policy])),
+            },
+          });
+        } catch (error) {
+          await Promise.allSettled([facades.cleanup(), discovery?.close()]);
+          throw error;
+        }
+      },
+    });
   try {
     const bootstrap = await startExecutorNodeBootstrap({
       ...options,
