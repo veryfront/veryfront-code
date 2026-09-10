@@ -71,7 +71,7 @@ async function workspaceMetadata(
   for (const member of [".", ...members]) {
     const memberDir = resolve(directory, member);
     for (const file of ["deno.json", "deno.jsonc", "package.json"]) {
-      if (member === "." && file === "deno.json") continue;
+      if (member === "." && file !== "package.json") continue;
       const source = await optionalText(resolve(memberDir, file));
       if (source === null) {
         metadata.push([member, file, null]);
@@ -127,7 +127,8 @@ async function workspaceMetadata(
 
 async function dependencyMetadata(directory: string) {
   const config = parseDenoConfig(
-    await Deno.readTextFile(resolve(directory, "deno.json")),
+    await optionalText(resolve(directory, "deno.json")) ??
+      await Deno.readTextFile(resolve(directory, "deno.jsonc")),
   );
   if (config === null) return { config: {}, lock: null, workspace: null };
   const workspace = await workspaceMetadata(directory, config);

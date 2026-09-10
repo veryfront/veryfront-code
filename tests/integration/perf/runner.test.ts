@@ -94,6 +94,21 @@ describe("framework profiling command", () => {
         );
       }
       assertEquals(await check(head), 0);
+      for (const directory of [base, head]) {
+        const path = `${directory}/deno.json`;
+        const jsoncPath = `${directory}/deno.jsonc`;
+        const original = await Deno.readTextFile(path);
+        await Deno.rename(path, jsoncPath);
+        assertEquals(await check(head), 0, "Either root filename can provide compatible metadata");
+        await Deno.writeTextFile(jsoncPath, `// Root configuration\n${original}`);
+        assertEquals(await check(head), 1, "Root JSONC syntax requires a new baseline");
+        await Deno.remove(jsoncPath);
+        assertEquals(await check(head), 2, "Missing root configuration must remain an error");
+        await Deno.writeTextFile(path, original);
+        await Deno.writeTextFile(jsoncPath, "{/* ignored when deno.json exists */}");
+        assertEquals(await check(head), 0, "Root deno.json takes precedence over deno.jsonc");
+        await Deno.remove(jsoncPath);
+      }
       await Deno.writeTextFile(
         `${base}/package.json`,
         JSON.stringify({ dependencies: { fixture: "2.0.0" } }),
