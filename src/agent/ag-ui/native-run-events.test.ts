@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunStatusChangedEvent,
@@ -15,6 +15,12 @@ import {
   nativeRunEventTypes,
 } from "./native-run-events.ts";
 
+import {
+  AG_UI_EVENT_TIMING_STAMP_FIELDS,
+  createAgUiEncoderState,
+  stampAgUiEventTiming,
+} from "./encoder.ts";
+import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import { parseAgUiSseResponse } from "./sse-parser.ts";
 
 const INPUT_REQUEST = {
@@ -138,6 +144,46 @@ describe("agent/ag-ui-native-run-events", () => {
     assertEquals(frames[0].live.payload.result, { type: "nested-result", ok: true });
     assertEquals(frames[0].durable.result, frames[0].live.payload.result);
   });
+
+  for (
+    const name of [
+      "tool-call-status",
+      "veryfront.invoke_agent.lifecycle",
+      "source-url",
+      "source-document",
+      "file",
+    ]
+  ) {
+    for (const field of AG_UI_EVENT_TIMING_STAMP_FIELDS) {
+      for (const supplied of ["application metadata", 42]) {
+        it(`keeps ${typeof supplied} ${field} out of ${name} transport timing`, () => {
+          const value: Record<string, unknown> = {
+            ...CHILD_RUN,
+            url: "https://example.com/source",
+            mediaType: "text/plain",
+            sourceId: "source-1",
+            [field]: supplied,
+            detail: { [field]: supplied },
+          };
+          const frame = buildNativeRunEventFrame({ name, value });
+          assertExists(frame);
+          const clocks = { nowMs: () => 50, epochMs: () => 1_700_000_000_000 };
+          const [live] = stampAgUiEventTiming(createAgUiEncoderState(clocks), [frame.live]);
+          const [durable] = new ConversationRunEventEncoder(clocks).stamp([frame.durable]);
+          assertExists(live);
+          assertExists(durable);
+          for (const payload of [live.payload, durable]) {
+            assertEquals(payload.elapsedMs, 0);
+            assertEquals(payload.emittedAt, 1_700_000_000_000);
+            assertEquals(payload.detail, { [field]: supplied });
+          }
+          assertEquals(Object.hasOwn(frame.live.payload, field), false);
+          assertEquals(Object.hasOwn(frame.durable, field), false);
+          assertEquals(value[field], supplied);
+        });
+      }
+    }
+  }
 
   it("selects the input request type from the action and drops the action field", () => {
     assertEquals(

@@ -214,7 +214,9 @@ Veryfront emits native AG-UI events for tool status, input requests, child-run
 status, citations, and attachments. Live SSE frames carry names such as
 `ChildRunStatusChanged`; durable records use `CHILD_RUN_STATUS_CHANGED`. Readers
 also accept the earlier `Custom` events. Tool-status frames can omit the tool name
-or set it to `null`; the chat decoder preserves the status in either case.
+or set it to `null`; the chat decoder preserves the status in either case. Native
+event payloads reserve `type`, `elapsedMs`, and `emittedAt` for transport metadata.
+Put application timing data in nested fields.
 
 The public `buildInvokeAgentChildRunLifecycleCustomEvent` and
 `buildInvokeAgentChildRunProgressEvents` helpers retain the `{ type: "CUSTOM",
