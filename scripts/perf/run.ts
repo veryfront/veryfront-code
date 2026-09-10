@@ -165,6 +165,9 @@ async function main() {
     );
   }
   const output = `.cache/perf/${opts.label}`;
+  const selectedScenarios = scenarioNames.filter((name) =>
+    opts.scenario === "all" || opts.scenario === name
+  );
   const workloadSha256 = await workloadHash();
   const [revision, status, diff] = await Promise.all([
     git(["rev-parse", "HEAD"]),
@@ -195,6 +198,7 @@ async function main() {
     scenarios: [],
   };
   let baseline: Results | undefined;
+  const baselineMedians = new Map<string, number>();
   if (opts.baseline) {
     try {
       baseline = JSON.parse(await Deno.readTextFile(opts.baseline));
@@ -204,7 +208,7 @@ async function main() {
       );
     }
     if (
-      baseline?.schemaVersion !== 1 ||
+      baseline?.schemaVersion !== 1 || !Array.isArray(baseline.scenarios) ||
       baseline.workloadSha256 !== results.workloadSha256 ||
       JSON.stringify(baseline.environment) !==
         JSON.stringify(results.environment) ||
@@ -213,6 +217,19 @@ async function main() {
       throw new UsageError(
         "Baseline must use the same workload, runtime, hardware, and measurement settings",
       );
+    }
+    for (const name of selectedScenarios) {
+      const previous = baseline.scenarios.find((s) => s?.name === name);
+      if (!previous) {
+        throw new UsageError("Baseline must include every selected workload");
+      }
+      const median = previous.latencyMs?.median;
+      if (!Number.isFinite(median) || median <= 0) {
+        throw new UsageError(
+          "Baseline latency measurements must be positive finite numbers",
+        );
+      }
+      baselineMedians.set(name, median);
     }
   }
   // Read and validate the baseline before replacing a reused output label.
@@ -244,11 +261,7 @@ async function main() {
     if (value) env[key] = value;
   }
   const graphs: string[] = [];
-  for (
-    const name of scenarioNames.filter((name) =>
-      opts.scenario === "all" || opts.scenario === name
-    )
-  ) {
+  for (const name of selectedScenarios) {
     const runs: Measurement[] = [];
     const profilePath = `${output}/${name}.cpuprofile`;
     for (let trial = 0; trial < opts.trials; trial++) {
@@ -314,13 +327,10 @@ async function main() {
       latencyMs: summarizeRuns(runs.map((r) => r.msPerOperation)),
       cpuUs: summarizeRuns(runs.map((r) => r.cpuUsPerOperation)),
     };
-    if (baseline) {
-      const previous = baseline.scenarios.find((s) => s.name === name);
-      if (!previous) {
-        throw new UsageError("Baseline must include every selected workload");
-      }
+    const previousMedian = baselineMedians.get(name);
+    if (previousMedian !== undefined) {
       scenario.comparison = compare(
-        previous.latencyMs.median,
+        previousMedian,
         scenario.latencyMs.median,
       );
     }

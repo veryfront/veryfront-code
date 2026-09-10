@@ -62,6 +62,35 @@ describe("framework profiling command", () => {
       const profile = JSON.parse(await Deno.readTextFile(`${directory}/request-timing.cpuprofile`));
       assertEquals(profile.samples.length > 0, true);
 
+      const savedBaseline = await Deno.readTextFile(`${directory}/results.json`);
+      const invalidComparison = await new Deno.Command("deno", {
+        args: [
+          "task",
+          "perf",
+          ...args,
+          "--scenario=ssr",
+          "--no-profile",
+          `--baseline=${directory}/results.json`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(invalidComparison.code, 2);
+      assertEquals(await Deno.readTextFile(`${directory}/results.json`), savedBaseline);
+
+      const invalidBaseline = JSON.parse(savedBaseline);
+      invalidBaseline.scenarios[0].latencyMs.median = 0;
+      const invalidBaselineText = JSON.stringify(invalidBaseline);
+      await Deno.writeTextFile(`${directory}/results.json`, invalidBaselineText);
+      const invalidLatency = await new Deno.Command("deno", {
+        args: ["task", "perf", ...args, "--no-profile", `--baseline=${directory}/results.json`],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(invalidLatency.code, 2);
+      assertEquals(await Deno.readTextFile(`${directory}/results.json`), invalidBaselineText);
+      await Deno.writeTextFile(`${directory}/results.json`, savedBaseline);
+
       const rerun = await new Deno.Command("deno", {
         args: ["task", "perf", ...args, "--no-profile", `--baseline=${directory}/results.json`],
         stdout: "piped",
