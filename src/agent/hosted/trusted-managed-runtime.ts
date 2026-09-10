@@ -1,17 +1,17 @@
 import type {
   TrustedManagedRuntime,
   TrustedManagedRuntimeOptions,
-} from "./trusted-managed-runtime-contract.ts";
+} from "#veryfront/agent/hosted/trusted-managed-runtime-contract.ts";
 import {
   createExecutorChannel,
   type ExecutorChannel,
   type ExecutorOperation,
 } from "../executor/channel.ts";
 import type { ExecutorOperationGate } from "#veryfront/agent/executor/operation-gate.ts";
-import { createExecutorProjectToolSource } from "./executor-project-tools.ts";
-import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
-import { createTrustedRuntimePreparation } from "./trusted-runtime-prepare.ts";
-import { awaitExecutorCleanup } from "./executor-runtime-settlement.ts";
+import { createExecutorProjectToolSource } from "#veryfront/agent/hosted/executor-project-tools.ts";
+import { createExecutorRuntimeFacades } from "#veryfront/agent/hosted/executor-runtime-facades.ts";
+import { createTrustedRuntimePreparation } from "#veryfront/agent/hosted/trusted-runtime-prepare.ts";
+import { awaitExecutorCleanup } from "#veryfront/agent/hosted/executor-runtime-settlement.ts";
 import { reserveExecutorToolMetadata } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 /** Broker-only channels preserve the existing capability gates without exposing them to project code. */

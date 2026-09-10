@@ -7,7 +7,12 @@ import {
   pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
-import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
+import {
+  chainPrivatePromise,
+  createPrivateDeferred,
+  observePrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { captureExecutorProjectCallContext } from "#veryfront/agent/hosted/executor-project-context.ts";
 import type { ExecutorChannel, ExecutorOperation } from "#veryfront/agent/executor/channel.ts";
 import {
@@ -37,13 +42,14 @@ import {
   parseExecutorToolData,
 } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
-import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "./executor-runtime-install-schema.ts";
-export { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "./executor-runtime-install-schema.ts";
+import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
+export { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 const TOOL_ALIASES_OPERATION = "project.tool-aliases";
 const apply = Reflect.apply;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
+const nativeSetHas = Set.prototype.has;
 
 export interface ExecutorProjectToolSource extends RemoteToolSource {
   readonly aliases: readonly { readonly name: string; readonly shortName: string }[];
@@ -93,6 +99,12 @@ const getAliasesSchema = defineSchema((v) =>
   }).strict()
 );
 
+/** Materialize project-tool protocol schemas before project code can run. */
+export function warmExecutorProjectToolSchemas(): void {
+  getContextSchema();
+  getAliasesSchema();
+}
+
 export interface ExecutorProjectToolOperationsOptions {
   scope: { binding: ExecutorBinding; signal: AbortSignal; assertActive(): void };
   context: ExecutorProjectToolContext;
@@ -139,6 +151,22 @@ function callField<K extends keyof ToolExecutionContext>(
 export function createExecutorProjectToolOperations(
   options: ExecutorProjectToolOperationsOptions,
 ): ReadonlyMap<string, ExecutorOperation> {
+  // Project code executes in this dedicated process and may replace native
+  // collection methods. Keep executor construction on the captured host
+  // intrinsic; the callback below restores the project method only while the
+  // authored tool is running.
+  const projectSetHas = Set.prototype.has;
+  if (projectSetHas !== nativeSetHas) Set.prototype.has = nativeSetHas;
+  let projectSetHasTail = resolvePrivatePromise();
+  let projectIntrinsicsUnavailable = false;
+  function restoreProjectMembership(): void {
+    projectIntrinsicsUnavailable = true;
+    Set.prototype.has = nativeSetHas;
+    if (getOwnPropertyDescriptor(Set.prototype, "has")?.value !== nativeSetHas) {
+      throw new TypeError("Project tool runtime is unavailable");
+    }
+    projectIntrinsicsUnavailable = false;
+  }
   const fixed = captureContext(options.context);
   const limits = executorToolLimits(options.limits);
   const allowed = captureNames(options.allowedToolNames, limits);
@@ -158,11 +186,47 @@ export function createExecutorProjectToolOperations(
     ) continue;
     if (typeof registered.execute !== "function") throw new TypeError("Invalid project tool");
     const callback = registered.execute;
-    const execute: Tool["execute"] = (args, context) => {
+    const runWithProjectRuntime = options.runWithProjectRuntime;
+    const execute: Tool["execute"] = async (args, context) => {
+      if (projectIntrinsicsUnavailable) throw new TypeError("Project tool runtime is unavailable");
       const invoke = () => apply(callback, registered, [args, context]);
-      return options.runWithProjectRuntime === undefined
-        ? invoke()
-        : options.runWithProjectRuntime(invoke);
+      if (projectSetHas === nativeSetHas) {
+        return await (runWithProjectRuntime === undefined
+          ? invoke()
+          : runWithProjectRuntime(invoke));
+      }
+      // A mutable process-global intrinsic cannot safely be switched for
+      // concurrent authored callbacks. Serialize the project-code scope while
+      // preserving the broker's independent admission limits.
+      const predecessor = projectSetHasTail;
+      const release = createPrivateDeferred<void>();
+      projectSetHasTail = chainPrivatePromise(
+        predecessor,
+        () => release.promise,
+        () => release.promise,
+      );
+      await observePrivatePromise(predecessor);
+      try {
+        if (projectIntrinsicsUnavailable) {
+          throw new TypeError("Project tool runtime is unavailable");
+        }
+        context?.abortSignal?.throwIfAborted();
+        // Establish policy using native membership before restoring project
+        // hooks for the authored callback itself.
+        const invokeProject = () => {
+          Set.prototype.has = projectSetHas;
+          return invoke();
+        };
+        try {
+          return await (runWithProjectRuntime === undefined
+            ? invokeProject()
+            : runWithProjectRuntime(invokeProject));
+        } finally {
+          restoreProjectMembership();
+        }
+      } finally {
+        release.resolve();
+      }
     };
     const definition = executorToolDefinition({
       ...toolToProviderDefinition(registered),

@@ -5,15 +5,15 @@ import { getExecutorBindingSchema } from "../executor/protocol.ts";
 import {
   getHostedExecutorOwnerSchema,
   getHostedExecutorSourceSchema,
-} from "./executor-session-schema.ts";
-import { getExecutorRuntimeGrantDataSchema } from "./executor-runtime-prepare-schema.ts";
-import { getExecutorPersistenceCapabilityIdsSchema } from "./executor-persistence-schema.ts";
-import { getExecutorDiscoveryIdSchema } from "./executor-discovery-schema.ts";
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
+import { getExecutorRuntimeGrantDataSchema } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
+import { getExecutorPersistenceCapabilityIdsSchema } from "#veryfront/agent/hosted/executor-persistence-schema.ts";
+import { getExecutorDiscoveryIdSchema } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import {
   EXECUTOR_TOOL_LIMITS,
   getExecutorToolIdSchema,
   getExecutorToolLimitsSchema,
-} from "./executor-tool-schema.ts";
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
 export const EXECUTOR_PROJECT_TOOL_SOURCE_ID = "project";
 

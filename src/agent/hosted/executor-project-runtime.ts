@@ -6,27 +6,27 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
+import type { ExecutorDiscovery } from "#veryfront/agent/hosted/executor-discovery.ts";
 import {
   getProjectAgentRuntimeInlineTools,
   runWithProjectAgentRuntime,
 } from "#veryfront/agent/project/agent-runtime.ts";
-import type { ExecutorDiscovery } from "./executor-discovery.ts";
 import {
   getExecutorAgentDescribeResultSchema,
   parseDiscoveryData,
-} from "./executor-discovery-schema.ts";
+} from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import {
   createExecutorProjectToolOperations,
   type ExecutorProjectToolContext,
-} from "./executor-project-tools.ts";
+} from "#veryfront/agent/hosted/executor-project-tools.ts";
 import {
   type ExecutorProjectToolInstall,
   getExecutorProjectToolInstallSchema,
   parseExecutorInstallation,
-} from "./executor-runtime-install-schema.ts";
-import { executorToolLimits } from "./executor-tool-schema.ts";
-import type { InstalledExecutorRuntime } from "./executor-runtime-install.ts";
-import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
+import { executorToolLimits } from "#veryfront/agent/hosted/executor-tool-schema.ts";
+import type { InstalledExecutorRuntime } from "#veryfront/agent/hosted/executor-runtime-install.ts";
+import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 
 const apply = Reflect.apply;
 
@@ -62,11 +62,12 @@ export async function createExecutorProjectToolRuntime(options: {
     const getRuntime = discovery.getRuntime;
     const retainRuntimeTask = discovery.retainRuntimeTask;
     const settled = discovery.settled;
+    const agentDescribeResultSchema = getExecutorAgentDescribeResultSchema();
     signal.throwIfAborted();
     const describe = discoveryOperations.get("agent.describe");
     if (describe?.mode !== "unary") throw new Error("Project discovery unavailable");
     const result = parseDiscoveryData(
-      getExecutorAgentDescribeResultSchema(),
+      agentDescribeResultSchema,
       await chainPrivatePromise(resolvePrivatePromise(), () =>
         describe.handle(
           { agentId: context.agentId },

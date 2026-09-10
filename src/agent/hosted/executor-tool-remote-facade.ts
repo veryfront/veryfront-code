@@ -20,6 +20,7 @@ import {
   getExecutorToolCallSchema,
   getExecutorToolFrameSchema,
   getExecutorToolListSchema,
+  isExecutorToolSettledFailure,
   parseExecutorToolData,
   throwExecutorToolFailure,
 } from "#veryfront/agent/hosted/executor-tool-schema.ts";
@@ -75,6 +76,7 @@ export async function createExecutorRemoteToolSources(options: {
       signal.throwIfAborted();
       iterator = channel.stream(operation, input, { signal });
       let terminal = false;
+      let failure: ExecutorToolFrame | undefined;
       let result: JsonValue | undefined;
       let progressCount = 0;
       let progressBytes = 0;
@@ -84,12 +86,15 @@ export async function createExecutorRemoteToolSources(options: {
         if (next.done) {
           if (!terminal) throw new TypeError("Executor tool completion is missing");
           complete = true;
+          if (failure) throwExecutorToolFailure(failure, true);
           return result;
         }
         if (terminal) throw new TypeError("Executor tool has multiple terminal frames");
         const frame = parseExecutorToolData(getExecutorToolFrameSchema(), next.value);
-        throwExecutorToolFailure(frame);
-        if (frame.type === "progress" && operation !== "tool.sources") {
+        if (frame.type === "failure") {
+          failure = frame;
+          terminal = true;
+        } else if (frame.type === "progress" && operation !== "tool.sources") {
           const event = executorToolProgress(frame.event, limits);
           if (
             ++progressCount > limits.maxProgressEvents ||
@@ -114,7 +119,7 @@ export async function createExecutorRemoteToolSources(options: {
       }
     } catch (error) {
       // Never expose peer/transport diagnostics or classify an unknown failure.
-      throw error instanceof ExecutorAgentError
+      throw isExecutorToolSettledFailure(error) || error instanceof ExecutorAgentError
         ? error
         : new TypeError("Executor tool operation failed");
     } finally {

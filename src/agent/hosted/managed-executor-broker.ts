@@ -7,12 +7,12 @@ import { reserveExecutorToolMetadata } from "#veryfront/agent/hosted/executor-to
 import type {
   TrustedManagedRuntime,
   TrustedManagedRuntimeFactory,
-} from "./trusted-managed-runtime-contract.ts";
-import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "./executor-runtime-install-schema.ts";
+} from "#veryfront/agent/hosted/trusted-managed-runtime-contract.ts";
+import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import {
   type ExecutorProjectToolInstall,
   getExecutorProjectToolInstallSchema,
-} from "./executor-runtime-install-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -21,28 +21,28 @@ import {
   type ExecutorOperationGate,
 } from "../executor/operation-gate.ts";
 import type { ExecutorBinding } from "../executor/protocol.ts";
-import type { HostedChatRuntimeAgent } from "./chat-runtime-contract.ts";
+import type { HostedChatRuntimeAgent } from "#veryfront/agent/hosted/chat-runtime-contract.ts";
 import {
   createHostedExecutorSessionPool,
   type HostedExecutorSessionPoolOptions,
-} from "./executor-session-pool.ts";
+} from "#veryfront/agent/hosted/executor-session-pool.ts";
 import {
   createHostedExecutorSessionClock,
   type HostedExecutorOwnedWork,
   type HostedExecutorSessionCloseResult,
   type HostedExecutorSessionOptions,
-} from "./executor-session.ts";
+} from "#veryfront/agent/hosted/executor-session.ts";
 import {
   getHostedExecutorAllocationRequestSchema,
   parseHostedExecutorData,
   sameHostedExecutorOwner,
-} from "./executor-session-schema.ts";
-import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
+import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
   type ExecutorRuntimeInstall,
   getExecutorRuntimeInstallSchema,
   parseExecutorInstallation,
-} from "./executor-runtime-install-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import {
   ExecutorRuntimePreparationError,
   type ExecutorRuntimePrepareRequest,
@@ -50,25 +50,31 @@ import {
   getExecutorRuntimePrepareResultSchema,
   isExecutorRuntimePreparationFailureCode,
   parseRuntimePreparationData,
-} from "./executor-runtime-prepare-schema.ts";
+} from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import {
   ExecutorDiscoveryError,
   getExecutorAgentDescribeResultSchema,
   parseDiscoveryData,
-} from "./executor-discovery-schema.ts";
-import { ExecutorAgentError } from "./executor-agent-schema.ts";
-import { createExecutorHostedChatRuntimeAgent } from "./executor-agent-bridge.ts";
+} from "#veryfront/agent/hosted/executor-discovery-schema.ts";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { createExecutorHostedChatRuntimeAgent } from "#veryfront/agent/hosted/executor-agent-bridge.ts";
 import {
   createEphemeralHostedExecutorModelBroker,
   createHostedExecutorModelBroker,
-} from "./executor-model-dispatch.ts";
-import type { ExecutorModelGrant } from "./executor-model-grant.ts";
-import { createExecutorToolBroker, type ExecutorToolCapability } from "./executor-tool-bridge.ts";
-import { type ExecutorToolLimits, executorToolLimits } from "./executor-tool-schema.ts";
-import { createExecutorPersistenceBroker } from "./executor-persistence-bridge.ts";
-import { executorInitialCheckpointsOperation } from "./executor-checkpoint-state.ts";
-import { createExecutorStateBroker } from "./executor-state-bridge.ts";
-import { executorStateOperations } from "./executor-state-schema.ts";
+} from "#veryfront/agent/hosted/executor-model-dispatch.ts";
+import type { ExecutorModelGrant } from "#veryfront/agent/hosted/executor-model-grant.ts";
+import {
+  createExecutorToolBroker,
+  type ExecutorToolCapability,
+} from "#veryfront/agent/hosted/executor-tool-bridge.ts";
+import {
+  type ExecutorToolLimits,
+  executorToolLimits,
+} from "#veryfront/agent/hosted/executor-tool-schema.ts";
+import { createExecutorPersistenceBroker } from "#veryfront/agent/hosted/executor-persistence-bridge.ts";
+import { executorInitialCheckpointsOperation } from "#veryfront/agent/hosted/executor-checkpoint-state.ts";
+import { createExecutorStateBroker } from "#veryfront/agent/hosted/executor-state-bridge.ts";
+import { executorStateOperations } from "#veryfront/agent/hosted/executor-state-schema.ts";
 import type { ExecutorOperation } from "../executor/channel.ts";
 
 type SessionInput = Omit<HostedExecutorSessionOptions, "createOperations">;
@@ -314,6 +320,7 @@ export function createManagedExecutorBroker(
                     ),
                     sources: new Map([...operationInput.tools.sources, [projectTools.id, {
                       source: projectTools,
+                      retired: session.settled,
                       allowedToolNames: new Set(trusted.projectInstallation.allowedToolNames),
                       projectContext: "skill",
                       context: {
@@ -643,6 +650,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
         executeTool: source.executeTool.bind(source),
       }),
       allowedToolNames: new Set(capability.allowedToolNames),
+      retired: capability.retired,
       context: Object.freeze({
         ...context,
         ...(context.publishDataEvent
