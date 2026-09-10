@@ -1,4 +1,13 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { copyPrivateSet, createPrivateSet } from "#veryfront/security/private-set.ts";
+import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
+import {
+  filterPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { chainPrivatePromise, resolvePrivatePromise } from "#veryfront/security/private-promise.ts";
 import type { ExecutorChannel, ExecutorOperation } from "#veryfront/agent/executor/channel.ts";
 import {
   type ExecutorBinding,
@@ -8,7 +17,10 @@ import type { RemoteToolSource, Tool, ToolExecutionContext } from "#veryfront/to
 import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
-import { createExecutorToolBroker } from "#veryfront/agent/hosted/executor-tool-bridge.ts";
+import {
+  createExecutorToolBroker,
+  type ExecutorToolCapability,
+} from "#veryfront/agent/hosted/executor-tool-bridge.ts";
 import { createExecutorRemoteToolSources } from "#veryfront/agent/hosted/executor-tool-remote-facade.ts";
 import {
   EXECUTOR_TOOL_LIMITS,
@@ -24,6 +36,10 @@ import {
 
 export const EXECUTOR_PROJECT_TOOL_SOURCE_ID = "project";
 const TOOL_ALIASES_OPERATION = "project.tool-aliases";
+const apply = Reflect.apply;
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 
 export interface ExecutorProjectToolSource extends RemoteToolSource {
   readonly aliases: readonly { readonly name: string; readonly shortName: string }[];
@@ -48,7 +64,7 @@ const getContextSchema = defineSchema((v) =>
 
 function captureContext(input: ExecutorProjectToolContext) {
   const context = parseExecutorToolData(getContextSchema(), input);
-  return Object.freeze({
+  return freeze({
     agentId: context.agentId,
     projectId: context.projectId,
     runIdBindsToolAuthorization: context.execution.kind === "canonical",
@@ -85,13 +101,11 @@ export interface ExecutorProjectToolSourceOptions {
 }
 
 function captureNames(names: ReadonlySet<string>, limits: ExecutorToolLimits): Set<string> {
-  const result = new Set<string>();
-  for (const name of names) {
-    if (result.size >= limits.maxToolsPerSource) {
-      throw new TypeError("Project tool allowlist exceeds its limit");
-    }
-    result.add(parseExecutorToolData(getExecutorToolIdSchema(), name));
+  const result = copyPrivateSet(names, limits.maxToolsPerSource);
+  if (result.size > limits.maxToolsPerSource) {
+    throw new TypeError("Project tool allowlist exceeds its limit");
   }
+  for (const name of result) parseExecutorToolData(getExecutorToolIdSchema(), name);
   return result;
 }
 
@@ -101,9 +115,9 @@ function callField<K extends keyof ToolExecutionContext>(
   key: K,
 ): ToolExecutionContext[K] {
   if (context === undefined) return undefined;
-  const descriptor = Object.getOwnPropertyDescriptor(context, key);
+  const descriptor = getOwnPropertyDescriptor(context, key);
   if (!descriptor) return undefined;
-  if (!Object.hasOwn(descriptor, "value")) throw new TypeError("Invalid project tool call context");
+  if (!hasOwn(descriptor, "value")) throw new TypeError("Invalid project tool call context");
   return descriptor.value;
 }
 
@@ -114,28 +128,31 @@ export function createExecutorProjectToolOperations(
   const fixed = captureContext(options.context);
   const limits = executorToolLimits(options.limits);
   const allowed = captureNames(options.allowedToolNames, limits);
-  if (options.tools.size > limits.maxTotalTools) {
+  const tools = copyPrivateMap(options.tools, limits.maxTotalTools);
+  if (tools.size > limits.maxTotalTools) {
     throw new TypeError("Project tool catalog exceeds its limit");
   }
-  const catalog = new Map<string, {
+  const catalog = createPrivateMap<string, {
     definition: ReturnType<typeof toolToProviderDefinition>;
     execute: Tool["execute"];
   }>();
   const aliases: { name: string; shortName: string }[] = [];
-  for (const [name, registered] of options.tools) {
+  for (const [name, registered] of tools) {
     if (
       !allowed.has(name) || isSkillInfrastructureToolId(name) ||
       !isToolVisibleTo(registered, { agentId: fixed.agentId })
     ) continue;
     if (typeof registered.execute !== "function") throw new TypeError("Invalid project tool");
-    const execute = registered.execute.bind(registered);
+    const callback = registered.execute;
+    const execute: Tool["execute"] = (args, context) =>
+      apply(callback, registered, [args, context]);
     const definition = executorToolDefinition({
       ...toolToProviderDefinition(registered),
       name,
     }, limits);
     catalog.set(name, { definition, execute });
     if (registered.ownerAgentId === fixed.agentId && registered.shortName !== undefined) {
-      aliases.push({
+      pushPrivateArray(aliases, {
         name,
         shortName: parseExecutorToolData(getExecutorToolIdSchema(), registered.shortName),
       });
@@ -144,8 +161,11 @@ export function createExecutorProjectToolOperations(
   const source: RemoteToolSource = {
     id: EXECUTOR_PROJECT_TOOL_SOURCE_ID,
     listTools: () =>
-      Promise.resolve(
-        [...catalog.values()].map(({ definition }) => executorToolDefinition(definition, limits)),
+      chainPrivatePromise(
+        resolvePrivatePromise(),
+        () =>
+          mapPrivateArray([...catalog.values()], ({ definition }) =>
+            executorToolDefinition(definition, limits)),
       ),
     async executeTool(name, args, context) {
       const selected = catalog.get(name);
@@ -161,20 +181,23 @@ export function createExecutorProjectToolOperations(
       });
     },
   };
-  const operations = new Map(createExecutorToolBroker({
+  const sources = createPrivateMap<string, ExecutorToolCapability>();
+  sources.set(source.id, {
+    source,
+    allowedToolNames: createPrivateSet(catalog.keys()),
+    context: fixed,
+  });
+  const operations = copyPrivateMap(createExecutorToolBroker({
     scope: options.scope,
-    sources: new Map([[source.id, {
-      source,
-      allowedToolNames: new Set(catalog.keys()),
-      context: fixed,
-    }]]),
+    sources,
     maxCalls: options.maxCalls,
     maxConcurrent: options.maxConcurrent,
     limits,
   }));
   const binding = parseExecutorToolData(getExecutorBindingSchema(), options.scope.binding);
   const signal = options.scope.signal;
-  const assertActive = options.scope.assertActive.bind(options.scope);
+  const assertScope = options.scope.assertActive;
+  const assertActive = () => apply(assertScope, options.scope, []);
   let described = false;
   operations.set(TOOL_ALIASES_OPERATION, {
     mode: "unary",
@@ -236,7 +259,7 @@ export async function createExecutorProjectToolSource(
       ...(publish === undefined ? {} : {
         publishDataEvent: async (event) => {
           check();
-          await publish.call(context, event);
+          await apply(publish, context, [event]);
           check();
         },
       }),
@@ -259,31 +282,36 @@ export async function createExecutorProjectToolSource(
   if (metadata.agentId !== fixed.agentId) {
     throw new TypeError("Project tool metadata owner mismatch");
   }
-  const catalog = new Map(
-    definitions.filter((definition) => allowed.has(definition.name)).map(
-      (definition) => [definition.name, definition] as const,
-    ),
-  );
-  const aliases = new Map<string, string>();
-  for (const entry of metadata.aliases) {
+  const catalog = createPrivateMap<string, (typeof definitions)[number]>();
+  for (let index = 0; index < definitions.length; index++) {
+    const definition = definitions[index]!;
+    if (allowed.has(definition.name)) catalog.set(definition.name, definition);
+  }
+  const aliases = createPrivateMap<string, string>();
+  for (let index = 0; index < metadata.aliases.length; index++) {
+    const entry = metadata.aliases[index]!;
     if (
-      !definitions.some((definition) => definition.name === entry.name) ||
+      !somePrivateArray(definitions, (definition) => definition.name === entry.name) ||
       aliases.has(entry.shortName)
     ) {
       throw new TypeError("Invalid project tool aliases");
     }
     aliases.set(entry.shortName, entry.name);
   }
-  return Object.freeze({
+  return freeze({
     id: EXECUTOR_PROJECT_TOOL_SOURCE_ID,
-    aliases: Object.freeze(
-      [...aliases].filter(([, name]) => catalog.has(name)).map(([shortName, name]) =>
-        Object.freeze({ name, shortName })
+    aliases: freeze(
+      mapPrivateArray(
+        filterPrivateArray([...aliases], (entry) => catalog.has(entry[1])),
+        (entry) => freeze({ name: entry[1], shortName: entry[0] }),
       ),
     ),
     async listTools(context?: ToolExecutionContext) {
       projectContext(context);
-      return [...catalog.values()].map((definition) => executorToolDefinition(definition, limits));
+      return mapPrivateArray(
+        [...catalog.values()],
+        (definition) => executorToolDefinition(definition, limits),
+      );
     },
     async executeTool(name: string, args: Record<string, unknown>, context?: ToolExecutionContext) {
       const call = projectContext(context);

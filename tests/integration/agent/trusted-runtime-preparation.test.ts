@@ -41,7 +41,16 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
 } else {
   const { runNativeTrustedScenario } = await import("./fixtures/trusted-runtime-scenario.ts");
   describe("trusted hosted native execution", () => {
-    for (const mode of ["complete", "cancel", "crash", "startup-failure", "denied"] as const) {
+    for (
+      const mode of [
+        "complete",
+        "cancel",
+        "crash",
+        "startup-failure",
+        "denied",
+        "collections",
+      ] as const
+    ) {
       it(
         `preserves the trust boundary and original-work ownership on ${mode}`,
         { timeout: 30_000 },

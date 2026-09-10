@@ -12,7 +12,7 @@ import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpe
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 
 export async function runNativeTrustedScenario(
-  mode: "complete" | "cancel" | "crash" | "startup-failure" | "denied",
+  mode: "complete" | "cancel" | "crash" | "startup-failure" | "denied" | "collections",
 ) {
   const root = new URL("../../../../", import.meta.url);
   const startedAt = performance.now();
@@ -32,7 +32,12 @@ export async function runNativeTrustedScenario(
     fileURLToPath(new URL("./trusted-project-executor.ts", import.meta.url)),
   ], {
     cwd: fileURLToPath(root),
-    env: { PATH: process.env.PATH, NODE_ENV: "test", DENO_TESTING: "1" },
+    env: {
+      PATH: process.env.PATH,
+      NODE_ENV: "test",
+      DENO_TESTING: "1",
+      ...(mode === "collections" ? { VF_NATIVE_PATCH_MEMBERSHIP: "1" } : {}),
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdin.end(JSON.stringify({ binding, key: [...key], context, mode }) + "\n");
@@ -86,6 +91,22 @@ export async function runNativeTrustedScenario(
       allowedToolNames: new Set(["inspect"]),
       assertActive() {},
     });
+    if (mode === "collections") {
+      const frames = await Array.fromAsync(channel.stream("tool.list", { sourceId: "project" }));
+      assertEquals(
+        frames.filter((frame) =>
+          frame && typeof frame === "object" && !Array.isArray(frame) && frame.type === "tool"
+        ).length,
+        1,
+      );
+      const denied = await Array.fromAsync(channel.stream("tool.execute", {
+        sourceId: "project",
+        toolName: "denied",
+        toolCallId: "denied",
+        args: {},
+      }));
+      assertEquals(denied, [{ type: "failure" }]);
+    }
     if (mode === "denied") {
       await assertRejects(() => source.executeTool("ungranted", {}, { toolCallId: "denied" }));
       await assertRejects(() =>
@@ -228,7 +249,7 @@ export async function runNativeTrustedScenario(
         }],
       }, opContext),
     );
-    if (mode !== "complete") {
+    if (mode === "cancel" || mode === "crash") {
       await assertRejects(() => reading);
       await owner.close();
       assertEquals(runtimeCleanups, 1);
@@ -263,6 +284,7 @@ export async function runNativeTrustedScenario(
       ],
       observations: [],
       hasParentSecret: false,
+      patchedMembership: mode === "collections",
     }]);
     assertEquals(model.callCount, 2);
     assertEquals(checkpoints.length, 2);

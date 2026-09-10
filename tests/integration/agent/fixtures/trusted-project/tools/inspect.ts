@@ -32,6 +32,7 @@ export default tool({
       }),
       observations: observations(),
       hasParentSecret: Object.hasOwn(process.env, "VF_NATIVE_PARENT_SECRET"),
+      patchedMembership: new Set().has("denied"),
     });
   },
 });

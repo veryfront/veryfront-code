@@ -1,4 +1,13 @@
 import type { JsonValue } from "#veryfront/schemas/index.ts";
+import { copyPrivateSet, createPrivateSet } from "#veryfront/security/private-set.ts";
+import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  chainPrivatePromise,
+  createPrivateDeferred,
+  observePrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import type {
   ExecutorOperation,
@@ -25,6 +34,10 @@ import {
   getExecutorToolListSchema,
   parseExecutorToolData,
 } from "#veryfront/agent/hosted/executor-tool-schema.ts";
+
+const apply = Reflect.apply;
+const isArray = Array.isArray;
+const hasOwn = Object.hasOwn;
 
 /** Already-scoped capabilities. The source owns exact project, run, and skill policy. */
 export interface ExecutorToolCapability {
@@ -55,11 +68,13 @@ export function createExecutorToolBroker(options: {
   const maxConcurrent = executorToolLimit(options.maxConcurrent, 32);
   const binding = parseExecutorToolData(getExecutorBindingSchema(), options.scope.binding);
   const lifetime = options.scope.signal;
-  const assertActive = options.scope.assertActive.bind(options.scope);
-  if (!(lifetime instanceof AbortSignal) || options.sources.size > limits.maxSources) {
+  const scopeAssertion = options.scope.assertActive;
+  const assertActive = () => apply(scopeAssertion, options.scope, []);
+  const suppliedSources = copyPrivateMap(options.sources, limits.maxSources);
+  if (!(lifetime instanceof AbortSignal) || suppliedSources.size > limits.maxSources) {
     throw new TypeError("Invalid executor tool authority");
   }
-  const sources = new Map<string, {
+  const sources = createPrivateMap<string, {
     source: RemoteToolSource;
     list: RemoteToolSource["listTools"];
     execute: RemoteToolSource["executeTool"];
@@ -78,22 +93,22 @@ export function createExecutorToolBroker(options: {
       throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
     }
   };
-  for (const [id, capability] of options.sources) {
+  for (const [id, capability] of suppliedSources) {
+    const allowed = copyPrivateSet(capability.allowedToolNames, limits.maxToolsPerSource);
     if (
       ++sourceCount > limits.maxSources || sources.has(id) || !capability.context ||
       capability.source.id !== id || typeof capability.source.listTools !== "function" ||
       typeof capability.source.executeTool !== "function" ||
-      capability.allowedToolNames.size > limits.maxToolsPerSource
+      allowed.size > limits.maxToolsPerSource
     ) {
       throw new TypeError("Invalid executor tool capability");
     }
     parseExecutorToolData(getExecutorToolIdSchema(), id);
-    const allowed = new Set<string>();
-    for (const name of capability.allowedToolNames) {
-      if (++allowedTools > limits.maxTotalTools || allowed.size >= limits.maxToolsPerSource) {
+    for (const name of allowed) {
+      if (++allowedTools > limits.maxTotalTools) {
         throw new TypeError("Executor tool allowlist exceeds its limit");
       }
-      allowed.add(parseExecutorToolData(getExecutorToolIdSchema(), name));
+      parseExecutorToolData(getExecutorToolIdSchema(), name);
     }
     sources.set(id, {
       source: capability.source,
@@ -166,8 +181,8 @@ export function createExecutorToolBroker(options: {
       const result = yield* callWithProgress({
         invoke: (context) =>
           call
-            ? capability.execute.call(capability.source, call.toolName, call.args, context)
-            : capability.list.call(capability.source, context),
+            ? apply(capability.execute, capability.source, [call.toolName, call.args, context])
+            : apply(capability.list, capability.source, [context]),
         context: capability.context,
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
@@ -188,25 +203,27 @@ export function createExecutorToolBroker(options: {
         });
       } else {
         if (
-          !Array.isArray(result) || result.length > limits.maxToolsPerSource ||
+          !isArray(result) || result.length > limits.maxToolsPerSource ||
           metadataTools + result.length > limits.maxTotalTools
         ) {
           throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
         }
         metadataTools += result.length;
-        const names = new Set<string>();
+        const names = createPrivateSet<string>();
         const frames: JsonValue[] = [];
         // Snapshot the bounded catalog before the first yield. A stateful
         // source may reuse or mutate its array while the consumer is paused.
-        for (const raw of result) {
+        for (let index = 0; index < result.length; index++) {
+          const raw = result[index];
           const definition = executorToolDefinition(raw, limits);
           if (names.has(definition.name)) throw new TypeError("Duplicate executor tool definition");
           names.add(definition.name);
           const frame = executorToolJson({ type: "tool", definition });
           accountMetadata(frame);
-          if (capability.allowed.has(definition.name)) frames.push(frame);
+          if (capability.allowed.has(definition.name)) pushPrivateArray(frames, frame);
         }
-        for (const frame of frames) {
+        for (let index = 0; index < frames.length; index++) {
+          const frame = frames[index]!;
           assertCall();
           yield frame;
         }
@@ -222,17 +239,20 @@ export function createExecutorToolBroker(options: {
     }
   }
 
-  return new Map([
-    ["tool.sources", {
-      mode: "stream",
-      handle: (value, context) => handle("sources", value, context),
-    }],
-    ["tool.list", { mode: "stream", handle: (value, context) => handle("list", value, context) }],
-    ["tool.execute", {
-      mode: "stream",
-      handle: (value, context) => handle("execute", value, context),
-    }],
-  ]);
+  const operations = createPrivateMap<string, ExecutorOperation>();
+  operations.set("tool.sources", {
+    mode: "stream",
+    handle: (value, context) => handle("sources", value, context),
+  });
+  operations.set("tool.list", {
+    mode: "stream",
+    handle: (value, context) => handle("list", value, context),
+  });
+  operations.set("tool.execute", {
+    mode: "stream",
+    handle: (value, context) => handle("execute", value, context),
+  });
+  return operations;
 }
 
 /** Keep original execution and publisher promises inside the channel handler lifetime. */
@@ -248,15 +268,16 @@ async function* callWithProgress(options: {
 }): AsyncGenerator<JsonValue, unknown> {
   const abort = new AbortController();
   const signal = AbortSignal.any([options.signal, abort.signal]);
-  type Acknowledgement = ReturnType<typeof Promise.withResolvers<void>>;
+  type Acknowledgement = ReturnType<typeof createPrivateDeferred<void>>;
   const queue: {
     frame: JsonValue;
     bytes: number;
     work: Promise<void>;
     acknowledgement: Acknowledgement;
   }[] = [];
-  const pending = new Set<Promise<void>>();
-  const acknowledgements = new Set<Acknowledgement>();
+  const pending = createPrivateSet<Promise<void>>();
+  const acknowledgements = createPrivateSet<Acknowledgement>();
+  let queueHead = 0;
   let wake: (() => void) | undefined;
   let accepting = true;
   let settled = false;
@@ -315,24 +336,29 @@ async function* callWithProgress(options: {
         }
         retainedCount++;
         retainedBytes += bytes;
-        const publication = Promise.withResolvers<void>();
+        const publication = createPrivateDeferred<void>();
         const work = publication.promise;
-        const acknowledgement = Promise.withResolvers<void>();
+        const acknowledgement = createPrivateDeferred<void>();
         acknowledgements.add(acknowledgement);
         // Ignored publications still have an observed, bounded acknowledgement.
-        void acknowledgement.promise.catch(() => {});
+        void chainPrivatePromise(acknowledgement.promise, () => {}, () => {});
         pending.add(work);
-        void work.then(() => pending.delete(work), (error) => {
+        void chainPrivatePromise(work, () => {
+          pending.delete(work);
+        }, (error) => {
           pending.delete(work);
           fail(error);
         });
-        queue.push({ frame, bytes, work, acknowledgement });
+        pushPrivateArray(queue, { frame, bytes, work, acknowledgement });
         try {
           // Start the original callback synchronously, after reserving space.
           // Keep its promise joined even if the next publication overflows.
           // A separate snapshot prevents it from changing queued wire data.
-          const original = options.publisher?.call(options.publisherReceiver, snapshot);
-          void Promise.resolve(original).then(() => {
+          const original = options.publisher === undefined
+            ? undefined
+            : apply(options.publisher, options.publisherReceiver, [snapshot]);
+          const observed = chainPrivatePromise(resolvePrivatePromise(), () => original);
+          void chainPrivatePromise(observed, () => {
             try {
               check();
               publication.resolve();
@@ -352,22 +378,29 @@ async function* callWithProgress(options: {
       }
     },
   };
-  const execution = Promise.resolve().then(() => {
+  const started = chainPrivatePromise(resolvePrivatePromise(), () => {
     check();
     return options.invoke(context);
-  }).then((value) => {
+  });
+  const completed = chainPrivatePromise(started, (value) => {
     result = value;
-  }, fail).finally(() => {
+  }, fail);
+  const finish = () => {
     accepting = false;
     settled = true;
     wake?.();
+  };
+  const execution = chainPrivatePromise(completed, finish, (error) => {
+    finish();
+    throw error;
   });
   try {
     while (true) {
       if (failed) throw failure;
       check();
-      const next = queue.shift();
+      const next = hasOwn(queue, queueHead) ? queue[queueHead] : undefined;
       if (next) {
+        delete queue[queueHead++];
         await next.work;
         if (failed) throw failure;
         check();
@@ -381,9 +414,9 @@ async function* callWithProgress(options: {
         next.acknowledgement.resolve();
       } else if (settled) break;
       else {
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
+        const notification = createPrivateDeferred<void>();
+        wake = notification.resolve;
+        await notification.promise;
       }
     }
     return result;
@@ -399,7 +432,11 @@ async function* callWithProgress(options: {
     rejectAcknowledgements();
     signal.removeEventListener("abort", notifyAbort);
     await execution;
-    await Promise.allSettled(pending);
+    for (const work of pending) {
+      try {
+        await observePrivatePromise(work);
+      } catch { /* The first failure is retained above. */ }
+    }
     queue.length = 0;
   }
 }
