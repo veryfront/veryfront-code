@@ -630,7 +630,10 @@ export default agent({ id: "probe", model: ${JSON.stringify(modelId)},
               : {},
           },
           messages: direct
-            ? ingress.broker.getParsedRequest().messages
+            ? ingress.broker.getParsedRequest().messages.map((message, timestamp) => ({
+              ...message,
+              timestamp,
+            }))
             : ingress.executor.input.messages.map((message) => ({
               id: message.id,
               role: message.role,
