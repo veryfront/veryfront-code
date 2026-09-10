@@ -26,6 +26,10 @@ import {
   RUN_EVENT_PAYLOAD_SCHEMAS,
 } from "veryfront/run-events";
 
+const apiUrl = "https://api.veryfront.example";
+const runId = "<RUN_ID>";
+const token = "<TOKEN>";
+
 const response = await fetch(`${apiUrl}/runs/${runId}/events?format=typed`, {
   headers: { Authorization: `Bearer ${token}` },
 });
@@ -34,10 +38,12 @@ const body = await response.json() as { data: unknown[] };
 for (const raw of body.data) {
   const row = parseTypedRunEventRow(raw);
   if (!isRunEventType(row.event_type)) continue;
-  const result = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type]?.().safeParse(row.payload);
-  if (result?.success) {
-    console.log(row.event_type, row.span_id, result.data);
-  }
+  // The sixteen control-plane `AGENT_RUN_*` types have no payload schema:
+  // the API owns their shape and sanitizes it before a reader ever sees
+  // it, so fall back to the already-validated raw payload for those.
+  const schema = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type];
+  const result = schema?.().safeParse(row.payload);
+  console.log(row.event_type, row.span_id, result?.success ? result.data : row.payload);
 }
 ```
 
