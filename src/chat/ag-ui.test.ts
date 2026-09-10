@@ -16,6 +16,7 @@ import {
   buildUrlCitedEvent,
   NATIVE_RUN_EVENTS,
 } from "#veryfront/agent/ag-ui/native-run-events.ts";
+import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import { AG_UI_EVENT_TIMING_STAMP_FIELDS } from "#veryfront/agent/ag-ui/encoder.ts";
 import { readConversationRunLifecycleFrames } from "#veryfront/agent/conversation/legacy-run-read-adapter.ts";
 import {
@@ -695,6 +696,44 @@ describe("chat/ag-ui", () => {
       },
     ]);
   });
+  for (const schemaBacked of [true, false]) {
+    for (const validationMode of ["strict", "permissive"] as const) {
+      it(`accepts optional tool names with schema=${schemaBacked} in ${validationMode} mode`, () => {
+        ensureTestSchemaValidator();
+        const frames = [{}, { toolCallName: null }, { toolCallName: "create_file" }].map(
+          (name) => {
+            const payload = { toolCallId: "tool-1", status: "pending_input", ...name };
+            return {
+              payload,
+              wire: new TextDecoder().decode(formatAgUiEvent("ToolCallStatusChanged", payload)),
+            };
+          },
+        );
+        if (!schemaBacked) unregister("SchemaValidator");
+        try {
+          for (const { payload, wire } of frames) {
+            const state = createAgUiChatEventDecoderState({ validationMode });
+            assertEquals(
+              decodeAgUiSseChunk(state, wire).events.flatMap((entry) => entry.chatEvents),
+              [{ type: "data-tool-call-status", data: payload }],
+            );
+          }
+          const invalid = 'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1",' +
+            '"status":"pending_input","toolCallName":42}\n\n';
+          const decodeInvalid = () =>
+            decodeAgUiSseChunk(
+              createAgUiChatEventDecoderState({ validationMode }),
+              invalid,
+            );
+          if (validationMode === "strict") assertThrows(decodeInvalid);
+          else assertEquals(decodeInvalid().events, []);
+        } finally {
+          ensureTestSchemaValidator();
+        }
+      });
+    }
+  }
+
   it("decodes native run event frames into the chunks their custom twins produced", () => {
     ensureTestSchemaValidator();
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });

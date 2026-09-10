@@ -530,7 +530,7 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       payload: v.object({
         toolCallId: v.string().min(1),
         status: v.string().min(1),
-        toolCallName: v.string().nullable(),
+        toolCallName: v.string().nullable().optional(),
       }).passthrough(),
     }),
     v.object({
@@ -694,11 +694,11 @@ function isValidAgUiPayload(
       return hasStringField(payload, "toolCallId");
 
     case "ToolCallStatusChanged":
-      // toolCallName is required and nullable in the API variant, so the two
-      // decode paths agree only if this one checks that it is present.
+      // Match the optional, nullable name accepted by the internal SSE formatter.
       return hasStringField(payload, "toolCallId") &&
         hasStringField(payload, "status") &&
-        (payload.toolCallName === null || typeof payload.toolCallName === "string");
+        (payload.toolCallName === undefined || payload.toolCallName === null ||
+          typeof payload.toolCallName === "string");
 
     case "InputRequestCreated":
     case "InputRequestUpdated":
