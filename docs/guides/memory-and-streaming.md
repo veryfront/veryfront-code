@@ -331,13 +331,22 @@ const body = await response.json() as { data: unknown[] };
 
 for (const raw of body.data) {
   const row = parseTypedRunEventRow(raw);
-  if (!isRunEventType(row.event_type)) continue; // a type this build predates
-  const result = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type]?.().safeParse(row.payload);
-  if (result?.success) {
-    console.log(row.event_type, row.span_id, result.data);
+  if (!isRunEventType(row.event_type)) {
+    console.log(row.event_type, row.span_id, row.payload); // a type this build predates
+    continue;
   }
+  // The sixteen control-plane `AGENT_RUN_*` types have no payload schema (see
+  // "What the module exports" below), so look one up rather than assume one
+  // exists, and render the already-validated payload as-is when it does not.
+  const schema = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type];
+  const result = schema?.().safeParse(row.payload);
+  console.log(row.event_type, row.span_id, result?.success ? result.data : row.payload);
 }
 ```
+
+Render or pass through every row rather than filtering to the ones with a
+payload schema: skipping unmatched rows would silently drop the control-plane
+types below, and the durable log has no "irrelevant" row to discard.
 
 What the module exports:
 
@@ -351,7 +360,10 @@ What the module exports:
   (GraphQL, MCP, and the conversation events route) key the payload as `event`
   rather than `payload`; use `getConversationTypedRunEventRowSchema` there.
 - One payload schema per type, such as `getUrlCitedPayloadSchema`, plus
-  `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime.
+  `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime. The exception
+  is the sixteen control-plane `AGENT_RUN_*` types: the API owns their shape
+  and sanitizes it before a reader ever sees it, so `RUN_EVENT_PAYLOAD_SCHEMAS`
+  has no entry for them and `row.payload` is already the value to use.
 
 Every schema is lazy and materializes through the registered `SchemaValidator`
 contract. Inside a Veryfront app, bootstrap registers it before handlers run.

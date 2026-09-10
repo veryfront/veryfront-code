@@ -57,10 +57,23 @@ export type RunEventEnvelope = InferSchema<ReturnType<typeof getRunEventEnvelope
  * reports the damage rather than dropping the row), so validating the payload
  * strictly at this level would reject rows the contract says to keep. Use
  * `RUN_EVENT_PAYLOAD_SCHEMAS` or a per-type getter for the narrow check.
+ *
+ * `payload.type` always agrees with `event_type`: the API's own typed-event
+ * contract requires the field and keeps it in sync with the envelope's type
+ * before a row is ever served, so a row where they disagree is malformed
+ * input, not a variant to tolerate. Rejecting that disagreement here means a
+ * consumer never has to choose which discriminant to trust.
  */
 export const getTypedRunEventRowSchema = defineRunEventSchema((v) =>
   getRunEventEnvelopeSchema().extend({
     payload: v.object({ type: v.string().min(1) }).passthrough(),
+  }).superRefine((row, ctx) => {
+    if (row.event_type !== row.payload.type) {
+      ctx.addIssue({
+        message: `payload.type "${row.payload.type}" does not match event_type "${row.event_type}"`,
+        path: ["payload", "type"],
+      });
+    }
   })
 );
 
@@ -78,6 +91,13 @@ export type TypedRunEventRow = InferSchema<ReturnType<typeof getTypedRunEventRow
 export const getConversationTypedRunEventRowSchema = defineRunEventSchema((v) =>
   getRunEventEnvelopeSchema().extend({
     event: v.object({ type: v.string().min(1) }).passthrough(),
+  }).superRefine((row, ctx) => {
+    if (row.event_type !== row.event.type) {
+      ctx.addIssue({
+        message: `event.type "${row.event.type}" does not match event_type "${row.event_type}"`,
+        path: ["event", "type"],
+      });
+    }
   })
 );
 

@@ -110,4 +110,49 @@ describe("run-events/envelope", () => {
         .success,
     );
   });
+
+  it("accepts a run-scoped row whose payload.type agrees with event_type", () => {
+    const row = parseTypedRunEventRow({ ...ENVELOPE, payload: PAYLOAD });
+    assertEquals(row.event_type, row.payload.type);
+  });
+
+  it("rejects a run-scoped row whose payload.type disagrees with event_type", () => {
+    assertThrows(() =>
+      parseTypedRunEventRow({
+        ...ENVELOPE,
+        event_type: "URL_CITED",
+        payload: { ...PAYLOAD, type: "RUN_ERROR" },
+      })
+    );
+  });
+
+  it("throws on a run-scoped row whose payload has no type", () => {
+    assertThrows(() =>
+      parseTypedRunEventRow({ ...ENVELOPE, payload: { ...PAYLOAD, type: undefined } })
+    );
+  });
+
+  it("accepts a conversation-scoped row whose event.type agrees with event_type", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, event: PAYLOAD });
+    assertEquals(row.event_type, row.event.type);
+  });
+
+  it("rejects a conversation-scoped row whose event.type disagrees with event_type", () => {
+    assertThrows(() =>
+      getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        event_type: "URL_CITED",
+        event: { ...PAYLOAD, type: "RUN_ERROR" },
+      })
+    );
+  });
+
+  it("throws on a conversation-scoped row whose event has no type", () => {
+    assertThrows(() =>
+      getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        event: { ...PAYLOAD, type: undefined },
+      })
+    );
+  });
 });
