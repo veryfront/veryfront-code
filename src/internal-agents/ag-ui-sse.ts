@@ -176,6 +176,15 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
       url: v.unknown().optional(),
       filename: v.unknown().optional(),
     }).passthrough(),
+    // The eighth native run event wire name (see native-run-events.ts):
+    // an API-catalog diagnostics record with no AG-UI equivalent. `value`
+    // is unconstrained JSON per the catalog's `requiredUnknown`, so it is
+    // passed through unvalidated the same way Custom's own `value` is.
+    RuntimeEventRecorded: withTiming({
+      runtime: v.string().min(1),
+      kind: v.string().min(1),
+      value: v.unknown(),
+    }).passthrough(),
   };
   return schemas;
 }
@@ -216,7 +225,8 @@ type AgUiEventName =
   | "ChildRunStatusChanged"
   | "UrlCited"
   | "DocumentCited"
-  | "FileAttached";
+  | "FileAttached"
+  | "RuntimeEventRecorded";
 
 export function formatAgUiEvent(event: string, payload: Record<string, unknown>): Uint8Array {
   const eventNameMatch = AG_UI_EVENT_NAME_PATTERN.exec(event);

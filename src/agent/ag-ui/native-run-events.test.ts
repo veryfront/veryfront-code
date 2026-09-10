@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunStatusChangedEvent,
@@ -7,6 +7,7 @@ import {
   buildFileAttachedEvent,
   buildInputRequestLifecycleEvent,
   buildNativeRunEventFrame,
+  buildRuntimeEventRecordedEvent,
   buildToolCallStatusChangedEvent,
   buildUrlCitedEvent,
   isNativeRunEventName,
@@ -57,6 +58,7 @@ describe("agent/ag-ui-native-run-events", () => {
       "UrlCited",
       "DocumentCited",
       "FileAttached",
+      "RuntimeEventRecorded",
     ]);
     assertEquals(
       Object.values(nativeRunEventTypes),
@@ -69,7 +71,7 @@ describe("agent/ag-ui-native-run-events", () => {
     );
   });
 
-  it("accepts the six legacy custom names and rejects everything else", () => {
+  it("accepts the seven legacy custom names and rejects everything else", () => {
     for (
       const name of [
         "tool-call-status",
@@ -78,6 +80,7 @@ describe("agent/ag-ui-native-run-events", () => {
         "source-url",
         "source-document",
         "file",
+        "veryfront.runtime_context",
       ]
     ) {
       assertEquals(isNativeRunEventName(name), true, name);
@@ -423,6 +426,55 @@ describe("agent/ag-ui-native-run-events", () => {
     }
   });
 
+  it("builds both emission shapes for a runtime event recorded", () => {
+    const runtimeContext = {
+      currentTimeUtc: "2026-09-09T00:00:00.000Z",
+      currentDateUtc: "2026-09-09",
+      runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+    };
+    assertEquals(
+      buildRuntimeEventRecordedEvent({
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: runtimeContext,
+      }),
+      {
+        live: {
+          event: "RuntimeEventRecorded",
+          payload: { runtime: "veryfront", kind: "runtime_context", value: runtimeContext },
+        },
+        durable: {
+          runtime: "veryfront",
+          kind: "runtime_context",
+          value: runtimeContext,
+          type: "RUNTIME_EVENT_RECORDED",
+        },
+      },
+    );
+  });
+
+  it("rejects a runtime event recorded with an invalid runtime, kind, or value", () => {
+    // `runtime`/`kind` are typed `string`, which accepts empty text, and
+    // `value` is typed `unknown`, which accepts `undefined`; but the API
+    // catalog's RUNTIME_EVENT_RECORDED variant requires non-empty strings
+    // and a JSON value. This builder has callers outside this module's own
+    // dispatcher (e.g. a future codex-runtime producer), so it must reject
+    // those on its own rather than trusting the caller's static types.
+    assertThrows(() =>
+      buildRuntimeEventRecordedEvent({ runtime: "", kind: "runtime_context", value: {} })
+    );
+    assertThrows(() =>
+      buildRuntimeEventRecordedEvent({ runtime: "veryfront", kind: "", value: {} })
+    );
+    assertThrows(() =>
+      buildRuntimeEventRecordedEvent({
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: undefined,
+      })
+    );
+  });
+
   it("routes every legacy name through the dispatcher", () => {
     assertEquals(
       buildNativeRunEventFrame({
@@ -461,6 +513,40 @@ describe("agent/ag-ui-native-run-events", () => {
       })?.live.event,
       "FileAttached",
     );
+    assertEquals(
+      buildNativeRunEventFrame({
+        name: "veryfront.runtime_context",
+        value: {
+          currentTimeUtc: "2026-09-09T00:00:00.000Z",
+          currentDateUtc: "2026-09-09",
+          runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+        },
+      }),
+      {
+        live: {
+          event: "RuntimeEventRecorded",
+          payload: {
+            runtime: "veryfront",
+            kind: "runtime_context",
+            value: {
+              currentTimeUtc: "2026-09-09T00:00:00.000Z",
+              currentDateUtc: "2026-09-09",
+              runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+            },
+          },
+        },
+        durable: {
+          runtime: "veryfront",
+          kind: "runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
+          type: "RUNTIME_EVENT_RECORDED",
+        },
+      },
+    );
   });
 
   it("returns null for a name or value that has no native frame", () => {
@@ -493,6 +579,11 @@ describe("agent/ag-ui-native-run-events", () => {
       }),
       null,
       "a file-change value is FILES_CHANGED on the legacy path, never FileAttached",
+    );
+    assertEquals(
+      buildNativeRunEventFrame({ name: "veryfront.runtime_context", value: null }),
+      null,
+      "a non-record value cannot become a RuntimeEventRecorded payload",
     );
   });
 });

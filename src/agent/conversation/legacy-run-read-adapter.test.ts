@@ -18,6 +18,7 @@ import {
   buildDocumentCitedEvent,
   buildFileAttachedEvent,
   buildInputRequestLifecycleEvent,
+  buildRuntimeEventRecordedEvent,
   buildToolCallStatusChangedEvent,
   buildUrlCitedEvent,
   NATIVE_RUN_EVENTS,
@@ -1569,6 +1570,27 @@ describe("conversation run lifecycle read adapter", () => {
           value: { type: "file", mediaType: "text/plain", path: "notes.txt" },
         },
       },
+      {
+        description: "RUNTIME_EVENT_RECORDED",
+        native: buildRuntimeEventRecordedEvent({
+          runtime: "veryfront",
+          kind: "runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
+        }).durable,
+        customTwin: {
+          type: "CUSTOM",
+          name: "veryfront.runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
+        },
+      },
     ];
 
     it("covers every native type with a legacy reconstruction case", () => {
@@ -1596,6 +1618,28 @@ describe("conversation run lifecycle read adapter", () => {
       const { native, customTwin } = cases.find((entry) => entry.description === "URL_CITED")!;
       assertEquals(customFramesFor(1, native), customFramesFor(1, customTwin));
     });
+
+    it(
+      "does not reconstruct a non-veryfront RUNTIME_EVENT_RECORDED as the runtime_context twin",
+      () => {
+        // RUNTIME_EVENT_RECORDED is the API catalog's generic diagnostics
+        // shape and has other producers (e.g. the codex runtime) with other
+        // runtime/kind pairs. Only the exact veryfront/runtime_context pair
+        // may unwrap to the legacy `veryfront.runtime_context` CUSTOM twin;
+        // every other pair must surface as its own generic custom record
+        // instead of a false runtime_context.
+        const native = buildRuntimeEventRecordedEvent({
+          runtime: "codex",
+          kind: "stderr",
+          value: { line: "boom" },
+        }).durable;
+
+        assertEquals(
+          customFramesFor(2, { ...native, ...v2Envelope(1, "codex-runtime-event") }),
+          [{ type: "custom", name: "codex.stderr", data: { line: "boom" } }],
+        );
+      },
+    );
 
     it("reads a TOOL_CALL_STATUS_CHANGED durable record as its CUSTOM twin on the version 1 reader", () => {
       const { native, customTwin } = cases.find((entry) =>

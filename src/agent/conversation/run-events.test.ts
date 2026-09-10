@@ -277,6 +277,32 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes native runtime event chunks as native durable records", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(
+      encoder.encode({
+        type: "data-veryfront.runtime_context",
+        data: {
+          currentTimeUtc: "2026-09-09T00:00:00.000Z",
+          currentDateUtc: "2026-09-09",
+          runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+        },
+      }),
+      [
+        {
+          type: conversationRunEventTypes.runtimeEventRecorded,
+          runtime: "veryfront",
+          kind: "runtime_context",
+          value: {
+            currentTimeUtc: "2026-09-09T00:00:00.000Z",
+            currentDateUtc: "2026-09-09",
+            runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+          },
+        },
+      ],
+    );
+  });
+
   it("keeps state chunks and unknown data names custom", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

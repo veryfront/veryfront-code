@@ -129,6 +129,7 @@ const AG_UI_WIRE_EVENT_NAMES = [
   "UrlCited",
   "DocumentCited",
   "FileAttached",
+  "RuntimeEventRecorded",
   "RunFinished",
   "RunError",
 ] as const;
@@ -595,6 +596,14 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       }).passthrough(),
     }),
     v.object({
+      eventName: v.literal("RuntimeEventRecorded"),
+      payload: v.object({
+        runtime: v.string().min(1),
+        kind: v.string().min(1),
+        value: v.unknown(),
+      }).passthrough(),
+    }),
+    v.object({
       eventName: v.literal("RunFinished"),
       payload: v.object({ metadata: getAgUiRunFinishedMetadataSchema().optional() }),
     }),
@@ -724,6 +733,10 @@ function isValidAgUiPayload(
 
     case "FileAttached":
       return hasStringField(payload, "mediaType");
+
+    case "RuntimeEventRecorded":
+      return hasStringField(payload, "runtime") && hasStringField(payload, "kind") &&
+        "value" in payload;
 
     case "ToolCallResult":
       return hasStringField(payload, "toolCallId") &&
@@ -1089,6 +1102,34 @@ function mapWireEventToChatEvents(
         url,
         mediaType,
         ...(typeof filename === "string" ? { filename } : {}),
+      }];
+    }
+
+    case "RuntimeEventRecorded": {
+      const { runtime, kind, value } = wireEvent.payload;
+      if (runtime === "veryfront" && kind === "runtime_context") {
+        // The Custom twin's data chunk carried the bare runtime context value,
+        // not the API's { runtime, kind, value } wrapper -- veryfront-code's
+        // one producer today (runtime/index.ts's #streamWithinTurn) always
+        // sent the whole snapshot object as `data`, so unwrap the same way
+        // legacy-run-read-adapter.ts's durable twin does.
+        return [{
+          type: "data-veryfront.runtime_context",
+          data: value,
+        }];
+      }
+
+      // RUNTIME_EVENT_RECORDED is the API catalog's generic diagnostics
+      // shape and accepts any non-empty runtime/kind pair (the catalog's own
+      // description mentions codex thread/session events as a future
+      // producer), so any pair other than veryfront/runtime_context is not
+      // this repo's legacy twin. Expose it as its own generic chat chunk the
+      // same way the "Custom" case above falls back to `data-${name}` for an
+      // unrecognized custom name, instead of mislabeling it as Veryfront's
+      // runtime context.
+      return [{
+        type: `data-${runtime}.${kind}`,
+        data: value,
       }];
     }
 

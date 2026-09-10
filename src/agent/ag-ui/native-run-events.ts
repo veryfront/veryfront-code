@@ -1,7 +1,9 @@
+import { getJsonValueSchema, getNonEmptyStringSchema } from "#veryfront/schemas/index.ts";
+
 /**
  * Native run event vocabulary shared by every emission path.
  *
- * Veryfront Code used to wrap these seven occurrences in an AG-UI `Custom`
+ * Veryfront Code used to wrap these eight occurrences in an AG-UI `Custom`
  * frame and let the API translate the custom name back into a type. The API
  * now accepts the native names, so this module owns the list once: the wire
  * name a live SSE frame carries, the stored type a durable record carries, and
@@ -45,6 +47,11 @@ export const NATIVE_RUN_EVENTS = [
     legacyCustomName: "source-document",
   },
   { wireName: "FileAttached", storedType: "FILE_ATTACHED", legacyCustomName: "file" },
+  {
+    wireName: "RuntimeEventRecorded",
+    storedType: "RUNTIME_EVENT_RECORDED",
+    legacyCustomName: "veryfront.runtime_context",
+  },
 ] as const satisfies readonly NativeRunEventDefinition[];
 
 type NativeRunEventEntry = (typeof NATIVE_RUN_EVENTS)[number];
@@ -78,6 +85,7 @@ export const nativeRunEventTypes = {
   urlCited: "URL_CITED",
   documentCited: "DOCUMENT_CITED",
   fileAttached: "FILE_ATTACHED",
+  runtimeEventRecorded: "RUNTIME_EVENT_RECORDED",
 } as const;
 
 /** Stored type for each native wire name, for SSE readers. */
@@ -136,6 +144,7 @@ const CHILD_RUN_STATUS_CHANGED = NATIVE_RUN_EVENTS[3];
 const URL_CITED = NATIVE_RUN_EVENTS[4];
 const DOCUMENT_CITED = NATIVE_RUN_EVENTS[5];
 const FILE_ATTACHED = NATIVE_RUN_EVENTS[6];
+const RUNTIME_EVENT_RECORDED = NATIVE_RUN_EVENTS[7];
 
 // Keep application fields from overriding the native type or transport timing
 // when an open custom value becomes a flat native payload.
@@ -330,6 +339,39 @@ export function buildFileAttachedEvent(source: Record<string, unknown>): NativeR
   return toFrame(FILE_ATTACHED, payload);
 }
 
+/**
+ * Fields the API catalog's `RUNTIME_EVENT_RECORDED` variant requires:
+ * `runtime` and `kind` non-empty strings, `value` any JSON value but never
+ * `undefined`. This is the catch-all diagnostics type for a runtime-native
+ * event with no AG-UI equivalent (the API catalog's own description
+ * mentions codex thread/session events as a future producer), so unlike the
+ * other seven builders this one does not derive its shape from a fixed
+ * source chunk -- the caller supplies the catalog fields directly.
+ */
+export interface RuntimeEventRecordedInput {
+  runtime: string;
+  kind: string;
+  value: unknown;
+}
+
+/**
+ * Build the runtime event recorded frames.
+ *
+ * Validates against the catalog's own constraints -- `runtime`/`kind` non-empty
+ * strings, `value` a bounded JSON value -- rather than trusting the caller's
+ * static `string`/`unknown` types, since this builder (unlike the other seven)
+ * has callers outside this module's own dispatcher that supply the catalog
+ * fields directly.
+ */
+export function buildRuntimeEventRecordedEvent(
+  input: RuntimeEventRecordedInput,
+): NativeRunEventFrame {
+  const runtime = getNonEmptyStringSchema().parse(input.runtime);
+  const kind = getNonEmptyStringSchema().parse(input.kind);
+  const value = getJsonValueSchema().parse(input.value);
+  return toFrame(RUNTIME_EVENT_RECORDED, { runtime, kind, value });
+}
+
 /** Routing input for one custom event name and its value. */
 export interface NativeRunEventRoutingInput {
   name: string;
@@ -389,6 +431,18 @@ export function buildNativeRunEventFrame(
           readString(record.mediaType)
         ? buildFileAttachedEvent(record)
         : null;
+    case "veryfront.runtime_context":
+      // The one producer (runtime/index.ts's #streamWithinTurn) always sends
+      // the whole AgentRunRuntimeContext snapshot as the chunk's `data`, so
+      // `record` (already guarded non-null above) is the payload's `value`
+      // field wholesale; `runtime`/`kind` are this producer's own constants,
+      // not read off the value, since this legacy name only ever carried the
+      // context object itself.
+      return buildRuntimeEventRecordedEvent({
+        runtime: "veryfront",
+        kind: "runtime_context",
+        value: record,
+      });
     default:
       return null;
   }

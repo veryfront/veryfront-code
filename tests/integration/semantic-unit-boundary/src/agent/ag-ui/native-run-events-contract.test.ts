@@ -9,6 +9,7 @@ import {
   buildDocumentCitedEvent,
   buildFileAttachedEvent,
   buildInputRequestLifecycleEvent,
+  buildRuntimeEventRecordedEvent,
   buildToolCallStatusChangedEvent,
   buildUrlCitedEvent,
   NATIVE_RUN_EVENTS,
@@ -25,7 +26,7 @@ const FIXTURE_URL = new URL(
 // The veryfront-api copy of this file pins the same digest, which is what makes
 // the two repositories byte-identical rather than merely similar.
 const NATIVE_RUN_EVENTS_FIXTURE_SHA256 =
-  "a4e3e51168fd6d51d47b5baeb0579be892d4189c9f1231f34853b99744e41287";
+  "864384ebc620f2f0894390b45bd31635f757a230992da92351986cb0d0e53f94";
 
 const INPUT_REQUEST = {
   id: "8f2f1f52-0f2a-4a3a-9b0f-0f2a4a3a9b0f",
@@ -96,6 +97,15 @@ function buildSamples(): NativeRunEventFrame[] {
       url: "https://cdn.example.com/report.pdf",
       mediaType: "application/pdf",
       filename: "report.pdf",
+    }),
+    buildRuntimeEventRecordedEvent({
+      runtime: "veryfront",
+      kind: "runtime_context",
+      value: {
+        currentTimeUtc: "2026-09-09T00:00:00.000Z",
+        currentDateUtc: "2026-09-09",
+        runStartedAtUtc: "2026-09-09T00:00:00.000Z",
+      },
     }),
   ];
 }
