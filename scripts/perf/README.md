@@ -41,6 +41,8 @@ Negative change means lower latency. `summary.md` provides compact context for
 an agent that does not need the full profile. Absolute profile paths and URL
 queries are removed before artifacts are written. Generated module paths use
 `[generated]` because runtime cache filenames can embed absolute source paths.
+Hotspot aggregation retains script and column identity so sanitized URLs do not
+combine unrelated functions.
 
 Run `deno task perf:check` after changing the harness. It checks report types,
 lint, formatting, and calculation tests. Run

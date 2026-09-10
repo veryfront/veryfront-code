@@ -81,6 +81,27 @@ describe("performance reports", () => {
     assertEquals(serialized.includes("private"), false);
     assertStringIncludes(serialized, "[external]");
   });
+  it("keeps distinct scripts and columns separate after sanitization", () => {
+    const collision = structuredClone(profile);
+    for (const node of collision.nodes.slice(1)) {
+      Object.assign(node.callFrame, {
+        functionName: "render",
+        url: "https://example.invalid/runtime.js",
+        lineNumber: 28,
+        columnNumber: 10,
+      });
+    }
+    const hotspots = () =>
+      summarizeProfile(sanitizeProfile(collision, "file:///workspace/"))
+        .hotspots.filter((item) => item.name === "render");
+    assertEquals(hotspots().map((item) => item.selfMs), [9, 1]);
+    collision.nodes[2]!.callFrame.scriptId =
+      collision.nodes[1]!.callFrame.scriptId;
+    collision.nodes[2]!.callFrame.columnNumber = 20;
+    assertEquals(hotspots().map((item) => item.selfMs), [9, 1]);
+    collision.nodes[2]!.callFrame.columnNumber = 10;
+    assertEquals(hotspots().map((item) => item.selfMs), [10]);
+  });
   it("redacts generated module paths that embed absolute source paths", () => {
     const generated = structuredClone(profile);
     generated.nodes[1]!.callFrame.url =

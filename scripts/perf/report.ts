@@ -66,9 +66,10 @@ export function summarizeProfile(profile: CpuProfile) {
     { name: string; location: string; selfMs: number; totalMs: number }
   >();
   for (const node of profile.nodes) {
-    const { functionName, url, lineNumber } = node.callFrame;
+    const { functionName, url, lineNumber, columnNumber, scriptId } =
+      node.callFrame;
     const location = url ? `${url}:${lineNumber + 1}` : "[runtime]";
-    const key = `${functionName}\0${location}`;
+    const key = `${scriptId}\0${lineNumber}\0${columnNumber}\0${functionName}`;
     const item = functions.get(key) ??
       { name: functionName || "(anonymous)", location, selfMs: 0, totalMs: 0 };
     item.selfMs += own.get(node.id) ?? 0;
