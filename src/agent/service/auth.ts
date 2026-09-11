@@ -2,7 +2,8 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
-import { readOwnDataProperty } from "../runtime/data-property-descriptor.ts";
+import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
+import { isSafeHostedJwtVerificationEnvironment } from "./jwt-verification-environment.ts";
 
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
@@ -494,8 +495,10 @@ export function createHostedServiceAuth(
   async function verifyRunCancellationToken(
     input: { token: string; runId: string },
   ): Promise<boolean> {
+    if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
     const config = options.getConfig();
     try {
+      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
       const token = readOwnDataProperty(input, "token", "Cancellation request");
       const runId = readOwnDataProperty(input, "runId", "Cancellation request");
       const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
@@ -510,10 +513,11 @@ export function createHostedServiceAuth(
         false,
       );
       const authProvider = await getAuthProvider(options);
-      if (!authProvider) return false;
+      if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return false;
       const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
         algorithms: ["RS256"],
       });
+      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
       const claimRunId = readOwnDataProperty(claims, "runId", "Cancellation claims");
       const userId = readOwnDataProperty(claims, "userId", "Cancellation claims");
       const exp = readOwnDataProperty(claims, "exp", "Cancellation claims");

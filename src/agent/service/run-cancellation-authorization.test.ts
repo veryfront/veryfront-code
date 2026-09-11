@@ -40,6 +40,34 @@ function authForClaims(claims: TokenPayload) {
 }
 
 describe("hosted cancellation token authorization", () => {
+  it("rejects thenable request inheritance before invoking the JWT provider", async () => {
+    let verifications = 0;
+    let thenReads = 0;
+    const inherited = Object.create(null);
+    Object.defineProperty(inherited, "then", {
+      get() {
+        thenReads++;
+        return () => {};
+      },
+    });
+    const input = { token: "signed-token", runId };
+    Object.setPrototypeOf(input, inherited);
+    const auth = createHostedServiceAuth({
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        OAUTH_PUBLIC_KEY: "public-key",
+      }),
+      authProvider: {
+        verifyWithPublicKey: () => {
+          verifications++;
+          return Promise.resolve(globalClaims);
+        },
+      },
+    });
+    assertEquals(await auth.verifyRunCancellationToken(input), false);
+    assertEquals(verifications, 0);
+    assertEquals(thenReads, 0);
+  });
   for (const key of ["OAUTH_PUBLIC_KEY", "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID"]) {
     it(`does not accept inherited ${key} configuration`, async () => {
       const config = {
@@ -290,6 +318,36 @@ describe("hosted cancellation token authorization", () => {
 });
 
 describe("hosted cancellation route authorization", () => {
+  it("rejects thenable request inheritance before authentication or cancellation", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const signal = tracker.sessionManager.startRun({ runId, threadId: "thread" });
+    let authentications = 0;
+    const routes = createHostedAgentServiceRouteSet({
+      tracker,
+      authenticateRequest: () => {
+        authentications++;
+        return Promise.resolve({ userId: "caller", authToken: "token" });
+      },
+      verifyRunCancellationToken: () => Promise.resolve(true),
+      verifyProjectAccess: () => Promise.resolve({ success: true }),
+      prepareExecution: () => Promise.reject(new Error("Unexpected preparation")),
+      streamExecutionToAgUiResponse: () => new Response(),
+      startDetachedExecution: () => Promise.reject(new Error("Unexpected execution")),
+    });
+    const input = {
+      request: new Request(`https://agent.example.test/api/runs/${runId}`, { method: "DELETE" }),
+      runId,
+    };
+    Object.setPrototypeOf(input, { then() {} });
+    try {
+      const response = await routes.handleDurableChatRunCancelRequest(input);
+      assertEquals(response.status, 403);
+      assertEquals(authentications, 0);
+      assertEquals(signal.aborted, false);
+    } finally {
+      tracker.reset();
+    }
+  });
   for (const allowed of [false, true, undefined]) {
     for (const active of [false, true]) {
       it(`authorizes before cancellation or tombstones (allowed=${allowed}, active=${active})`, async () => {

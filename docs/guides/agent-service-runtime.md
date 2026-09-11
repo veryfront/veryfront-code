@@ -550,6 +550,13 @@ does not grant cancellation. Custom route sets must supply
 collaborator authorization before minting the runtime credential. Request-owned
 AG-UI streams still support cancellation through their request signal.
 
+Cancellation claims and request bindings must be own data properties. The route
+also rejects inherited `then` properties before authentication and rechecks after
+asynchronous verification. This prevents known thenable pollution from replacing
+JWT verification results. These checks do not isolate arbitrary project code
+running in the service process; use a separate trusted broker process for that
+boundary.
+
 The broker owns HTTP authentication, credentials, model and tool authorization,
 and durable persistence. Executor facades call these capabilities through the
 authenticated channel. Closing a runtime revokes its facades; admission remains
