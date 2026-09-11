@@ -269,6 +269,7 @@ export function createAgentServiceRuntime<
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),
     verifyRunEventAppendToken: auth.verifyRunEventAppendToken,
+    verifyRunCancellationToken: auth.verifyRunCancellationToken,
     tracker,
     prepareExecution: options.prepareExecution,
     streamExecutionToAgUiResponse: options.streamExecutionToAgUiResponse,

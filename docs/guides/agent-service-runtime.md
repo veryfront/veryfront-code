@@ -540,6 +540,23 @@ retirement, even when the caller's cancellation signal remains live.
 
 ### Broker composition
 
+The hosted service's `DELETE /api/runs/:runId` route requires verified cancellation
+authority for that exact run before changing execution state or remembering a
+delayed-start cancellation. The default runtime verifies the API's existing signed
+cancellation bearer with its configured public key. A general user token without
+a matching run claim is insufficient, and development decode-only authentication
+does not grant cancellation. Custom route sets must supply
+`verifyRunCancellationToken`; omission returns HTTP 403. The API retains actor and
+collaborator authorization before minting the runtime credential. Request-owned
+AG-UI streams still support cancellation through their request signal.
+
+Cancellation claims and request bindings must be own data properties. The route
+also rejects inherited `then` properties before authentication and rechecks after
+asynchronous verification. This prevents known thenable pollution from replacing
+JWT verification results. These checks do not isolate arbitrary project code
+running in the service process; use a separate trusted broker process for that
+boundary.
+
 The broker owns HTTP authentication, credentials, model and tool authorization,
 and durable persistence. Executor facades call these capabilities through the
 authenticated channel. Closing a runtime revokes its facades; admission remains

@@ -2,8 +2,13 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
+import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
+import { isSafeHostedJwtVerificationEnvironment } from "./jwt-verification-environment.ts";
 
 const ReflectApply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
+const DateNow = Date.now;
+const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
 const HeadersGet = Headers.prototype.get;
 const RegExpExec = RegExp.prototype.exec;
@@ -157,6 +162,25 @@ function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
     expected.every((requiredScope) => scopes.includes(requiredScope));
 }
 
+function hasExactCancellationScopes(scopes: unknown, expected: readonly string[]): boolean {
+  if (!ArrayIsArray(scopes)) return false;
+  if (readOwnDataProperty(scopes, "length", "Cancellation scopes") !== expected.length) {
+    return false;
+  }
+  // JWT arrays must contain each required scope exactly once. Reading descriptors
+  // avoids inherited entries, getters, iterators and overridable array methods.
+  for (let expectedIndex = 0; expectedIndex < expected.length; expectedIndex++) {
+    let matches = 0;
+    for (let index = 0; index < expected.length; index++) {
+      if (readOwnDataProperty(scopes, index, "Cancellation scopes") === expected[expectedIndex]) {
+        matches++;
+      }
+    }
+    if (matches !== 1) return false;
+  }
+  return true;
+}
+
 function hasExactRunEventWriterScopes(payload: TokenPayload): boolean {
   const claims = payload as TokenPayload & { scope?: unknown; scopes?: unknown };
   const isLegacy = claims.scopes === undefined &&
@@ -178,6 +202,8 @@ export type HostedServiceAuthOptions = {
 
 /** Public API contract for hosted service auth. */
 export type HostedServiceAuth = {
+  /** Verify the API's signed exact-run cancellation bearer; ordinary user tokens are insufficient. */
+  verifyRunCancellationToken: (input: { token: string; runId: string }) => Promise<boolean>;
   authenticateRequest: (
     request: Request,
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
@@ -466,6 +492,65 @@ export function createHostedServiceAuth(
     };
   }
 
+  async function verifyRunCancellationToken(
+    input: { token: string; runId: string },
+  ): Promise<boolean> {
+    if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
+    const config = options.getConfig();
+    try {
+      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
+      const token = readOwnDataProperty(input, "token", "Cancellation request");
+      const runId = readOwnDataProperty(input, "runId", "Cancellation request");
+      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+      if (
+        typeof publicKey !== "string" || !publicKey ||
+        typeof token !== "string" || !token || typeof runId !== "string" || !runId
+      ) return false;
+      const serverId = readOwnDataProperty(
+        config,
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+        "Service config",
+        false,
+      );
+      const authProvider = await getAuthProvider(options);
+      if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return false;
+      const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
+        algorithms: ["RS256"],
+      });
+      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
+      const claimRunId = readOwnDataProperty(claims, "runId", "Cancellation claims");
+      const userId = readOwnDataProperty(claims, "userId", "Cancellation claims");
+      const exp = readOwnDataProperty(claims, "exp", "Cancellation claims");
+      const scope = readOwnDataProperty(claims, "scope", "Cancellation claims");
+      const tokenUse = readOwnDataProperty(claims, "tokenUse", "Cancellation claims", false);
+      const scopes = readOwnDataProperty(claims, "scopes", "Cancellation claims", false);
+      const actorType = readOwnDataProperty(claims, "actorType", "Cancellation claims", false);
+      const serviceAccountId = readOwnDataProperty(
+        claims,
+        "serviceAccountId",
+        "Cancellation claims",
+        false,
+      );
+      const projectId = readOwnDataProperty(claims, "projectId", "Cancellation claims", false);
+      if (
+        claimRunId !== runId || typeof userId !== "string" || !userId ||
+        typeof exp !== "number" || !NumberIsFinite(exp) ||
+        exp * 1000 <= DateNow() || tokenUse !== undefined || scopes !== undefined
+      ) return false;
+      // Match the two existing mintRuntimeCancellationAuthToken contracts. The
+      // API authorizes the actor before minting this exact-run server authority.
+      if (actorType === "service_account") {
+        return typeof serverId === "string" && !!serverId && serviceAccountId === serverId &&
+          userId === serviceAccountId && typeof projectId === "string" && projectId.length > 0 &&
+          hasExactCancellationScopes(scope, ["projects:read"]);
+      }
+      return actorType === undefined && serviceAccountId === undefined && projectId === undefined &&
+        hasExactCancellationScopes(scope, ["read", "write", "delete"]);
+    } catch {
+      return false;
+    }
+  }
+
   async function verifyRunEventAppendToken(
     input: HostedServiceRunEventAppendTokenInput,
   ): Promise<HostedServiceRunEventAppendTokenResult> {
@@ -595,6 +680,7 @@ export function createHostedServiceAuth(
   }
 
   return {
+    verifyRunCancellationToken,
     authenticateRequest,
     getTokenFromRequest: getHostedServiceTokenFromRequest,
     verifyJwt,
