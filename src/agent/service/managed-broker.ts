@@ -7,7 +7,10 @@ export {
 } from "../hosted/managed-executor-broker.ts";
 export {
   createManagedBrokerPersistence,
+  createManagedBrokerPersistenceFromCapability,
+  createManagedBrokerTerminal,
   type ManagedBrokerOutput,
+  type ManagedBrokerTerminal,
 } from "../hosted/managed-broker-persistence.ts";
 export { createManagedBrokerProjectState } from "../hosted/managed-broker-project-state.ts";
 export { createHostedExecutorAllocatorClient } from "../hosted/executor-allocator-client.ts";
@@ -16,7 +19,9 @@ export {
   type ConnectExecutorTransportOptions,
 } from "../hosted/executor-node-transport.ts";
 export {
+  createManagedAgUiBrokerHandler,
   createManagedBrokerHandler,
+  createManagedDurableBrokerHandler,
   type ManagedExecutorStarter,
 } from "./managed-broker-handler.ts";
 export {

@@ -1,3 +1,4 @@
+import { isResponseLike } from "./response-like.ts";
 import type {
   HostedChatRuntimeFinishPart,
   HostedChatRuntimeStreamInput,
@@ -26,6 +27,18 @@ import {
 } from "./broker-ingress.ts";
 
 import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
+import {
+  type ManagedAgUiAgentIngressResult,
+  type ManagedDurableAgentIngressResult,
+  parseManagedAgUiAgentIngress,
+  type ParseManagedAgUiAgentIngressOptions,
+  parseManagedDurableAgentIngress,
+} from "./managed-hosted-ingress.ts";
+import type { ParseHostedChatRequestOptions } from "#veryfront/agent/hosted/chat-request-parser.ts";
+import {
+  getHostedExecutorOwnerSchema,
+  type HostedExecutorOwner,
+} from "#veryfront/agent/hosted/executor-session-schema.ts";
 
 /** Trusted executor admission boundary with actual settlement notification. */
 export interface ManagedExecutorStarter {
@@ -57,15 +70,167 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   }>;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
+  return createManagedBrokerIngressHandler({
+    ...options,
+    async parse(request, signal) {
+      const runId = parseBrokerSignedRunPath(new URL(request.url).pathname);
+      if (request.method !== "POST" || runId === null) {
+        return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
+      }
+      const ingress = await parseBrokerRuntimeAgentIngress(request, {
+        ...options.resolveIngressOptions({ request, runId }),
+        expectedRunId: runId,
+        signal,
+      });
+      return {
+        ingress,
+        runId,
+        runKey: managedRunKey(ingress),
+        stream: {
+          threadId: ingress.executor.run.conversationId,
+          agentId: ingress.executor.run.agentId,
+          agUiInput: ingress.executor.input,
+        },
+      };
+    },
+  });
+}
+
+type ManagedBrokerPreparation = {
+  start: ManagedExecutorStartInput;
+  messages: HostedChatRuntimeStreamInput["messages"];
+  executionSignal: AbortSignal;
+  output?: ManagedBrokerOutput;
+  cleanup?: () => Promise<void>;
+};
+
+/** Authenticate request-owned AG-UI in the broker before executor admission. */
+export function createManagedAgUiBrokerHandler(options: {
+  broker: ManagedExecutorStarter;
+  owner: HostedExecutorOwner;
+  defaultAgentId: string;
+  signal?: AbortSignal;
+  ingress: ParseManagedAgUiAgentIngressOptions;
+  prepare(input: {
+    ingress: ManagedAgUiAgentIngressResult;
+    signal: AbortSignal;
+  }): Promise<ManagedBrokerPreparation>;
+  onExecutionError?: (error: unknown, runId: string) => void;
+}) {
+  const owner = getHostedExecutorOwnerSchema().parse(options.owner);
+  if (!options.defaultAgentId.trim()) {
+    throw new TypeError("Managed broker default agent is required");
+  }
+  return createManagedBrokerIngressHandler({
+    ...options,
+    responseMode: "sse",
+    async parse(request, signal) {
+      if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ag-ui") {
+        return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
+      }
+      signal.throwIfAborted();
+      // Preserve the streaming body explicitly: Bun otherwise leaves the cloned body unread.
+      const ingress = await parseManagedAgUiAgentIngress(
+        new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
+        options.ingress,
+      );
+      signal.throwIfAborted();
+      if (isResponseLike(ingress)) return ingress;
+      const parsed = ingress.broker.getParsedRequest();
+      if (owner.scopeKind === "project" && parsed.projectId !== owner.projectId) {
+        return Response.json({ errorCode: "BROKER_INGRESS_SCOPE_DENIED" }, { status: 403 });
+      }
+      const runId = parsed.agUiInput.runId;
+      const ownerKey = owner.scopeKind === "project"
+        ? `project:${owner.projectId}`
+        : `global:${owner.serviceName}`;
+      return {
+        ingress,
+        runId,
+        runKey: `${ownerKey}:${parsed.projectId}:${runId}`,
+        stream: {
+          threadId: parsed.agUiInput.threadId,
+          agentId: parsed.agentId ?? options.defaultAgentId,
+          agUiInput: parsed.agUiInput,
+        },
+      };
+    },
+  });
+}
+
+/** Authenticate direct durable requests in the broker before executor admission. */
+export function createManagedDurableBrokerHandler(options: {
+  broker: ManagedExecutorStarter;
+  owner: HostedExecutorOwner;
+  signal?: AbortSignal;
+  ingress: ParseHostedChatRequestOptions;
+  prepare(input: {
+    ingress: ManagedDurableAgentIngressResult;
+    signal: AbortSignal;
+  }): Promise<ManagedBrokerPreparation>;
+  onExecutionError?: (error: unknown, runId: string) => void;
+}) {
+  const owner = getHostedExecutorOwnerSchema().parse(options.owner);
+  if (typeof options.ingress.verifyRunEventAppendToken !== "function") {
+    throw new TypeError("Managed durable broker requires run-event authorization");
+  }
+  return createManagedBrokerIngressHandler({
+    ...options,
+    responseMode: "detached",
+    async parse(request, signal) {
+      if (request.method !== "POST" || new URL(request.url).pathname !== "/api/runs") {
+        return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
+      }
+      if (!request.headers.get("x-veryfront-run-event-token")?.trim()) {
+        return Response.json({ errorCode: "BROKER_INGRESS_AUTH_REQUIRED" }, { status: 401 });
+      }
+      signal.throwIfAborted();
+      // Preserve the streaming body explicitly: Bun otherwise leaves the cloned body unread.
+      const ingress = await parseManagedDurableAgentIngress(
+        new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
+        options.ingress,
+      );
+      signal.throwIfAborted();
+      if (isResponseLike(ingress)) return ingress;
+      const parsed = ingress.broker.getParsedRequest();
+      if (!parsed.durableRootRun || !parsed.conversationId) {
+        return Response.json({ errorCode: "BROKER_INGRESS_INVALID_BODY" }, { status: 400 });
+      }
+      if (owner.scopeKind === "project" && parsed.projectId !== owner.projectId) {
+        return Response.json({ errorCode: "BROKER_INGRESS_SCOPE_DENIED" }, { status: 403 });
+      }
+      const ownerKey = owner.scopeKind === "project"
+        ? `project:${owner.projectId}`
+        : `global:${owner.serviceName}`;
+      return {
+        ingress,
+        runId: parsed.durableRootRun.runId,
+        runKey: `${ownerKey}:${parsed.projectId}:${parsed.durableRootRun.runId}`,
+      };
+    },
+  });
+}
+
+function createManagedBrokerIngressHandler<TIngress>(options: {
+  broker: ManagedExecutorStarter;
+  responseMode: "detached" | "sse";
+  signal?: AbortSignal;
+  parse(request: Request, signal: AbortSignal): Promise<
+    Response | {
+      ingress: TIngress;
+      runId: string;
+      runKey: string;
+      stream?: { threadId: string; agentId: string; agUiInput: AgUiRuntimeRequest };
+    }
+  >;
+  prepare(input: { ingress: TIngress; signal: AbortSignal }): Promise<ManagedBrokerPreparation>;
+  onExecutionError?: (error: unknown, runId: string) => void;
+}) {
   const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
   const lifetime = new AbortController();
   let closed = false;
 
   async function handle(request: Request): Promise<Response> {
-    const runId = parseBrokerSignedRunPath(new URL(request.url).pathname);
-    if (request.method !== "POST" || runId === null) {
-      return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
-    }
     if (closed || options.signal?.aborted) {
       return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
     }
@@ -75,13 +240,10 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
         lifetime.signal,
         ...(options.signal ? [options.signal] : []),
       ]);
-      const ingress = await parseBrokerRuntimeAgentIngress(request, {
-        ...options.resolveIngressOptions({ request, runId }),
-        expectedRunId: runId,
-        signal,
-      });
+      const parsed = await options.parse(request, signal);
+      if (isResponseLike(parsed)) return parsed;
+      const { ingress, runId, runKey } = parsed;
       assertAvailable(closed, signal);
-      const runKey = managedRunKey(ingress);
       const existing = active.get(runKey);
       if (existing) {
         if (!existing.accepted) {
@@ -142,14 +304,13 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
         }
         if (options.responseMode === "sse") {
           try {
+            if (!parsed.stream) throw new TypeError("Managed broker stream context is required");
             return await createSseResponse({
               runtime,
               messages: prepared.messages,
               requestSignal: request.signal,
               runId,
-              threadId: ingress.executor.run.conversationId,
-              agentId: ingress.executor.run.agentId,
-              agUiInput: ingress.executor.input,
+              ...parsed.stream,
               onSettled: () => retire(runtime.settled),
             });
           } catch (error) {

@@ -10,8 +10,10 @@ import { it } from "veryfront/testing/bdd";
 import { initializeExecutorRuntimeContracts } from "veryfront/agent/executor-runtime";
 import {
   connectExecutorTransport,
+  createManagedAgUiBrokerHandler,
   createManagedBrokerHandler,
   createManagedBrokerPersistence,
+  createManagedDurableBrokerHandler,
   createManagedExecutorBroker,
   startNodeManagedAgentBroker,
 } from "veryfront/agent/managed-broker";
@@ -46,11 +48,17 @@ async function bounded(promise, label, ms = 25_000) {
 async function scenario(kind, trusted = false) {
   const privateRuntimeMarker = `synthetic-broker-private-runtime-${randomUUID()}`;
   const steering = kind === "steering";
+  const directAgUi = kind === "direct-ag-ui";
+  const directDurable = kind === "direct-durable";
+  const direct = directAgUi || directDurable;
   const providerToolNames = steering ? ["web_search"] : [];
-  const mode = kind === "sse" || kind === "disconnect" ? "sse" : "detached";
+  const mode = kind === "sse" || kind === "disconnect" || directAgUi ? "sse" : "detached";
   const project = new URL(`./project-${kind}-${trusted ? "trusted" : "remote"}/`, import.meta.url);
   await mkdir(new URL("agents/", project), { recursive: true });
-  await copyFile(new URL("./project-hooks.mjs", import.meta.url), new URL("hooks.mjs", project));
+  await copyFile(
+    new URL("./project-hooks.mjs", import.meta.url),
+    new URL("hooks.mjs", project),
+  );
   await writeFile(
     new URL("veryfront.config.ts", project),
     'import "./hooks.mjs"; export default { ai: { agents: { discovery: { paths: ["agents"] } } } };',
@@ -97,7 +105,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   ));
   const canaries = Object.values(secrets);
   const runId = `run-${kind}`;
-  const path = `/api/control-plane/runs/${runId}/stream`;
+  const path = directAgUi
+    ? "/api/ag-ui"
+    : directDurable
+    ? "/api/runs"
+    : `/api/control-plane/runs/${runId}/stream`;
   const run = {
     runId,
     conversationId,
@@ -110,23 +122,58 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     streamProtocolVersion: 2,
   };
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const body = JSON.stringify({
-    run: {
-      agentServiceId: "synthetic-service",
-      agentId: "probe",
-      conversationId,
-      runId,
-      messageId,
-      inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
-      requestedByUserId: "00000000-0000-4000-8000-000000000006",
-      project: { projectId, projectSlug: "demo-project", runtimeTargetKind: "main_branch" },
-    },
-    messages: [{ id: "user", role: "user", content: "Run the host probe." }],
-    tools: [],
-    context: [],
-    agentSource: source,
-    credentials: { authToken: secrets.api, inferenceAuthToken: secrets.inference },
-  });
+  const body = JSON.stringify(
+    directAgUi
+      ? {
+        threadId: conversationId,
+        runId,
+        messages: [{
+          id: "user",
+          role: "user",
+          content: "Run the host probe.",
+        }],
+        tools: [],
+        context: [],
+      }
+      : directDurable
+      ? {
+        messages: [{
+          id: "user",
+          role: "user",
+          parts: [{ type: "text", text: "Run the host probe." }],
+        }],
+        context: { projectId, branchId: "branch-1", conversationId },
+        durableRootRun: { runId, messageId },
+      }
+      : {
+        run: {
+          agentServiceId: "synthetic-service",
+          agentId: "probe",
+          conversationId,
+          runId,
+          messageId,
+          inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
+          requestedByUserId: "00000000-0000-4000-8000-000000000006",
+          project: {
+            projectId,
+            projectSlug: "demo-project",
+            runtimeTargetKind: "main_branch",
+          },
+        },
+        messages: [{
+          id: "user",
+          role: "user",
+          content: "Run the host probe.",
+        }],
+        tools: [],
+        context: [],
+        agentSource: source,
+        credentials: {
+          authToken: secrets.api,
+          inferenceAuthToken: secrets.inference,
+        },
+      },
+  );
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const nowSeconds = Math.floor(Date.now() / 1000);
   const signed = `${encode({ alg: "EdDSA", typ: "JWT" })}.${
@@ -149,6 +196,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       sign(null, Buffer.from(signed), privateKey).toString("base64url")
     }`,
     "x-veryfront-run-event-token": secrets.events,
+    "x-veryfront-inference-token": secrets.inference,
     "content-type": "application/json",
   };
   const clientAbort = new AbortController();
@@ -158,6 +206,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   const terminalRelease = Promise.withResolvers();
   const finished = Promise.withResolvers();
   const allocations = [];
+  const ingressControls = [];
   const releases = [];
   const persisted = [];
   const completions = [];
@@ -181,7 +230,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   // provider is contacted; credentials are freshly generated synthetic canaries.
   const api = createServer(async (request, response) => {
     try {
-      assertEquals(request.headers.authorization, `Bearer ${secrets.events}`);
+      assertEquals(
+        request.headers.authorization,
+        `Bearer ${request.url.endsWith("/complete") ? secrets.api : secrets.events}`,
+      );
       let raw = "";
       for await (const chunk of request) raw += chunk;
       const data = JSON.parse(raw);
@@ -190,7 +242,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       }
       response.setHeader("content-type", "application/json");
       if (Array.isArray(data.events)) {
-        assertEquals(request.url, `/conversations/${conversationId}/runs/${runId}/events`);
+        assertEquals(
+          request.url,
+          `/conversations/${conversationId}/runs/${runId}/events`,
+        );
         persisted.push(...data.events);
         cursor += data.events.length;
         response.end(JSON.stringify({
@@ -209,7 +264,12 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         completions.push(data);
         terminalEntered.resolve();
         if (kind === "delayed-persistence") await terminalRelease.promise;
-        response.end(JSON.stringify({ completed: true, run: { runId, status: data.status } }));
+        response.end(
+          JSON.stringify({
+            completed: true,
+            run: { runId, status: data.status },
+          }),
+        );
       }
     } catch (error) {
       apiErrors.push(error);
@@ -263,7 +323,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                   input: { path: "AGENTS.md", project_reference: projectId },
                 });
               }
-              controller.enqueue({ type: "finish", finishReason: "tool-calls", totalUsage: usage });
+              controller.enqueue({
+                type: "finish",
+                finishReason: "tool-calls",
+                totalUsage: usage,
+              });
               controller.close();
             } else {
               controller.enqueue({
@@ -276,9 +340,15 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               if (kind === "kill" || kind === "disconnect") {
                 const abort = () => controller.error(new Error("Synthetic provider cancelled"));
                 if (options.abortSignal.aborted) abort();
-                else options.abortSignal.addEventListener("abort", abort, { once: true });
+                else {options.abortSignal.addEventListener("abort", abort, {
+                    once: true,
+                  });}
               } else {
-                controller.enqueue({ type: "finish", finishReason: "stop", totalUsage: usage });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "stop",
+                  totalUsage: usage,
+                });
                 controller.close();
               }
             }
@@ -289,7 +359,40 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
   };
 
   try {
-    handler = createManagedBrokerHandler({
+    const createHandler = directAgUi
+      ? createManagedAgUiBrokerHandler
+      : directDurable
+      ? createManagedDurableBrokerHandler
+      : createManagedBrokerHandler;
+    handler = createHandler({
+      owner,
+      defaultAgentId: "probe",
+      ingress: {
+        authenticate: (request) => {
+          assertEquals(allocations.length, 0);
+          ingressControls.push("authenticate");
+          assertEquals(request.headers.get("authorization"), headers.authorization);
+          return Promise.resolve({
+            userId: "00000000-0000-4000-8000-000000000006",
+            authToken: secrets.api,
+          });
+        },
+        verifyProjectAccess: () => {
+          assertEquals(allocations.length, 0);
+          ingressControls.push("project-access");
+          return Promise.resolve({ success: true });
+        },
+        verifyRunEventAppendToken: (
+          { token, projectId: requestedProject, runId: requestedRun },
+        ) => {
+          assertEquals(allocations.length, 0);
+          ingressControls.push("run-event-token");
+          assertEquals(token, secrets.events);
+          assertEquals(requestedProject, projectId);
+          assertEquals(requestedRun, runId);
+          return Promise.resolve(true);
+        },
+      },
       broker,
       responseMode: mode,
       resolveIngressOptions: () => ({
@@ -307,10 +410,26 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         },
       }),
       prepare({ ingress }) {
-        assertEquals(ingress.privateAuthority.inferenceAuthToken, secrets.inference);
+        if (direct) {
+          assertEquals(
+            ingress.broker.getParsedRequest().authToken,
+            secrets.api,
+          );
+          for (const canary of canaries) {
+            assert(!JSON.stringify(ingress.executor).includes(canary));
+          }
+        } else {
+          assertEquals(
+            ingress.privateAuthority.inferenceAuthToken,
+            secrets.inference,
+          );
+        }
         const persistence = createManagedBrokerPersistence({
           apiUrl,
-          runEventToken: ingress.privateAuthority.runEventToken,
+          runEventToken: direct ? secrets.events : ingress.privateAuthority.runEventToken,
+          completionAuthToken: direct
+            ? ingress.broker.getParsedRequest().authToken
+            : ingress.privateAuthority.apiAuthToken,
           run,
           modelId,
           resolveProvider: () => "openai",
@@ -372,7 +491,9 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                 VERYFRONT_EXECUTOR_INVOCATION_ID: request.invocationId,
                 VERYFRONT_EXECUTOR_GENERATION: "1",
                 VERYFRONT_EXECUTOR_ACTIVE_DEADLINE_SECONDS: "90",
-                VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(request.hardDeadlineAt),
+                VERYFRONT_EXECUTOR_HARD_DEADLINE_AT: String(
+                  request.hardDeadlineAt,
+                ),
                 PORT: "8081",
               },
             });
@@ -510,7 +631,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
                       Promise.resolve([{
                         name: "host_probe",
                         description: "Read a synthetic result",
-                        parameters: { type: "object", properties: {}, additionalProperties: false },
+                        parameters: {
+                          type: "object",
+                          properties: {},
+                          additionalProperties: false,
+                        },
                       }]),
                     executeTool(name) {
                       tools.push(name);
@@ -575,12 +700,17 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
               }
               : {},
           },
-          messages: ingress.executor.input.messages.map((message) => ({
-            id: message.id,
-            role: message.role,
-            timestamp: 1,
-            parts: [{ type: "text", text: message.content }],
-          })),
+          messages: direct
+            ? ingress.broker.getParsedRequest().messages.map((message, timestamp) => ({
+              ...message,
+              timestamp,
+            }))
+            : ingress.executor.input.messages.map((message) => ({
+              id: message.id,
+              role: message.role,
+              timestamp: 1,
+              parts: [{ type: "text", text: message.content }],
+            })),
           executionSignal: executionAbort.signal,
           output: persistence.output,
           async cleanup() {
@@ -599,9 +729,9 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       broker,
       readiness: () => true,
       handlers: {
-        signedStream: handler,
-        durableStart: unsupported,
-        agUi: unsupported,
+        signedStream: direct ? unsupported : handler,
+        durableStart: directDurable ? handler : unsupported,
+        agUi: directAgUi ? handler : unsupported,
         cancel: unsupported,
         resume: unsupported,
       },
@@ -614,7 +744,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       });
       assertEquals(rejected.status, 401);
       await rejected.body?.cancel();
-      assertEquals(allocations.length, 0, "Invalid signatures must not allocate an executor");
+      assertEquals(
+        allocations.length,
+        0,
+        "Invalid signatures must not allocate an executor",
+      );
     }
     const response = await fetch(`${server.url}${path}`, {
       method: "POST",
@@ -640,7 +774,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     await bounded(secondModelCall.promise, "Second model call");
 
     if (kind === "kill") {
-      const duplicate = await fetch(`${server.url}${path}`, { method: "POST", headers, body });
+      const duplicate = await fetch(`${server.url}${path}`, {
+        method: "POST",
+        headers,
+        body,
+      });
       assertEquals(await duplicate.json(), { accepted: true, duplicate: true });
       child.kill("SIGKILL");
     } else if (kind === "disconnect") {
@@ -650,7 +788,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       await bounded(terminalEntered.promise, "Terminal persistence");
       shutdown = server.stop();
       await bounded(broker.closed, "Bounded broker closure");
-      assertEquals(broker.active, 1, "Pending persistence must retain admission");
+      assertEquals(
+        broker.active,
+        1,
+        "Pending persistence must retain admission",
+      );
       let settled = false;
       void broker.settled.then(() => {
         settled = true;
@@ -663,6 +805,14 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     if (kind !== "disconnect") await bounded(reading, "SSE completion");
     const exit = await bounded(childExited, "Executor retirement");
     assertEquals(allocations.length, 1);
+    assertEquals(
+      ingressControls,
+      directDurable
+        ? ["authenticate", "project-access", "run-event-token"]
+        : directAgUi
+        ? ["authenticate"]
+        : [],
+    );
     assertEquals(releases.length, 1);
     assertEquals(transportClosed, true);
     assertEquals(
@@ -670,32 +820,64 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       steering ? ["host_probe", "update_file"] : ["host_probe"],
     );
     assertEquals(modelCalls.length, 2);
-    assert(JSON.stringify(modelCalls[0].prompt).includes("Run the host probe."));
+    assert(
+      JSON.stringify(modelCalls[0].prompt).includes("Run the host probe."),
+    );
     assert(JSON.stringify(modelCalls[1].prompt).includes("host-ok"));
     if (steering) {
-      assertEquals(steeringRefreshes, [["host_probe", "update_file", "web_search"]]);
+      assertEquals(steeringRefreshes, [[
+        "host_probe",
+        "update_file",
+        "web_search",
+      ]]);
       for (const call of modelCalls) {
         assert(call.tools.some((tool) => tool.name === "web_search"));
       }
-      assert(JSON.stringify(modelCalls[1].prompt).includes("Synthetic refreshed steering"));
+      assert(
+        JSON.stringify(modelCalls[1].prompt).includes(
+          "Synthetic refreshed steering",
+        ),
+      );
     }
     assertEquals(apiErrors, []);
     if (kind === "kill") assertEquals(exit.signal, "SIGKILL");
     else assertEquals(exit.code, 0);
     if (mode === "detached") {
-      assertEquals(completions.length, 1, "Exactly one durable terminal update");
-      assertEquals(completions[0].status, kind === "kill" ? "failed" : "completed");
-      if (kind !== "kill") assert(JSON.stringify(persisted).includes("Host tool completed."));
+      assertEquals(
+        completions.length,
+        1,
+        "Exactly one durable terminal update",
+      );
+      assertEquals(
+        completions[0].status,
+        kind === "kill" ? "failed" : "completed",
+      );
+      if (kind !== "kill") {
+        assert(JSON.stringify(persisted).includes("Host tool completed."));
+      }
     } else {
-      assertEquals(completions.length, 0, "SSE persistence is owned by the stream consumer");
-      if (kind === "sse") {
-        assertEquals(wire.split("\n").filter((line) => line === "event: RunFinished").length, 1);
+      assertEquals(
+        completions.length,
+        0,
+        "SSE persistence is owned by the stream consumer",
+      );
+      if (kind === "sse" || directAgUi) {
+        assertEquals(
+          wire.split("\n").filter((line) => line === "event: RunFinished")
+            .length,
+          1,
+        );
         assert(wire.includes("Host tool completed."));
         assert(!wire.includes("event: RunError"));
       }
     }
-    assert(persisted.length > 0, "Canonical model/tool events must reach persistence");
-    const observation = JSON.parse(await readFile(new URL("observations.json", project), "utf8"));
+    assert(
+      persisted.length > 0,
+      "Canonical model/tool events must reach persistence",
+    );
+    const observation = JSON.parse(
+      await readFile(new URL("observations.json", project), "utf8"),
+    );
     assertEquals(observation.pid, child.pid);
     assertEquals(observation.controls, {
       call: true,
@@ -715,7 +897,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       assert(wire.includes(privateRuntimeMarker));
     }
     for (const canary of canaries) {
-      assert(!`${wire}${childOutput}`.includes(canary), "Credential entered executor output");
+      assert(
+        !`${wire}${childOutput}`.includes(canary),
+        "Credential entered executor output",
+      );
     }
     await bounded(shutdown ?? server.stop(), "Server shutdown");
     await bounded(broker.settled, "Broker settlement");
@@ -726,15 +911,31 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     executionAbort.abort();
     child?.kill("SIGKILL");
     await childExited?.catch(() => {});
-    await bounded(shutdown ?? server?.stop() ?? broker.shutdown(), "Cleanup").catch(() => {});
+    await bounded(shutdown ?? server?.stop() ?? broker.shutdown(), "Cleanup")
+      .catch(() => {});
     api.closeAllConnections();
     await new Promise((resolve) => api.close(resolve));
     await rm(project, { recursive: true, force: true });
   }
 }
 
-for (const kind of ["sse", "detached", "kill", "disconnect", "delayed-persistence", "steering"]) {
-  it(`packed managed broker: ${kind}`, { timeout: 90_000 }, () => scenario(kind));
+for (
+  const kind of [
+    "sse",
+    "detached",
+    "kill",
+    "disconnect",
+    "delayed-persistence",
+    "steering",
+    "direct-durable",
+    "direct-ag-ui",
+  ]
+) {
+  it(
+    `packed managed broker: ${kind}`,
+    { timeout: 90_000 },
+    () => scenario(kind),
+  );
 }
 
 it(

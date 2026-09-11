@@ -94,6 +94,7 @@ function createRuntimeAgentInvocationBody(): Record<string, unknown> {
 }
 
 function createRouteSet(input: {
+  authenticateRequest?: (request: Request) => Promise<HostedServiceAuthenticatedRequest | Response>;
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
   runtimeSource?: HostedRuntimeSourceIdentity | null;
@@ -113,13 +114,14 @@ function createRouteSet(input: {
   const routeSet = createHostedAgentServiceRouteSet<{ executionId: string }>({
     tracker,
     runtimeSource: input.runtimeSource === null ? undefined : input.runtimeSource ?? runtimeSource,
-    authenticateRequest: async (request): Promise<HostedServiceAuthenticatedRequest | Response> => {
-      const authorization = request.headers.get("authorization");
-      if (!authorization?.startsWith("Bearer ")) {
-        return Response.json({ errorCode: "UNAUTHENTICATED" }, { status: 401 });
-      }
-      return { authToken: authorization.slice(7), userId: "user-1" };
-    },
+    authenticateRequest: input.authenticateRequest ??
+      (async (request): Promise<HostedServiceAuthenticatedRequest | Response> => {
+        const authorization = request.headers.get("authorization");
+        if (!authorization?.startsWith("Bearer ")) {
+          return Response.json({ errorCode: "UNAUTHENTICATED" }, { status: 401 });
+        }
+        return { authToken: authorization.slice(7), userId: "user-1" };
+      }),
     verifyProjectAccess: async () => ({ success: true }),
     verifyRunCancellationToken: () => Promise.resolve(true),
     verifyRunEventAppendToken: input.verifyRunEventAppendToken ??
@@ -151,6 +153,58 @@ Deno.test("agent service routes expose the default paths", () => {
     "POST /api/control-plane/runs/:runId/stream",
   ]);
 });
+
+for (const route of ["durable", "runtime", "cancel"] as const) {
+  for (const native of [false, true]) {
+    it(`preserves ${route} authentication rejection (native=${native})`, async () => {
+      const rejection = native
+        ? new Response("unauthorized", { status: 401, headers: { "www-authenticate": "Bearer" } })
+        : {
+          status: 401,
+          headers: new Headers({ "www-authenticate": "Bearer" }),
+          bodyUsed: false,
+          text: () => Promise.resolve("unauthorized"),
+          json: () => Promise.resolve({ error: "unauthorized" }),
+        } as Response;
+      let starts = 0;
+      const { routeSet, tracker, preparedRequests } = createRouteSet({
+        authenticateRequest: () => Promise.resolve(rejection),
+        startDetachedExecution: () => {
+          starts++;
+          return Promise.resolve();
+        },
+      });
+      if (route === "cancel") {
+        tracker.sessionManager.startRun({ runId: "run-1", threadId: crypto.randomUUID() });
+      }
+      try {
+        const response = route === "durable"
+          ? await routeSet.handleDurableChatRunExecuteRequest({
+            request: createAuthenticatedRequest("/api/runs", {}),
+          })
+          : route === "runtime"
+          ? await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+            request: createAuthenticatedRequest(
+              "/api/control-plane/runs/run-1/stream",
+              createRuntimeAgentInvocationBody(),
+            ),
+            runId: "run-1",
+          })
+          : await routeSet.handleDurableChatRunCancelRequest({
+            request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),
+            runId: "run-1",
+          });
+        assertEquals(response, rejection);
+        assertEquals(response.status, 401);
+        assertEquals(response.headers.get("www-authenticate"), "Bearer");
+        assertEquals(preparedRequests, []);
+        assertEquals(starts, 0);
+      } finally {
+        if (route === "cancel") assertEquals(tracker.sessionManager.cancelRun("run-1"), true);
+      }
+    });
+  }
+}
 
 Deno.test("agent service routes require auth for AG-UI streams", async () => {
   const { routeSet } = createRouteSet();

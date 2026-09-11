@@ -564,7 +564,21 @@ held until the original work and cleanup settle. This entrypoint requires the
 broker and isolation infrastructure to be configured separately.
 
 Use `veryfront/agent/managed-broker` for the broker composition and signed
-control-plane HTTP adapter. The broker installs invocation grants, describes
+control-plane HTTP adapter. `createManagedDurableBrokerHandler` handles direct
+`POST /api/runs` requests with detached execution and requires run-event token
+verification and output persistence. `createManagedAgUiBrokerHandler` handles
+direct `POST /api/ag-ui` requests with request-owned SSE. Its ingress must supply
+`verifyProjectAccess` for requests containing a project ID. Without that verifier,
+project requests return HTTP 403 before preparation or allocation; projectless
+requests can still proceed. Configure each direct
+adapter's owner in trusted service configuration; project owners reject requests
+for other projects before preparation or allocation. Their `prepare` callbacks
+receive private broker authority and bounded executor data separately. Resolve
+immutable sources and capabilities in the broker before returning the executor
+start input. These adapters share admission, duplicate handling, and retirement
+with the signed adapter.
+
+The broker installs invocation grants, describes
 the selected agent, and prepares the executor before accepting a run. It keeps
 model and tool execution unavailable during preparation. Configure detached
 202 responses or request-owned SSE responses in trusted service configuration.
@@ -579,6 +593,26 @@ callback in `ManagedExecutorStartInput`. The broker binds it after reserving a
 session and before installation or preparation. Scheduled, retry, and explicit
 event-queue writes use that session owner. A persistence timeout can return
 promptly while pool capacity stays reserved until the original write settles.
+
+`createManagedBrokerPersistenceFromCapability` accepts the opaque writer returned
+by managed ingress's `createRunEventWriterCapability`, the canonical run projection,
+and an opaque `terminal` capability created by `createManagedBrokerTerminal`.
+The writer pins event append to its run, API endpoint and transport. The terminal
+factory takes independent completion credentials, the run projection, model and
+provider resolution, and trusted API transport. It keeps the run binding and
+completion operation in private state. Relabeled, cloned, fabricated, and
+other-run terminal handles are rejected before writes.
+
+An event-writer token cannot authenticate the API's `/complete` route. The terminal
+factory uses that route with independent application authority; it does not accept
+arbitrary completion callbacks or implement the detached-completion protocol.
+
+The raw-token `createManagedBrokerPersistence` constructor requires both
+`runEventToken` and a distinct `completionAuthToken` accepted by the API completion
+route. Existing callers must add that completion credential; the constructor
+rejects omission or reuse of the append token. Provider resolution is called without
+exposing private adapter options as its receiver. Both constructors require the
+same session binding and cleanup. Tokens and terminal capabilities remain in the broker.
 
 `startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
 and cancel/resume handlers to a Node server. Supply every handler, the broker
