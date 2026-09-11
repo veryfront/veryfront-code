@@ -1000,6 +1000,7 @@ describe("managed executor broker", () => {
     const persistence = createManagedBrokerPersistence({
       apiUrl: "https://api.example.test",
       runEventToken: "run-event-token",
+      completionAuthToken: "completion-token",
       run: {
         runId: "run-1",
         conversationId,
