@@ -2,8 +2,12 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
+import { readOwnDataProperty } from "../runtime/data-property-descriptor.ts";
 
 const ReflectApply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
+const DateNow = Date.now;
+const NumberIsFinite = Number.isFinite;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")?.get;
 const HeadersGet = Headers.prototype.get;
 const RegExpExec = RegExp.prototype.exec;
@@ -155,6 +159,25 @@ function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
     scopes.every((value): value is string => typeof value === "string") &&
     new Set(scopes).size === scopes.length &&
     expected.every((requiredScope) => scopes.includes(requiredScope));
+}
+
+function hasExactCancellationScopes(scopes: unknown, expected: readonly string[]): boolean {
+  if (!ArrayIsArray(scopes)) return false;
+  if (readOwnDataProperty(scopes, "length", "Cancellation scopes") !== expected.length) {
+    return false;
+  }
+  // JWT arrays must contain each required scope exactly once. Reading descriptors
+  // avoids inherited entries, getters, iterators and overridable array methods.
+  for (let expectedIndex = 0; expectedIndex < expected.length; expectedIndex++) {
+    let matches = 0;
+    for (let index = 0; index < expected.length; index++) {
+      if (readOwnDataProperty(scopes, index, "Cancellation scopes") === expected[expectedIndex]) {
+        matches++;
+      }
+    }
+    if (matches !== 1) return false;
+  }
+  return true;
 }
 
 function hasExactRunEventWriterScopes(payload: TokenPayload): boolean {
@@ -472,31 +495,53 @@ export function createHostedServiceAuth(
     input: { token: string; runId: string },
   ): Promise<boolean> {
     const config = options.getConfig();
-    const { token, runId } = input;
-    if (!config.OAUTH_PUBLIC_KEY || !token || !runId) return false;
     try {
+      const token = readOwnDataProperty(input, "token", "Cancellation request");
+      const runId = readOwnDataProperty(input, "runId", "Cancellation request");
+      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+      if (
+        typeof publicKey !== "string" || !publicKey ||
+        typeof token !== "string" || !token || typeof runId !== "string" || !runId
+      ) return false;
+      const serverId = readOwnDataProperty(
+        config,
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+        "Service config",
+        false,
+      );
       const authProvider = await getAuthProvider(options);
       if (!authProvider) return false;
-      const claims = await authProvider.verifyWithPublicKey(token, config.OAUTH_PUBLIC_KEY, {
+      const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
         algorithms: ["RS256"],
       });
+      const claimRunId = readOwnDataProperty(claims, "runId", "Cancellation claims");
+      const userId = readOwnDataProperty(claims, "userId", "Cancellation claims");
+      const exp = readOwnDataProperty(claims, "exp", "Cancellation claims");
+      const scope = readOwnDataProperty(claims, "scope", "Cancellation claims");
+      const tokenUse = readOwnDataProperty(claims, "tokenUse", "Cancellation claims", false);
+      const scopes = readOwnDataProperty(claims, "scopes", "Cancellation claims", false);
+      const actorType = readOwnDataProperty(claims, "actorType", "Cancellation claims", false);
+      const serviceAccountId = readOwnDataProperty(
+        claims,
+        "serviceAccountId",
+        "Cancellation claims",
+        false,
+      );
+      const projectId = readOwnDataProperty(claims, "projectId", "Cancellation claims", false);
       if (
-        claims.runId !== runId || typeof claims.userId !== "string" || !claims.userId ||
-        typeof claims.exp !== "number" || !Number.isFinite(claims.exp) ||
-        claims.exp * 1000 <= Date.now() || claims.tokenUse !== undefined ||
-        claims.scopes !== undefined
+        claimRunId !== runId || typeof userId !== "string" || !userId ||
+        typeof exp !== "number" || !NumberIsFinite(exp) ||
+        exp * 1000 <= DateNow() || tokenUse !== undefined || scopes !== undefined
       ) return false;
       // Match the two existing mintRuntimeCancellationAuthToken contracts. The
       // API authorizes the actor before minting this exact-run server authority.
-      if (claims.actorType === "service_account") {
-        return !!config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
-          claims.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
-          claims.userId === claims.serviceAccountId &&
-          typeof claims.projectId === "string" && claims.projectId.length > 0 &&
-          hasExactScopes(claims.scope, ["projects:read"]);
+      if (actorType === "service_account") {
+        return typeof serverId === "string" && !!serverId && serviceAccountId === serverId &&
+          userId === serviceAccountId && typeof projectId === "string" && projectId.length > 0 &&
+          hasExactCancellationScopes(scope, ["projects:read"]);
       }
-      return claims.actorType === undefined && claims.serviceAccountId === undefined &&
-        claims.projectId === undefined && hasExactScopes(claims.scope, ["read", "write", "delete"]);
+      return actorType === undefined && serviceAccountId === undefined && projectId === undefined &&
+        hasExactCancellationScopes(scope, ["read", "write", "delete"]);
     } catch {
       return false;
     }

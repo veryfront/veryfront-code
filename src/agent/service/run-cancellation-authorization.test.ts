@@ -5,6 +5,7 @@ import { createHostedServiceAuth } from "./auth.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
+import type { TokenPayload } from "#veryfront/extensions/auth/index.ts";
 
 const runId = "run-owned";
 const serverId = "test-server-account";
@@ -27,7 +28,196 @@ const globalClaims = {
   exp: 4_000_000_000,
 };
 
+function authForClaims(claims: TokenPayload) {
+  return createHostedServiceAuth({
+    getConfig: () => ({
+      VERYFRONT_API_URL: "https://api.example.test",
+      OAUTH_PUBLIC_KEY: "test-public-key",
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: serverId,
+    }),
+    authProvider: { verifyWithPublicKey: () => Promise.resolve(claims) },
+  });
+}
+
 describe("hosted cancellation token authorization", () => {
+  for (const key of ["OAUTH_PUBLIC_KEY", "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID"]) {
+    it(`does not accept inherited ${key} configuration`, async () => {
+      const config = {
+        VERYFRONT_API_URL: "https://api.example.test",
+        OAUTH_PUBLIC_KEY: "test-public-key",
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: serverId,
+      };
+      const value = config[key as keyof typeof config];
+      Reflect.deleteProperty(config, key);
+      Object.setPrototypeOf(config, { [key]: value });
+      const auth = createHostedServiceAuth({
+        getConfig: () => config,
+        authProvider: { verifyWithPublicKey: () => Promise.resolve(projectClaims) },
+      });
+      assertEquals(await auth.verifyRunCancellationToken({ token: "signed-token", runId }), false);
+    });
+  }
+  for (const key of ["token", "runId"]) {
+    it(`requires an own ${key} in the cancellation request`, async () => {
+      const input = { token: "signed-token", runId };
+      const value = input[key as keyof typeof input];
+      Reflect.deleteProperty(input, key);
+      Object.setPrototypeOf(input, { [key]: value });
+      assertEquals(await authForClaims(globalClaims).verifyRunCancellationToken(input), false);
+    });
+  }
+  it("accepts reordered scopes but rejects duplicates and non-array values", async () => {
+    for (
+      const [scope, expected] of [
+        [["delete", "read", "write"], true],
+        [["read", "read", "delete"], false],
+        [["read", "write", "delete", "extra"], false],
+        [{ 0: "read", 1: "write", 2: "delete", length: 3 }, false],
+        [null, false],
+      ] as const
+    ) {
+      assertEquals(
+        await authForClaims({ ...globalClaims, scope }).verifyRunCancellationToken({
+          token: "signed-token",
+          runId,
+        }),
+        expected,
+      );
+    }
+  });
+  for (
+    const key of ["runId", "userId", "exp", "scope", "actorType", "serviceAccountId", "projectId"]
+  ) {
+    it(`rejects an inherited ${key} authorization claim`, async () => {
+      // Use a fixture-owned prototype; never modify shared native prototypes locally.
+      const claims: TokenPayload = { ...projectClaims };
+      const inherited = claims[key];
+      delete claims[key];
+      Object.setPrototypeOf(claims, { [key]: inherited });
+      assertEquals(
+        await authForClaims(claims).verifyRunCancellationToken({ token: "signed-token", runId }),
+        false,
+      );
+    });
+  }
+  it("rejects an ordinary user token with an inherited victim run ID", async () => {
+    const claims: TokenPayload = { ...globalClaims };
+    delete claims.runId;
+    Object.setPrototypeOf(claims, { runId });
+    assertEquals(
+      await authForClaims(claims).verifyRunCancellationToken({ token: "signed-user-token", runId }),
+      false,
+    );
+  });
+  for (
+    const key of [
+      "runId",
+      "userId",
+      "exp",
+      "scope",
+      "actorType",
+      "serviceAccountId",
+      "projectId",
+      "tokenUse",
+      "scopes",
+    ]
+  ) {
+    it(`rejects an accessor-backed ${key} claim without invoking it`, async () => {
+      const claims: TokenPayload = { ...globalClaims };
+      const value = claims[key];
+      let reads = 0;
+      Object.defineProperty(claims, key, {
+        get() {
+          reads++;
+          return value;
+        },
+      });
+      assertEquals(
+        await authForClaims(claims).verifyRunCancellationToken({ token: "signed-token", runId }),
+        false,
+      );
+      assertEquals(reads, 0);
+    });
+  }
+  it("uses only signed own claims when optional claim names are inherited", async () => {
+    const claims = { ...globalClaims };
+    Object.setPrototypeOf(claims, {
+      tokenUse: "run_event_writer",
+      scopes: ["runs:write"],
+      actorType: "service_account",
+      projectId: "foreign-project",
+      serviceAccountId: "foreign-account",
+    });
+    assertEquals(
+      await authForClaims(claims).verifyRunCancellationToken({ token: "signed-token", runId }),
+      true,
+    );
+  });
+  it("does not delegate scope authorization to supplied array methods", async () => {
+    let callbacks = 0;
+    const scope = ["unrelated-a", "unrelated-b", "unrelated-c"];
+    scope.includes = () => {
+      callbacks++;
+      return true;
+    };
+    assertEquals(
+      await authForClaims({ ...globalClaims, scope }).verifyRunCancellationToken({
+        token: "signed-token",
+        runId,
+      }),
+      false,
+    );
+    assertEquals(callbacks, 0);
+  });
+  it("accepts own scope entries without invoking array iteration callbacks", async () => {
+    let callbacks = 0;
+    const scope = [...globalClaims.scope];
+    Object.defineProperty(scope, Symbol.iterator, {
+      value() {
+        callbacks++;
+        throw new Error("Unexpected iteration");
+      },
+    });
+    Object.defineProperty(scope, "every", {
+      value() {
+        callbacks++;
+        return false;
+      },
+    });
+    assertEquals(
+      await authForClaims({ ...globalClaims, scope }).verifyRunCancellationToken({
+        token: "signed-token",
+        runId,
+      }),
+      true,
+    );
+    assertEquals(callbacks, 0);
+  });
+  it("rejects inherited and accessor-backed scope entries", async () => {
+    for (const accessor of [false, true]) {
+      const scope = [...globalClaims.scope];
+      let reads = 0;
+      if (accessor) {
+        Object.defineProperty(scope, "0", {
+          get() {
+            reads++;
+            return "read";
+          },
+        });
+      } else {
+        delete scope[0];
+        Object.setPrototypeOf(scope, Object.create(Array.prototype, { "0": { value: "read" } }));
+      }
+      assertEquals(
+        await authForClaims({ ...globalClaims, scope }).verifyRunCancellationToken({
+          token: "signed-token",
+          runId,
+        }),
+        false,
+      );
+      assertEquals(reads, 0);
+    }
+  });
   for (const claims of [projectClaims, globalClaims]) {
     it(`accepts API-issued exact-run ${claims === projectClaims ? "project" : "global"} authority`, async () => {
       const auth = createHostedServiceAuth({
