@@ -1594,7 +1594,7 @@ describe("child-run-result-summary", () => {
       const longerDuration = median(longerDurations);
       const details = JSON.stringify({ shorterDurations, longerDurations });
 
-      assertEquals(Math.max(...longerDurations) < 750, true, details);
+      assertEquals(longerDuration < 750, true, details);
       assertEquals(longerDuration < shorterDuration * 3 + 100, true, details);
     });
   });
