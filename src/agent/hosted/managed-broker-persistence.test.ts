@@ -4,8 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createManagedBrokerPersistence,
   createManagedBrokerPersistenceFromCapability,
+  createManagedBrokerTerminal,
 } from "./managed-broker-persistence.ts";
 import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
+import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 
 const run = {
   runId: "run-1",
@@ -34,7 +36,14 @@ function authorities() {
     });
   return {
     writer,
-    terminal: { runId: run.runId, dispatch: unexpected },
+    terminal: createManagedBrokerTerminal({
+      apiUrl: "https://api.example.test",
+      completionAuthToken: "synthetic-completion-token",
+      run,
+      modelId: "model",
+      resolveProvider: unexpected,
+      fetch: unexpected,
+    }),
     raw: {
       apiUrl: "https://api.example.test",
       runEventToken: "synthetic-event-token",
@@ -48,6 +57,79 @@ function authorities() {
 }
 
 describe("managed persistence authority validation", () => {
+  it("requires completion credentials when creating terminal authority", () => {
+    const fixture = authorities();
+    for (const completionAuthToken of [undefined, null, "", " "]) {
+      assertThrows(
+        () =>
+          Reflect.apply(createManagedBrokerTerminal, undefined, [{
+            ...fixture.raw,
+            completionAuthToken,
+          }]),
+        TypeError,
+        "completion authorization",
+      );
+    }
+    fixture.assertNoEffects();
+  });
+
+  it("rejects another run's terminal capability and relabeled or cloned handles", () => {
+    const fixture = authorities();
+    const foreign = createManagedBrokerTerminal({
+      ...fixture.raw,
+      run: { ...run, runId: "foreign-run" },
+      completionAuthToken: "synthetic-completion-token",
+    });
+    for (
+      const terminal of [
+        foreign,
+        { ...foreign, runId: run.runId },
+        { ...fixture.terminal },
+        new Proxy(foreign, {
+          get() {
+            throw new Error("Terminal wrapper traps must not run");
+          },
+        }),
+      ]
+    ) {
+      assertThrows(
+        () =>
+          Reflect.apply(createManagedBrokerPersistenceFromCapability, undefined, [{
+            capability: fixture.writer(),
+            run,
+            terminal,
+          }]),
+        TypeError,
+        "terminal authority",
+      );
+    }
+    assertEquals(Object.isFrozen(fixture.terminal), true);
+    assertEquals(JSON.stringify(fixture.terminal), '{"kind":"managed-broker-terminal"}');
+    fixture.assertNoEffects();
+  });
+
+  it("rejects a run label paired with another run's completion dispatcher", () => {
+    const fixture = authorities();
+    const foreign = createConversationHostedTerminalAdapter({
+      apiUrl: fixture.raw.apiUrl,
+      authToken: "synthetic-completion-token",
+      run: { ...run, runId: "foreign-run" },
+      fallbackModelId: "model",
+      resolveProvider: fixture.raw.resolveProvider,
+      fetch: fixture.raw.fetch,
+    });
+    assertThrows(
+      () =>
+        Reflect.apply(createManagedBrokerPersistenceFromCapability, undefined, [{
+          capability: fixture.writer(),
+          run,
+          terminal: { runId: run.runId, dispatch: foreign.dispatch },
+        }]),
+      TypeError,
+      "terminal authority",
+    );
+    fixture.assertNoEffects();
+  });
   it("requires an independent completion credential before creating raw-token persistence", () => {
     const fixture = authorities();
     for (const completionAuthToken of [undefined, null, "", " ", "synthetic-event-token"]) {

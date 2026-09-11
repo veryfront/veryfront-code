@@ -579,19 +579,23 @@ promptly while pool capacity stays reserved until the original write settles.
 
 `createManagedBrokerPersistenceFromCapability` accepts the opaque writer returned
 by managed ingress's `createRunEventWriterCapability`, the canonical run projection,
-and a trusted `terminal` adapter. The writer pins event append to its run, API
-endpoint and transport. The terminal adapter must declare the same `runId` and
-provide `dispatch`, acknowledging the authoritative terminal outcome. Configure
-its completion authority separately; an event-writer token cannot authenticate
-the API's `/complete` route. Missing, fabricated or different-run writer authority,
-and missing or different-run terminal configuration, are rejected before writes.
+and an opaque `terminal` capability created by `createManagedBrokerTerminal`.
+The writer pins event append to its run, API endpoint and transport. The terminal
+factory takes independent completion credentials, the run projection, model and
+provider resolution, and trusted API transport. It keeps the run binding and
+completion operation in private state. Relabeled, cloned, fabricated, and
+other-run terminal handles are rejected before writes.
+
+An event-writer token cannot authenticate the API's `/complete` route. The terminal
+factory uses that route with independent application authority; it does not accept
+arbitrary completion callbacks or implement the detached-completion protocol.
 
 The raw-token `createManagedBrokerPersistence` constructor requires both
 `runEventToken` and a distinct `completionAuthToken` accepted by the API completion
 route. Existing callers must add that completion credential; the constructor
 rejects omission or reuse of the append token. Provider resolution is called without
 exposing private adapter options as its receiver. Both constructors require the
-same session binding and cleanup. Tokens and terminal adapters remain in the broker.
+same session binding and cleanup. Tokens and terminal capabilities remain in the broker.
 
 `startNodeManagedAgentBroker` binds the signed stream, durable start, AG-UI,
 and cancel/resume handlers to a Node server. Supply every handler, the broker

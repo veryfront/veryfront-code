@@ -8,6 +8,7 @@ export {
 export {
   createManagedBrokerPersistence,
   createManagedBrokerPersistenceFromCapability,
+  createManagedBrokerTerminal,
   type ManagedBrokerOutput,
   type ManagedBrokerTerminal,
 } from "../hosted/managed-broker-persistence.ts";

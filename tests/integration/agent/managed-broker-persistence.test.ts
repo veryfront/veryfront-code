@@ -5,11 +5,11 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createManagedBrokerPersistence,
   createManagedBrokerPersistenceFromCapability,
+  createManagedBrokerTerminal,
 } from "#veryfront/agent/service/managed-broker.ts";
 import {
   createHostedRunEventWriterCapability,
 } from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
-import { createConversationHostedTerminalAdapter } from "#veryfront/agent/conversation/hosted-terminal.ts";
 import { FakeTime } from "#std/testing/time";
 
 const conversationId = "00000000-0000-4000-8000-000000000001";
@@ -53,15 +53,14 @@ function terminalForTest(
   fetch: typeof globalThis.fetch,
   resolveProvider: (modelId: string) => string = () => "provider",
 ) {
-  const adapter = createConversationHostedTerminalAdapter({
+  return createManagedBrokerTerminal({
     apiUrl: "https://api.example.test",
-    authToken: "synthetic-completion-token",
+    completionAuthToken: "synthetic-completion-token",
     run,
-    fallbackModelId: "model",
+    modelId: "model",
     resolveProvider,
     fetch,
   });
-  return { runId: run.runId, dispatch: adapter.dispatch };
 }
 
 function bindForTest(
@@ -514,7 +513,14 @@ describe("managed persistence capability authorization", () => {
     const input = {
       capability,
       run: mutableRun,
-      terminal: terminalForTest(fetch),
+      terminal: createManagedBrokerTerminal({
+        apiUrl: "https://api.example.test",
+        completionAuthToken: "synthetic-completion-token",
+        run: mutableRun,
+        modelId: "model",
+        resolveProvider: () => "provider",
+        fetch,
+      }),
       modelId: "model",
       resolveProvider: () => "provider",
       apiUrl: "https://untrusted.example.test",

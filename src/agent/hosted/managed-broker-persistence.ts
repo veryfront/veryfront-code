@@ -26,6 +26,7 @@ import {
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import type { HostedExecutorOwnedWork } from "./executor-session.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
 /** Acknowledging output writes and terminal finalization for a canonical run. */
 export interface ManagedBrokerOutput {
@@ -37,10 +38,43 @@ export interface ManagedBrokerOutput {
   }): Promise<void>;
 }
 
-/** Trusted completion adapter authorized independently from event append. */
+/** Opaque, exact-run completion authority created by the trusted broker. */
 export interface ManagedBrokerTerminal {
+  readonly kind: "managed-broker-terminal";
+}
+
+const freezeTerminal = Object.freeze;
+const terminalStates = createPrivateWeakStore<ManagedBrokerTerminal, {
   runId: string;
   dispatch(state: ConversationHostedTerminalStateInput): Promise<HostedLifecycleTerminalState>;
+}>();
+
+/** Bind API completion credentials and transport privately to one canonical run. */
+export function createManagedBrokerTerminal(input: {
+  apiUrl: string;
+  completionAuthToken: string;
+  run: ConversationRunProjection;
+  modelId: string;
+  resolveProvider(modelId: string): string;
+  fetch?: typeof globalThis.fetch;
+}): ManagedBrokerTerminal {
+  const run = getConversationRunProjectionSchema().parse(input.run);
+  if (typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim()) {
+    throw new TypeError("Managed broker requires completion authorization");
+  }
+  const resolveProvider = input.resolveProvider;
+  const adapter = createConversationHostedTerminalAdapter({
+    apiUrl: input.apiUrl,
+    authToken: input.completionAuthToken,
+    run,
+    fallbackModelId: input.modelId,
+    // Do not expose secret-bearing adapter options as the caller's receiver.
+    resolveProvider: (modelId) => resolveProvider(modelId),
+    fetch: input.fetch,
+  });
+  const terminal = freezeTerminal({ kind: "managed-broker-terminal" as const });
+  terminalStates.set(terminal, { runId: run.runId, dispatch: adapter.dispatch });
+  return terminal;
 }
 
 /** Create exact-run API persistence callbacks while retaining credentials in the broker. */
@@ -61,16 +95,7 @@ export function createManagedBrokerPersistence(input: {
   ) {
     throw new TypeError("Managed broker requires independent completion authorization");
   }
-  const resolveProvider = input.resolveProvider;
-  const terminal = createConversationHostedTerminalAdapter({
-    apiUrl: input.apiUrl,
-    authToken: input.completionAuthToken,
-    run,
-    fallbackModelId: input.modelId,
-    // Do not expose secret-bearing adapter options as the caller's receiver.
-    resolveProvider: (modelId) => resolveProvider(modelId),
-    fetch: input.fetch,
-  });
+  const terminal = createManagedBrokerTerminal({ ...input, run });
   return createManagedBrokerPersistenceFromCapability({
     capability: createHostedRunEventWriterCapability({
       apiUrl: input.apiUrl,
@@ -79,7 +104,7 @@ export function createManagedBrokerPersistence(input: {
       fetch: input.fetch,
     }),
     run,
-    terminal: { runId: run.runId, dispatch: terminal.dispatch },
+    terminal,
   });
 }
 
@@ -93,10 +118,11 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
     throw new TypeError("Managed broker persistence requires an active run");
   }
-  const dispatchTerminal = input.terminal?.dispatch;
-  if (input.terminal?.runId !== run.runId || typeof dispatchTerminal !== "function") {
+  const terminalState = terminalStates.get(input.terminal);
+  if (!terminalState || terminalState.runId !== run.runId) {
     throw new TypeError("Managed broker terminal authority is not bound to this run");
   }
+  const dispatchTerminal = terminalState.dispatch;
   let sessionOwnedWork: HostedExecutorOwnedWork | undefined;
   let retainedPersistenceTail = Promise.resolve();
   let cleaned = false;
