@@ -1576,11 +1576,26 @@ describe("child-run-result-summary", () => {
         return performance.now() - start;
       };
 
-      const shorterDuration = measure(8_000);
-      const longerDuration = measure(16_000);
+      // Coverage shards run concurrently. Interleave repeated measurements so
+      // a scheduling pause in one sample cannot determine the scaling ratio.
+      const shorterDurations: number[] = [];
+      const longerDurations: number[] = [];
+      for (let sample = 0; sample < 5; sample++) {
+        shorterDurations.push(measure(8_000));
+        longerDurations.push(measure(16_000));
+      }
+      const median = (durations: number[]): number => {
+        const sorted = [...durations].sort((left, right) => left - right);
+        const middle = sorted[Math.floor(sorted.length / 2)];
+        if (middle === undefined) throw new Error("Expected timing measurements");
+        return middle;
+      };
+      const shorterDuration = median(shorterDurations);
+      const longerDuration = median(longerDurations);
+      const details = JSON.stringify({ shorterDurations, longerDurations });
 
-      assertEquals(longerDuration < 750, true);
-      assertEquals(longerDuration < shorterDuration * 3 + 100, true);
+      assertEquals(Math.max(...longerDurations) < 750, true, details);
+      assertEquals(longerDuration < shorterDuration * 3 + 100, true, details);
     });
   });
 
