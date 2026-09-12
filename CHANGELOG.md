@@ -6,6 +6,30 @@ versions are listed at
 
 ## Unreleased
 
+### Deprecated: the `event` key on conversation-scoped run event rows
+
+The Veryfront API now serves every run event row keyed `payload`, on the
+conversation-scoped events route, GraphQL `agentRunEvents`, and the MCP
+`get_agent_run_events` tool as well as the run-scoped route and the SSE
+streams. `getConversationTypedRunEventRowSchema` from `veryfront/run-events`
+previously required the pre-cutover `event` key and rejected every row those
+surfaces serve now.
+
+The schema reads `payload` as canonical and accepts `event` as a transitional
+alias: at least one must be present, and a row with both parses as `payload`
+without looking at the alias.
+The parsed `ConversationTypedRunEventRow` exposes the payload as `payload` and,
+until Phase F removes the alias, as the deprecated `event`. Move reads from
+`row.event` to `row.payload` before Phase F.
+
+`ConversationTypedRunEventRow` now describes the parsed row, so `payload` is
+required on it. A row you build by hand keyed only by `event` no longer type
+checks as `ConversationTypedRunEventRow`; annotate it with the new
+`ConversationTypedRunEventRowInput` and parse it instead.
+
+Stop sending `format=typed` to any run event surface. The API accepts and
+ignores it, and refuses every other value, including `format=raw`.
+
 ### Breaking: eval exports omit the dataset content hash
 
 `EvalReportExporterRegistry.export()` now strips `dataset.hash` from the report
