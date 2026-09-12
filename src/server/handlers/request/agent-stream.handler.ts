@@ -1030,7 +1030,11 @@ export class AgentStreamHandler extends BaseHandler {
       // Project code and sandbox-backed tools may only receive the runtime's
       // existing project credential, never the credential supplied by the user.
       // The process host token is never combined with request-selected tenant
-      // identity, so it is not a fallback here either.
+      // identity, so it is not a fallback here either. The platform MCP tool
+      // source is framework-owned: it authenticates with the verified run
+      // invocation credential, whose scope profile authorizes the platform
+      // tool callbacks (files:write among them) that the stream credential
+      // deliberately lacks.
       const projectRuntimeToken = ctx.proxyToken || "";
       const requestScopedContext: HandlerContext = {
         ...ctx,
@@ -1192,7 +1196,7 @@ export class AgentStreamHandler extends BaseHandler {
                         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
                         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
                           agent: runtimeBaseAgent as Agent,
-                          token: projectRuntimeToken || null,
+                          token: apiAuthToken || null,
                           projectId: projectScopedContext.projectId ?? null,
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                         });
