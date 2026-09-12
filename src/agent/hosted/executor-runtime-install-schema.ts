@@ -93,7 +93,7 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     binding: getExecutorBindingSchema(),
     context: v.object({
       agentId: getExecutorDiscoveryIdSchema(),
-      projectId: getExecutorDiscoveryIdSchema(),
+      projectId: getExecutorDiscoveryIdSchema().nullable(),
       runId: getExecutorDiscoveryIdSchema(),
       userId: getExecutorDiscoveryIdSchema().optional(),
       projectSlug: getExecutorDiscoveryIdSchema().optional(),
@@ -105,8 +105,11 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     maxConcurrent: v.number().int().min(1).max(32),
     limits: getExecutorToolLimitsSchema().optional(),
   }).strict().refine(
-    (input) => new Set(input.allowedToolNames).size === input.allowedToolNames.length,
-    "Duplicate project tool grant",
+    (input) =>
+      new Set(input.allowedToolNames).size === input.allowedToolNames.length &&
+      (input.context.projectId !== null ||
+        (input.owner.scopeKind === "global" && input.context.projectSlug === undefined)),
+    "Invalid project tool grant or source context",
   )
 );
 export type ExecutorProjectToolInstall = InferSchema<

@@ -496,6 +496,13 @@ the trusted broker owns the agent loop and privileged operations.
 
 The fixed context also accepts optional `userId` and `projectSlug` from the approved
 execution grant. Project tools receive those captured values; caller conflicts fail.
+For canonical execution using a globally owned source, `context.projectId` may be
+explicitly `null`. The tool receives no project ID, while its canonical run ID
+remains bound. A projectless context must not include a project slug, and a
+project-owned source still requires a project ID. Omitting `projectId` does not
+select global execution. Global steering may be provided as an explicit granted
+capability; it is not inferred from a placeholder project. This support does not
+enable ephemeral execution or project transitions in the trusted broker.
 An explicitly enabled project source can receive the current call's `activeSkillId`
 and bounded `activeSkillToolAvailability`. Omitted skill fields clear prior values.
 Credentials and other caller context fields do not cross the project channel.

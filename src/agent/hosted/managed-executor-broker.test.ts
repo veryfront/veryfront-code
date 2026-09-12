@@ -61,6 +61,7 @@ function runtimeModel(): ModelRuntime {
 
 function fixture(
   options: {
+    owner?: HostedExecutorSessionOptions["request"]["owner"];
     completeStream?: boolean;
     agentId?: string;
     prepareFailure?: boolean;
@@ -72,10 +73,11 @@ function fixture(
   } = {},
 ) {
   const now = Date.now();
+  const fixtureOwner = options.owner ?? owner;
   const request = {
     allocationId: crypto.randomUUID(),
     invocationId: crypto.randomUUID(),
-    owner,
+    owner: fixtureOwner,
     source,
     requestedAt: now,
     prepareDeadlineAt: now + 10_000,
@@ -118,7 +120,7 @@ function fixture(
       binding: {
         allocationId: request.allocationId,
         invocationId: request.invocationId,
-        owner,
+        owner: fixtureOwner,
         source,
         generation,
         brokerInstanceId: "broker-test",
@@ -250,7 +252,7 @@ function fixture(
   };
   const installation: ManagedExecutorStartInput["installation"] = {
     version: 1,
-    owner,
+    owner: fixtureOwner,
     source,
     root: "project",
     grant: {
@@ -1129,13 +1131,17 @@ function trustedFixture(
   includeHost = false,
   projectExecute?: Tool["execute"],
   projectAliases?: { name: string; shortName: string }[],
+  scope: { owner: HostedExecutorSessionOptions["request"]["owner"]; projectId: string | null } = {
+    owner,
+    projectId: "project-test",
+  },
 ) {
-  const f = fixture({ allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
+  const f = fixture({ owner: scope.owner, allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
   const privateMarker = "synthetic-private-broker-runtime";
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
-  f.input.installation.grant.execution.projectId = "project-test";
-  f.input.installation.capabilities.projectSteering = "steering";
+  f.input.installation.grant.execution.projectId = scope.projectId;
+  if (scope.projectId !== null) f.input.installation.capabilities.projectSteering = "steering";
   f.input.installation.grant.allowedToolNames = ["inspect"];
   f.input.installation.grant.remoteToolSourceIds = ["project"];
   f.input.tools.catalog = new Map([["inspect", {}]]);
@@ -1146,7 +1152,7 @@ function trustedFixture(
       sourceIntegrationPolicy: { schemaVersion: 1 as const, mode: "unrestricted" as const },
     },
   });
-  f.input.state = {
+  f.input.state = scope.projectId === null ? {} : {
     prepareProjectSteering: async ({ definition }) => {
       steeringEntered.resolve();
       await blockSteering;
@@ -1200,7 +1206,7 @@ function trustedFixture(
     const installation = createExecutorRuntimeInstallation({
       mode: "project-tools",
       binding,
-      artifact: { version: 1, owner, source, root: "project" },
+      artifact: { version: 1, owner: scope.owner, source, root: "project" },
       async install(input, signal, context) {
         installedProjectMode = input.mode === "project-tools";
         const registered = tool({
@@ -1210,7 +1216,7 @@ function trustedFixture(
           execute: (args, call) => {
             executions++;
             assertEquals(args, { query: "approved" });
-            assertEquals(call?.projectId, "project-test");
+            assertEquals(call?.projectId, scope.projectId ?? undefined);
             assertEquals(call?.runId, "run-1");
             return projectExecute ? projectExecute(args, call) : { ok: true };
           },
@@ -1371,6 +1377,81 @@ async function withTrustedToolOperations(
 }
 
 describe("broker-local trusted runtime", () => {
+  it("executes a canonical global run without inventing a project identity", async () => {
+    const observed: ToolExecutionContext[] = [];
+    const f = trustedFixture(
+      undefined,
+      true,
+      async (_args, context) => {
+        assert(context);
+        observed.push(context);
+        return { ok: true };
+      },
+      undefined,
+      {
+        owner: { scopeKind: "global", serviceName: "global-test-service" },
+        projectId: null,
+      },
+    );
+    await drainTrustedFixture(f);
+    assertEquals(f.executions, 1);
+    assertEquals(f.hostCalls, 1);
+    assertEquals(f.installedProjectMode, true);
+    assertEquals(observed[0]?.projectId, undefined);
+    assertEquals(observed[0]?.runId, "run-1");
+    assertEquals(observed[0]?.authToken, undefined);
+    assertEquals(f.projectWire.includes(f.privateMarker), false);
+    assertEquals(f.projectWire.includes('"projectId":"project-test"'), false);
+    assert(f.projectWire.includes('"projectId":null'));
+  });
+
+  it("rejects a project-owned source without its project context before allocation", async () => {
+    const f = trustedFixture(undefined, false, undefined, undefined, { owner, projectId: null });
+    const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    try {
+      await assertRejects(() => broker.start(f.input));
+      assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+    }
+  });
+
+  it("accepts explicit global steering without a project identity", async () => {
+    const f = trustedFixture(undefined, false, undefined, undefined, {
+      owner: { scopeKind: "global", serviceName: "global-test-service" },
+      projectId: null,
+    });
+    let prepared = false;
+    f.input.installation.capabilities.projectSteering = "global-steering";
+    f.input.state = {
+      prepareProjectSteering: ({ definition, projectId }) => {
+        assertEquals(projectId, null);
+        prepared = true;
+        return Promise.resolve({ agent: definition, initialProjectInstructions: f.privateMarker });
+      },
+      refreshProjectSteering: () => f.privateMarker,
+    };
+    await drainTrustedFixture(f);
+    assertEquals(prepared, true);
+    assertEquals(f.executions, 1);
+    assertEquals(f.projectWire.includes(f.privateMarker), false);
+  });
+
+  it("rejects a project slug in projectless execution before allocation", async () => {
+    const f = trustedFixture(undefined, false, undefined, undefined, {
+      owner: { scopeKind: "global", serviceName: "global-test-service" },
+      projectId: null,
+    });
+    f.input.installation.grant.execution.projectSlug = "unbound-project";
+    const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    try {
+      await assertRejects(() => broker.start(f.input));
+      assertEquals(f.calls, []);
+    } finally {
+      await broker.shutdown();
+    }
+  });
+
   it("preserves retirement authority for preconfigured remote source snapshots", async () => {
     const f = trustedFixture(undefined, true);
     const retired = Promise.withResolvers<void>();

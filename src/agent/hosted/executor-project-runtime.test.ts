@@ -121,6 +121,22 @@ function fixture(
 }
 
 describe("installed project tool runtime", () => {
+  it("accepts explicit projectless context only for globally owned source", () => {
+    const input = install();
+    input.context.projectId = null;
+    const schema = getExecutorProjectToolInstallSchema();
+    assertEquals(schema.safeParse(input).success, true);
+    for (
+      const invalid of [
+        { ...input, owner: { scopeKind: "project", projectId: "source-project" } },
+        { ...input, context: { ...input.context, projectId: undefined } },
+        { ...input, context: { ...input.context, projectSlug: "unbound-project" } },
+      ]
+    ) {
+      assertEquals(schema.safeParse(invalid).success, false);
+    }
+  });
+
   it("constructs project tool metadata under the admitted source policy", async () => {
     const denyAll = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
     const observed: unknown[] = [];
