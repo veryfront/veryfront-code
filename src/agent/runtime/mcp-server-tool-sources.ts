@@ -32,6 +32,7 @@ import {
 import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export type RuntimeRemoteToolConfig = {
@@ -152,24 +153,27 @@ function createMcpToolPolicySource(
  * re-derive its own bootstrap source past one of these, because the child
  * resolves the same process-global identity; a source injected by a host
  * (request-scoped credentials, another project's binding) is never in this
- * set and keeps exclusive ownership of its id.
+ * store and keeps exclusive ownership of its id. The private weak store keeps
+ * membership checks off mutable prototypes: project code that patches
+ * WeakSet.prototype must not be able to launder a host-injected source into
+ * bootstrap ownership or break child tool resolution.
  */
-const bootstrapIdentityToolSources = new WeakSet<RemoteToolSource>();
+const bootstrapIdentityToolSources = createPrivateWeakStore<RemoteToolSource, true>();
 
 export function markBootstrapIdentityRemoteToolSource(source: RemoteToolSource): RemoteToolSource {
-  bootstrapIdentityToolSources.add(source);
+  bootstrapIdentityToolSources.set(source, true);
   return source;
 }
 
 export function isBootstrapIdentityRemoteToolSource(source: RemoteToolSource): boolean {
-  return bootstrapIdentityToolSources.has(source);
+  return bootstrapIdentityToolSources.get(source) === true;
 }
 
 function propagateBootstrapIdentity(
   input: RemoteToolSource,
   output: RemoteToolSource,
 ): RemoteToolSource {
-  return bootstrapIdentityToolSources.has(input)
+  return isBootstrapIdentityRemoteToolSource(input)
     ? markBootstrapIdentityRemoteToolSource(output)
     : output;
 }
@@ -466,10 +470,19 @@ export function getRuntimeRemoteToolSources(
     }
     return [];
   });
+  // A host-owned id must resolve exclusively to the host's source: tool
+  // execution takes the first source that serves a name, so a bootstrap-owned
+  // sibling sharing the id would bypass the host credential boundary.
+  const hostOwnedInjectedIds = createPrivateSet<string>();
+  for (const source of selectedInjectedSources) {
+    if (!isBootstrapIdentityRemoteToolSource(source)) hostOwnedInjectedIds.add(source.id);
+  }
   const policyWrappedInjectedSources = mapPrivateArray(
     filterPrivateArray(
       selectedInjectedSources,
-      (source) => !selfServedFirstPartyIds.has(source.id),
+      (source) =>
+        !selfServedFirstPartyIds.has(source.id) &&
+        !(isBootstrapIdentityRemoteToolSource(source) && hostOwnedInjectedIds.has(source.id)),
     ),
     (source) => {
       const server = configuredFirstPartyServersBySourceId.get(source.id);

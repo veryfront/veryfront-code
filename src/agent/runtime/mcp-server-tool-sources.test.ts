@@ -1041,3 +1041,56 @@ Deno.test("getRuntimeRemoteToolSources keeps a host-injected ambient source auth
     .map((tool) => tool.name);
   assertEquals(names, ["get_file"]);
 });
+
+Deno.test("getRuntimeRemoteToolSources drops a bootstrap-owned sibling when a host source owns the id", async () => {
+  const hostInjectedSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "get_file",
+        description: "Read a project file (host credential)",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true, credential: "host" }),
+  };
+  const bootstrapSibling: RemoteToolSource = markBootstrapIdentityRemoteToolSource({
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "get_file",
+        description: "Read a project file (bootstrap credential)",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true, credential: "bootstrap" }),
+  });
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [bootstrapSibling, hostInjectedSource],
+    () =>
+      getRuntimeRemoteToolSources(
+        {
+          id: "child-agent",
+          system: "Store intake evidence.",
+          tools: { get_file: true },
+        },
+        {
+          getVeryfrontBootstrap: () => ({
+            apiBaseUrl: "https://api.example/",
+            apiToken: "server-token",
+            projectSlug: "server-project",
+            hasRequestContext: false,
+            usesVeryfrontFs: false,
+          }),
+          createRemoteToolSource: () => {
+            throw new Error("host-owned id must not be re-derived from bootstrap identity");
+          },
+        },
+      ),
+  );
+
+  assertEquals(sources?.length, 1);
+  const definitions = await sources![0]!.listTools();
+  assertEquals(definitions.map((tool) => tool.description), [
+    "Read a project file (host credential)",
+  ]);
+});
