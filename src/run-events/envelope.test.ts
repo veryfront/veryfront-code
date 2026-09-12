@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  type ConversationTypedRunEventRowInput,
   getConversationTypedRunEventRowSchema,
   getRunEventEnvelopeSchema,
   getTypedRunEventRowSchema,
@@ -141,6 +142,20 @@ describe("run-events/envelope", () => {
     const result = getConversationTypedRunEventRowSchema().safeParse({ ...ENVELOPE, event: {} });
     assert(!result.success);
     assertEquals(result.issues.map((issue) => issue.path), [["event", "type"]]);
+  });
+
+  it("types a hand-built row by the key it carries and parses either shape", () => {
+    const byPayload: ConversationTypedRunEventRowInput = { ...ENVELOPE, payload: PAYLOAD };
+    const byAlias: ConversationTypedRunEventRowInput = { ...ENVELOPE, event: PAYLOAD };
+    // @ts-expect-error a row with neither key is not an input row
+    const neither: ConversationTypedRunEventRowInput = { ...ENVELOPE };
+    // @ts-expect-error an alias-only row needs a typed payload under event
+    const malformedAlias: ConversationTypedRunEventRowInput = { ...ENVELOPE, event: {} };
+    for (const input of [byPayload, byAlias]) {
+      assertEquals(getConversationTypedRunEventRowSchema().parse(input).payload, PAYLOAD);
+    }
+    assert(!getConversationTypedRunEventRowSchema().safeParse(neither).success);
+    assert(!getConversationTypedRunEventRowSchema().safeParse(malformedAlias).success);
   });
 
   it("rejects a conversation-scoped row with neither payload nor event, naming both keys", () => {

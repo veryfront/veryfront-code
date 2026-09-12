@@ -137,15 +137,33 @@ export type ConversationTypedRunEventRow = RunEventEnvelope & {
  * `getConversationTypedRunEventRowSchema` collapses its two keys into one:
  * keyed `payload`, or, until Phase F, by the `event` alias. Annotate a row you
  * build by hand (a fixture, a stub server) with this type and parse it to get
- * a `ConversationTypedRunEventRow`.
+ * a `ConversationTypedRunEventRow`. A row with neither key, or an alias-only
+ * row whose alias is not a typed payload, is not assignable to it, matching
+ * what the schema rejects.
  *
- * `event` is unchecked here: the schema validates it only when it is the
- * row's one payload, so a canonical `payload` beside a stale or malformed
- * alias still wins.
+ * Beside a canonical `payload` the alias is unchecked: the schema validates
+ * `event` only when it is the row's one payload, so a stale or malformed
+ * alias next to a canonical payload still parses.
  */
-export type ConversationTypedRunEventRowInput = RunEventEnvelope & {
+export type ConversationTypedRunEventRowInput =
+  | (RunEventEnvelope & {
+    payload: TypedRunEventPayload;
+    /** @deprecated Serve `payload` only. Removed in Phase F. */
+    event?: unknown;
+  })
+  | (RunEventEnvelope & {
+    payload?: undefined;
+    /** @deprecated Serve `payload` instead. Removed in Phase F. */
+    event: TypedRunEventPayload;
+  });
+
+/**
+ * The row as the object schema hands it to the refinement, where both keys
+ * are still optional: the union above is what a consumer builds, this is what
+ * the validator has established so far.
+ */
+type LooseConversationTypedRunEventRow = RunEventEnvelope & {
   payload?: TypedRunEventPayload;
-  /** @deprecated Serve `payload`. Removed in Phase F. */
   event?: unknown;
 };
 
@@ -158,7 +176,7 @@ export type ConversationTypedRunEventRowInput = RunEventEnvelope & {
  */
 function pickConversationPayload(
   typedPayload: Schema<TypedRunEventPayload>,
-  row: ConversationTypedRunEventRowInput,
+  row: LooseConversationTypedRunEventRow,
 ): { key: "payload" | "event"; result: ValidationResult<TypedRunEventPayload> } | undefined {
   if (row.payload !== undefined) {
     return { key: "payload", result: { success: true, data: row.payload } };
