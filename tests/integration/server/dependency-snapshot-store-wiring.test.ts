@@ -1,0 +1,493 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { MemoryCacheBackend } from "#veryfront/cache/backends/memory.ts";
+import { createDistributedCacheAccessor } from "#veryfront/cache/backends/factory.ts";
+import { captureRevisionedCacheBackendMethods } from "#veryfront/cache/capabilities.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import * as publicPlatform from "veryfront/platform";
+import {
+  _createSharedDependencySnapshotCacheBackend,
+  createCacheBackedDependencySnapshotStore,
+  createCacheDependencySnapshotStoreHandle,
+} from "#veryfront/cache/dependency-snapshot-store.ts";
+import {
+  createDependencySnapshotStoreHandle,
+  resolveDependencySnapshotStoreHandle,
+} from "#veryfront/platform/adapters/dependency-snapshot-store.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { HandlerContext } from "#veryfront/server/handlers/types.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+
+function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
+  return {
+    projectDir: "/project",
+    adapter: createMockAdapter(),
+    securityConfig: null,
+    ...overrides,
+  };
+}
+
+// Both the pinning rollout and the shared-backend resolution read process
+// configuration, so every test here pins the environment it needs and
+// restores whatever the process had. Activation itself is never environmental:
+// the host configures the adapter explicitly, per
+// docs/architecture/15-runtime-adapters.md.
+const MANAGED_ENV = [
+  "VERYFRONT_DEPENDENCY_PINNING",
+  "VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT",
+  "VERYFRONT_API_BASE_URL",
+  "PROXY_MODE",
+  "REDIS_URL",
+] as const;
+
+describe("host-configured dependency snapshot store", () => {
+  it("keeps captured revision methods and their backend out of replaced Object.freeze", async () => {
+    const backend = {
+      type: "redis",
+      getWithRevision: () => Promise.resolve({ value: null, revision: "synthetic-revision" }),
+      compareExchange: () => Promise.resolve(true),
+    };
+    const originalFreeze = Object.freeze;
+    let observations = 0;
+    Object.freeze = ((value: unknown) => {
+      if (
+        value !== null && typeof value === "object" &&
+        Object.getOwnPropertyDescriptor(value, "getWithRevision")?.value
+      ) {
+        observations++;
+        return {
+          getWithRevision(this: unknown) {
+            if (this === backend) observations++;
+            return Promise.resolve({ value: null, revision: "synthetic-revision" });
+          },
+          compareExchange: () => Promise.resolve(true),
+        };
+      }
+      return originalFreeze(value);
+    }) as typeof Object.freeze;
+    try {
+      const methods = captureRevisionedCacheBackendMethods(backend)!;
+      await Reflect.apply(methods.getWithRevision, backend, ["synthetic-key"]);
+    } finally {
+      Object.freeze = originalFreeze;
+    }
+    assertEquals(observations, 0);
+  });
+
+  it("exports the host opt-in factory through the public platform surface", () => {
+    assertEquals(
+      "createCacheDependencySnapshotStoreHandle" in publicPlatform &&
+        publicPlatform.createCacheDependencySnapshotStoreHandle,
+      createCacheDependencySnapshotStoreHandle,
+    );
+  });
+
+  it("retries initialization after a synchronous factory failure", async () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    let calls = 0;
+    const backend: CacheBackend = {
+      type: "api",
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const accessor = createDistributedCacheAccessor(() => {
+      if (++calls === 1) throw new Error("Synthetic initialization failure");
+      return Promise.resolve(backend);
+    }, "SYNTHETIC");
+    try {
+      Date.now = () => now;
+      assertEquals(await accessor(), null);
+      now += 60_001;
+      assertEquals(await accessor(), backend);
+      assertEquals(calls, 2);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it("keeps initialized backends out of Promise species constructors", async () => {
+    const backend: CacheBackend = {
+      type: "api",
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    const NativePromise = Promise;
+    const originalConstructor = Object.getOwnPropertyDescriptor(Promise.prototype, "constructor")!;
+    let observations = 0;
+    class ObservedPromise<T> extends NativePromise<T> {
+      constructor(
+        executor: (
+          resolve: (value: T | PromiseLike<T>) => void,
+          reject: (reason?: unknown) => void,
+        ) => void,
+      ) {
+        super((resolve, reject) =>
+          executor((value) => {
+            if (value === backend) observations++;
+            resolve(value);
+          }, reject)
+        );
+      }
+    }
+    const accessor = createDistributedCacheAccessor(
+      () => NativePromise.resolve(backend),
+      "SYNTHETIC",
+    );
+    let resolved;
+    try {
+      Object.defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        writable: true,
+        value: { [Symbol.species]: ObservedPromise },
+      });
+      resolved = await accessor();
+      assertEquals(await accessor(), backend);
+    } finally {
+      Object.defineProperty(Promise.prototype, "constructor", originalConstructor);
+    }
+    assertEquals(resolved, backend);
+    assertEquals(observations, 0);
+  });
+
+  it("keeps cached backends out of a replaced Promise.resolve", async () => {
+    const backend = { type: "api" } as CacheBackend;
+    const accessor = createDistributedCacheAccessor(() => Promise.resolve(backend), "SYNTHETIC");
+    assertEquals(await accessor(), backend);
+    const originalResolve = Promise.resolve;
+    const apply = Reflect.apply;
+    let observations = 0;
+    Promise.resolve = (function (this: PromiseConstructor, value: unknown) {
+      if (value === backend) observations++;
+      return apply(originalResolve, this, [value]);
+    }) as typeof Promise.resolve;
+    try {
+      assertEquals(await accessor(), backend);
+    } finally {
+      Promise.resolve = originalResolve;
+    }
+    assertEquals(observations, 0);
+  });
+
+  for (const hook of ["create", "defineProperty"] as const) {
+    it(`keeps bounded read capabilities out of replaced Object.${hook}`, async () => {
+      const backend = new MemoryCacheBackend();
+      const namespace = "a".repeat(64);
+      const expiresAt = Date.now() + 60_000;
+      await backend.set(
+        `${namespace}:on:synthetic`,
+        JSON.stringify({ value: "snapshot", expiresAt }),
+        60,
+      );
+      const store = createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend));
+      const originalCreate = Object.create;
+      const originalDefineProperty = Object.defineProperty;
+      let observedCapabilities = 0;
+      const inspect = (key: PropertyKey, descriptor: PropertyDescriptor) => {
+        if (key === "getWithinLimit" && typeof descriptor.value === "function") {
+          observedCapabilities++;
+        }
+      };
+      if (hook === "create") {
+        Object.create = ((prototype: object | null, descriptors?: PropertyDescriptorMap) => {
+          const value = descriptors === undefined
+            ? originalCreate(prototype)
+            : originalCreate(prototype, descriptors);
+          return new Proxy(value, {
+            defineProperty(target, key, descriptor) {
+              inspect(key, descriptor);
+              originalDefineProperty(target, key, descriptor);
+              return true;
+            },
+          });
+        }) as typeof Object.create;
+      } else {
+        Object.defineProperty =
+          ((target: object, key: PropertyKey, descriptor: PropertyDescriptor) => {
+            inspect(key, descriptor);
+            return originalDefineProperty(target, key, descriptor);
+          }) as typeof Object.defineProperty;
+      }
+      try {
+        assertEquals(await store.read(namespace, "on:synthetic"), { value: "snapshot", expiresAt });
+      } finally {
+        Object.create = originalCreate;
+        Object.defineProperty = originalDefineProperty;
+      }
+      assertEquals(observedCapabilities, 0);
+    });
+  }
+
+  const prior = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const name of MANAGED_ENV) {
+      prior.set(name, getHostEnv(name));
+      deleteEnv(name);
+    }
+    setEnv("VERYFRONT_DEPENDENCY_PINNING", "1");
+    setEnv("VERYFRONT_DEPENDENCY_PINNING_ROLLOUT_PERCENT", "100");
+    clearReactVersionCache();
+  });
+  afterEach(() => {
+    for (const [name, value] of prior) {
+      if (value === undefined) deleteEnv(name);
+      else setEnv(name, value);
+    }
+    clearReactVersionCache();
+  });
+
+  it("resolves a pre-writeback snapshot on a cold replica through an adapter-configured store", async () => {
+    // The documented host bootstrap pattern: the handle is placed on the
+    // adapter before its first request; every handler-created pinning source
+    // inherits it through the adapter capability.
+    const backend = new MemoryCacheBackend();
+    const handle = createDependencySnapshotStoreHandle(
+      createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend)),
+    );
+    const adapter = createMockAdapter();
+    Object.defineProperty(adapter, "dependencySnapshotStore", {
+      value: handle,
+      enumerable: true,
+    });
+    adapter.fs.files.set("/project/package.json", '{"dependencies":{}}');
+
+    const renderingReplica = createHandlerDependencyPinningSource(
+      makeCtx({ adapter, projectId: "shared-history-project", isLocalProject: false }),
+    );
+    const document = await getDependencyPinningSnapshot(renderingReplica);
+    assertEquals(document.cacheKey.startsWith("on:"), true);
+
+    // Dependency writeback pins the resolved versions, changing the current key.
+    adapter.fs.files.set("/project/package.json", '{"dependencies":{"react":"19.2.4"}}');
+    // A cold replica holds no process-local history for the rendered key.
+    clearReactVersionCache();
+
+    const coldReplica = createHandlerDependencyPinningSource(
+      makeCtx({ adapter, projectId: "shared-history-project", isLocalProject: false }),
+    );
+    const recovered = await resolveRequestedDependencyPinningSnapshot(
+      coldReplica,
+      document.cacheKey,
+    );
+
+    assertEquals(
+      recovered?.cacheKey,
+      document.cacheKey,
+      "a cold replica must recover the rendered snapshot instead of conflicting",
+    );
+    assertEquals(recovered?.dependencies, document.dependencies);
+  });
+
+  it("keeps unconfigured runtimes on process-local history", async () => {
+    // Without an adapter-configured provider the framework must not select
+    // storage on its own, whatever credentials the environment carries.
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.com");
+    setEnv("PROXY_MODE", "1");
+    setEnv("REDIS_URL", "redis://127.0.0.1:1");
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/package.json", '{"dependencies":{}}');
+
+    const source = createHandlerDependencyPinningSource(
+      makeCtx({ adapter, projectId: "unconfigured-project", isLocalProject: false }),
+    );
+    const document = await getDependencyPinningSnapshot(source);
+
+    assertEquals(
+      document.cacheKey.startsWith("on:"),
+      true,
+      "rendering must not depend on any shared storage the host never configured",
+    );
+  });
+
+  it("rejects backend resolution instead of falling back to node-local storage", async () => {
+    // Without API cache or Redis configured, backend resolution yields the
+    // memory backend. The factory must reject so the distributed-cache
+    // accessor records a failure and retries, rather than caching a
+    // node-local backend as shared history for the life of the process.
+    await assertRejects(() => _createSharedDependencySnapshotCacheBackend());
+  });
+
+  it("builds a handle whose operations reject while no shared backend resolves", async () => {
+    const store = resolveDependencySnapshotStoreHandle(
+      createCacheDependencySnapshotStoreHandle(),
+    );
+
+    await assertRejects(() => store.read("a".repeat(64), "on:54uvgwr2ih7p"));
+    await assertRejects(() =>
+      store.publish("a".repeat(64), "on:54uvgwr2ih7p", "bytes", Date.now() + 60_000)
+    );
+  });
+
+  it("keeps the backend and stored bytes away from replaced globals", async () => {
+    // Project code in the shared realm can replace writable globals between
+    // requests. Privileged store operations must run entirely on intrinsics
+    // captured at module load, so a replacement hook never observes the
+    // backend object or the snapshot bytes.
+    const backend = new MemoryCacheBackend();
+    const store = createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend));
+    const namespace = "a".repeat(64);
+    const value = "snapshot-bytes";
+    const expiresAt = Date.now() + 60_000;
+    const observedLeaks: string[] = [];
+    const inspect = (label: string, args: readonly unknown[]) => {
+      for (const arg of args) {
+        if (arg === backend) observedLeaks.push(`${label}: backend object`);
+        if (typeof arg === "string" && arg.includes(value)) {
+          observedLeaks.push(`${label}: stored bytes`);
+        }
+        if (
+          arg !== null && typeof arg === "object" &&
+          (arg as { value?: unknown }).value === value
+        ) observedLeaks.push(`${label}: record object`);
+      }
+    };
+    const originals = {
+      apply: Reflect.apply,
+      parse: JSON.parse,
+      stringify: JSON.stringify,
+      hasOwn: Object.hasOwn,
+      getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor,
+      getPrototypeOf: Reflect.getPrototypeOf,
+      ownKeys: Reflect.ownKeys,
+      setAdd: Set.prototype.add,
+      setHas: Set.prototype.has,
+    };
+    Reflect.apply = ((target: never, thisArg: unknown, argumentsList: readonly unknown[]) => {
+      inspect("Reflect.apply", [thisArg, ...argumentsList]);
+      return originals.apply(target, thisArg, argumentsList as never);
+    }) as typeof Reflect.apply;
+    JSON.parse = ((text: string) => {
+      inspect("JSON.parse", [text]);
+      return originals.parse(text);
+    }) as typeof JSON.parse;
+    JSON.stringify = ((input: unknown) => {
+      inspect("JSON.stringify", [input]);
+      return originals.stringify(input);
+    }) as typeof JSON.stringify;
+    Object.hasOwn = ((target: object, property: PropertyKey) => {
+      inspect("Object.hasOwn", [target]);
+      return originals.hasOwn(target, property);
+    }) as typeof Object.hasOwn;
+    Reflect.getOwnPropertyDescriptor = ((target: object, property: PropertyKey) => {
+      inspect("Reflect.getOwnPropertyDescriptor", [target]);
+      return originals.getOwnPropertyDescriptor(target, property);
+    }) as typeof Reflect.getOwnPropertyDescriptor;
+    Reflect.getPrototypeOf = ((target: object) => {
+      inspect("Reflect.getPrototypeOf", [target]);
+      return originals.getPrototypeOf(target);
+    }) as typeof Reflect.getPrototypeOf;
+    Reflect.ownKeys = ((target: object) => {
+      inspect("Reflect.ownKeys", [target]);
+      return originals.ownKeys(target);
+    }) as typeof Reflect.ownKeys;
+    // deno-lint-ignore no-explicit-any
+    (Object.prototype as any).toJSON = function () {
+      inspect("Object.prototype.toJSON", [this]);
+      return this;
+    };
+    Set.prototype.add = function <T>(this: Set<T>, item: T) {
+      inspect("Set.prototype.add", [item]);
+      return originals.setAdd.call(this, item);
+    } as typeof Set.prototype.add;
+    Set.prototype.has = function <T>(this: Set<T>, item: T) {
+      inspect("Set.prototype.has", [item]);
+      return originals.setHas.call(this, item);
+    } as typeof Set.prototype.has;
+
+    try {
+      await store.publish(namespace, "on:54uvgwr2ih7p", value, expiresAt);
+      assertEquals(await store.read(namespace, "on:54uvgwr2ih7p"), { value, expiresAt });
+    } finally {
+      Reflect.apply = originals.apply;
+      JSON.parse = originals.parse;
+      JSON.stringify = originals.stringify;
+      Object.hasOwn = originals.hasOwn;
+      Reflect.getOwnPropertyDescriptor = originals.getOwnPropertyDescriptor;
+      Reflect.getPrototypeOf = originals.getPrototypeOf;
+      Reflect.ownKeys = originals.ownKeys;
+      // deno-lint-ignore no-explicit-any
+      delete (Object.prototype as any).toJSON;
+      Set.prototype.add = originals.setAdd;
+      Set.prototype.has = originals.setHas;
+    }
+
+    assertEquals(observedLeaks, []);
+  });
+
+  it("ignores revision capabilities injected through universal prototypes", async () => {
+    // Project code adding getWithRevision/compareExchange to Object.prototype
+    // must never have them invoked with the private backend as `this`, and a
+    // faked exchange must never acknowledge a publication nothing stored.
+    const backend = new MemoryCacheBackend();
+    const store = createCacheBackedDependencySnapshotStore(() => Promise.resolve(backend));
+    const invoked: unknown[] = [];
+    // deno-lint-ignore no-explicit-any
+    const prototypeHost = Object.prototype as any;
+    prototypeHost.getWithRevision = function () {
+      invoked.push(this);
+      return Promise.resolve({ value: null, revision: "0" });
+    };
+    prototypeHost.compareExchange = function () {
+      invoked.push(this);
+      return Promise.resolve(true);
+    };
+
+    const namespace = "a".repeat(64);
+    const expiresAt = Date.now() + 60_000;
+    try {
+      await store.publish(namespace, "on:54uvgwr2ih7p", "snapshot-bytes", expiresAt);
+    } finally {
+      delete prototypeHost.getWithRevision;
+      delete prototypeHost.compareExchange;
+    }
+
+    assertEquals(invoked, [], "injected prototype methods must never run");
+    assertEquals(await store.read(namespace, "on:54uvgwr2ih7p"), {
+      value: "snapshot-bytes",
+      expiresAt,
+    }, "publication must store through the real backend, not a faked exchange");
+  });
+
+  it("keeps accessor state away from replaced Map methods", async () => {
+    // The distributed-cache accessor behind the factory handle tracks state
+    // (including the resolved backend) in a Map. Replaced Map prototype
+    // methods must never observe those entries.
+    const observed: unknown[] = [];
+    const originals = { get: Map.prototype.get, set: Map.prototype.set };
+    Map.prototype.get = function <K, V>(this: Map<K, V>, key: K) {
+      const result = originals.get.call(this, key);
+      if (result !== null && typeof result === "object" && "backend" in (result as object)) {
+        observed.push(result);
+      }
+      return result;
+    } as typeof Map.prototype.get;
+    Map.prototype.set = function <K, V>(this: Map<K, V>, key: K, value: V) {
+      if (value !== null && typeof value === "object" && "backend" in (value as object)) {
+        observed.push(value);
+      }
+      return originals.set.call(this, key, value);
+    } as typeof Map.prototype.set;
+
+    try {
+      const store = resolveDependencySnapshotStoreHandle(
+        createCacheDependencySnapshotStoreHandle(),
+      );
+      await assertRejects(() => store.read("a".repeat(64), "on:54uvgwr2ih7p"));
+      await assertRejects(() => store.read("a".repeat(64), "on:54uvgwr2ih7p"));
+    } finally {
+      Map.prototype.get = originals.get;
+      Map.prototype.set = originals.set;
+    }
+
+    assertEquals(observed, [], "accessor state must not pass through ambient Map methods");
+  });
+});
