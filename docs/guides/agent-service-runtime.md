@@ -543,7 +543,13 @@ retirement, even when the caller's cancellation signal remains live.
 The hosted service's `DELETE /api/runs/:runId` route requires verified cancellation
 authority for that exact run before changing execution state or remembering a
 delayed-start cancellation. The default runtime verifies the API's existing signed
-cancellation bearer with its configured public key. A general user token without
+cancellation bearer with its configured public key. Two claim shapes are accepted,
+one for each shape the API mints: a project- and run-scoped `veryfront-server`
+service-account bearer carrying `tokenUse: project_scoped_service_account`, and,
+for a run with no project, the requester's own session bearer, which carries no
+`tokenUse` at all. Both shapes are pinned by
+`tests/fixtures/contracts/api-run-cancellation-jwt-payload.json`, captured from the
+API's `mintRuntimeCancellationAuthToken`. A general user token without
 a matching run claim is insufficient, and development decode-only authentication
 does not grant cancellation. Custom route sets must supply
 `verifyRunCancellationToken`; omission returns HTTP 403. The API retains actor and

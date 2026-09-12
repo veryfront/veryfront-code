@@ -154,6 +154,27 @@ const RUN_EVENT_WRITER_TOKEN_USE = "run_event_writer";
 const RUN_EVENT_WRITER_V1_SCOPES = ["projects:read", "runs:write"] as const;
 const RUN_EVENT_WRITER_V2_SCOPES = ["agent-runs:events:append"] as const;
 
+// Cross-repo claim contract for `mintRuntimeCancellationAuthToken`
+// (veryfront-api `src/usecases/agent-execution/runtime-auth-token.ts`). Pinned
+// by `tests/fixtures/contracts/api-run-cancellation-jwt-payload.json`, which
+// carries payloads captured from that producer: changing any constant below
+// without the API fails the contract tests instead of silently 403ing every
+// Stop while the API finalizes the run cancelled locally.
+//
+// `mintProjectScopedServiceToken` stamps this use on every project-bound
+// cancellation bearer (its `tokenUse` default, veryfront-api
+// `src/usecases/auth/mint-project-scoped-service-token.ts`). Other uses —
+// `run_event_writer`, the inference uses — are not cancellation authority.
+const PROJECT_SCOPED_SERVICE_ACCOUNT_TOKEN_USE = "project_scoped_service_account";
+// veryfront-api `RUNTIME_SCOPES.runsCancel`.
+const PROJECT_CANCELLATION_SCOPES = ["projects:read"] as const;
+// veryfront-api `AUTHENTICATED_USER_SCOPES`, the whole scope set
+// `mintAuthenticatedUserToken` puts on a projectless cancellation bearer. This
+// list is duplicated rather than imported because the API is a separate
+// deployment unit with no shared package; the contract fixture is what forces
+// the two to stay equal.
+const AUTHENTICATED_USER_CANCELLATION_SCOPES = ["read", "write", "delete"] as const;
+
 function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
   return Array.isArray(scopes) &&
     scopes.length === expected.length &&
@@ -535,17 +556,24 @@ export function createHostedServiceAuth(
       if (
         claimRunId !== runId || typeof userId !== "string" || !userId ||
         typeof exp !== "number" || !NumberIsFinite(exp) ||
-        exp * 1000 <= DateNow() || tokenUse !== undefined || scopes !== undefined
+        exp * 1000 <= DateNow() || scopes !== undefined
       ) return false;
       // Match the two existing mintRuntimeCancellationAuthToken contracts. The
       // API authorizes the actor before minting this exact-run server authority.
       if (actorType === "service_account") {
-        return typeof serverId === "string" && !!serverId && serviceAccountId === serverId &&
+        // The project-bound bearer always carries the project service-account
+        // use; every other use (writer, inference) is a different authority and
+        // must not cancel.
+        return tokenUse === PROJECT_SCOPED_SERVICE_ACCOUNT_TOKEN_USE &&
+          typeof serverId === "string" && !!serverId && serviceAccountId === serverId &&
           userId === serviceAccountId && typeof projectId === "string" && projectId.length > 0 &&
-          hasExactCancellationScopes(scope, ["projects:read"]);
+          hasExactCancellationScopes(scope, PROJECT_CANCELLATION_SCOPES);
       }
-      return actorType === undefined && serviceAccountId === undefined && projectId === undefined &&
-        hasExactCancellationScopes(scope, ["read", "write", "delete"]);
+      // The projectless bearer is a plain user session, which carries no
+      // `tokenUse` at all.
+      return tokenUse === undefined && actorType === undefined &&
+        serviceAccountId === undefined && projectId === undefined &&
+        hasExactCancellationScopes(scope, AUTHENTICATED_USER_CANCELLATION_SCOPES);
     } catch {
       return false;
     }
