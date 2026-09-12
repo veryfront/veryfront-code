@@ -956,7 +956,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           platformMcpFetchCalls += 1;
           assertEquals(
             new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-            "Bearer run-scoped-token",
+            "Bearer request-scoped-user-token",
           );
           return Promise.resolve(
             new Response(
@@ -2768,7 +2768,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
         assertEquals(
           new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-          "Bearer run-scoped-token",
+          "Bearer request-scoped-user-token",
         );
         const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
           id: string;
@@ -3063,7 +3063,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
 
         if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
-          assertEquals(authorization, "Bearer run-scoped-token");
+          assertEquals(authorization, "Bearer request-scoped-user-token");
           capturedMcpRequest = {
             url: String(url),
             authorization,
@@ -3131,9 +3131,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedSystem ?? "", "project_reference=support-agent-fork");
     assertStringIncludes(capturedSystem ?? "", '<project_context>\nproject_reference: "proj-1"');
     assertEquals(capturedProjectContextToken, "run-scoped-token");
+    // The platform MCP source is framework-owned and authenticates with the
+    // verified run invocation credential; only project-code-visible surfaces
+    // (the agent environment above) keep the runtime's project credential.
     assertEquals(capturedMcpRequest, {
       url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
-      authorization: "Bearer run-scoped-token",
+      authorization: "Bearer request-scoped-user-token",
     });
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
     assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
