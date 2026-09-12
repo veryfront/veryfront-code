@@ -10,7 +10,12 @@
  * @module run-events/envelope
  */
 
-import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
+import type {
+  InferSchema,
+  RefinementCtx,
+  Schema,
+  ValidationResult,
+} from "#veryfront/extensions/schema/index.ts";
 import { defineRunEventSchema } from "./schema-validator.ts";
 import { isRunEventType, RUN_EVENT_CLASS_BY_TYPE, RUN_EVENT_CLASSES } from "./vocabulary.ts";
 
@@ -127,22 +132,34 @@ export type ConversationTypedRunEventRow = RunEventEnvelope & {
   event: TypedRunEventPayload;
 };
 
-/** The conversation row as it arrives, before the two keys collapse into one. */
+/**
+ * The conversation row as it arrives, before the two keys collapse into one.
+ * `event` is still unchecked here: it is only validated when it is the row's
+ * one payload, so a canonical `payload` beside a stale or malformed alias
+ * still wins.
+ */
 type ConversationTypedRunEventRowInput = RunEventEnvelope & {
   payload?: TypedRunEventPayload;
-  event?: TypedRunEventPayload;
+  event?: unknown;
 };
 
 /**
  * The one payload a conversation-scoped row carries. `payload` is canonical
- * and wins when a row somehow carries both; `event` is the transitional alias.
- * Returns undefined when the row has neither, which the schema rejects.
+ * and wins when a row somehow carries both, without looking at the alias;
+ * `event` is the transitional alias and is validated as a typed payload only
+ * when it is all the row has. Returns undefined when the row has neither,
+ * which the schema rejects.
  */
 function pickConversationPayload(
+  typedPayload: Schema<TypedRunEventPayload>,
   row: ConversationTypedRunEventRowInput,
-): { key: "payload" | "event"; payload: TypedRunEventPayload } | undefined {
-  if (row.payload !== undefined) return { key: "payload", payload: row.payload };
-  if (row.event !== undefined) return { key: "event", payload: row.event };
+): { key: "payload" | "event"; result: ValidationResult<TypedRunEventPayload> } | undefined {
+  if (row.payload !== undefined) {
+    return { key: "payload", result: { success: true, data: row.payload } };
+  }
+  if (row.event !== undefined) {
+    return { key: "event", result: typedPayload.safeParse(row.event) };
+  }
   return undefined;
 }
 
@@ -154,8 +171,9 @@ function pickConversationPayload(
  * as the run-scoped route and the SSE frames, so this schema reads `payload`
  * as canonical and accepts the pre-cutover `event` key as a transitional
  * alias that Phase F removes. Exactly one of the two must be present: a row
- * with both parses as `payload`, a row with neither is rejected with an issue
- * naming both keys.
+ * with both parses as `payload` and never looks at the alias, so a stale or
+ * malformed alias beside a canonical payload does not reject the row; a row
+ * with neither is rejected with an issue naming both keys.
  *
  * The `type` agreement and `event_class` checks run against whichever object
  * was chosen, exactly as `getTypedRunEventRowSchema` runs them. The parsed row
@@ -170,9 +188,10 @@ export const getConversationTypedRunEventRowSchema = defineRunEventSchema((v) =>
   const typedPayload = v.object({ type: v.string().min(1) }).passthrough();
   return getRunEventEnvelopeSchema().extend({
     payload: typedPayload.optional(),
-    event: typedPayload.optional(),
+    // Not validated at the object level: see `pickConversationPayload`.
+    event: v.unknown().optional(),
   }).superRefine((row, ctx) => {
-    const chosen = pickConversationPayload(row);
+    const chosen = pickConversationPayload(typedPayload, row);
     if (chosen === undefined) {
       ctx.addIssue({
         message:
@@ -181,23 +200,36 @@ export const getConversationTypedRunEventRowSchema = defineRunEventSchema((v) =>
       });
       return;
     }
-    if (row.event_type !== chosen.payload.type) {
+    if (!chosen.result.success) {
+      for (const issue of chosen.result.issues) {
+        ctx.addIssue({
+          code: issue.code,
+          message: issue.message,
+          path: [chosen.key, ...issue.path],
+        });
+      }
+      return;
+    }
+    const payload = chosen.result.data;
+    if (row.event_type !== payload.type) {
       ctx.addIssue({
         message:
-          `${chosen.key}.type "${chosen.payload.type}" does not match event_type "${row.event_type}"`,
+          `${chosen.key}.type "${payload.type}" does not match event_type "${row.event_type}"`,
         path: [chosen.key, "type"],
       });
     }
     checkEventClassAgreesWithType(row, ctx);
   }).transform((row): ConversationTypedRunEventRow => {
     const { payload: _payload, event: _event, ...envelope } = row;
-    const chosen = pickConversationPayload(row);
-    if (chosen === undefined) {
+    // A second pick re-validates an alias-keyed row's small payload object;
+    // the refinement cannot hand its result forward.
+    const chosen = pickConversationPayload(typedPayload, row);
+    if (chosen === undefined || !chosen.result.success) {
       // The refinement above already rejected this row; a validator that ran
       // the transform anyway would be a contract bug worth surfacing.
-      throw new Error("conversation run event row reached the transform with no payload");
+      throw new Error("conversation run event row reached the transform without a payload");
     }
-    return { ...envelope, payload: chosen.payload, event: chosen.payload };
+    return { ...envelope, payload: chosen.result.data, event: chosen.result.data };
   });
 });
 

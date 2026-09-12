@@ -125,6 +125,24 @@ describe("run-events/envelope", () => {
     assertEquals(row.event, PAYLOAD);
   });
 
+  it("ignores a stale or malformed event alias beside a canonical payload", () => {
+    for (const alias of [{}, null, "not an object", { type: "" }]) {
+      const row = getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        payload: PAYLOAD,
+        event: alias,
+      });
+      assertEquals(row.payload, PAYLOAD);
+      assertEquals(row.event, PAYLOAD);
+    }
+  });
+
+  it("reports the alias's own issues under event when it is the row's only payload", () => {
+    const result = getConversationTypedRunEventRowSchema().safeParse({ ...ENVELOPE, event: {} });
+    assert(!result.success);
+    assertEquals(result.issues.map((issue) => issue.path), [["event", "type"]]);
+  });
+
   it("rejects a conversation-scoped row with neither payload nor event, naming both keys", () => {
     const result = getConversationTypedRunEventRowSchema().safeParse({ ...ENVELOPE });
     assertEquals(result.success, false);
