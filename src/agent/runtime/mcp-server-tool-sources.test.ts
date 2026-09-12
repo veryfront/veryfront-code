@@ -937,3 +937,61 @@ it("keeps injected remote facades out of source collection hooks", async () => {
   assertEquals(await selected[0]!.executeTool("allowed", {}), { ok: true });
   assertEquals(executions, 1);
 });
+
+Deno.test("getRuntimeRemoteToolSources serves a child agent's own named tools past a constrained inherited source", async () => {
+  const inheritedSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "list_files",
+        description: "List project files",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+  const rawSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([
+        {
+          name: "create_file",
+          description: "Create a project file",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "get_file",
+          description: "Read a project file",
+          parameters: { type: "object", properties: {} },
+        },
+      ]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [inheritedSource],
+    () =>
+      getRuntimeRemoteToolSources(
+        {
+          id: "child-agent",
+          system: "Store intake evidence.",
+          tools: { create_file: true, get_file: true },
+        },
+        {
+          getVeryfrontBootstrap: () => ({
+            apiBaseUrl: "https://api.example/",
+            apiToken: "server-token",
+            projectSlug: "server-project",
+            hasRequestContext: false,
+            usesVeryfrontFs: false,
+          }),
+          createRemoteToolSource: () => rawSource,
+        },
+      ),
+  );
+
+  const names = (await Promise.all((sources ?? []).map((source) => source.listTools())))
+    .flat()
+    .map((tool) => tool.name)
+    .toSorted();
+  assertEquals(names, ["create_file", "get_file"]);
+});

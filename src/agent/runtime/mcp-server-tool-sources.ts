@@ -376,22 +376,23 @@ export function getRuntimeRemoteToolSources(
       (source) => configuredFirstPartyServersBySourceId.has(source.id),
     )
     : injectedSources;
-  const policyWrappedInjectedSources = mapPrivateArray(selectedInjectedSources, (source) => {
-    const server = configuredFirstPartyServersBySourceId.get(source.id);
-    const policy = server?.toolPolicy ??
-      (implicitToolNames.length > 0 ? { allow: implicitToolNames } : undefined);
-    return createMcpToolPolicySource(source, policy);
-  });
+  // Ambient inheritance carries the invoking runtime's sources, already
+  // constrained to the INVOKER's tool allowlist. A child agent whose own
+  // config names first-party tools must not be capped by that boundary: it
+  // builds its own bootstrap-identity source for its declared tools, exactly
+  // as it would when no parent context is active. Only a host that injected
+  // sources explicitly (__vfRemoteToolSources) still owns the boundary.
+  const hostOwnedSourceBoundary = configuredInjectedSources !== undefined;
+  const selfServedFirstPartyIds = createPrivateSet<string>();
   const configuredSources = flatMapPrivateArray(configuredServers, (server) => {
     if (isHttpMcpServerConfig(server)) {
       return [createMcpServerToolSource(server)];
     }
     if (server.kind === "veryfront-api") {
+      const sourceId = getFirstPartyMcpSourceId(server);
       if (
-        somePrivateArray(
-          injectedSources,
-          (source) => source.id === getFirstPartyMcpSourceId(server),
-        )
+        hostOwnedSourceBoundary &&
+        somePrivateArray(injectedSources, (source) => source.id === sourceId)
       ) {
         return [];
       }
@@ -400,7 +401,11 @@ export function getRuntimeRemoteToolSources(
         dependencies,
         hasExplicitMcpServers,
       );
-      return source ? [source] : [];
+      if (!source) {
+        return [];
+      }
+      selfServedFirstPartyIds.add(sourceId);
+      return [source];
     }
     if (server.kind === "veryfront-studio") {
       if (
@@ -415,6 +420,18 @@ export function getRuntimeRemoteToolSources(
     }
     return [];
   });
+  const policyWrappedInjectedSources = mapPrivateArray(
+    filterPrivateArray(
+      selectedInjectedSources,
+      (source) => !selfServedFirstPartyIds.has(source.id),
+    ),
+    (source) => {
+      const server = configuredFirstPartyServersBySourceId.get(source.id);
+      const policy = server?.toolPolicy ??
+        (implicitToolNames.length > 0 ? { allow: implicitToolNames } : undefined);
+      return createMcpToolPolicySource(source, policy);
+    },
+  );
   const remoteToolSources = concatPrivateArrays(
     policyWrappedInjectedSources,
     configuredSources,
