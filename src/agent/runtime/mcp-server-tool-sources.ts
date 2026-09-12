@@ -491,7 +491,10 @@ export function getRuntimeRemoteToolSources(
       const server = configuredFirstPartyServersBySourceId.get(source.id);
       const policy = server?.toolPolicy ??
         (implicitToolNames.length > 0 ? { allow: implicitToolNames } : undefined);
-      return createMcpToolPolicySource(source, policy);
+      // A retained source keeps its provenance: a deeper child must still be
+      // able to re-derive its own bootstrap source past an inherited alias
+      // this level only policy-narrowed.
+      return propagateBootstrapIdentity(source, createMcpToolPolicySource(source, policy));
     },
   );
   const remoteToolSources = concatPrivateArrays(

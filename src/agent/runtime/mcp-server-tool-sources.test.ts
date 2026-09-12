@@ -939,7 +939,7 @@ it("keeps injected remote facades out of source collection hooks", async () => {
   assertEquals(executions, 1);
 });
 
-Deno.test("getRuntimeRemoteToolSources serves a child agent's own named tools past a constrained inherited source", async () => {
+it("getRuntimeRemoteToolSources serves a child agent's own named tools past a constrained inherited source", async () => {
   const inheritedSource: RemoteToolSource = markBootstrapIdentityRemoteToolSource({
     id: VERYFRONT_API_MCP_SOURCE_ID,
     listTools: () =>
@@ -997,7 +997,7 @@ Deno.test("getRuntimeRemoteToolSources serves a child agent's own named tools pa
   assertEquals(names, ["create_file", "get_file"]);
 });
 
-Deno.test("getRuntimeRemoteToolSources keeps a host-injected ambient source authoritative for its id", async () => {
+it("getRuntimeRemoteToolSources keeps a host-injected ambient source authoritative for its id", async () => {
   const hostInjectedSource: RemoteToolSource = {
     id: VERYFRONT_API_MCP_SOURCE_ID,
     listTools: () =>
@@ -1042,7 +1042,7 @@ Deno.test("getRuntimeRemoteToolSources keeps a host-injected ambient source auth
   assertEquals(names, ["get_file"]);
 });
 
-Deno.test("getRuntimeRemoteToolSources drops a bootstrap-owned sibling when a host source owns the id", async () => {
+it("getRuntimeRemoteToolSources drops a bootstrap-owned sibling when a host source owns the id", async () => {
   const hostInjectedSource: RemoteToolSource = {
     id: VERYFRONT_API_MCP_SOURCE_ID,
     listTools: () =>
@@ -1093,4 +1093,68 @@ Deno.test("getRuntimeRemoteToolSources drops a bootstrap-owned sibling when a ho
   assertEquals(definitions.map((tool) => tool.description), [
     "Read a project file (host credential)",
   ]);
+});
+
+it("keeps bootstrap provenance across a retained intermediate delegation", async () => {
+  const ALIAS = "custom-api-alias";
+  const rootAliasSource: RemoteToolSource = markBootstrapIdentityRemoteToolSource({
+    id: ALIAS,
+    listTools: () =>
+      Promise.resolve([{
+        name: "list_files",
+        description: "List project files",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  });
+  const grandchildSource: RemoteToolSource = {
+    id: ALIAS,
+    listTools: () =>
+      Promise.resolve([{
+        name: "create_file",
+        description: "Create a project file",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+  const bootstrap = () => ({
+    apiBaseUrl: "https://api.example/",
+    apiToken: "server-token",
+    projectSlug: "server-project",
+    hasRequestContext: false,
+    usesVeryfrontFs: false,
+  });
+
+  // The intermediate child names its own tool, so it retains and merely
+  // policy-narrows the inherited alias rather than replacing it.
+  const intermediateSources = runWithExactRuntimeRemoteToolSources(
+    [rootAliasSource],
+    () =>
+      getRuntimeRemoteToolSources({
+        id: "intermediate-agent",
+        system: "List the inbox.",
+        tools: { list_files: true },
+      }, { getVeryfrontBootstrap: bootstrap, createRemoteToolSource: () => rootAliasSource }),
+  );
+  const retainedAlias = intermediateSources?.find((source) => source.id === ALIAS);
+  assertEquals(retainedAlias !== undefined, true);
+
+  // The grandchild selects that alias explicitly for a tool the intermediate
+  // policy excluded. The retained alias is bootstrap-built, so it must not read
+  // as host-owned: the grandchild serves the alias from its own identity.
+  const grandchildSources = runWithExactRuntimeRemoteToolSources(
+    [retainedAlias!],
+    () =>
+      getRuntimeRemoteToolSources({
+        id: "grandchild-agent",
+        system: "Store intake evidence.",
+        tools: { create_file: true },
+        mcpServers: [{ kind: "veryfront-api", id: ALIAS, toolPolicy: { allow: ["create_file"] } }],
+      }, { getVeryfrontBootstrap: bootstrap, createRemoteToolSource: () => grandchildSource }),
+  );
+
+  const names = (await Promise.all((grandchildSources ?? []).map((source) => source.listTools())))
+    .flat()
+    .map((tool) => tool.name);
+  assertEquals(names, ["create_file"]);
 });
