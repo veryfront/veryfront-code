@@ -83,6 +83,7 @@ export {
 
 export {
   type ConversationTypedRunEventRow,
+  type ConversationTypedRunEventRowInput,
   getConversationTypedRunEventRowSchema,
   getRunEventEnvelopeSchema,
   getTypedRunEventRowSchema,

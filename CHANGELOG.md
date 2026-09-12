@@ -22,6 +22,11 @@ The parsed `ConversationTypedRunEventRow` exposes the payload as `payload` and,
 until Phase F removes the alias, as the deprecated `event`. Move reads from
 `row.event` to `row.payload` before Phase F.
 
+`ConversationTypedRunEventRow` now describes the parsed row, so `payload` is
+required on it. A row you build by hand keyed only by `event` no longer type
+checks as `ConversationTypedRunEventRow`; annotate it with the new
+`ConversationTypedRunEventRowInput` and parse it instead.
+
 Stop sending `format=typed` to any run event surface. The API accepts and
 ignores it, and refuses every other value, including `format=raw`.
 

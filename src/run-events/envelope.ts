@@ -133,13 +133,19 @@ export type ConversationTypedRunEventRow = RunEventEnvelope & {
 };
 
 /**
- * The conversation row as it arrives, before the two keys collapse into one.
- * `event` is still unchecked here: it is only validated when it is the row's
- * one payload, so a canonical `payload` beside a stale or malformed alias
- * still wins.
+ * A conversation-scoped row as the API serves it, before
+ * `getConversationTypedRunEventRowSchema` collapses its two keys into one:
+ * keyed `payload`, or, until Phase F, by the `event` alias. Annotate a row you
+ * build by hand (a fixture, a stub server) with this type and parse it to get
+ * a `ConversationTypedRunEventRow`.
+ *
+ * `event` is unchecked here: the schema validates it only when it is the
+ * row's one payload, so a canonical `payload` beside a stale or malformed
+ * alias still wins.
  */
-type ConversationTypedRunEventRowInput = RunEventEnvelope & {
+export type ConversationTypedRunEventRowInput = RunEventEnvelope & {
   payload?: TypedRunEventPayload;
+  /** @deprecated Serve `payload`. Removed in Phase F. */
   event?: unknown;
 };
 
