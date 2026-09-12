@@ -188,6 +188,12 @@ function pickConversationPayload(
  *
  * `format=typed` is accepted and ignored on these surfaces (it is deprecated),
  * and any other value, including `format=raw`, is refused. Do not send it.
+ *
+ * Because the parsed row is normalized, this is not an object schema: its
+ * output differs from its input, so the object chainables (`extend`, `pick`,
+ * `strict`) do not apply to it. To compose a row schema of your own, start
+ * from `getRunEventEnvelopeSchema()` and the `ConversationTypedRunEventRowInput`
+ * shape, or compose `getTypedRunEventRowSchema()` for a `payload`-keyed row.
  */
 // legacy: removed in Phase F -- the `event` alias goes; `payload` stays as the only key.
 export const getConversationTypedRunEventRowSchema = defineRunEventSchema((v) => {
