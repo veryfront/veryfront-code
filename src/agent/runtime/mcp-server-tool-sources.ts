@@ -474,8 +474,11 @@ export function getRuntimeRemoteToolSources(
   // execution takes the first source that serves a name, so a bootstrap-owned
   // sibling sharing the id would bypass the host credential boundary.
   const hostOwnedInjectedIds = createPrivateSet<string>();
-  for (const source of selectedInjectedSources) {
-    if (!isBootstrapIdentityRemoteToolSource(source)) hostOwnedInjectedIds.add(source.id);
+  for (let index = 0; index < selectedInjectedSources.length; index++) {
+    const source = selectedInjectedSources[index];
+    if (source !== undefined && !isBootstrapIdentityRemoteToolSource(source)) {
+      hostOwnedInjectedIds.add(source.id);
+    }
   }
   const policyWrappedInjectedSources = mapPrivateArray(
     filterPrivateArray(
