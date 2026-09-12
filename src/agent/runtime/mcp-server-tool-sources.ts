@@ -145,6 +145,35 @@ function createMcpToolPolicySource(
 }
 
 /** Carry an explicit remote-tool ceiling into nested execution. */
+
+/**
+ * Sources the runtime built itself from the host bootstrap identity, tracked
+ * by object identity through the wrappers below. A locally invoked child may
+ * re-derive its own bootstrap source past one of these, because the child
+ * resolves the same process-global identity; a source injected by a host
+ * (request-scoped credentials, another project's binding) is never in this
+ * set and keeps exclusive ownership of its id.
+ */
+const bootstrapIdentityToolSources = new WeakSet<RemoteToolSource>();
+
+export function markBootstrapIdentityRemoteToolSource(source: RemoteToolSource): RemoteToolSource {
+  bootstrapIdentityToolSources.add(source);
+  return source;
+}
+
+export function isBootstrapIdentityRemoteToolSource(source: RemoteToolSource): boolean {
+  return bootstrapIdentityToolSources.has(source);
+}
+
+function propagateBootstrapIdentity(
+  input: RemoteToolSource,
+  output: RemoteToolSource,
+): RemoteToolSource {
+  return bootstrapIdentityToolSources.has(input)
+    ? markBootstrapIdentityRemoteToolSource(output)
+    : output;
+}
+
 export function constrainRuntimeRemoteToolSources(
   sources: RemoteToolSource[] | undefined,
   allowedToolNames: string[] | undefined,
@@ -155,7 +184,10 @@ export function constrainRuntimeRemoteToolSources(
 
   const policy = { allow: [...createPrivateSet(allowedToolNames)] };
   const sourcesToConstrain = sources ?? getActiveRuntimeRemoteToolSources() ?? [];
-  return mapPrivateArray(sourcesToConstrain, (source) => createMcpToolPolicySource(source, policy));
+  return mapPrivateArray(
+    sourcesToConstrain,
+    (source) => propagateBootstrapIdentity(source, createMcpToolPolicySource(source, policy)),
+  );
 }
 
 const REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS = [
@@ -205,21 +237,22 @@ export function bindRuntimeRemoteToolSourcesToCredentialOwner(
     return undefined;
   }
 
-  return mapPrivateArray(sources, (source) => ({
-    id: source.id,
-    listTools: (nestedContext) =>
-      source.listTools(withBoundRemoteToolContext(nestedContext, context, ["authToken"])),
-    executeTool: (toolName, args, nestedContext) =>
-      source.executeTool(
-        toolName,
-        args,
-        withBoundRemoteToolContext(
-          nestedContext,
-          context,
-          REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS,
+  return mapPrivateArray(sources, (source) =>
+    propagateBootstrapIdentity(source, {
+      id: source.id,
+      listTools: (nestedContext) =>
+        source.listTools(withBoundRemoteToolContext(nestedContext, context, ["authToken"])),
+      executeTool: (toolName, args, nestedContext) =>
+        source.executeTool(
+          toolName,
+          args,
+          withBoundRemoteToolContext(
+            nestedContext,
+            context,
+            REMOTE_TOOL_CREDENTIAL_CONTEXT_KEYS,
+          ),
         ),
-      ),
-  }));
+    }));
 }
 
 export type RuntimeMcpServerToolSourceDependencies = {
@@ -318,7 +351,9 @@ function createVeryfrontApiMcpServerToolSource(
       : {}),
   });
   const policySource = createMcpToolPolicySource(source, server.toolPolicy);
-  return bindRemoteToolSourceToProject(policySource, projectId);
+  return markBootstrapIdentityRemoteToolSource(
+    bindRemoteToolSourceToProject(policySource, projectId),
+  );
 }
 
 function requiresInjectedStudioMcpServerToolSource(server: AgentVeryfrontMcpServerConfig): never {
@@ -377,12 +412,14 @@ export function getRuntimeRemoteToolSources(
     )
     : injectedSources;
   // Ambient inheritance carries the invoking runtime's sources, already
-  // constrained to the INVOKER's tool allowlist. A child agent whose own
-  // config names first-party tools must not be capped by that boundary: it
-  // builds its own bootstrap-identity source for its declared tools, exactly
-  // as it would when no parent context is active. Only a host that injected
-  // sources explicitly (__vfRemoteToolSources) still owns the boundary.
-  const hostOwnedSourceBoundary = configuredInjectedSources !== undefined;
+  // policy-limited to the INVOKER's tool set. A child agent whose own config
+  // names first-party tools may re-derive its own source past that boundary
+  // ONLY when every ambient source with that id was itself built from the
+  // process-global bootstrap identity: the child then resolves the same
+  // credential domain it would resolve with no parent active. A source a
+  // host injected (explicitly via __vfRemoteToolSources, or ambiently with
+  // request-scoped credentials) is never replaced — it keeps exclusive
+  // ownership of its id, and the child stays inside the host's boundary.
   const selfServedFirstPartyIds = createPrivateSet<string>();
   const configuredSources = flatMapPrivateArray(configuredServers, (server) => {
     if (isHttpMcpServerConfig(server)) {
@@ -390,16 +427,25 @@ export function getRuntimeRemoteToolSources(
     }
     if (server.kind === "veryfront-api") {
       const sourceId = getFirstPartyMcpSourceId(server);
-      if (
-        hostOwnedSourceBoundary &&
-        somePrivateArray(injectedSources, (source) => source.id === sourceId)
-      ) {
+      const sameIdSources = filterPrivateArray(
+        injectedSources,
+        (source) => source.id === sourceId,
+      );
+      const hostOwnsSourceId = configuredInjectedSources !== undefined
+        ? sameIdSources.length > 0
+        : somePrivateArray(
+          sameIdSources,
+          (source) => !isBootstrapIdentityRemoteToolSource(source),
+        );
+      if (hostOwnsSourceId) {
         return [];
       }
       const source = createVeryfrontApiMcpServerToolSource(
         server,
         dependencies,
-        hasExplicitMcpServers,
+        // With an ambient same-id source present, fall back to it instead of
+        // failing when no bootstrap identity can be resolved.
+        hasExplicitMcpServers && sameIdSources.length === 0,
       );
       if (!source) {
         return [];

@@ -11,6 +11,7 @@ import {
   constrainRuntimeRemoteToolSources,
   getRequestedUnresolvedBooleanToolNames,
   getRuntimeRemoteToolSources,
+  markBootstrapIdentityRemoteToolSource,
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
@@ -939,7 +940,7 @@ it("keeps injected remote facades out of source collection hooks", async () => {
 });
 
 Deno.test("getRuntimeRemoteToolSources serves a child agent's own named tools past a constrained inherited source", async () => {
-  const inheritedSource: RemoteToolSource = {
+  const inheritedSource: RemoteToolSource = markBootstrapIdentityRemoteToolSource({
     id: VERYFRONT_API_MCP_SOURCE_ID,
     listTools: () =>
       Promise.resolve([{
@@ -948,7 +949,7 @@ Deno.test("getRuntimeRemoteToolSources serves a child agent's own named tools pa
         parameters: { type: "object", properties: {} },
       }]),
     executeTool: () => Promise.resolve({ ok: true }),
-  };
+  });
   const rawSource: RemoteToolSource = {
     id: VERYFRONT_API_MCP_SOURCE_ID,
     listTools: () =>
@@ -994,4 +995,49 @@ Deno.test("getRuntimeRemoteToolSources serves a child agent's own named tools pa
     .map((tool) => tool.name)
     .toSorted();
   assertEquals(names, ["create_file", "get_file"]);
+});
+
+Deno.test("getRuntimeRemoteToolSources keeps a host-injected ambient source authoritative for its id", async () => {
+  const hostInjectedSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "get_file",
+        description: "Read a project file (host credential)",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true, credential: "host" }),
+  };
+  let bootstrapSourceCreated = false;
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    [hostInjectedSource],
+    () =>
+      getRuntimeRemoteToolSources(
+        {
+          id: "child-agent",
+          system: "Store intake evidence.",
+          tools: { create_file: true, get_file: true },
+        },
+        {
+          getVeryfrontBootstrap: () => ({
+            apiBaseUrl: "https://api.example/",
+            apiToken: "server-token",
+            projectSlug: "server-project",
+            hasRequestContext: false,
+            usesVeryfrontFs: false,
+          }),
+          createRemoteToolSource: () => {
+            bootstrapSourceCreated = true;
+            throw new Error("host-owned id must not be re-derived from bootstrap identity");
+          },
+        },
+      ),
+  );
+
+  assertEquals(bootstrapSourceCreated, false);
+  const names = (await Promise.all((sources ?? []).map((source) => source.listTools())))
+    .flat()
+    .map((tool) => tool.name);
+  assertEquals(names, ["get_file"]);
 });
