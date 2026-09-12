@@ -97,18 +97,45 @@ describe("run-events/envelope", () => {
     assertEquals(result.success, false);
   });
 
-  it("accepts the conversation-scoped row, which keys the payload as event", () => {
-    const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, event: PAYLOAD });
-    assertEquals(row.event.type, "URL_CITED");
+  it("accepts the conversation-scoped row keyed by payload, as every surface serves it now", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, payload: PAYLOAD });
+    assertEquals(row.payload, PAYLOAD);
     assertEquals(row.run_id, ENVELOPE.run_id);
   });
 
-  it("does not accept the conversation row's key on the run-scoped schema", () => {
+  it("exposes the payload-keyed row under the event alias too, until Phase F", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, payload: PAYLOAD });
+    assertEquals(row.event, PAYLOAD);
+  });
+
+  it("still accepts the conversation-scoped row keyed by the event alias", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, event: PAYLOAD });
+    assertEquals(row.payload, PAYLOAD);
+    assertEquals(row.event, PAYLOAD);
+    assertEquals(row.run_id, ENVELOPE.run_id);
+  });
+
+  it("prefers payload when a conversation-scoped row carries both keys", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({
+      ...ENVELOPE,
+      payload: PAYLOAD,
+      event: { ...PAYLOAD, url: "https://example.com/stale-alias" },
+    });
+    assertEquals(row.payload, PAYLOAD);
+    assertEquals(row.event, PAYLOAD);
+  });
+
+  it("rejects a conversation-scoped row with neither payload nor event, naming both keys", () => {
+    const result = getConversationTypedRunEventRowSchema().safeParse({ ...ENVELOPE });
+    assertEquals(result.success, false);
+    assert(!result.success);
+    const message = JSON.stringify(result.error);
+    assert(message.includes("payload"), message);
+    assert(message.includes("event"), message);
+  });
+
+  it("does not accept the event alias on the run-scoped schema", () => {
     assertThrows(() => parseTypedRunEventRow({ ...ENVELOPE, event: PAYLOAD }));
-    assert(
-      !getConversationTypedRunEventRowSchema().safeParse({ ...ENVELOPE, payload: PAYLOAD })
-        .success,
-    );
   });
 
   it("accepts a run-scoped row whose payload.type agrees with event_type", () => {
@@ -132,9 +159,44 @@ describe("run-events/envelope", () => {
     );
   });
 
+  it("accepts a conversation-scoped row whose payload.type agrees with event_type", () => {
+    const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, payload: PAYLOAD });
+    assertEquals(row.event_type, row.payload.type);
+  });
+
+  it("rejects a conversation-scoped row whose payload.type disagrees with event_type", () => {
+    assertThrows(() =>
+      getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        event_type: "URL_CITED",
+        payload: { ...PAYLOAD, type: "RUN_ERROR" },
+      })
+    );
+  });
+
+  it("checks the type agreement against payload when both keys are present", () => {
+    // payload wins, so a disagreeing payload fails even though the alias agrees...
+    assertThrows(() =>
+      getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        event_type: "URL_CITED",
+        payload: { ...PAYLOAD, type: "RUN_ERROR" },
+        event: PAYLOAD,
+      })
+    );
+    // ...and an agreeing payload passes even though the alias disagrees.
+    const row = getConversationTypedRunEventRowSchema().parse({
+      ...ENVELOPE,
+      event_type: "URL_CITED",
+      payload: PAYLOAD,
+      event: { ...PAYLOAD, type: "RUN_ERROR" },
+    });
+    assertEquals(row.payload.type, "URL_CITED");
+  });
+
   it("accepts a conversation-scoped row whose event.type agrees with event_type", () => {
     const row = getConversationTypedRunEventRowSchema().parse({ ...ENVELOPE, event: PAYLOAD });
-    assertEquals(row.event_type, row.event.type);
+    assertEquals(row.event_type, row.payload.type);
   });
 
   it("rejects a conversation-scoped row whose event.type disagrees with event_type", () => {
@@ -143,6 +205,15 @@ describe("run-events/envelope", () => {
         ...ENVELOPE,
         event_type: "URL_CITED",
         event: { ...PAYLOAD, type: "RUN_ERROR" },
+      })
+    );
+  });
+
+  it("throws on a conversation-scoped row whose payload has no type", () => {
+    assertThrows(() =>
+      getConversationTypedRunEventRowSchema().parse({
+        ...ENVELOPE,
+        payload: { ...PAYLOAD, type: undefined },
       })
     );
   });
@@ -192,20 +263,22 @@ describe("run-events/envelope", () => {
       ...ENVELOPE,
       event_type: "TEXT_MESSAGE_CONTENT",
       event_class: "delta",
-      event: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
+      payload: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
     });
     assertEquals(row.event_class, "delta");
   });
 
   it("rejects a conversation-scoped row whose event_class disagrees with its catalogued event_type", () => {
-    assertThrows(() =>
-      getConversationTypedRunEventRowSchema().parse({
-        ...ENVELOPE,
-        event_type: "TEXT_MESSAGE_CONTENT",
-        event_class: "fact",
-        event: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
-      })
-    );
+    for (const key of ["payload", "event"] as const) {
+      assertThrows(() =>
+        getConversationTypedRunEventRowSchema().parse({
+          ...ENVELOPE,
+          event_type: "TEXT_MESSAGE_CONTENT",
+          event_class: "fact",
+          [key]: { ...PAYLOAD, type: "TEXT_MESSAGE_CONTENT" },
+        })
+      );
+    }
   });
 
   it("accepts a conversation-scoped row whose event_type is not catalogued, regardless of event_class", () => {
@@ -213,7 +286,7 @@ describe("run-events/envelope", () => {
       ...ENVELOPE,
       event_type: "SOMETHING_THE_API_ADDED_LATER",
       event_class: "delta",
-      event: { type: "SOMETHING_THE_API_ADDED_LATER" },
+      payload: { type: "SOMETHING_THE_API_ADDED_LATER" },
     });
     assertEquals(row.event_class, "delta");
   });

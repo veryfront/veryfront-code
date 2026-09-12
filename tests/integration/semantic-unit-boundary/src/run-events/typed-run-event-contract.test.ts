@@ -108,13 +108,25 @@ describe("run-events typed contract fixture", () => {
     });
   });
 
-  it("accepts every durable sample on the conversation-scoped row", () => {
+  it("accepts every durable sample on the conversation-scoped row keyed by payload", () => {
+    SAMPLES.forEach((sample, index) => {
+      const row = getConversationTypedRunEventRowSchema().parse({
+        ...envelopeFor(sample, index + 1),
+        payload: sample.durable,
+      });
+      assertEquals(row.payload.type, sample.storedType);
+      // The alias mirrors the chosen payload until Phase F removes it.
+      assertEquals(row.event, row.payload);
+    });
+  });
+
+  it("accepts every durable sample on the conversation-scoped row keyed by the event alias", () => {
     SAMPLES.forEach((sample, index) => {
       const row = getConversationTypedRunEventRowSchema().parse({
         ...envelopeFor(sample, index + 1),
         event: sample.durable,
       });
-      assertEquals(row.event.type, sample.storedType);
+      assertEquals(row.payload.type, sample.storedType);
     });
   });
 });

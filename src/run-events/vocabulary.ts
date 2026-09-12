@@ -1,5 +1,5 @@
 /**
- * The run event vocabulary the Veryfront API publishes under `format=typed`.
+ * The run event vocabulary the Veryfront API publishes on every run event surface.
  *
  * The API owns this list: `RUN_EVENT_TYPES` here mirrors the type union
  * `RunEventPayloadSchema` declares in the API's `run-event/payload.ts`, in the

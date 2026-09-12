@@ -307,11 +307,17 @@ export default function ChatPage() {
 
 ### Reading run events
 
-A run's durable event log is available from the Veryfront API. Read it with
-`format=typed` and every row carries a catalogued `event_type`, a payload named
-by that type, and a span envelope (`run_id`, `event_class`, `span_id`,
-`parent_span_id`, `turn_id`, `origin_event_type`, `origin_custom_name`,
-`unrecoverable_fields`). No typed row uses `event_type: "CUSTOM"`.
+A run's durable event log is available from the Veryfront API. Every row
+carries a catalogued `event_type`, a `payload` named by that type, and a span
+envelope (`run_id`, `event_class`, `span_id`, `parent_span_id`, `turn_id`,
+`origin_event_type`, `origin_custom_name`, `unrecoverable_fields`). No typed
+row uses `event_type: "CUSTOM"`.
+
+The typed contract is the only one, on every surface: the run-scoped route,
+the conversation-scoped events route, GraphQL `agentRunEvents`, the MCP
+`get_agent_run_events` tool, and the SSE streams. Do not send a `format`
+query parameter. `format=typed` is deprecated: the API accepts and ignores it.
+Any other value, including `format=raw`, is refused.
 
 The `veryfront/run-events` module owns the reader's half of that contract, so
 you do not restate the vocabulary or the payload shapes in your own code:
@@ -337,7 +343,7 @@ const runId = "<RUN_ID>";
 const token = "<TOKEN>";
 
 const response = await fetch(
-  `${apiUrl}/runs/${runId}/events?format=typed`,
+  `${apiUrl}/runs/${runId}/events`,
   { headers: { Authorization: `Bearer ${token}` } },
 );
 const body = await response.json() as { data: unknown[] };
@@ -369,9 +375,12 @@ What the module exports:
 - `toRunEventWireName` and `fromRunEventWireName` to move between a stored
   type such as `URL_CITED` and the SSE wire name `UrlCited`.
 - `getRunEventEnvelopeSchema`, `getTypedRunEventRowSchema`, and
-  `parseTypedRunEventRow` for the row itself. Conversation-scoped surfaces
-  (GraphQL, MCP, and the conversation events route) key the payload as `event`
-  rather than `payload`; use `getConversationTypedRunEventRowSchema` there.
+  `parseTypedRunEventRow` for the row itself. The conversation-scoped surfaces
+  (GraphQL, MCP, and the conversation events route) serve the same
+  `payload`-keyed row. `getConversationTypedRunEventRowSchema` reads `payload`
+  as canonical and still accepts the pre-cutover `event` key as an alias; its
+  parsed row exposes the payload as `payload` and, until Phase F removes the
+  alias, as the deprecated `event`. Read `payload`.
 - One payload schema per type, such as `getUrlCitedPayloadSchema`, plus
   `RUN_EVENT_PAYLOAD_SCHEMAS` to look one up by type at runtime. The exception
   is the sixteen control-plane `AGENT_RUN_*` types: the API owns their shape
