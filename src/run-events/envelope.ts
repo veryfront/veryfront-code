@@ -170,7 +170,7 @@ function pickConversationPayload(
  * cutover every one of them keys the payload as `payload`, the same spelling
  * as the run-scoped route and the SSE frames, so this schema reads `payload`
  * as canonical and accepts the pre-cutover `event` key as a transitional
- * alias that Phase F removes. Exactly one of the two must be present: a row
+ * alias that Phase F removes. At least one of the two must be present: a row
  * with both parses as `payload` and never looks at the alias, so a stale or
  * malformed alias beside a canonical payload does not reject the row; a row
  * with neither is rejected with an issue naming both keys.

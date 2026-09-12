@@ -16,7 +16,8 @@ previously required the pre-cutover `event` key and rejected every row those
 surfaces serve now.
 
 The schema reads `payload` as canonical and accepts `event` as a transitional
-alias: exactly one must be present, and a row with both parses as `payload`.
+alias: at least one must be present, and a row with both parses as `payload`
+without looking at the alias.
 The parsed `ConversationTypedRunEventRow` exposes the payload as `payload` and,
 until Phase F removes the alias, as the deprecated `event`. Move reads from
 `row.event` to `row.payload` before Phase F.
