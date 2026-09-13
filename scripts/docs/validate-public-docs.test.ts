@@ -1034,6 +1034,14 @@ describe("public docs validation", () => {
 
     assertEquals((await cite("docs/guides/README.md")).length, 0);
     assertEquals((await cite("docs/concepts/README.md")).length, 0);
+
+    // Test files also sit directly under the test root, with no second slash.
+    const rootLevel = await collectIssues(
+      "docs/guides/agent-service-runtime.md",
+      "Pinned by `tests/test-file-utils.test.mjs`.\n",
+    );
+    assertEquals(rootLevel.length, 1);
+    assertStringIncludes(rootLevel[0].message, "repository test paths");
     // Word boundary and a full path segment are both required, so prose that
      // merely ends in "tests" stays publishable.
     assertEquals(

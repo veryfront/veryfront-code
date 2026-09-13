@@ -536,7 +536,10 @@ const RULES: Rule[] = [
     // where this tree happens to keep it. AGENTS.md keeps implementation paths
     // out of published pages; describe the contract and leave the path to
     // source comments or a contributor doc.
-    pattern: /\btests\/[A-Za-z0-9_.-]+\//,
+    // A segment must start with a word character so a sentence that merely ends
+    // in "tests/" is not a path. Tests live both directly under the root and in
+    // subdirectories, so one segment is enough to match.
+    pattern: /\btests\/[A-Za-z0-9_][A-Za-z0-9_.-]*/,
     message:
       "Do not cite repository test paths in public docs. Describe the contract instead.",
     publishedPagesOnly: true,
