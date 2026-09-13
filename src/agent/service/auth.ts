@@ -544,51 +544,86 @@ export function createHostedServiceAuth(
     };
   }
 
+  /**
+   * Verify one run control bearer and expose its claims as own data reads.
+   *
+   * Cancel and resume share every step up to the per-operation claim rules:
+   * the same thenable-inheritance guards, the same configured public key, the
+   * same RS256-pinned verification, and the same exact-run binding that closes
+   * the gap between verifying a token and acting on it. Returns `null` for any
+   * failure so a caller cannot distinguish a missing key from a bad signature.
+   */
+  async function readRunControlClaims(
+    input: { token: string; runId: string },
+    operationLabel: string,
+  ): Promise<
+    | null
+    | {
+      serverId: unknown;
+      userId: string;
+      scope: unknown;
+      tokenUse: unknown;
+      actorType: unknown;
+      serviceAccountId: unknown;
+      projectId: unknown;
+      read: (key: PropertyKey, required?: boolean) => unknown;
+    }
+  > {
+    if (!isSafeHostedJwtVerificationEnvironment(input)) return null;
+    const config = options.getConfig();
+    if (!isSafeHostedJwtVerificationEnvironment(config)) return null;
+    const token = readOwnDataProperty(input, "token", `${operationLabel} request`);
+    const runId = readOwnDataProperty(input, "runId", `${operationLabel} request`);
+    const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+    if (
+      typeof publicKey !== "string" || !publicKey ||
+      typeof token !== "string" || !token || typeof runId !== "string" || !runId
+    ) return null;
+    const serverId = readOwnDataProperty(
+      config,
+      "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+      "Service config",
+      false,
+    );
+    const authProvider = await getAuthProvider(options);
+    if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return null;
+    const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
+      algorithms: ["RS256"],
+    });
+    if (!isSafeHostedJwtVerificationEnvironment(claims)) return null;
+    const read = (key: PropertyKey, required = true) =>
+      readOwnDataProperty(claims, key, `${operationLabel} claims`, required);
+    // Exact-run binding, then the claims and guards both operations share.
+    // Everything a caller reads below comes from a token already proven to name
+    // this run, to be unexpired, and to carry no `scopes` array (the run-event
+    // writer's V2 shape, which is not run control authority).
+    const userId = read("userId");
+    const exp = read("exp");
+    if (
+      read("runId") !== runId || typeof userId !== "string" || !userId ||
+      typeof exp !== "number" || !NumberIsFinite(exp) || exp * 1000 <= DateNow() ||
+      read("scopes", false) !== undefined
+    ) return null;
+    return {
+      serverId,
+      userId,
+      scope: read("scope"),
+      tokenUse: read("tokenUse", false),
+      actorType: read("actorType", false),
+      serviceAccountId: read("serviceAccountId", false),
+      projectId: read("projectId", false),
+      read,
+    };
+  }
+
   async function verifyRunCancellationToken(
     input: { token: string; runId: string },
   ): Promise<boolean> {
-    if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
-    const config = options.getConfig();
     try {
-      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
-      const token = readOwnDataProperty(input, "token", "Cancellation request");
-      const runId = readOwnDataProperty(input, "runId", "Cancellation request");
-      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
-      if (
-        typeof publicKey !== "string" || !publicKey ||
-        typeof token !== "string" || !token || typeof runId !== "string" || !runId
-      ) return false;
-      const serverId = readOwnDataProperty(
-        config,
-        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
-        "Service config",
-        false,
-      );
-      const authProvider = await getAuthProvider(options);
-      if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return false;
-      const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
-        algorithms: ["RS256"],
-      });
-      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
-      const claimRunId = readOwnDataProperty(claims, "runId", "Cancellation claims");
-      const userId = readOwnDataProperty(claims, "userId", "Cancellation claims");
-      const exp = readOwnDataProperty(claims, "exp", "Cancellation claims");
-      const scope = readOwnDataProperty(claims, "scope", "Cancellation claims");
-      const tokenUse = readOwnDataProperty(claims, "tokenUse", "Cancellation claims", false);
-      const scopes = readOwnDataProperty(claims, "scopes", "Cancellation claims", false);
-      const actorType = readOwnDataProperty(claims, "actorType", "Cancellation claims", false);
-      const serviceAccountId = readOwnDataProperty(
-        claims,
-        "serviceAccountId",
-        "Cancellation claims",
-        false,
-      );
-      const projectId = readOwnDataProperty(claims, "projectId", "Cancellation claims", false);
-      if (
-        claimRunId !== runId || typeof userId !== "string" || !userId ||
-        typeof exp !== "number" || !NumberIsFinite(exp) ||
-        exp * 1000 <= DateNow() || scopes !== undefined
-      ) return false;
+      const verified = await readRunControlClaims(input, "Cancellation");
+      if (!verified) return false;
+      const { serverId, userId, scope, tokenUse, actorType, serviceAccountId, projectId } =
+        verified;
       // Match the two existing mintRuntimeCancellationAuthToken contracts. The
       // API authorizes the actor before minting this exact-run server authority.
       if (actorType === "service_account") {
@@ -613,48 +648,13 @@ export function createHostedServiceAuth(
   async function verifyRunResumeToken(
     input: { token: string; runId: string },
   ): Promise<boolean> {
-    if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
-    const config = options.getConfig();
     try {
-      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
-      const token = readOwnDataProperty(input, "token", "Resume request");
-      const runId = readOwnDataProperty(input, "runId", "Resume request");
-      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+      const verified = await readRunControlClaims(input, "Resume");
+      if (!verified) return false;
+      const { serverId, userId, scope, tokenUse, actorType, serviceAccountId, projectId, read } =
+        verified;
+      const grantId = read("grantId", false);
       if (
-        typeof publicKey !== "string" || !publicKey ||
-        typeof token !== "string" || !token || typeof runId !== "string" || !runId
-      ) return false;
-      const serverId = readOwnDataProperty(
-        config,
-        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
-        "Service config",
-        false,
-      );
-      const authProvider = await getAuthProvider(options);
-      if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return false;
-      const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
-        algorithms: ["RS256"],
-      });
-      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
-      const claimRunId = readOwnDataProperty(claims, "runId", "Resume claims");
-      const userId = readOwnDataProperty(claims, "userId", "Resume claims");
-      const exp = readOwnDataProperty(claims, "exp", "Resume claims");
-      const scope = readOwnDataProperty(claims, "scope", "Resume claims");
-      const tokenUse = readOwnDataProperty(claims, "tokenUse", "Resume claims", false);
-      const scopes = readOwnDataProperty(claims, "scopes", "Resume claims", false);
-      const actorType = readOwnDataProperty(claims, "actorType", "Resume claims", false);
-      const serviceAccountId = readOwnDataProperty(
-        claims,
-        "serviceAccountId",
-        "Resume claims",
-        false,
-      );
-      const projectId = readOwnDataProperty(claims, "projectId", "Resume claims", false);
-      const grantId = readOwnDataProperty(claims, "grantId", "Resume claims", false);
-      if (
-        claimRunId !== runId || typeof userId !== "string" || !userId ||
-        typeof exp !== "number" || !NumberIsFinite(exp) ||
-        exp * 1000 <= DateNow() || scopes !== undefined ||
         actorType !== "service_account" || userId !== serviceAccountId ||
         typeof projectId !== "string" || !projectId ||
         !hasExactCancellationScopes(scope, RUN_RESUME_SCOPES, "Resume scopes")
