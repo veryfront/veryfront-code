@@ -59,8 +59,13 @@ export async function createTrustedManagedRuntime(
   void options.runOwned(() => retired.promise).catch(() => {});
   try {
     const execution = options.installation.grant.execution;
-    if (execution.kind !== "canonical" || execution.projectId === null) {
-      throw new TypeError("Trusted runtime requires canonical project execution");
+    if (
+      execution.kind !== "canonical" ||
+      (execution.projectId === null && options.installation.owner.scopeKind !== "global")
+    ) {
+      throw new TypeError(
+        "Trusted runtime requires canonical execution with matching source scope",
+      );
     }
     const projectTools = await createExecutorProjectToolSource({
       channel: options.projectChannel,

@@ -5,6 +5,7 @@ import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { createExecutorRuntimeInstallation } from "./executor-runtime-install.ts";
 import { EXECUTOR_TOOL_LIMITS } from "./executor-tool-schema.ts";
+import type { ExecutorArtifactManifest } from "./executor-runtime-install-schema.ts";
 
 const binding = { allocationId: "allocation", invocationId: "invocation", generation: 1 };
 const artifact = {
@@ -37,7 +38,10 @@ async function call(
   if (operation?.mode !== "unary") throw new Error("Missing unary operation");
   return await operation.handle(value as JsonValue, context());
 }
-function fixture(pending?: Promise<void>) {
+function fixture(
+  pending?: Promise<void>,
+  owner: ExecutorArtifactManifest["owner"] = artifact.owner,
+) {
   let starts = 0;
   let closes = 0;
   const retired = Promise.withResolvers<void>();
@@ -59,7 +63,7 @@ function fixture(pending?: Promise<void>) {
   const installation = createExecutorRuntimeInstallation({
     mode: "project-tools",
     binding,
-    artifact,
+    artifact: { ...artifact, owner },
     install: () => {
       starts++;
       return Promise.resolve({
@@ -85,6 +89,40 @@ function fixture(pending?: Promise<void>) {
 }
 
 describe("project tool installation", () => {
+  it("accepts explicit projectless global installation without privileged operations", async () => {
+    const f = fixture();
+    const input = { ...request, context: { ...request.context, projectId: null } };
+    try {
+      assertEquals(await call(f.installation.operations, "runtime.install", input), {
+        installed: true,
+      });
+      assertEquals(f.starts, 1);
+      for (
+        const name of ["runtime.prepare", "agent.stream", "model.generate", "persistence.append"]
+      ) {
+        assertEquals(f.installation.operations.has(name), false);
+      }
+      await assertRejects(() => call(f.installation.operations, "runtime.install", input));
+    } finally {
+      await f.installation.close();
+    }
+  });
+  it("rejects projectless context for the matching project-owned artifact", async () => {
+    const owner = { scopeKind: "project", projectId: "source-project" } as const;
+    const f = fixture(undefined, owner);
+    try {
+      await assertRejects(() =>
+        call(f.installation.operations, "runtime.install", {
+          ...request,
+          owner,
+          context: { ...request.context, projectId: null },
+        })
+      );
+      assertEquals(f.starts, 0);
+    } finally {
+      await f.installation.close();
+    }
+  });
   it("exposes only discovery and project tools after one authenticated installation", async () => {
     const f = fixture();
     try {
@@ -136,7 +174,8 @@ describe("project tool installation", () => {
           { ...request, allowedToolNames: ["inspect", "inspect"] },
           { ...request, binding: { ...binding, generation: 2 } },
           { ...request, source: { type: "release", releaseId: "other" } },
-          { ...request, context: { ...request.context, projectId: null } },
+          { ...request, context: { ...request.context, projectId: undefined } },
+          { ...request, context: { ...request.context, projectId: "" } },
         ]
       ) await assertRejects(() => call(f.installation.operations, "runtime.install", invalid));
       assertEquals(f.starts, 0);

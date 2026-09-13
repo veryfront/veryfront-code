@@ -325,6 +325,7 @@ export function createManagedExecutorBroker(
                       projectContext: "skill",
                       context: {
                         ...trusted.projectInstallation.context,
+                        projectId: trusted.projectInstallation.context.projectId ?? undefined,
                         runIdBindsToolAuthorization: true,
                       },
                     }]]),
@@ -436,7 +437,8 @@ function snapshotTrustedRuntime(
 } {
   const execution = installation.grant.execution;
   if (
-    execution.kind !== "canonical" || execution.projectId === null ||
+    execution.kind !== "canonical" ||
+    (execution.projectId === null && installation.owner.scopeKind !== "global") ||
     !installation.grant.remoteToolSourceIds.includes(EXECUTOR_PROJECT_TOOL_SOURCE_ID) ||
     installation.grant.hostToolFacadeIds.includes(EXECUTOR_PROJECT_TOOL_SOURCE_ID) ||
     operations.tools.sources.has(EXECUTOR_PROJECT_TOOL_SOURCE_ID) ||

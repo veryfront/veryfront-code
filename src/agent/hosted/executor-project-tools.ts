@@ -59,7 +59,8 @@ export interface ExecutorProjectToolSource extends RemoteToolSource {
 
 export interface ExecutorProjectToolContext {
   agentId: string;
-  projectId: string;
+  /** Null binds globally owned source tools without a project identity. */
+  projectId: string | null;
   userId?: string;
   projectSlug?: string;
   execution: { kind: "canonical"; runId: string } | { kind: "ephemeral" };
@@ -68,21 +69,24 @@ export interface ExecutorProjectToolContext {
 const getContextSchema = defineSchema((v) =>
   v.object({
     agentId: getExecutorToolIdSchema(),
-    projectId: getExecutorToolIdSchema(),
+    projectId: getExecutorToolIdSchema().nullable(),
     userId: getExecutorToolIdSchema().optional(),
     projectSlug: getExecutorToolIdSchema().optional(),
     execution: v.discriminatedUnion("kind", [
       v.object({ kind: v.literal("canonical"), runId: getExecutorToolIdSchema() }).strict(),
       v.object({ kind: v.literal("ephemeral") }).strict(),
     ]),
-  }).strict()
+  }).strict().refine(
+    (context) => context.projectId !== null || context.projectSlug === undefined,
+    "Projectless tool context cannot include a project slug",
+  )
 );
 
 function captureContext(input: ExecutorProjectToolContext) {
   const context = parseExecutorToolData(getContextSchema(), input);
   return freeze({
     agentId: context.agentId,
-    projectId: context.projectId,
+    ...(context.projectId === null ? {} : { projectId: context.projectId }),
     ...(context.userId === undefined ? {} : { userId: context.userId }),
     ...(context.projectSlug === undefined ? {} : { projectSlug: context.projectSlug }),
     runIdBindsToolAuthorization: context.execution.kind === "canonical",
