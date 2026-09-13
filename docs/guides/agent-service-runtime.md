@@ -547,11 +547,11 @@ cancellation bearer with its configured public key. Two claim shapes are accepte
 one for each shape the API mints: a project- and run-scoped `veryfront-server`
 service-account bearer carrying `tokenUse: project_scoped_service_account`, and,
 for a run with no project, the requester's own session bearer, which carries no
-`tokenUse` at all. Both shapes are pinned by
-`tests/fixtures/contracts/api-run-cancellation-jwt-payload.json`, captured from the
-API's `mintRuntimeCancellationAuthToken`. A general user token without
-a matching run claim is insufficient, and development decode-only authentication
-does not grant cancellation. Custom route sets must supply
+`tokenUse` at all. Both shapes are pinned by a contract fixture holding payloads
+captured from the API's minting code, so a claim change on either side fails a
+test instead of rejecting every cancellation in production. A general user token
+without a matching run claim is insufficient, and development decode-only
+authentication does not grant cancellation. Custom route sets must supply
 `verifyRunCancellationToken`; omission returns HTTP 403. The API retains actor and
 collaborator authorization before minting the runtime credential. Request-owned
 AG-UI streams still support cancellation through their request signal.

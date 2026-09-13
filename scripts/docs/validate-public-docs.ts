@@ -26,6 +26,12 @@ interface PublicDocIssue {
 interface Rule {
   pattern: RegExp;
   message: string;
+  /**
+   * Skip the section `README.md` files the sync deletes before publishing.
+   * Those pages are maintainer guidance for readers of this repository, so they
+   * may name repository paths that must never reach the published site.
+   */
+  publishedPagesOnly?: boolean;
 }
 
 /**
@@ -526,6 +532,16 @@ const RULES: Rule[] = [
     message: "Do not expose test-only setup modules in public docs.",
   },
   {
+    // A reader cannot import a test or a fixture, so naming one only tells them
+    // where this tree happens to keep it. AGENTS.md keeps implementation paths
+    // out of published pages; describe the contract and leave the path to
+    // source comments or a contributor doc.
+    pattern: /\btests\/[A-Za-z0-9_.-]+\//,
+    message:
+      "Do not cite repository test paths in public docs. Describe the contract instead.",
+    publishedPagesOnly: true,
+  },
+  {
     pattern: /\bInternal utilities\b/,
     message: "Do not describe public API pages as internal utilities.",
   },
@@ -714,6 +730,7 @@ export async function collectIssues(
       decodeMarkdownCharacterReferences(text),
     );
     for (const rule of RULES) {
+      if (rule.publishedPagesOnly && UNSYNCED_README_PATHS.includes(path)) continue;
       if (!rule.pattern.test(renderedText)) continue;
       issues.push({
         path,
