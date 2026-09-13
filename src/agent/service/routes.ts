@@ -511,6 +511,17 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       const hostedAgUiCancelHandler = createAgUiCancelHandler({
         sessionManager: options.tracker.sessionManager,
         resolveRunId: () => runId,
+        // The handler repeats the decision rather than trusting this route's.
+        // The session manager now takes authority instead of a run id for the
+        // cancel-and-tombstone effect, and the authority can only come from the
+        // handler's own call, so the route cannot hand down a decision the
+        // handler did not make. Re-verifying one already-parsed RS256 bearer
+        // once per Stop is not a cost worth a bypass for.
+        authorizeRunControl: async (control) =>
+          await options.verifyRunCancellationToken?.({
+            token: authenticatedRequest.authToken,
+            runId: control.runId,
+          }) === true,
       });
       return hostedAgUiCancelHandler(input.request);
     });

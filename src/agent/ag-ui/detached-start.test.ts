@@ -15,6 +15,7 @@ import {
   RunResumeSessionManager,
 } from "../index.ts";
 import type { Agent, Message } from "../types.ts";
+import { authorizeRunControl } from "../runtime/run-control-authority.ts";
 
 const encoder = new TextEncoder();
 
@@ -371,7 +372,15 @@ describe("agent/ag-ui-detached-start", () => {
       isError: boolean;
     }>();
     let started = false;
-    sessionManager.cancelRun("run_1", { rememberIfMissing: true });
+    {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+        runId: "run_1",
+        operation: "cancel",
+      });
+      assertExists(authority);
+      sessionManager.cancelRunWithAuthority(authority);
+    }
 
     const handler = createAgUiDetachedStartHandler({
       sessionManager,

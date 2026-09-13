@@ -12,6 +12,10 @@ import {
   WaitNotPendingError,
 } from "../runtime/resume-session.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  authorizeRunControl,
+  type RunControlAuthorizer,
+} from "../runtime/run-control-authority.ts";
 
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
@@ -48,6 +52,14 @@ export interface AgUiRunControlHandlerOptions {
   resolveRunId?:
     | ((input: { request: Request; requestOrCtx: unknown }) => string | null)
     | ((input: { request: Request; requestOrCtx: unknown }) => Promise<string | null>);
+  /**
+   * Decide whether this request may control this exact run. Required: these
+   * handlers reach a run registry keyed by run id alone, so a surface that
+   * mounts one without an authority decision would let any authenticated
+   * caller control another caller's run. Return `true` only for a caller whose
+   * permission for this run and operation has been verified.
+   */
+  authorizeRunControl: RunControlAuthorizer;
 }
 
 /** Options accepted by AG-UI resume handler. */
@@ -86,9 +98,18 @@ export function createAgUiResumeHandler(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
+    const authority = await authorizeRunControl(options.authorizeRunControl, {
+      request,
+      runId,
+      operation: "resume",
+    });
+    if (!authority) {
+      return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+    }
+
     try {
       const parsed = getAgUiResumeSignalSchema().parse(await parseAgUiJsonBody(request));
-      const outcome = options.sessionManager.submitSignal(runId, {
+      const outcome = options.sessionManager.submitSignalWithAuthority(authority, {
         waitKey: parsed.toolCallId,
         value: {
           result: parsed.result,
@@ -156,7 +177,16 @@ export function createAgUiCancelHandler<T = unknown>(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
-    const accepted = options.sessionManager.cancelRun(runId, { rememberIfMissing: true });
+    const authority = await authorizeRunControl(options.authorizeRunControl, {
+      request,
+      runId,
+      operation: "cancel",
+    });
+    if (!authority) {
+      return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+    }
+
+    const accepted = options.sessionManager.cancelRunWithAuthority(authority);
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }

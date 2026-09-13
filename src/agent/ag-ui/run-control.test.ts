@@ -9,6 +9,11 @@ import {
   RunResumeSessionManager,
 } from "../index.ts";
 
+// Every run control handler now requires an authority decision, so the
+// behavioural tests below state one explicitly. `run-control-authorization.test.ts`
+// covers what happens when the decision is negative or missing.
+const allowRunControl = () => true;
+
 describe("agent/ag-ui-run-control", () => {
   it("exports the canonical public resume signal schema", () => {
     assertEquals(
@@ -34,7 +39,10 @@ describe("agent/ag-ui-run-control", () => {
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     const pending = sessionManager.waitForSignal("run_1", "tool_1");
 
-    const handler = createAgUiResumeHandler({ sessionManager });
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
@@ -57,7 +65,10 @@ describe("agent/ag-ui-run-control", () => {
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     const pending = sessionManager.waitForSignal("run_1", "tool_1");
 
-    const handler = createAgUiCancelHandler({ sessionManager });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1", {
         method: "DELETE",
@@ -85,6 +96,7 @@ describe("agent/ag-ui-run-control", () => {
     void sessionManager.waitForSignal("run_1", "tool_1").catch(() => undefined);
 
     const handler = createAgUiCancelHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager,
       resolveRunId: ({ request, requestOrCtx }) => {
         assertEquals(requestOrCtx, request);
@@ -114,6 +126,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("accepts a request wrapper and returns 410 for inactive runs", async () => {
     const handler = createAgUiResumeHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
     });
 
@@ -135,6 +148,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("returns 404 when the route does not include a run id", async () => {
     const handler = createAgUiResumeHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
     });
 
@@ -156,6 +170,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("returns 400 for malformed resume payloads", async () => {
     const handler = createAgUiResumeHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
     });
 
@@ -190,7 +205,10 @@ describe("agent/ag-ui-run-control", () => {
     });
     await pending;
 
-    const handler = createAgUiResumeHandler({ sessionManager });
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
@@ -215,7 +233,10 @@ describe("agent/ag-ui-run-control", () => {
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     const pending = sessionManager.waitForSignal("run_1", "tool_1").catch(() => undefined);
 
-    const handler = createAgUiResumeHandler({ sessionManager });
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
@@ -245,6 +266,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("returns 204 when cancelling an already inactive run", async () => {
     const handler = createAgUiCancelHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ ok: boolean }>(),
     });
 
