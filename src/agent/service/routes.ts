@@ -32,6 +32,7 @@ import {
 import { assertNativeHeaderProcessing } from "#veryfront/security/http/native-header-processing.ts";
 import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
 import { isResponseLike } from "./response-like.ts";
+import { isSafeHostedJwtVerificationEnvironment } from "./jwt-verification-environment.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import {
   type HostedRuntimeSourceIdentity,
@@ -159,6 +160,8 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
     projectId: string;
     runId: string;
   }) => Promise<HostedServiceRunEventAppendTokenVerification>;
+  /** Exact-run authority must be verified before cancellation, including delayed starts. */
+  verifyRunCancellationToken?: (input: { token: string; runId: string }) => Promise<boolean>;
   tracker: DetachedRunTracker<AgUiResumeValue>;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (
@@ -476,19 +479,38 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     request: Request;
     runId: string | undefined;
   }): Promise<Response> {
+    if (!isSafeHostedJwtVerificationEnvironment(input)) {
+      return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+    }
     return trace("handler.durableChatRunCancel", async () => {
+      if (!isSafeHostedJwtVerificationEnvironment(input)) {
+        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+      }
       const authenticatedRequest = await authenticateAgUiRequest(input.request);
+      if (!isSafeHostedJwtVerificationEnvironment(authenticatedRequest)) {
+        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+      }
       if (isResponseLike(authenticatedRequest)) {
         return authenticatedRequest;
       }
 
-      if (!input.runId) {
+      const runId = input.runId;
+      if (!runId) {
         return Response.json({ errorCode: "VALIDATION_ERROR" }, { status: 400 });
       }
 
-      options.setActiveSpanAttributes?.({ "run.id": input.runId });
+      const authorized = await options.verifyRunCancellationToken?.({
+        token: authenticatedRequest.authToken,
+        runId,
+      });
+      if (authorized !== true || !isSafeHostedJwtVerificationEnvironment()) {
+        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+      }
+
+      options.setActiveSpanAttributes?.({ "run.id": runId });
       const hostedAgUiCancelHandler = createAgUiCancelHandler({
         sessionManager: options.tracker.sessionManager,
+        resolveRunId: () => runId,
       });
       return hostedAgUiCancelHandler(input.request);
     });

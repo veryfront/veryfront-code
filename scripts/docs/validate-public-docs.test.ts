@@ -1016,6 +1016,44 @@ describe("public docs validation", () => {
     );
   });
 
+  it("keeps repository test paths out of pages the sync publishes", async () => {
+    // A published page that names a fixture tells the reader where this tree
+    // keeps a file they cannot import. The section README is deleted before the
+    // sync, so it stays free to cite repository paths for maintainers.
+    const cite = (path: string) =>
+      collectIssues(
+        path,
+        "Both shapes are pinned by\n" +
+          "`tests/fixtures/contracts/api-run-cancellation-jwt-payload.json`.\n",
+      );
+
+    const published = await cite("docs/guides/agent-service-runtime.md");
+    assertEquals(published.length, 1);
+    assertEquals(published[0].line, 2);
+    assertStringIncludes(published[0].message, "repository test paths");
+
+    assertEquals((await cite("docs/guides/README.md")).length, 0);
+    assertEquals((await cite("docs/concepts/README.md")).length, 0);
+
+    // Test files also sit directly under the test root, with no second slash.
+    const rootLevel = await collectIssues(
+      "docs/guides/agent-service-runtime.md",
+      "Pinned by `tests/test-file-utils.test.mjs`.\n",
+    );
+    assertEquals(rootLevel.length, 1);
+    assertStringIncludes(rootLevel[0].message, "repository test paths");
+    // Word boundary and a full path segment are both required, so prose that
+     // merely ends in "tests" stays publishable.
+    assertEquals(
+      (await collectIssues(
+        "docs/guides/agent-service-runtime.md",
+        "Read `contests/fixtures/entries/` on the unrelated site.\n" +
+          "Generated pages live under docs/api-reference, not tests/.\n",
+      )).length,
+      0,
+    );
+  });
+
   it("rejects case variants of private repository URLs", async () => {
     const issues = await collectIssues(
       "docs/guides/example.md",
