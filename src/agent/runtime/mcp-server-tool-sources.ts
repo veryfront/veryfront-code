@@ -188,9 +188,15 @@ export function constrainRuntimeRemoteToolSources(
 
   const policy = { allow: [...createPrivateSet(allowedToolNames)] };
   const sourcesToConstrain = sources ?? getActiveRuntimeRemoteToolSources() ?? [];
+  // Deliberately no bootstrap-provenance propagation: `allowedToolNames` is a
+  // trusted ceiling stamped into `__vfAllowedRemoteTools` by a run (forwarded
+  // grants, `runtimeOverrides.toolAllowlist`, fork authorization, retirement
+  // limits), never a plain agent declaration. The wrapper must read as owned
+  // so an invoked child cannot rebuild the source from the bootstrap identity
+  // and reach a tool the run's grant excluded.
   return mapPrivateArray(
     sourcesToConstrain,
-    (source) => propagateBootstrapIdentity(source, createMcpToolPolicySource(source, policy)),
+    (source) => createMcpToolPolicySource(source, policy),
   );
 }
 
@@ -475,6 +481,10 @@ export function getRuntimeRemoteToolSources(
   // sibling sharing the id would bypass the host credential boundary.
   const hostOwnedInjectedIds = createPrivateSet<string>();
   for (let index = 0; index < selectedInjectedSources.length; index++) {
+    // Own indexes only: a sparse ambient array must not read a source off a
+    // patched Array.prototype, which would mark a real bootstrap-owned id as
+    // host-owned and strip the child's remote tools.
+    if (!hasOwn(selectedInjectedSources, index)) continue;
     const source = selectedInjectedSources[index];
     if (source !== undefined && !isBootstrapIdentityRemoteToolSource(source)) {
       hostOwnedInjectedIds.add(source.id);

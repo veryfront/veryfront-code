@@ -1158,3 +1158,127 @@ it("keeps bootstrap provenance across a retained intermediate delegation", async
     .map((tool) => tool.name);
   assertEquals(names, ["create_file"]);
 });
+
+it("keeps a trusted remote-tool ceiling authoritative for an invoked child", async () => {
+  const grantedRootSource: RemoteToolSource = markBootstrapIdentityRemoteToolSource({
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([
+        {
+          name: "list_files",
+          description: "List project files",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "create_file",
+          description: "Create a project file",
+          parameters: { type: "object", properties: {} },
+        },
+      ]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  });
+  // A run stamps __vfAllowedRemoteTools as an authorization ceiling: only
+  // list_files is granted for the whole run, children included.
+  const ceilingSources = constrainRuntimeRemoteToolSources(
+    [grantedRootSource],
+    ["list_files"],
+  )!;
+  let rederivedFromBootstrap = false;
+
+  const sources = runWithExactRuntimeRemoteToolSources(
+    ceilingSources,
+    () =>
+      getRuntimeRemoteToolSources(
+        {
+          id: "child-agent",
+          system: "Store intake evidence.",
+          tools: { create_file: true },
+        },
+        {
+          getVeryfrontBootstrap: () => ({
+            apiBaseUrl: "https://api.example/",
+            apiToken: "server-token",
+            projectSlug: "server-project",
+            hasRequestContext: false,
+            usesVeryfrontFs: false,
+          }),
+          createRemoteToolSource: () => {
+            rederivedFromBootstrap = true;
+            return {
+              id: VERYFRONT_API_MCP_SOURCE_ID,
+              listTools: () =>
+                Promise.resolve([
+                  {
+                    name: "create_file",
+                    description: "Create a project file",
+                    parameters: { type: "object", properties: {} },
+                  },
+                ]),
+              executeTool: () => Promise.resolve({ ok: true }),
+            };
+          },
+        },
+      ),
+  );
+
+  assertEquals(rederivedFromBootstrap, false);
+  const names = (await Promise.all((sources ?? []).map((source) => source.listTools())))
+    .flat()
+    .map((tool) => tool.name);
+  assertEquals(names, []);
+});
+
+it("ignores inherited array slots when classifying remote source ownership", async () => {
+  const bootstrapSource: RemoteToolSource = markBootstrapIdentityRemoteToolSource({
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () =>
+      Promise.resolve([{
+        name: "list_files",
+        description: "List project files",
+        parameters: { type: "object", properties: {} },
+      }]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  });
+  const inheritedSlotSource: RemoteToolSource = {
+    id: VERYFRONT_API_MCP_SOURCE_ID,
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+  const sources: RemoteToolSource[] = [];
+  sources.length = 2;
+  Object.defineProperty(sources, 1, {
+    value: bootstrapSource,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  const prototype = Object.create(Array.prototype);
+  Object.defineProperty(prototype, 0, { value: inheritedSlotSource });
+  Object.setPrototypeOf(sources, prototype);
+
+  const resolved = runWithExactRuntimeRemoteToolSources(
+    sources,
+    () =>
+      getRuntimeRemoteToolSources(
+        {
+          id: "child-agent",
+          system: "List the inbox.",
+          tools: { list_files: true },
+        },
+        {
+          // No bootstrap identity: the child cannot re-derive, so dropping the
+          // inherited bootstrap source would leave it with no remote tools.
+          getVeryfrontBootstrap: () => ({
+            apiBaseUrl: "https://api.example/",
+            hasRequestContext: false,
+            usesVeryfrontFs: false,
+          }),
+        },
+      ),
+  );
+
+  const names = (await Promise.all((resolved ?? []).map((source) => source.listTools())))
+    .flat()
+    .map((tool) => tool.name);
+  assertEquals(names, ["list_files"]);
+});
